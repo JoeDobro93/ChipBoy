@@ -31,7 +31,12 @@ Four voices per instance, always. If you want more, load another instance.
 - [`docs/CHIPBOY_SPEC.md`](docs/CHIPBOY_SPEC.md) — the build specification, and the source of truth.
 - [`docs/HARDWARE_REFERENCE.md`](docs/HARDWARE_REFERENCE.md) — DMG APU registers, timing, and the measured analog behaviour the emulation has to reproduce.
 - [`docs/LICENSING.md`](docs/LICENSING.md) — third-party obligations and the licence decision still to be made.
+- [`docs/CAPTURE_GUIDE.md`](docs/CAPTURE_GUIDE.md) — step-by-step procedure for measuring a real DMG and CGB.
 - [`CHANGES.md`](CHANGES.md) — every departure from the spec, with reasons.
+
+The hardware capture tooling in [`tools/capture/`](tools/capture/) is built and tested:
+a probe ROM, an SM83 interpreter that verifies it, a loopback calibration generator, and
+an analyser that turns a recording into measured constants.
 
 Open decisions are collected in spec §18 and marked `[DECIDE]` throughout.
 

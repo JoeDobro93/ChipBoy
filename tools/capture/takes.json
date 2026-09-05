@@ -1,0 +1,684 @@
+{
+ "rom": "chipboy_probe.gb",
+ "cpu_hz": 4194304,
+ "marker": {
+  "preamble_hz": 2259.862068965517,
+  "one_hz": 1248.304761904762,
+  "zero_hz": 748.9828571428571,
+  "preamble_reps": 2,
+  "preamble_on_ms": 40,
+  "preamble_off_ms": 40,
+  "bits": 8,
+  "bit_on_ms": 25,
+  "bit_off_ms": 15,
+  "trailer_ms": 120
+ },
+ "lead_in_ms": 3000,
+ "total_seconds": 156.03,
+ "takes": [
+  {
+   "id": 1,
+   "marker_bits_seen": 8,
+   "marker_start_s": 3.113825,
+   "payload_start_s": 3.722114,
+   "payload_end_s": 5.745942,
+   "payload_seconds": 2.0238
+  },
+  {
+   "id": 2,
+   "marker_bits_seen": 8,
+   "marker_start_s": 5.745942,
+   "payload_start_s": 6.354231,
+   "payload_end_s": 8.378157,
+   "payload_seconds": 2.0239
+  },
+  {
+   "id": 3,
+   "marker_bits_seen": 8,
+   "marker_start_s": 8.378157,
+   "payload_start_s": 8.986447,
+   "payload_end_s": 11.013648,
+   "payload_seconds": 2.0272
+  },
+  {
+   "id": 4,
+   "marker_bits_seen": 8,
+   "marker_start_s": 11.013648,
+   "payload_start_s": 11.621937,
+   "payload_end_s": 13.659092,
+   "payload_seconds": 2.0372
+  },
+  {
+   "id": 10,
+   "marker_bits_seen": 8,
+   "marker_start_s": 13.659092,
+   "payload_start_s": 14.267383,
+   "payload_end_s": 15.725199,
+   "payload_seconds": 1.4578
+  },
+  {
+   "id": 11,
+   "marker_bits_seen": 8,
+   "marker_start_s": 15.725199,
+   "payload_start_s": 16.333491,
+   "payload_end_s": 17.791307,
+   "payload_seconds": 1.4578
+  },
+  {
+   "id": 12,
+   "marker_bits_seen": 8,
+   "marker_start_s": 17.791307,
+   "payload_start_s": 18.399598,
+   "payload_end_s": 19.857414,
+   "payload_seconds": 1.4578
+  },
+  {
+   "id": 13,
+   "marker_bits_seen": 8,
+   "marker_start_s": 19.857414,
+   "payload_start_s": 20.465707,
+   "payload_end_s": 21.923523,
+   "payload_seconds": 1.4578
+  },
+  {
+   "id": 14,
+   "marker_bits_seen": 8,
+   "marker_start_s": 21.923523,
+   "payload_start_s": 22.531816,
+   "payload_end_s": 23.989632,
+   "payload_seconds": 1.4578
+  },
+  {
+   "id": 15,
+   "marker_bits_seen": 8,
+   "marker_start_s": 23.989632,
+   "payload_start_s": 24.597926,
+   "payload_end_s": 26.055742,
+   "payload_seconds": 1.4578
+  },
+  {
+   "id": 16,
+   "marker_bits_seen": 8,
+   "marker_start_s": 26.055742,
+   "payload_start_s": 26.664031,
+   "payload_end_s": 28.121847,
+   "payload_seconds": 1.4578
+  },
+  {
+   "id": 17,
+   "marker_bits_seen": 8,
+   "marker_start_s": 28.121847,
+   "payload_start_s": 28.730138,
+   "payload_end_s": 30.187954,
+   "payload_seconds": 1.4578
+  },
+  {
+   "id": 18,
+   "marker_bits_seen": 8,
+   "marker_start_s": 30.187954,
+   "payload_start_s": 30.796245,
+   "payload_end_s": 32.254061,
+   "payload_seconds": 1.4578
+  },
+  {
+   "id": 19,
+   "marker_bits_seen": 8,
+   "marker_start_s": 32.254061,
+   "payload_start_s": 32.862353,
+   "payload_end_s": 34.320169,
+   "payload_seconds": 1.4578
+  },
+  {
+   "id": 20,
+   "marker_bits_seen": 8,
+   "marker_start_s": 34.320169,
+   "payload_start_s": 34.92846,
+   "payload_end_s": 36.386276,
+   "payload_seconds": 1.4578
+  },
+  {
+   "id": 21,
+   "marker_bits_seen": 8,
+   "marker_start_s": 36.386276,
+   "payload_start_s": 36.994569,
+   "payload_end_s": 38.452385,
+   "payload_seconds": 1.4578
+  },
+  {
+   "id": 22,
+   "marker_bits_seen": 8,
+   "marker_start_s": 38.452385,
+   "payload_start_s": 39.060678,
+   "payload_end_s": 40.518494,
+   "payload_seconds": 1.4578
+  },
+  {
+   "id": 23,
+   "marker_bits_seen": 8,
+   "marker_start_s": 40.518494,
+   "payload_start_s": 41.126788,
+   "payload_end_s": 42.584604,
+   "payload_seconds": 1.4578
+  },
+  {
+   "id": 24,
+   "marker_bits_seen": 8,
+   "marker_start_s": 42.584604,
+   "payload_start_s": 43.192895,
+   "payload_end_s": 44.650711,
+   "payload_seconds": 1.4578
+  },
+  {
+   "id": 25,
+   "marker_bits_seen": 8,
+   "marker_start_s": 44.650711,
+   "payload_start_s": 45.259004,
+   "payload_end_s": 46.71682,
+   "payload_seconds": 1.4578
+  },
+  {
+   "id": 30,
+   "marker_bits_seen": 8,
+   "marker_start_s": 46.71682,
+   "payload_start_s": 47.325114,
+   "payload_end_s": 48.539976,
+   "payload_seconds": 1.2149
+  },
+  {
+   "id": 31,
+   "marker_bits_seen": 8,
+   "marker_start_s": 48.539976,
+   "payload_start_s": 49.148273,
+   "payload_end_s": 50.363134,
+   "payload_seconds": 1.2149
+  },
+  {
+   "id": 32,
+   "marker_bits_seen": 8,
+   "marker_start_s": 50.363134,
+   "payload_start_s": 50.971423,
+   "payload_end_s": 52.186285,
+   "payload_seconds": 1.2149
+  },
+  {
+   "id": 33,
+   "marker_bits_seen": 8,
+   "marker_start_s": 52.186285,
+   "payload_start_s": 52.794576,
+   "payload_end_s": 54.009438,
+   "payload_seconds": 1.2149
+  },
+  {
+   "id": 34,
+   "marker_bits_seen": 8,
+   "marker_start_s": 54.009438,
+   "payload_start_s": 54.617728,
+   "payload_end_s": 55.83259,
+   "payload_seconds": 1.2149
+  },
+  {
+   "id": 35,
+   "marker_bits_seen": 8,
+   "marker_start_s": 55.83259,
+   "payload_start_s": 56.440883,
+   "payload_end_s": 57.655745,
+   "payload_seconds": 1.2149
+  },
+  {
+   "id": 36,
+   "marker_bits_seen": 8,
+   "marker_start_s": 57.655745,
+   "payload_start_s": 58.264035,
+   "payload_end_s": 59.478897,
+   "payload_seconds": 1.2149
+  },
+  {
+   "id": 37,
+   "marker_bits_seen": 8,
+   "marker_start_s": 59.478897,
+   "payload_start_s": 60.08719,
+   "payload_end_s": 61.302052,
+   "payload_seconds": 1.2149
+  },
+  {
+   "id": 40,
+   "marker_bits_seen": 8,
+   "marker_start_s": 61.302052,
+   "payload_start_s": 61.910342,
+   "payload_end_s": 63.125179,
+   "payload_seconds": 1.2148
+  },
+  {
+   "id": 41,
+   "marker_bits_seen": 8,
+   "marker_start_s": 63.125179,
+   "payload_start_s": 63.733472,
+   "payload_end_s": 64.948309,
+   "payload_seconds": 1.2148
+  },
+  {
+   "id": 42,
+   "marker_bits_seen": 8,
+   "marker_start_s": 64.948309,
+   "payload_start_s": 65.556602,
+   "payload_end_s": 66.771439,
+   "payload_seconds": 1.2148
+  },
+  {
+   "id": 43,
+   "marker_bits_seen": 8,
+   "marker_start_s": 66.771439,
+   "payload_start_s": 67.379733,
+   "payload_end_s": 68.59457,
+   "payload_seconds": 1.2148
+  },
+  {
+   "id": 50,
+   "marker_bits_seen": 8,
+   "marker_start_s": 68.59457,
+   "payload_start_s": 69.202863,
+   "payload_end_s": 69.8103,
+   "payload_seconds": 0.6074
+  },
+  {
+   "id": 51,
+   "marker_bits_seen": 8,
+   "marker_start_s": 69.8103,
+   "payload_start_s": 70.418594,
+   "payload_end_s": 71.026031,
+   "payload_seconds": 0.6074
+  },
+  {
+   "id": 52,
+   "marker_bits_seen": 8,
+   "marker_start_s": 71.026031,
+   "payload_start_s": 71.634324,
+   "payload_end_s": 72.241761,
+   "payload_seconds": 0.6074
+  },
+  {
+   "id": 53,
+   "marker_bits_seen": 8,
+   "marker_start_s": 72.241761,
+   "payload_start_s": 72.850056,
+   "payload_end_s": 73.457493,
+   "payload_seconds": 0.6074
+  },
+  {
+   "id": 54,
+   "marker_bits_seen": 8,
+   "marker_start_s": 73.457493,
+   "payload_start_s": 74.065787,
+   "payload_end_s": 74.673224,
+   "payload_seconds": 0.6074
+  },
+  {
+   "id": 55,
+   "marker_bits_seen": 8,
+   "marker_start_s": 74.673224,
+   "payload_start_s": 75.281521,
+   "payload_end_s": 75.888958,
+   "payload_seconds": 0.6074
+  },
+  {
+   "id": 56,
+   "marker_bits_seen": 8,
+   "marker_start_s": 75.888958,
+   "payload_start_s": 76.497251,
+   "payload_end_s": 77.104688,
+   "payload_seconds": 0.6074
+  },
+  {
+   "id": 57,
+   "marker_bits_seen": 8,
+   "marker_start_s": 77.104688,
+   "payload_start_s": 77.712982,
+   "payload_end_s": 78.320419,
+   "payload_seconds": 0.6074
+  },
+  {
+   "id": 58,
+   "marker_bits_seen": 8,
+   "marker_start_s": 78.320419,
+   "payload_start_s": 78.928714,
+   "payload_end_s": 79.536151,
+   "payload_seconds": 0.6074
+  },
+  {
+   "id": 59,
+   "marker_bits_seen": 8,
+   "marker_start_s": 79.536151,
+   "payload_start_s": 80.144447,
+   "payload_end_s": 80.751884,
+   "payload_seconds": 0.6074
+  },
+  {
+   "id": 60,
+   "marker_bits_seen": 8,
+   "marker_start_s": 80.751884,
+   "payload_start_s": 81.360179,
+   "payload_end_s": 81.967616,
+   "payload_seconds": 0.6074
+  },
+  {
+   "id": 61,
+   "marker_bits_seen": 8,
+   "marker_start_s": 81.967616,
+   "payload_start_s": 82.575912,
+   "payload_end_s": 83.18335,
+   "payload_seconds": 0.6074
+  },
+  {
+   "id": 62,
+   "marker_bits_seen": 8,
+   "marker_start_s": 83.18335,
+   "payload_start_s": 83.791646,
+   "payload_end_s": 84.399083,
+   "payload_seconds": 0.6074
+  },
+  {
+   "id": 63,
+   "marker_bits_seen": 8,
+   "marker_start_s": 84.399083,
+   "payload_start_s": 85.007381,
+   "payload_end_s": 85.614819,
+   "payload_seconds": 0.6074
+  },
+  {
+   "id": 64,
+   "marker_bits_seen": 8,
+   "marker_start_s": 85.614819,
+   "payload_start_s": 86.223107,
+   "payload_end_s": 86.830544,
+   "payload_seconds": 0.6074
+  },
+  {
+   "id": 65,
+   "marker_bits_seen": 8,
+   "marker_start_s": 86.830544,
+   "payload_start_s": 87.438835,
+   "payload_end_s": 88.046272,
+   "payload_seconds": 0.6074
+  },
+  {
+   "id": 70,
+   "marker_bits_seen": 8,
+   "marker_start_s": 88.046272,
+   "payload_start_s": 88.654565,
+   "payload_end_s": 89.262002,
+   "payload_seconds": 0.6074
+  },
+  {
+   "id": 71,
+   "marker_bits_seen": 8,
+   "marker_start_s": 89.262002,
+   "payload_start_s": 89.870296,
+   "payload_end_s": 90.477734,
+   "payload_seconds": 0.6074
+  },
+  {
+   "id": 72,
+   "marker_bits_seen": 8,
+   "marker_start_s": 90.477734,
+   "payload_start_s": 91.086024,
+   "payload_end_s": 91.693461,
+   "payload_seconds": 0.6074
+  },
+  {
+   "id": 73,
+   "marker_bits_seen": 8,
+   "marker_start_s": 91.693461,
+   "payload_start_s": 92.301754,
+   "payload_end_s": 92.909191,
+   "payload_seconds": 0.6074
+  },
+  {
+   "id": 80,
+   "marker_bits_seen": 8,
+   "marker_start_s": 92.909191,
+   "payload_start_s": 93.517482,
+   "payload_end_s": 95.743876,
+   "payload_seconds": 2.2264
+  },
+  {
+   "id": 81,
+   "marker_bits_seen": 8,
+   "marker_start_s": 95.743876,
+   "payload_start_s": 96.352169,
+   "payload_end_s": 98.578564,
+   "payload_seconds": 2.2264
+  },
+  {
+   "id": 82,
+   "marker_bits_seen": 8,
+   "marker_start_s": 98.578564,
+   "payload_start_s": 99.186856,
+   "payload_end_s": 101.413251,
+   "payload_seconds": 2.2264
+  },
+  {
+   "id": 83,
+   "marker_bits_seen": 8,
+   "marker_start_s": 101.413251,
+   "payload_start_s": 102.021545,
+   "payload_end_s": 104.24794,
+   "payload_seconds": 2.2264
+  },
+  {
+   "id": 84,
+   "marker_bits_seen": 8,
+   "marker_start_s": 104.24794,
+   "payload_start_s": 104.856233,
+   "payload_end_s": 107.082627,
+   "payload_seconds": 2.2264
+  },
+  {
+   "id": 85,
+   "marker_bits_seen": 8,
+   "marker_start_s": 107.082627,
+   "payload_start_s": 107.690922,
+   "payload_end_s": 109.917316,
+   "payload_seconds": 2.2264
+  },
+  {
+   "id": 86,
+   "marker_bits_seen": 8,
+   "marker_start_s": 109.917316,
+   "payload_start_s": 110.525611,
+   "payload_end_s": 112.752006,
+   "payload_seconds": 2.2264
+  },
+  {
+   "id": 87,
+   "marker_bits_seen": 8,
+   "marker_start_s": 112.752006,
+   "payload_start_s": 113.360302,
+   "payload_end_s": 115.586697,
+   "payload_seconds": 2.2264
+  },
+  {
+   "id": 88,
+   "marker_bits_seen": 8,
+   "marker_start_s": 115.586697,
+   "payload_start_s": 116.194989,
+   "payload_end_s": 118.421384,
+   "payload_seconds": 2.2264
+  },
+  {
+   "id": 89,
+   "marker_bits_seen": 8,
+   "marker_start_s": 118.421384,
+   "payload_start_s": 119.029678,
+   "payload_end_s": 121.256073,
+   "payload_seconds": 2.2264
+  },
+  {
+   "id": 90,
+   "marker_bits_seen": 8,
+   "marker_start_s": 121.256073,
+   "payload_start_s": 121.864367,
+   "payload_end_s": 124.090762,
+   "payload_seconds": 2.2264
+  },
+  {
+   "id": 91,
+   "marker_bits_seen": 8,
+   "marker_start_s": 124.090762,
+   "payload_start_s": 124.699059,
+   "payload_end_s": 126.925453,
+   "payload_seconds": 2.2264
+  },
+  {
+   "id": 92,
+   "marker_bits_seen": 8,
+   "marker_start_s": 126.925453,
+   "payload_start_s": 127.533748,
+   "payload_end_s": 129.760142,
+   "payload_seconds": 2.2264
+  },
+  {
+   "id": 93,
+   "marker_bits_seen": 8,
+   "marker_start_s": 129.760142,
+   "payload_start_s": 130.368439,
+   "payload_end_s": 132.594833,
+   "payload_seconds": 2.2264
+  },
+  {
+   "id": 100,
+   "marker_bits_seen": 8,
+   "marker_start_s": 132.594833,
+   "payload_start_s": 133.203126,
+   "payload_end_s": 133.709378,
+   "payload_seconds": 0.5063
+  },
+  {
+   "id": 101,
+   "marker_bits_seen": 8,
+   "marker_start_s": 133.709378,
+   "payload_start_s": 134.317673,
+   "payload_end_s": 134.823925,
+   "payload_seconds": 0.5063
+  },
+  {
+   "id": 102,
+   "marker_bits_seen": 8,
+   "marker_start_s": 134.823925,
+   "payload_start_s": 135.43222,
+   "payload_end_s": 135.938472,
+   "payload_seconds": 0.5063
+  },
+  {
+   "id": 103,
+   "marker_bits_seen": 8,
+   "marker_start_s": 135.938472,
+   "payload_start_s": 136.546768,
+   "payload_end_s": 137.05302,
+   "payload_seconds": 0.5063
+  },
+  {
+   "id": 110,
+   "marker_bits_seen": 8,
+   "marker_start_s": 137.05302,
+   "payload_start_s": 137.661317,
+   "payload_end_s": 138.167767,
+   "payload_seconds": 0.5064
+  },
+  {
+   "id": 111,
+   "marker_bits_seen": 8,
+   "marker_start_s": 138.167767,
+   "payload_start_s": 138.776065,
+   "payload_end_s": 139.282515,
+   "payload_seconds": 0.5064
+  },
+  {
+   "id": 120,
+   "marker_bits_seen": 8,
+   "marker_start_s": 139.282515,
+   "payload_start_s": 139.890809,
+   "payload_end_s": 140.397037,
+   "payload_seconds": 0.5062
+  },
+  {
+   "id": 121,
+   "marker_bits_seen": 8,
+   "marker_start_s": 140.397037,
+   "payload_start_s": 141.005333,
+   "payload_end_s": 141.51156,
+   "payload_seconds": 0.5062
+  },
+  {
+   "id": 122,
+   "marker_bits_seen": 8,
+   "marker_start_s": 141.51156,
+   "payload_start_s": 142.119857,
+   "payload_end_s": 142.626084,
+   "payload_seconds": 0.5062
+  },
+  {
+   "id": 123,
+   "marker_bits_seen": 8,
+   "marker_start_s": 142.626084,
+   "payload_start_s": 143.234383,
+   "payload_end_s": 143.74061,
+   "payload_seconds": 0.5062
+  },
+  {
+   "id": 130,
+   "marker_bits_seen": 8,
+   "marker_start_s": 143.74061,
+   "payload_start_s": 144.348901,
+   "payload_end_s": 144.855153,
+   "payload_seconds": 0.5063
+  },
+  {
+   "id": 131,
+   "marker_bits_seen": 8,
+   "marker_start_s": 144.855153,
+   "payload_start_s": 145.463446,
+   "payload_end_s": 145.969797,
+   "payload_seconds": 0.5064
+  },
+  {
+   "id": 132,
+   "marker_bits_seen": 8,
+   "marker_start_s": 145.969797,
+   "payload_start_s": 146.578088,
+   "payload_end_s": 147.084514,
+   "payload_seconds": 0.5064
+  },
+  {
+   "id": 133,
+   "marker_bits_seen": 8,
+   "marker_start_s": 147.084514,
+   "payload_start_s": 147.692806,
+   "payload_end_s": 148.503083,
+   "payload_seconds": 0.8103
+  },
+  {
+   "id": 134,
+   "marker_bits_seen": 8,
+   "marker_start_s": 148.503083,
+   "payload_start_s": 149.111376,
+   "payload_end_s": 150.730977,
+   "payload_seconds": 1.6196
+  },
+  {
+   "id": 140,
+   "marker_bits_seen": 8,
+   "marker_start_s": 150.730977,
+   "payload_start_s": 151.33927,
+   "payload_end_s": 153.380242,
+   "payload_seconds": 2.041
+  },
+  {
+   "id": 141,
+   "marker_bits_seen": 8,
+   "marker_start_s": 153.380242,
+   "payload_start_s": 153.988537,
+   "payload_end_s": 156.025418,
+   "payload_seconds": 2.0369
+  }
+ ]
+}

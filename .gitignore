@@ -30,3 +30,13 @@ JuceLibraryCode/
 
 # Test ROMs are fetched, never vendored (see spec §16.1)
 TestRoms/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Capture artefacts (recordings and their analysis stay out of git)
+*.wav
+*_measured.json
+*_truth.json
+tools/capture/probe.o

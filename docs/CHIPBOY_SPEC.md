@@ -1002,6 +1002,11 @@ The thing that separates this from a plausible emulation. The rig is a real **DM
 real **CGB**, a flash cart, and a **Focusrite Scarlett 18i20** at 192 kHz, driven by an
 RGBDS test ROM that steps register combinations with sync markers.
 
+> **Built.** The probe ROM, its verifier, the loopback generator and the analyser live in
+> `tools/capture/`; the procedure is [`CAPTURE_GUIDE.md`](CAPTURE_GUIDE.md). The ROM runs
+> 83 takes in 2 min 36 s and is verified by executing it on a minimal SM83 interpreter
+> before any recording session.
+
 **Calibrate the chain before the console.** The interface's inputs are themselves
 AC-coupled, so they add a high-pass on top of the console's — and the DMG's corner is
 around 28 Hz, close enough to the interface's own that an uncorrected measurement reads

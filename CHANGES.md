@@ -42,6 +42,31 @@ costs nothing extra while the rig is set up, and retrofitting a second model aft
 wave channel is built around DMG's re-trigger requirement would be more expensive than
 designing for both now.
 
+### 2026-09-05 — hardware capture tooling built (§16.6)
+
+**Added:** `tools/capture/` — probe ROM, SM83 verifier, loopback generator, analyser,
+and a synthetic-capture generator for testing the analyser; `docs/CAPTURE_GUIDE.md`.
+
+**Notable during development**, all caught before any recording session:
+
+- `WaveRamp` clobbered `DE`, the take interpreter's bytecode pointer, so the ROM ran
+  off into garbage after take 110 and never terminated. Found by executing the ROM
+  rather than trusting that it assembled.
+- The original marker tones (3000/1500/750 Hz) sat exactly on harmonics of the probe
+  tones (1000.6/500.3 Hz squares), so payload audio decoded as markers. Marker tones
+  moved into the gaps between harmonics, and the analyser now matches candidates
+  against the known take order.
+- Takes 130–133 originally used a sustained DC level on the wave channel, which is
+  invisible after the coupling capacitor. Rewritten as an AC ladder.
+- The analyser derived DAC step sign from edge direction, which inverted every wave
+  value below 7.5 — where the DAC output is genuinely negative. It now takes the sign
+  from the data, and measures only DAC-ON edges.
+
+**Known limitation:** equivalent-time sampling improves time resolution, not bandwidth.
+If the amplifier's corner is above the converter's ~90 kHz limit the analyser reports a
+lower bound and says so. This is audibly irrelevant and cosmetically relevant to the
+oscilloscope display only.
+
 ---
 
 ## Departures from the spec
