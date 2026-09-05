@@ -1,0 +1,32 @@
+# Build directories
+build/
+Build/
+cmake-build-*/
+out/
+
+# IDE
+.vscode/
+.idea/
+*.xcworkspace
+*.xcodeproj
+.vs/
+compile_commands.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# JUCE
+JuceLibraryCode/
+*.jucer.bak
+
+# Artifacts
+*.vst3
+*.component
+*.clap
+*.exe
+*.app
+*.zip
+
+# Test ROMs are fetched, never vendored (see spec §16.1)
+TestRoms/
