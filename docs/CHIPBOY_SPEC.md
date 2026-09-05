@@ -151,6 +151,11 @@ constraint that has no hardware cause.
   `LICENSING.md` §3.
 - AAX is out of scope.
 
+**Host targets.** **Reaper** and **FL Studio** on Windows are primary and are what
+development is validated against; **Logic** on macOS is the third. Logic is AU-only, so
+the AU build is not optional. Reaper supports CLAP natively and recent FL Studio versions
+do too — confirm the target FL version before settling `[DECIDE] D2`.
+
 Both plugins are instruments (VST3 `Instrument`, AU `aumu`). The Voice plugin is an
 instrument that outputs silence; see §11.6 for why it is not a MIDI effect.
 
@@ -334,6 +339,27 @@ powered, independent of whether any channel is playing — because that is how i
 only control in the product that changes what you hear. Off gives the clean signal path.
 There is no amount.
 
+### 6.5 Model selection — DMG and CGB
+
+v1 ships **two consoles**, because both are available to measure. Model selection is not
+an accuracy switch (**C8**): it chooses *which real hardware* is emulated, and each
+model's artefacts are then as fixed as **C7** requires.
+
+The difference is not only tonal:
+
+| | DMG | CGB |
+|---|---|---|
+| AC coupling | f_c ≈ 28 Hz — fat | f_c ≈ 706 Hz — thin |
+| Wave RAM while running | not writable; a frame change costs a DAC-off, a write and a re-trigger | writable live; updates tear if they race the read pointer |
+| Wave RAM corruption on trigger | present | absent |
+
+So **the wave channel behaves differently between models**, not merely sounds different:
+frame changes and kit streaming click on DMG and need not on CGB. Both are real hardware
+behaviour, so both are fixed within their model. A patch records which model it was
+designed for, and the UI says so when it is loaded under the other.
+
+MGB and AGB remain post-v1 (§17) — no hardware to measure.
+
 ---
 
 ## 7. Rendering (L4)
@@ -510,7 +536,8 @@ load only on WAV; NOISE only on NOI. The UI does not offer invalid combinations.
 
 **Changing frames costs a click.** On DMG, wave RAM is not writable while the channel
 runs, so a frame change is a DAC-off, a write, and a re-trigger
-(`HARDWARE_REFERENCE.md` §5). That is fixed behaviour under **C7**, not an option.
+(`HARDWARE_REFERENCE.md` §5). On CGB it does not — wave RAM is writable live (§6.5).
+Each is fixed behaviour under **C7** for its model; neither is an option within a model.
 
 **KIT** — see §9.8.
 
@@ -963,17 +990,55 @@ output), reconnect after the main is removed and restored, stale-region reaping,
 mismatch refusal, and a deliberately corrupted region that must disconnect rather than
 fault (§11.8).
 
+Automated tests cover the transport. They cannot cover the *host*, so the same scenarios
+are run by hand in **Reaper** and **FL Studio** on Windows and **Logic** on macOS before
+M5 is done. FL Studio is the interesting case: it bridges plugins into a separate process
+under several conditions, which is exactly why the transport is shared memory rather than
+in-process pointers (§11.2).
+
 ### 16.6 Hardware validation
 
-The thing that separates this from a plausible emulation.
+The thing that separates this from a plausible emulation. The rig is a real **DMG** and a
+real **CGB**, a flash cart, and a **Focusrite Scarlett 18i20** at 192 kHz, driven by an
+RGBDS test ROM that steps register combinations with sync markers.
 
-1. Write an RGBDS test ROM that steps every register combination with sync markers.
-2. Record a real DMG at 192 kHz, from the headphone jack and from a pre-amplifier tap.
-3. Measure, and replace the starting values in `HARDWARE_REFERENCE.md` §12: the coupling
-   time constant from the droop slope on a flat square top; DAC step linearity from a
-   staircase; amplifier slew and overshoot from a rising edge; the clip point from four
-   channels at full level; the noise floor spectrum from silence with the APU powered.
-4. Compare envelope decay times, click amplitudes and edge shapes against the model.
+**Calibrate the chain before the console.** The interface's inputs are themselves
+AC-coupled, so they add a high-pass on top of the console's — and the DMG's corner is
+around 28 Hz, close enough to the interface's own that an uncorrected measurement reads
+high. Run a loopback first, at the same gain staging, and characterise the interface's
+amplitude and phase response. Deconvolve every later measurement against it.
+
+**Fix and record the gain staging.** Line inputs at unity — not the instrument/Hi-Z input
+and not the mic preamp, whose own colour is precisely what is being measured out of the
+console. Record the console's volume pot position: it is an analog control ahead of the
+output and it changes the noise and distortion balance, so captures at different positions
+are not comparable. Take one at maximum and one at a mid position.
+
+**Separate the cart from the console.** A flash cart draws from the same rails and some
+models inject audible noise. Capture the noise floor with the flash cart *and* with a
+commercial cart or none, so the model in §6.4 is the console's and not the cart's.
+
+| Measurement | Method | Confidence at 192 kHz |
+|---|---|---|
+| Coupling time constant | Droop slope across a flat square top | High — a low-frequency effect |
+| DAC step linearity | Staircase through all 16 levels, per channel | High |
+| Envelope step timing | All seven rates, both directions | High |
+| Click amplitude and shape | DAC on/off from a known preceding level | High |
+| Clip point and symmetry | Four channels at level 15, master volume 7 | High |
+| Noise floor spectrum | Silence, APU powered and powered down | High |
+| Amplifier slew / edge shape | Rising edge | **Low — see below** |
+
+**Edge shape is the one thing an audio interface cannot measure honestly.** Its
+anti-alias filter rounds exactly the edges under measurement, and the console's amplifier
+bandwidth may sit above the 96 kHz ceiling a 192 kHz capture affords. An oscilloscope is
+the right instrument. Without one, fit the amplifier low-pass to the 192 kHz capture and
+accept that the fit is valid for what is *audible* but not for what the oscilloscope view
+in §13.1 draws — and label it that way in `HARDWARE_REFERENCE.md` §12 rather than
+presenting it as measured.
+
+**Capture both consoles.** A CGB in DMG-compatibility mode still sounds like a CGB
+(`HARDWARE_REFERENCE.md` §11), so the CGB cannot stand in for the DMG and both must be
+captured separately.
 
 A null test against analog hardware will not null. The deliverable is the measured
 parameter set, not a null.
@@ -997,9 +1062,9 @@ must link no JUCE module.
 | **M5** | Voice plugin + link transport + pairing. | ● |
 | **M6** | Waves, frames, kits, importer. | ● |
 | **M7** | Interface: scopes, editors, bank browser. | ● |
-| **M8** | Hardware validation pass (§16.6), noise-floor model, release preparation. | ● |
+| **M8** | Hardware validation pass (§16.6) for **both DMG and CGB**, model selection (§6.5), noise-floor model, release preparation. | ● |
 | — | LSDj import/export (§15) | post-v1 |
-| — | Model variants: MGB, CGB, AGB, Pro Sound `[DECIDE] D8` | post-v1 |
+| — | Further models: MGB, AGB, Pro Sound tap | post-v1 — no hardware to measure |
 | — | `.vgm` / `.gbs` playback | post-v1 |
 
 M1 before anything audible is deliberate. An APU that passes the test ROMs and then gets
@@ -1013,11 +1078,11 @@ into it.
 | | Decision | Recommendation |
 |---|---|---|
 | **D1** | Release licence: Path A (AGPLv3), B (commercial closed), or C (open core). `LICENSING.md` §2 | Keep C available regardless — it costs nothing and the architecture already requires it. Choose between A and B at release. |
-| **D2** | Ship CLAP in v1? | Yes. MIT, no agreement, and the audience overlaps heavily. |
+| **D2** | Ship CLAP in v1? | Yes. MIT, no agreement, and Reaper supports it natively. Confirm the target FL Studio version supports it. |
 | **D3** | Default tick source: host-synced or V-blank? | Host-synced. The tick rate was always a driver choice; only its quantising effect is hardware. |
 | **D4** | Default velocity mapping. | → envelope start volume, quantised to 0–15. |
 | **D5** | Bank embedded in plugin state, or referenced as a file? | Embedded by default, file reference as an option. Portable sessions matter more. |
 | **D6** | Product names. "ChipBoy" and "ChipBoy Voice"? | Confirm before any public artefact carries them, and check for conflicts with existing plugins and with Nintendo trademarks — "Game Boy" cannot appear in a product name. |
 | **D7** | Hex display option for LSDj users? | Yes. Display only, so **C8** is unaffected. |
-| **D8** | Post-v1 model order. | CGB first — it is the largest audible difference and the coupling constant is already known. |
+| **D8** | ~~Post-v1 model order.~~ **Resolved.** | **DMG and CGB both ship in v1** (§6.5) — both consoles are available to measure, and CGB changes wave-channel *behaviour*, not only tone. MGB and AGB stay post-v1 for want of hardware. |
 | **D9** | Default kit note map: chromatic or GM drum map? | Chromatic, since pitch and playback rate are the same control (§9.8) and a drum map implies a per-note pitch the chip cannot give. |

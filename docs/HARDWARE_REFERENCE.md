@@ -8,8 +8,8 @@ Primary sources: Pan Docs (gbdev.io/pandocs), the gbdev wiki "Game Boy Sound Har
 page, blargg's *Game Boy Sound Operation*, and SameBoy's implementation. Read for
 understanding only — see `LICENSING.md` §4.2.
 
-Target hardware for v1 is the **DMG** (original Game Boy, 1989). Other models are
-post-v1 (§11).
+Target hardware for v1 is the **DMG** (original Game Boy, 1989) and the **CGB** (Game Boy
+Color) — both are available to measure. Other models are post-v1 (§11).
 
 ---
 
@@ -318,17 +318,15 @@ volume is applied in the analog domain and does not re-quantise.
 
 ---
 
-## 11. Model differences (post-v1)
+## 11. Model differences
 
-Recorded now because they shape the analog stage's structure, not because they ship in v1.
-
-| Model | Notes |
-|---|---|
-| **DMG** | v1 target. Low-frequency AC coupling — the fat one. |
-| **MGB** (Pocket) | Different amplifier; commonly described as cleaner and quieter. |
-| **CGB** | Much more aggressive AC coupling — audibly thin. Wave RAM is live-writable (§5). A CGB running a DMG game still sounds like a CGB. |
-| **AGB** (GBA) | The PSG path is quieter and noisier, mixed alongside the DirectSound channels. |
-| **"Pro Sound"** | Not a model but a common hardware modification: a tap taken before the amplifier and volume pot. Cleaner, and worth modelling as an output-path option. |
+| Model | Ships | Notes |
+|---|---|---|
+| **DMG** | **v1** | Low-frequency AC coupling — the fat one. Wave RAM is not accessible while the channel runs (§5), so waveform changes cost a re-trigger. |
+| **CGB** | **v1** | Much more aggressive AC coupling — audibly thin. Wave RAM *is* live-writable (§5), and the trigger-corruption bug is absent, so the wave channel behaves differently, not just sounds different. A CGB running a DMG game still sounds like a CGB, so it cannot stand in for a DMG when capturing. |
+| **MGB** (Pocket) | post-v1 | Different amplifier; commonly described as cleaner and quieter. No hardware to measure. |
+| **AGB** (GBA) | post-v1 | The PSG path is quieter and noisier, mixed alongside the DirectSound channels. No hardware to measure. |
+| **"Pro Sound"** | post-v1 | Not a model but a common hardware modification: a tap taken ahead of the amplifier and volume pot. Cleaner, and worth modelling as an output-path option. |
 
 ---
 
