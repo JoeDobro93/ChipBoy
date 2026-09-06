@@ -139,6 +139,33 @@ envelope rates within 2%; a linear pulse DAC transfer with a zero intercept and
 level 0 reading 4.6e-6 (DAC-off is true silence); and the 9198 Hz LCD line at
 +26 dB prominence on the DMG, falling to +2 dB with the LCD off.
 
+### 2026-09-06 — probe ROM: wave trigger delay invalidated the DC-step takes
+
+**Found by looking at the raw capture**, after two wrong guesses from summary JSON.
+Every DC-step take stepped to the SAME value regardless of wave level for the first
+~1 ms, then the real level appeared. Cause: the takes set `NR33 = $00`, i.e. wave
+frequency 0, so the first sample after a trigger arrives `(2048 - f) * 2 = 4096`
+cycles = **976 us** late (`HARDWARE_REFERENCE.md` section 10.1, "wave trigger delay").
+The DAC-on step therefore landed on the channel's STALE sample buffer — identical for
+every take — and `DAC(L)` only appeared a millisecond afterwards.
+
+The reasoning that produced the bug was "all 32 samples are equal, so the frequency
+does not matter." The frequency does not change the OUTPUT, but it does change how
+long the stale buffer persists after a trigger.
+
+**Fixed:** those takes now drive f = 2047 (`NR33 = $FF`, trigger `NR34 = $87`),
+putting the first sample 0.48 us after the trigger. Requires a re-record.
+
+**Confirmed valid in the meantime:** the level-dependent step that appears after the
+delay gives `DAC(15) - DAC(0) = -0.115` on the DMG, against `0.00722 x 15 = 0.108`
+from the pulse-channel transfer measured in the same capture. Two independent
+channels agreeing to 6% says the console and the analysis are both sound.
+
+**Still open:** the DAC-off transitions produce no visible step at all, while every
+DAC-on does. Possibly a high-impedance disabled-DAC state. Not needed for the
+measurement — only ON edges are used — but it should be understood before section 6.1
+of the spec claims what a disabled DAC does.
+
 ---
 
 ## Departures from the spec

@@ -228,14 +228,20 @@ RunTake:
 ; ToggleWaveDac -- B reps of (NR30=$80 for C ms, NR30=$00 for D ms)
 ; Used both for DC step measurements and for equivalent-time edge sampling.
 ; -------------------------------------------------------------------------
+; NR33/NR34 are driven to f = 2047 here, NOT f = 0. On trigger the wave
+; channel's sample buffer holds its PREVIOUS value until the first timer
+; expiry, and that period is (2048 - f) * 2 cycles. At f = 0 that is 976 us,
+; so the DAC-on step lands on the stale buffer and the real sample only
+; appears a millisecond later -- identical for every wave value, which
+; destroys the transfer measurement. At f = 2047 the delay is 0.5 us.
 ToggleWaveDac:
 .loop:
     push bc
     push de
     ld   a, $80
     ldh  [rNR30], a
-    ld   a, $80
-    ldh  [rNR34], a           ; trigger
+    ld   a, $87               ; trigger, frequency MSB = 7
+    ldh  [rNR34], a
     ld   h, 0
     ld   l, c
     call WaitMs
@@ -502,7 +508,7 @@ FOR i, 0, 16
     apu 1
     wfill i
     reg rNR32, $20            ; 100%
-    reg rNR33, $00
+    reg rNR33, $FF
     toggle 6, 120, 120
     endtake
 ENDR
@@ -514,7 +520,7 @@ FOR v, 0, 8
     reg rNR50, (v << 4) | v
     wfill 15
     reg rNR32, $20
-    reg rNR33, $00
+    reg rNR33, $FF
     toggle 4, 150, 150
     endtake
 ENDR
@@ -525,7 +531,7 @@ FOR n, 0, 4
     apu 1
     wfill 15
     reg rNR32, n << 5
-    reg rNR33, $00
+    reg rNR33, $FF
     toggle 4, 150, 150
     endtake
 ENDR
@@ -690,7 +696,7 @@ ENDM
     reg rNR50, $00            ; master volume 0 -- confirms it is 1/8, not mute
     wfill 15
     reg rNR32, $20
-    reg rNR33, $00
+    reg rNR33, $FF
     toggle 4, 200, 200
     endtake
 
@@ -699,7 +705,7 @@ ENDM
     apu 1
     wfill 15
     reg rNR32, $20
-    reg rNR33, $00
+    reg rNR33, $FF
     toggle 250, 4, 4
     endtake
 
@@ -708,7 +714,7 @@ ENDM
     reg rNR50, $33
     wfill 15
     reg rNR32, $20
-    reg rNR33, $00
+    reg rNR33, $FF
     toggle 250, 4, 4
     endtake
 
