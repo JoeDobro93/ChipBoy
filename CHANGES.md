@@ -67,6 +67,24 @@ If the amplifier's corner is above the converter's ~90 kHz limit the analyser re
 lower bound and says so. This is audibly irrelevant and cosmetically relevant to the
 oscilloscope display only.
 
+### 2026-09-06 — capture guide: exact Reaper routing, 192 kHz, 4th Gen notes
+
+**Changed:** `docs/CAPTURE_GUIDE.md` Steps 1-5 rewritten with the real rig.
+
+- **192 kHz confirmed despite the DSP mixer being unavailable above 96 kHz.** The mixer
+  is an input-to-output path we never needed, and losing it means the interface cannot
+  route an input to an output at all — removing the only hardware feedback path.
+- **Feedback is now prevented by construction, not by care:** the playback track routes
+  to hardware outputs only with Master send unticked, and the record track sends nowhere
+  with monitoring off. No input reaches any output regardless of what is plugged in.
+- **4th Gen specifics:** Clip Safe, Auto Gain and Air must be off (all three change the
+  signal during or between takes). The 4th Gen *virtual* Loopback input must NOT be used
+  for calibration — it never leaves the digital domain and so skips every stage the
+  calibration exists to measure, yielding a correction of ~zero that looks legitimate.
+
+**Considered:** dropping to 96 kHz to keep the mixer. Rejected — the mixer has no role
+here, and 96 kHz would halve the usable bandwidth for the edge-shape measurement.
+
 ---
 
 ## Departures from the spec
