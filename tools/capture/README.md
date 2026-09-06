@@ -65,13 +65,27 @@ In the terminal, from the project root:
 
 ```
 python tools/capture/simulate_capture.py captures/sim.wav
-python tools/capture/make_calibration_wav.py captures/cal.wav
-python tools/capture/analyse.py captures/sim.wav --loopback captures/cal.wav
+python tools/capture/make_calibration_wav.py captures/calibration.wav
+python tools/capture/analyse.py captures/sim.wav --loopback captures/calibration.wav
 ```
 
 The report must show **takes decoded 83/83**, a coupling factor of **0.999958** per CPU
 cycle, and a wave-DAC **zero crossing at level 7.50**. Those are the constants
 `simulate_capture.py` baked in, so recovering them means the analysis is sound.
+
+> **This smoke test deliberately misuses `--loopback`.** It passes the *generated*
+> `calibration.wav` rather than a recording of it, purely to exercise the code path with
+> no hardware. The analyser will say so:
+>
+> ```
+> WARNING: the loopback file shows essentially no AC coupling ...
+> ```
+>
+> **That warning is expected here and only here.** In a real session `--loopback` takes
+> the file you *recorded* after playing `calibration.wav` out of the interface and back
+> in through a cable — `loopback_dmg.wav`, not `calibration.wav`. If you ever see that
+> warning during a real analysis, the correction is worthless: re-record it (see
+> `docs/CAPTURE_GUIDE.md` Step 4).
 
 ### 5. Run configurations
 
@@ -82,6 +96,7 @@ For anything you will run repeatedly, **Run → Edit Configurations → + → Py
 | **Name** | `analyse DMG` |
 | **Script path** | `tools/capture/analyse.py` |
 | **Parameters** | `captures/dmg_vol_max.wav --loopback captures/loopback_dmg.wav --model dmg --plots` |
+| | (`loopback_dmg.wav` is the **recording**, not the generated `calibration.wav`) |
 | **Working directory** | `$ProjectFileDir$` |
 
 Setting the working directory to the project root is what makes those `captures/...`
@@ -118,8 +133,8 @@ the marker scan and equivalent-time reconstruction both walk all of it.
 
 ```sh
 python simulate_capture.py sim.wav
-python make_calibration_wav.py cal.wav
-python analyse.py sim.wav --loopback cal.wav
+python make_calibration_wav.py calibration.wav
+python analyse.py sim.wav --loopback calibration.wav
 ```
 
 `sim_truth.json` holds the constants the simulator used. The analyser should recover

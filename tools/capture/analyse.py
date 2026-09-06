@@ -557,6 +557,8 @@ def analyse(path, manifest, loopback=None, want_plots=False):
     if loopback:
         lb = analyse_loopback(loopback)
         R["loopback"] = lb
+        if lb.get("implausible"):
+            R["loopback_trustworthy"] = False
         if "coupling" in R and lb.get("coupling_rate_1_s"):
             r_meas = R["coupling"]["rate_1_s"]
             r_lb = lb["coupling_rate_1_s"]
@@ -589,14 +591,41 @@ def analyse(path, manifest, loopback=None, want_plots=False):
     return R
 
 
+# A real analog loopback -- DAC, output stage, cable, input stage, ADC -- always
+# has AC coupling somewhere, typically a corner between about 1 and 20 Hz. A time
+# constant beyond this means the signal never went through the analog path.
+LOOPBACK_MAX_PLAUSIBLE_TAU_MS = 1000.0
+
+
 def analyse_loopback(path):
-    """Characterise the interface itself from a recording of calibration.wav."""
+    """Characterise the interface itself from a RECORDING of calibration.wav.
+
+    Note "recording": this must be the file captured after playing calibration.wav
+    out of the interface and back in through a cable. Passing the generated
+    calibration.wav itself -- or a 4th Gen virtual Loopback capture, which never
+    leaves the digital domain -- measures nothing and yields a correction of about
+    zero that looks legitimate. Both mistakes are caught below.
+    """
     y, sr, _ = load_mono(path)
     out = {"sample_rate": sr}
     m = dc_step_take(y, sr)
     if m:
         out.update({"coupling_rate_1_s": m["coupling_rate_1_s"],
                     "tau_ms": m["tau_ms"], "fc_hz": m["fc_hz"]})
+        if m["tau_ms"] > LOOPBACK_MAX_PLAUSIBLE_TAU_MS:
+            out["implausible"] = True
+            print(
+                f"\nWARNING: the loopback file shows essentially no AC coupling "
+                f"(tau {m['tau_ms']/1000:.1f} s, fc {m['fc_hz']:.4f} Hz). No analog "
+                f"path behaves like that.\n"
+                f"         This is almost certainly NOT a recording. Either the "
+                f"generated calibration.wav was passed directly, or a virtual/"
+                f"internal loopback was recorded instead of a cable from the "
+                f"outputs to the inputs.\n"
+                f"         The correction computed from it will be ~zero, so the "
+                f"console's coupling constant will come out UNCORRECTED while "
+                f"appearing corrected. Re-record it through a physical cable.\n",
+                file=sys.stderr)
     e = ets_edge(y, sr)
     if e:
         e.pop("shape", None); e.pop("t_us", None)
@@ -653,6 +682,9 @@ def report(R):
         P("\nAC COUPLING  (HARDWARE_REFERENCE.md 12: 'DMG coupling')")
         P(f"  raw                tau {c['tau_ms']:.3f} ms   fc {c['fc_hz']:.2f} Hz"
           f"   per-cycle {c['per_cpu_cycle_factor']:.6f}")
+        if R.get("loopback_trustworthy") is False:
+            P("  *** the loopback file is not a real recording -- see the warning "
+              "above; the corrected figures below are meaningless ***")
         if c.get("corrected"):
             for k, v in c["corrected"].items():
                 P(f"  {k[:38]:38s} tau {v['tau_ms']:.3f} ms  fc {v['fc_hz']:.2f} Hz"

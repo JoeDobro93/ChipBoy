@@ -85,6 +85,24 @@ oscilloscope display only.
 **Considered:** dropping to 96 kHz to keep the mixer. Rejected — the mixer has no role
 here, and 96 kHz would halve the usable bandwidth for the edge-shape measurement.
 
+### 2026-09-06 — analyser rejects a loopback that never went through analog
+
+**Added:** `analyse.py` warns when a `--loopback` file shows no plausible AC coupling
+(time constant over 1 s), and marks the corrected coupling figures as meaningless.
+
+**Why:** two different mistakes produce a loopback file that is a perfect digital copy —
+passing the generated `calibration.wav` instead of a recording of it, and recording a
+4th Gen *virtual* Loopback instead of cabling outputs to inputs. Both yield a correction
+of about zero, so the console's coupling constant comes out uncorrected while appearing
+corrected. That is worse than not calibrating, because it looks right.
+
+**Detection:** an un-played `calibration.wav` measures a 38.6 s time constant (0.004 Hz);
+a real analog path is 1-20 Hz. The threshold sits at 1 s, far from both.
+
+**Also:** docs used `cal.wav` and `calibration.wav` for the same file in different places.
+Unified to `calibration.wav`, and the smoke test now states explicitly that it misuses
+`--loopback` on purpose and that the resulting warning is expected there and nowhere else.
+
 ---
 
 ## Departures from the spec

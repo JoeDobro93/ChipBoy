@@ -207,6 +207,11 @@ python tools/capture/make_calibration_wav.py calibration.wav
    console runs are finished.
 5. Save the take as `loopback_dmg.wav`.
 
+**`calibration.wav` is what you play. `loopback_dmg.wav` is what you record, and it is
+what `--loopback` takes.** Passing the generated `calibration.wav` to `--loopback` measures
+nothing, exactly like the virtual-Loopback trap above. The analyser detects both and warns,
+but it is easier not to make the mistake.
+
 > **Why the fader and not the gain knob:** the whole point of this step is to characterise
 > the input path at the exact gain the console will see. Turning the input knob between
 > the loopback and the console makes the correction meaningless. Turning the playback
