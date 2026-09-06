@@ -429,10 +429,19 @@ def analyse(path, manifest, loopback=None, want_plots=False):
     def dc_payload(tid):
         """DC step trains must include their FIRST edge: it is the DAC-ON edge,
         and the sign of the whole measurement depends on starting there. The
-        preceding 120 ms of marker trailer is silent, so starting early is safe."""
-        y = payload(tid, head_ms=-10.0)
+        preceding 120 ms of marker trailer is silent, so starting early is safe.
+
+        RAW, deliberately. Step amplitude is read at the edge and needs no
+        deconvolution; running it through undo_hp (a cumulative sum) only adds
+        low-frequency wander to the very quantity being measured."""
+        return payload(tid, head_ms=-10.0)
+
+    def dc_payload_deconvolved(tid):
+        """Same payload with the interface's pole removed -- for the TIME
+        CONSTANT only, where the two-pole cascade genuinely has to be undone."""
+        y = dc_payload(tid)
         if y is not None and tau_iface_s:
-            y = undo_hp(y, sr, tau_iface_s)
+            y = undo_hp(y - float(np.mean(y)), sr, tau_iface_s)
         return y
 
     # --- noise floor -------------------------------------------------------
@@ -466,8 +475,10 @@ def analyse(path, manifest, loopback=None, want_plots=False):
         if m is None:
             continue
         wave_dac[lvl] = m["amplitude"]
-        if lvl >= 11:                      # best SNR levels only
-            coupling.append(m["coupling_rate_1_s"])
+        if lvl >= 11 or lvl <= 4:          # best SNR levels, both rails
+            d = dc_step_take(dc_payload_deconvolved(10 + lvl), sr)
+            if d:
+                coupling.append(d["coupling_rate_1_s"])
     R["wave_dac_transfer"] = {str(k): v for k, v in wave_dac.items()}
 
     if len(wave_dac) >= 4:
