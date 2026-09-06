@@ -39,4 +39,13 @@ __pycache__/
 *.wav
 *_measured.json
 *_truth.json
+*.png
 tools/capture/probe.o
+
+# IDE project files, but keep any shared run configurations
+.idea/*
+!.idea/runConfigurations/
+
+# Python virtual environments
+.venv/
+venv/

@@ -20,7 +20,7 @@ itself is 2 minutes 36 seconds per console.
 | **A second cable** | for the loopback: one interface output back to the input you will use. |
 | **Fresh batteries or a clean PSU** | a sagging supply changes the amplifier's clip point. Batteries are cleaner than most wall adapters. |
 | **A plain commercial cartridge** | for one noise-floor comparison (any game). |
-| **Python 3** | `pip install numpy scipy soundfile` (add `matplotlib` if you want plots). |
+| **Python 3.11+** | `pip install -r requirements.txt` from the repository root. Using PyCharm? See [`tools/capture/README.md`](../tools/capture/README.md#running-these-from-pycharm-windows) for setup, including a hardware-free smoke test to run **before** the session. |
 
 ---
 

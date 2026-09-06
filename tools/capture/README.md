@@ -17,6 +17,103 @@ step-by-step procedure. This file is just what each piece is.
 | `analyse.py` | Segments a capture by its markers and measures everything. Writes `<capture>_measured.json`. |
 | `simulate_capture.py` | Synthesises a fake capture from known constants so `analyse.py` can be tested without hardware. |
 
+## Running these from PyCharm (Windows)
+
+PyCharm **Community Edition** is enough. Nothing here needs Professional.
+
+### 1. Get the repository
+
+**File → Project from Version Control**, URL
+`https://github.com/JoeDobro93/ChipBoy.git`, pick a local directory, **Clone**.
+
+(If you already cloned it with git, just **File → Open** that folder instead.)
+
+### 2. Create the interpreter
+
+PyCharm usually spots `requirements.txt` and offers to build a virtual environment —
+accept, and skip to step 4.
+
+If it does not:
+
+1. **File → Settings → Project: ChipBoy → Python Interpreter**
+2. Gear icon → **Add Interpreter → Add Local Interpreter**
+3. **Virtualenv Environment → New**, Base interpreter **Python 3.11 or 3.12**
+4. Location: leave the default (`.venv` inside the project) — it is git-ignored
+5. **OK**
+
+Use a virtual environment rather than a system Python. It keeps this project's packages
+from colliding with anything else on the machine.
+
+### 3. Install the dependencies
+
+Open `requirements.txt`. PyCharm shows an **Install requirements** banner across the
+top — click it. Or in the built-in terminal (**Alt+F12**, the venv is already active):
+
+```
+pip install -r requirements.txt
+```
+
+`soundfile` bundles libsndfile in its Windows wheel, so there is nothing to install
+separately — a common snag on other platforms that does not apply here.
+
+### 4. Verify the whole toolchain before the recording session
+
+This is the important step. It exercises the analyser end to end with no hardware, so
+you find out now rather than at 1 a.m. with a Game Boy plugged in.
+
+In the terminal, from the project root:
+
+```
+python tools/capture/simulate_capture.py captures/sim.wav
+python tools/capture/make_calibration_wav.py captures/cal.wav
+python tools/capture/analyse.py captures/sim.wav --loopback captures/cal.wav
+```
+
+The report must show **takes decoded 83/83**, a coupling factor of **0.999958** per CPU
+cycle, and a wave-DAC **zero crossing at level 7.50**. Those are the constants
+`simulate_capture.py` baked in, so recovering them means the analysis is sound.
+
+### 5. Run configurations
+
+For anything you will run repeatedly, **Run → Edit Configurations → + → Python**:
+
+| Field | Value |
+|---|---|
+| **Name** | `analyse DMG` |
+| **Script path** | `tools/capture/analyse.py` |
+| **Parameters** | `captures/dmg_vol_max.wav --loopback captures/loopback_dmg.wav --model dmg --plots` |
+| **Working directory** | `$ProjectFileDir$` |
+
+Setting the working directory to the project root is what makes those `captures/...`
+paths resolve. Duplicate the configuration for the CGB, changing the two filenames and
+`--model cgb`.
+
+The scripts find `takes.json` relative to their own location, not the working directory,
+so they work from any folder — only your `captures/...` arguments care.
+
+Two more worth having:
+
+- **`verify probe ROM`** → script `tools/capture/verify_rom.py`, no parameters. Run after
+  any change to the `.asm`. Takes a couple of minutes; it is interpreting a real ROM.
+- **`simulate capture`** → script `tools/capture/simulate_capture.py`, parameters
+  `captures/sim.wav`. Run after any change to `analyse.py`.
+
+### Troubleshooting
+
+**"No Python interpreter configured"** — step 2.
+
+**`ModuleNotFoundError: numpy`** — the run configuration is using a different interpreter
+than the one you installed into. Check its **Python interpreter** field says the project
+venv.
+
+**`FileNotFoundError` on a capture** — working directory is not the project root. Set it
+to `$ProjectFileDir$`, or use absolute paths.
+
+**Analysis takes a while** — normal. A 2:36 capture at 192 kHz is 30 million samples, and
+the marker scan and equivalent-time reconstruction both walk all of it.
+
+---
+
 ## Testing the analyser without a Game Boy
 
 ```sh

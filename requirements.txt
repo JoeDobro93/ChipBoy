@@ -1,0 +1,12 @@
+# Python tooling for the hardware capture workflow (tools/capture/).
+# Nothing in the plugin itself needs Python -- these are for measuring real
+# hardware and for testing the analyser without it.
+#
+#   pip install -r requirements.txt
+#
+# PyCharm offers to install these automatically when the project is opened.
+
+numpy>=1.24
+scipy>=1.10
+soundfile>=0.12      # bundles libsndfile on Windows -- no separate install
+matplotlib>=3.7      # only needed for analyse.py --plots
