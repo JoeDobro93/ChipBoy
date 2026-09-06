@@ -187,6 +187,27 @@ hazard on a DMG whose cells shift — now costs a second pass, not a session.
 
 ---
 
+### 2026-09-06 — settled-level amplitude, and partial captures now merge
+
+**Fixed:** step amplitude was read from the PEAK within a few samples of the edge.
+Real hardware overshoots on DAC turn-on — measured at ~11% on a DMG (peak 0.0631
+where the settled value is 0.0572). That alone put the wave-DAC zero crossing at
+8.37; measuring the settled level 20-100 us after the edge puts it at **7.504**,
+recovered from the FIRST capture set.
+
+**The simulator now models both the turn-on overshoot and the wave trigger delay.**
+Neither was exercised before, which is exactly why a simulation that passed
+perfectly did not predict what real hardware did. A simulator that omits the
+hardware's awkward behaviour only tests the analyser against itself.
+
+**Added:** `analyse.py` accepts several captures and pools takes across them, since
+each take carries its own id in its marker. Verified by splitting a known-good
+capture into two overlapping halves: each alone decodes 46/83 and fails; merged
+they give 83/83 and identical constants. A console that cuts out mid-run — a real
+hazard on a DMG whose cells shift — now costs a second pass, not a session.
+
+---
+
 ## Departures from the spec
 
 *None yet — no code has been written.*
