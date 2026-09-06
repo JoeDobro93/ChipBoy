@@ -103,6 +103,42 @@ a real analog path is 1-20 Hz. The threshold sits at 1 s, far from both.
 Unified to `calibration.wav`, and the smoke test now states explicitly that it misuses
 `--loopback` on purpose and that the resulting warning is expected there and nowhere else.
 
+### 2026-09-06 — step measurement rewritten after the first real capture
+
+The first DMG and CGB captures came back with a broken wave-DAC zero crossing
+(4.7 and 5.4 on the DMG, 669 and -2616 on the CGB) and a CGB coupling constant of
+51 ms against an expected 0.23 ms. The recordings were fine; `analyse.py` was not.
+
+**Three faults, all in the step measurement:**
+
+1. **Fixed 1-25 ms fit window.** Suits a DMG (tau ~5 ms), useless on a CGB, whose
+   step has decayed to ~1% before the window opens — so it fitted the INTERFACE's
+   27.5 ms tail and reported it as the console's. Reproduced in simulation: 50.66 ms
+   measured against 0.23 ms true, matching the observed 51.01 ms. The window now
+   scales to the observed decay.
+2. **Amplitude extrapolated from a single-exponential fit.** The console's coupling
+   capacitor and the interface's are in SERIES, so the decay is two-pole and the
+   extrapolation is biased. Amplitude is now read directly at the edge and corrected
+   for the few samples of decay before the peak.
+3. **Rates subtracted instead of the pole being removed.** Rates add only at t=0;
+   subtracting them under-read the DMG by ~5%. `undo_hp` now deconvolves the
+   interface's measured pole before fitting.
+
+**Validated against a simulation carrying the real time constants, the real
+interface pole and the measured noise floors:** DMG tau 5.674 ms against 5.680 true
+(-0.1%), CGB 0.226 against 0.225 (+0.5%), zero crossings 7.498 and 7.523.
+
+**Also:** duty is now reported polarity-corrected. The real DMG measured
+0.84/0.73/0.50/0.27 against theory 0.125/0.25/0.5/0.75 — exactly 1 - theory,
+because the DMG's DAC is inverting. That polarity is now detected from the wave
+transfer's slope and recorded as `dac_polarity`.
+
+**What the first capture already established**, all from FFT-based measurements
+that were never affected: pitch within 2.4 cents on both consoles; all seven
+envelope rates within 2%; a linear pulse DAC transfer with a zero intercept and
+level 0 reading 4.6e-6 (DAC-off is true silence); and the 9198 Hz LCD line at
++26 dB prominence on the DMG, falling to +2 dB with the LCD off.
+
 ---
 
 ## Departures from the spec

@@ -157,27 +157,63 @@ def step_edges(y, sr, min_gap_ms=40.0):
     return keep, np.sign(d[keep])
 
 
-def fit_step(y, sr, i0, fit_from_ms=1.0, fit_to_ms=25.0):
-    """Fit A*exp(-r t) to the decay after edge i0. Returns (A_at_edge, rate_1_s).
+def measure_step(y, sr, i0, noise=0.0):
+    """Signed step amplitude at edge i0, plus the local decay rate.
 
-    A is the step amplitude extrapolated back to the edge, which is immune to
-    the settling of the first few samples; r is the AC-coupling rate.
+    Two things here are deliberate, and the previous version got both wrong:
+
+    1. AMPLITUDE IS READ DIRECTLY AT THE EDGE, not extrapolated from an
+       exponential fit. The console's coupling capacitor and the interface's
+       input coupling are in SERIES, so the observed decay is two-pole. A
+       single-exponential extrapolation back to t=0 is biased, and the bias
+       depends on the time constants -- which differ by ~25x between a DMG
+       (~5 ms) and a CGB (~0.2 ms).
+
+    2. THE FIT WINDOW SCALES TO THE OBSERVED DECAY. A window fixed at 1-25 ms
+       suits a DMG and completely misses a CGB, whose step has already decayed
+       to ~1% before 1 ms. Fitting that window on a CGB measures the
+       INTERFACE's tail and reports its time constant as the console's.
     """
-    a = i0 + int(sr * fit_from_ms / 1000)
-    b = i0 + int(sr * fit_to_ms / 1000)
-    if b >= len(y) or b - a < 32:
+    n = len(y)
+    pre = max(1, int(sr * 0.001))
+    if i0 - pre < 0 or i0 + 8 >= n:
         return None, None
-    t = np.arange(a, b) / sr - i0 / sr
-    v = y[a:b]
-    base = np.median(y[max(0, i0 - int(sr * 0.002)):i0])
-    v = v - base
-    s = np.sign(np.median(v[:len(v) // 4]))
-    mag = np.abs(v)
-    good = mag > (0.05 * mag[0] + 1e-12)
-    if good.sum() < 32:
+    base = float(np.median(y[max(0, i0 - pre):i0]))
+    dev = y[i0:] - base
+
+    # Peak within a few samples: long enough to clear the converter's own
+    # settling (the loopback edge takes ~2 samples), short enough that even a
+    # 0.2 ms time constant has barely decayed.
+    look = min(8, n - i0 - 1)
+    k0 = int(np.argmax(np.abs(dev[:look])))
+    a0 = float(dev[k0])
+    if a0 == 0.0:
         return None, None
-    p = np.polyfit(t[good], np.log(mag[good]), 1)
-    return float(s * np.exp(p[1])), float(-p[0])
+
+    # Decay rate, over a window derived from the signal itself.
+    mag = np.abs(dev[k0:])
+    floor = max(noise * 3.0, abs(a0) * 1e-3)
+    below = np.where(mag < abs(a0) / np.e)[0]
+    if len(below) == 0:
+        return None, None
+    n_1e = int(below[0])
+    if n_1e < 2:
+        return None, None
+    lo = k0 + max(1, int(0.05 * n_1e))
+    hi = k0 + min(int(0.5 * n_1e), len(mag) - 1)
+    seg = np.abs(dev[lo:hi])
+    t = np.arange(lo, hi) / sr
+    good = seg > floor
+    if good.sum() < 8:
+        return None, None
+    slope = np.polyfit(t[good], np.log(seg[good]), 1)[0]
+    rate = float(-slope)
+    if not np.isfinite(rate) or rate <= 0:
+        return None, None
+
+    # Undo the decay that happened in the k0 samples before the peak.
+    amp = a0 * float(np.exp(rate * k0 / sr))
+    return amp, rate
 
 
 def dc_step_take(y, sr):
@@ -188,9 +224,10 @@ def dc_step_take(y, sr):
     steps from an already-decayed level, not from the DAC level.
 
     The sign must come from the data, not from the edge direction. For a wave
-    value below mid-scale the DAC output is NEGATIVE, so turning the DAC on is
-    a DOWNWARD step -- taking |edge| would report the wrong sign for every
-    level below 7.5 and hide the very thing being measured.
+    value below mid-scale the DAC output is on the other side of zero, so
+    turning the DAC on is a step in the opposite direction -- taking |edge|
+    would report the wrong sign for half the levels and hide the very thing
+    being measured.
     """
     if y is None or len(y) < 64:
         return None
@@ -198,12 +235,16 @@ def dc_step_take(y, sr):
     if len(idx) < 1:
         return None
     alternating = bool(len(sgn) < 2 or np.all(sgn[:-1] * sgn[1:] < 0))
+    # Noise estimate from the quietest stretch, used as the fit's cutoff.
+    w = max(1, int(sr * 0.005))
+    blocks = np.abs(y[:len(y) // w * w]).reshape(-1, w).max(axis=1)
+    noise = float(np.percentile(blocks, 5)) if len(blocks) else 0.0
     amps, rates = [], []
     for i in idx[0::2]:                       # ON edges only
-        A, r = fit_step(y, sr, i)
+        A, r = measure_step(y, sr, i, noise)
         if A is None or not np.isfinite(r) or r <= 0:
             continue
-        amps.append(A)                        # already signed by fit_step
+        amps.append(A)                        # already signed by measure_step
         rates.append(r)
     if not amps:
         return None
@@ -213,6 +254,22 @@ def dc_step_take(y, sr):
             "fc_hz": float(np.median(rates) / (2 * np.pi)),
             "edges_used": len(amps), "edges_found": len(idx),
             "edges_alternate": alternating}
+
+
+def undo_hp(y, sr, tau_s):
+    """Exact inverse of a one-pole high-pass, vectorised.
+
+    The console's coupling capacitor and the interface's are in SERIES, so the
+    recorded step is a two-pole decay and neither pole can be read off it
+    directly. Removing the interface's measured pole first leaves a genuine
+    single-pole decay, which is what the fit assumes.
+
+    Subtracting rates instead (rates add only at t=0) leaves a systematic
+    error: on a DMG it under-reads the time constant by about 5%.
+    """
+    a = float(np.exp(-1.0 / (sr * tau_s)))
+    d = y / a - np.concatenate(([0.0], y[:-1]))
+    return np.cumsum(d)
 
 
 def theil_sen(xs, ys):
@@ -364,11 +421,19 @@ def analyse(path, manifest, loopback=None, want_plots=False):
         y = seg(x, sr, a, b, head_ms=head_ms)
         return y if len(y) >= sr * min_ms / 1000 else None
 
+    # The interface's own coupling pole, measured from the loopback, is removed
+    # from every DC-step payload before anything is fitted (see undo_hp).
+    lb = analyse_loopback(loopback) if loopback else None
+    tau_iface_s = (lb.get("tau_ms") / 1000.0) if (lb and lb.get("tau_ms")) else None
+
     def dc_payload(tid):
         """DC step trains must include their FIRST edge: it is the DAC-ON edge,
         and the sign of the whole measurement depends on starting there. The
         preceding 120 ms of marker trailer is silent, so starting early is safe."""
-        return payload(tid, head_ms=-10.0)
+        y = payload(tid, head_ms=-10.0)
+        if y is not None and tau_iface_s:
+            y = undo_hp(y, sr, tau_iface_s)
+        return y
 
     # --- noise floor -------------------------------------------------------
     nf = {}
@@ -418,7 +483,8 @@ def analyse(path, manifest, loopback=None, want_plots=False):
         R["coupling"] = {"rate_1_s": r, "tau_ms": 1000.0 / r,
                          "fc_hz": r / (2 * np.pi),
                          "per_cpu_cycle_factor": float(np.exp(-r / CPU_HZ)),
-                         "corrected": None}
+                         "interface_pole_removed": bool(tau_iface_s),
+                         "interface_tau_ms": (tau_iface_s * 1000 if tau_iface_s else None)}
 
     # --- master volume (30..37) -------------------------------------------
     mv = {}
@@ -478,13 +544,20 @@ def analyse(path, manifest, loopback=None, want_plots=False):
 
     # --- duty cycles (70..73) ---------------------------------------------
     duty = {}
+    # The DAC's polarity, taken from the wave transfer: a negative slope means
+    # digital 0 sits at the POSITIVE rail, so "above zero" in the recording is
+    # the LOW half of the duty cycle.
+    inverting = -1 if (R.get("wave_dac_fit") or {}).get("slope_per_level", 0) < 0 else 1
+    R["dac_polarity"] = "inverting" if inverting == -1 else "non-inverting"
     f500 = 131072.0 / (2048 - 1786)
     for d in range(4):
         y = payload(70 + d)
         if y is None: continue
         b, a = sig.butter(2, [f500 * 0.4 / (sr / 2), min(0.99, f500 * 12 / (sr / 2))], "band")
         z = sig.filtfilt(b, a, y)
-        duty[d] = {"measured_high_fraction": float((z > 0).mean()),
+        frac = float((z > 0).mean())
+        duty[d] = {"measured_high_fraction": frac,
+                   "high_fraction_polarity_corrected": frac if inverting == 1 else 1.0 - frac,
                    "theory": [0.125, 0.25, 0.5, 0.75][d],
                    "fundamental": fundamental(y, sr, f500)}
     R["duty"] = {str(k): v for k, v in duty.items()}
@@ -554,35 +627,24 @@ def analyse(path, manifest, loopback=None, want_plots=False):
     R["edge"] = edges
 
     # --- loopback correction ----------------------------------------------
-    if loopback:
-        lb = analyse_loopback(loopback)
+    if lb:
         R["loopback"] = lb
         if lb.get("implausible"):
             R["loopback_trustworthy"] = False
-        if "coupling" in R and lb.get("coupling_rate_1_s"):
-            r_meas = R["coupling"]["rate_1_s"]
-            r_lb = lb["coupling_rate_1_s"]
-            # cascaded 1-pole high-passes: initial decay rates add. The loopback
-            # contains the interface OUTPUT and INPUT stages; only the input is
-            # in the console path, so report both bounds.
-            full = max(r_meas - r_lb, 1e-9)
-            half = max(r_meas - r_lb / 2, 1e-9)
-            R["coupling"]["corrected"] = {
-                "assume_input_only_is_half_of_loopback": {
-                    "rate_1_s": half, "tau_ms": 1000 / half, "fc_hz": half / (2 * np.pi),
-                    "per_cpu_cycle_factor": float(np.exp(-half / CPU_HZ))},
-                "assume_all_of_loopback_is_input": {
-                    "rate_1_s": full, "tau_ms": 1000 / full, "fc_hz": full / (2 * np.pi),
-                    "per_cpu_cycle_factor": float(np.exp(-full / CPU_HZ))},
-            }
+        # The loopback contains the interface's OUTPUT and INPUT stages, but only
+        # the input stage is in the console's path, so removing the whole loopback
+        # pole slightly over-corrects. Quantify that rather than hiding it.
+        if "coupling" in R and tau_iface_s:
+            r = R["coupling"]["rate_1_s"]
+            half = undo_hp_alternative_rate(r, tau_iface_s)
+            R["coupling"]["bound_if_input_is_half_the_loopback"] = {
+                "rate_1_s": half, "tau_ms": 1000.0 / half,
+                "fc_hz": half / (2 * np.pi),
+                "per_cpu_cycle_factor": float(np.exp(-half / CPU_HZ))}
         if edges and lb.get("edge"):
             for name, e in edges.items():
                 lr = lb["edge"]["rise_10_90_us"]
                 e["loopback_rise_10_90_us"] = lr
-                # The loopback rise is an UPPER bound on the interface's true
-                # rise (shared DAC/ADC clock limits equivalent-time sampling on
-                # it), so this verdict errs toward "we measured the interface" --
-                # i.e. toward reporting a lower bound rather than overclaiming.
                 e["limited_by_interface"] = bool(e["rise_10_90_us"] <= lr * 1.25)
                 e["verdict_is_conservative"] = True
 
@@ -595,6 +657,13 @@ def analyse(path, manifest, loopback=None, want_plots=False):
 # has AC coupling somewhere, typically a corner between about 1 and 20 Hz. A time
 # constant beyond this means the signal never went through the analog path.
 LOOPBACK_MAX_PLAUSIBLE_TAU_MS = 1000.0
+
+
+def undo_hp_alternative_rate(rate, tau_iface_s):
+    """Console rate if only HALF the loopback's pole is in the console's path.
+    Deconvolving by the full loopback removes a little too much; this is the
+    other end of the bracket."""
+    return max(rate - 0.5 / tau_iface_s, 1e-9)
 
 
 def analyse_loopback(path):
@@ -679,18 +748,17 @@ def report(R):
 
     if R.get("coupling"):
         c = R["coupling"]
-        P("\nAC COUPLING  (HARDWARE_REFERENCE.md 12: 'DMG coupling')")
-        P(f"  raw                tau {c['tau_ms']:.3f} ms   fc {c['fc_hz']:.2f} Hz"
-          f"   per-cycle {c['per_cpu_cycle_factor']:.6f}")
+        P("\nAC COUPLING  (HARDWARE_REFERENCE.md 12)")
         if R.get("loopback_trustworthy") is False:
-            P("  *** the loopback file is not a real recording -- see the warning "
-              "above; the corrected figures below are meaningless ***")
-        if c.get("corrected"):
-            for k, v in c["corrected"].items():
-                P(f"  {k[:38]:38s} tau {v['tau_ms']:.3f} ms  fc {v['fc_hz']:.2f} Hz"
-                  f"  per-cycle {v['per_cpu_cycle_factor']:.6f}")
-        else:
-            P("  (no loopback supplied -- this includes the interface's own coupling)")
+            P("  *** the loopback is not a real recording (see the warning above) --")
+            P("      the interface pole was NOT removed and these figures are raw ***")
+        tag = "interface pole removed" if c.get("interface_pole_removed") else "NO LOOPBACK -- includes the interface"
+        P(f"  measured           tau {c['tau_ms']:.3f} ms   fc {c['fc_hz']:.2f} Hz"
+          f"   per-cycle {c['per_cpu_cycle_factor']:.6f}   ({tag})")
+        b = c.get("bound_if_input_is_half_the_loopback")
+        if b:
+            P(f"  other bound        tau {b['tau_ms']:.3f} ms   fc {b['fc_hz']:.2f} Hz"
+              f"   per-cycle {b['per_cpu_cycle_factor']:.6f}")
 
     if R.get("wave_dac_fit"):
         f = R["wave_dac_fit"]
@@ -727,9 +795,10 @@ def report(R):
               f"  ({d['cents']:+.1f} cents)")
 
     if R.get("duty"):
-        P("\nDUTY                      measured / theory high fraction")
+        P(f"\nDUTY  (DAC is {R.get('dac_polarity','?')})   corrected / theory high fraction")
         for k, d in sorted(R["duty"].items(), key=lambda kv: int(kv[0])):
-            P(f"  {k}                  {d['measured_high_fraction']:.3f} / {d['theory']:.3f}")
+            P(f"  {k}                  {d['high_fraction_polarity_corrected']:.3f} / {d['theory']:.3f}"
+              f"    (raw {d['measured_high_fraction']:.3f})")
 
     if R.get("summing"):
         P("\nSUMMING AND CLIPPING")
