@@ -181,12 +181,19 @@ def measure_step(y, sr, i0, noise=0.0):
     base = float(np.median(y[max(0, i0 - pre):i0]))
     dev = y[i0:] - base
 
-    # Peak within a few samples: long enough to clear the converter's own
-    # settling (the loopback edge takes ~2 samples), short enough that even a
-    # 0.2 ms time constant has barely decayed.
-    look = min(8, n - i0 - 1)
-    k0 = int(np.argmax(np.abs(dev[:look])))
-    a0 = float(dev[k0])
+    # SETTLED level, not the peak. Real hardware overshoots on DAC turn-on --
+    # measured at ~11% on a DMG (peak 0.0631 where the settled value is 0.0572),
+    # which alone moved the wave-DAC zero crossing from 7.50 to 8.37. Skip the
+    # overshoot, then average a window that is still far shorter than any
+    # plausible coupling time constant.
+    lo_us, hi_us = 20e-6, 100e-6
+    a, b = int(sr * lo_us), int(sr * hi_us)
+    if b <= a + 1 or i0 + b >= n:
+        a, b = 1, min(8, n - i0 - 1)      # fall back at low sample rates
+    if b <= a:
+        return None, None
+    k0 = (a + b) // 2
+    a0 = float(np.median(dev[a:b]))
     if a0 == 0.0:
         return None, None
 
@@ -381,21 +388,51 @@ def spectrum(y, sr, nfft=32768):
 # per-group analysis
 # --------------------------------------------------------------------------
 
-def analyse(path, manifest, loopback=None, want_plots=False):
-    x, sr, ch = load_mono(path)
+def analyse(paths, manifest, loopback=None, want_plots=False):
+    """Measure one capture, or several partial ones merged.
+
+    Every take carries its own id in its sync marker, so takes can be pooled
+    across files: a run cut short by a power interruption is not a wasted
+    session, it is a partial set to be completed by another pass. Later files
+    fill in only what earlier ones are missing.
+    """
+    if isinstance(paths, str):
+        paths = [paths]
+    xs, sr, ch = [], None, None
+    for p in paths:
+        xi, sri, chi = load_mono(p)
+        if sr is None:
+            sr, ch = sri, chi
+        elif sri != sr:
+            raise SystemExit(f"{p} is {sri:g} Hz but {paths[0]} is {sr:g} Hz -- "
+                             f"all captures must share a sample rate")
+        xs.append(xi)
     if sr < 96000:
         print(f"WARNING: capture is {sr:g} Hz. 192 kHz is expected; edge and "
               f"bandwidth results will be meaningless.", file=sys.stderr)
+
     expected = [t["id"] for t in manifest["takes"]]
-    takes = find_takes(x, sr, manifest["marker"], expected)
-    found = {t[0]: t for t in takes}
+    found, sources = {}, {}
+    for fi, xi in enumerate(xs):
+        for tid, t0, t1 in find_takes(xi, sr, manifest["marker"], expected):
+            if tid not in found:                 # first good instance wins
+                found[tid] = (tid, t0, t1)
+                sources[tid] = fi
+    if len(xs) > 1:
+        per = {os.path.basename(paths[i]): sum(1 for v in sources.values() if v == i)
+               for i in range(len(xs))}
+        print(f"merged {len(found)}/{len(expected)} takes from {len(xs)} captures: {per}",
+              file=sys.stderr)
+    x = xs[0]
+    path = paths[0]
     missing = [i for i in expected if i not in found]
 
     # Headroom: a clipped capture silently ruins the DAC-transfer and clipping
     # measurements, and looks like console saturation. Check before anything else.
-    peak = float(np.abs(x).max())
-    at_fs = float((np.abs(x) >= 0.999).mean())
-    R = {"capture": os.path.basename(path), "sample_rate": sr, "channels": ch,
+    peak = max(float(np.abs(xi).max()) for xi in xs)
+    at_fs = max(float((np.abs(xi) >= 0.999).mean()) for xi in xs)
+    R = {"capture": [os.path.basename(p) for p in paths],
+         "sample_rate": sr, "channels": ch,
          "takes_expected": len(expected), "takes_found": len(found),
          "takes_missing": missing,
          "headroom": {"peak": peak, "peak_dbfs": float(20 * np.log10(peak + 1e-30)),
@@ -418,7 +455,7 @@ def analyse(path, manifest, loopback=None, want_plots=False):
         if tid not in found:
             return None
         _, a, b = found[tid]
-        y = seg(x, sr, a, b, head_ms=head_ms)
+        y = seg(xs[sources[tid]], sr, a, b, head_ms=head_ms)
         return y if len(y) >= sr * min_ms / 1000 else None
 
     # The interface's own coupling pole, measured from the loopback, is removed
@@ -660,7 +697,7 @@ def analyse(path, manifest, loopback=None, want_plots=False):
                 e["verdict_is_conservative"] = True
 
     if want_plots:
-        write_plots(R, os.path.splitext(path)[0])
+        write_plots(R, os.path.splitext(paths[0])[0])
     return R
 
 
@@ -747,7 +784,7 @@ def write_plots(R, stem):
 def report(R):
     P = print
     P("=" * 72)
-    P(f"ChipBoy capture analysis -- {R['capture']}  @ {R['sample_rate']:g} Hz")
+    P(f"ChipBoy capture analysis -- {', '.join(R['capture'])}  @ {R['sample_rate']:g} Hz")
     P("=" * 72)
     h = R["headroom"]
     P(f"peak level           {h['peak_dbfs']:.2f} dBFS"
@@ -839,7 +876,8 @@ def report(R):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("capture")
+    ap.add_argument("capture", nargs="+",
+                    help="one capture, or several partial ones to merge")
     ap.add_argument("--loopback")
     ap.add_argument("--takes", default=None)
     ap.add_argument("--out", default=None)
@@ -852,7 +890,7 @@ def main():
     R = analyse(a.capture, manifest, a.loopback, a.plots)
     R["model"] = a.model
     report(R)
-    out = a.out or os.path.splitext(a.capture)[0] + "_measured.json"
+    out = a.out or os.path.splitext(a.capture[0])[0] + "_measured.json"
     slim = dict(R)
     slim["edge"] = {k: {kk: vv for kk, vv in v.items() if kk not in ("t_us", "shape")}
                     for k, v in (R.get("edge") or {}).items()}

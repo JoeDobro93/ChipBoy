@@ -64,10 +64,27 @@ def marker(b, tid, mk):
     b.silence(mk["trailer_ms"])
 
 
-def dc_train(b, level, reps, on_ms, off_ms, master=7, scale=1.0):
+# Real hardware overshoots when the DAC turns on, and the wave channel's sample
+# buffer holds its previous value for (2048 - f) * 2 cycles after a trigger.
+# Both are modelled here because both broke the analyser on the first real
+# capture and neither was exercised by a simulation that omitted them.
+OVERSHOOT = 0.11          # measured on a DMG: peak 11% above the settled level
+STALE_LEVEL = 0           # the buffer reads 0 after an APU power-cycle
+
+
+def dc_train(b, level, reps, on_ms, off_ms, master=7, scale=1.0, wave_f=2047):
     g = (master + 1) / 8.0 * scale
+    delay_ms = (2048 - wave_f) * 2 / CPU_HZ * 1000.0
     for _ in range(reps):
-        b.dc(on_ms, dac(level) * g)
+        n_over = max(1, int(b.sr * 0.00002))
+        if delay_ms > 0.05:
+            b.add(np.full(n_over, dac(STALE_LEVEL) * g * (1 + OVERSHOOT)))
+            b.dc(delay_ms - n_over / b.sr * 1000, dac(STALE_LEVEL) * g)
+            b.add(np.full(n_over, dac(level) * g * (1 + OVERSHOOT)))
+            b.dc(on_ms - delay_ms - n_over / b.sr * 1000, dac(level) * g)
+        else:
+            b.add(np.full(n_over, dac(level) * g * (1 + OVERSHOOT)))
+            b.dc(on_ms - n_over / b.sr * 1000, dac(level) * g)
         b.dc(off_ms, 0.0)
 
 
