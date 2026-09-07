@@ -1,0 +1,335 @@
+{
+ "capture": [
+  "cgb_vol_mid.wav"
+ ],
+ "sample_rate": 192000.0,
+ "channels": 2,
+ "takes_expected": 83,
+ "takes_found": 83,
+ "takes_missing": [],
+ "headroom": {
+  "peak": 0.1364848017692566,
+  "peak_dbfs": -17.298314133670637,
+  "fraction_at_full_scale": 0.0,
+  "clipped": false,
+  "too_quiet": false
+ },
+ "noise_floor": {
+  "apu_off_lcd_on": {
+   "rms_dbfs": -72.42309747199232,
+   "line_9198_db": 42.52120640415457,
+   "line_2x_db": 23.376199540779595,
+   "frame_59_7_db": 33.93332227823963
+  },
+  "apu_on_lcd_on": {
+   "rms_dbfs": -72.39882551343189,
+   "line_9198_db": 42.619243550682924,
+   "line_2x_db": 23.09713878579744,
+   "frame_59_7_db": 33.491167857369874
+  },
+  "apu_off_lcd_off": {
+   "rms_dbfs": -73.65808253363008,
+   "line_9198_db": 41.033727471535045,
+   "line_2x_db": 22.25702628675846,
+   "frame_59_7_db": 32.531907433213306
+  },
+  "apu_on_lcd_off": {
+   "rms_dbfs": -73.63436872463522,
+   "line_9198_db": 41.05387954955518,
+   "line_2x_db": 22.527079485907862,
+   "frame_59_7_db": 32.37062314281488
+  }
+ },
+ "wave_dac_transfer": {
+  "0": 0.02489888607566218,
+  "1": 0.022668616943763212,
+  "2": 0.018157959300942397,
+  "3": 0.015713492768357398,
+  "4": 0.013792415353508527,
+  "5": 0.005671652449613423,
+  "6": 0.002240374146363462,
+  "8": -0.0023028340771544414,
+  "9": -0.0007868614865272748,
+  "10": -0.00883545093122482,
+  "11": -0.011363964789603567,
+  "12": -0.013978041665629682,
+  "13": -0.021481744789906075,
+  "14": -0.0009762501533941706,
+  "15": -0.02422996179199434
+ },
+ "wave_dac_fit": {
+  "slope_per_level": -0.0032802137878384405,
+  "intercept": 0.02489888607566218,
+  "zero_crossing_level": 7.590629052281917,
+  "max_deviation_lsb": 6.111753104328219
+ },
+ "coupling": {
+  "rate_1_s": 1875.3885857714024,
+  "tau_ms": 0.533222825171814,
+  "fc_hz": 298.47736364363766,
+  "per_cpu_cycle_factor": 0.9995529724647128,
+  "interface_pole_removed": true,
+  "interface_tau_ms": 57.52317277493178,
+  "bound_if_input_is_half_the_loopback": {
+   "rate_1_s": 1866.6964365751762,
+   "tau_ms": 0.5357057421905715,
+   "fc_hz": 297.093965132966,
+   "per_cpu_cycle_factor": 0.9995550439103135
+  }
+ },
+ "master_volume": {
+  "0": -0.007282212369314964,
+  "1": -0.0053591061505357095,
+  "2": -0.012447500641397808,
+  "3": -0.012920166376306667,
+  "4": -0.015891966504552105,
+  "5": -0.01828977768947013,
+  "6": -0.022142068621755204,
+  "7": -0.024634806662353147
+ },
+ "master_volume_vs_theory": {
+  "0": {
+   "measured_ratio": 0.29560663775955764,
+   "theory_ratio": 0.125
+  },
+  "1": {
+   "measured_ratio": 0.21754204220021273,
+   "theory_ratio": 0.25
+  },
+  "2": {
+   "measured_ratio": 0.5052810363809369,
+   "theory_ratio": 0.375
+  },
+  "3": {
+   "measured_ratio": 0.5244679429959251,
+   "theory_ratio": 0.5
+  },
+  "4": {
+   "measured_ratio": 0.6451021403321249,
+   "theory_ratio": 0.625
+  },
+  "5": {
+   "measured_ratio": 0.7424364209612623,
+   "theory_ratio": 0.75
+  },
+  "6": {
+   "measured_ratio": 0.8988123562419778,
+   "theory_ratio": 0.875
+  },
+  "7": {
+   "measured_ratio": 1.0,
+   "theory_ratio": 1.0
+  }
+ },
+ "wave_output_level": {
+  "0": {
+   "measured": 0.025214623160768827,
+   "digital_value": 0,
+   "predicted_from_dac_fit": 0.02489888607566218,
+   "error": 0.0003157370851066474
+  },
+  "1": {
+   "measured": -0.02462545906168628,
+   "digital_value": 15,
+   "predicted_from_dac_fit": -0.02430432074191443,
+   "error": -0.00032113831977184995
+  },
+  "2": {
+   "measured": 0.003575320151860937,
+   "digital_value": 7,
+   "predicted_from_dac_fit": 0.0019373895607930972,
+   "error": 0.0016379305910678398
+  },
+  "3": {
+   "measured": 0.012318732394718913,
+   "digital_value": 3,
+   "predicted_from_dac_fit": 0.015058244712146859,
+   "error": -0.0027395123174279463
+  }
+ },
+ "_pulse_probe_hz": 1000.5496183206106,
+ "pulse_dac_transfer": {
+  "0": 7.910464146440995e-06,
+  "1": 0.0029397779350841795,
+  "2": 0.0060823391991440615,
+  "3": 0.008799456586872314,
+  "4": 0.011748831624381288,
+  "5": 0.01517016068370374,
+  "6": 0.01760410735575906,
+  "7": 0.020486522447013156,
+  "8": 0.02491038192797462,
+  "9": 0.027898968152713012,
+  "10": 0.029904333714885736,
+  "11": 0.03282218891844228,
+  "12": 0.0370091729454953,
+  "13": 0.038586297882411795,
+  "14": 0.04160108835011489,
+  "15": 0.046113668458317957
+ },
+ "pulse_dac_fit": {
+  "slope_per_level": 0.003014790467703095,
+  "intercept": -0.0002435709621452127,
+  "level0_residual": 7.910464146440995e-06
+ },
+ "dac_polarity": "inverting",
+ "duty": {
+  "0": {
+   "measured_high_fraction": 0.8416481481481481,
+   "high_fraction_polarity_corrected": 0.15835185185185185,
+   "theory": 0.125,
+   "fundamental": 0.009601879262647954
+  },
+  "1": {
+   "measured_high_fraction": 0.7287149705014749,
+   "high_fraction_polarity_corrected": 0.27128502949852507,
+   "theory": 0.25,
+   "fundamental": 0.01823153525231599
+  },
+  "2": {
+   "measured_high_fraction": 0.5005162241887906,
+   "high_fraction_polarity_corrected": 0.4994837758112094,
+   "theory": 0.5,
+   "fundamental": 0.02576698672640148
+  },
+  "3": {
+   "measured_high_fraction": 0.2710951027324327,
+   "high_fraction_polarity_corrected": 0.7289048972675674,
+   "theory": 0.75,
+   "fundamental": 0.017744649648896448
+  }
+ },
+ "envelope": {
+  "down_1": {
+   "measured_step_s": 0.015,
+   "theory_step_s": 0.015625,
+   "steps_detected": 15
+  },
+  "up_1": {
+   "measured_step_s": 0.015,
+   "theory_step_s": 0.015625,
+   "steps_detected": 15
+  },
+  "down_2": {
+   "measured_step_s": 0.030000000000000027,
+   "theory_step_s": 0.03125,
+   "steps_detected": 15
+  },
+  "up_2": {
+   "measured_step_s": 0.030000000000000006,
+   "theory_step_s": 0.03125,
+   "steps_detected": 15
+  },
+  "down_3": {
+   "measured_step_s": 0.047999999999999994,
+   "theory_step_s": 0.046875,
+   "steps_detected": 15
+  },
+  "up_3": {
+   "measured_step_s": 0.04799999999999999,
+   "theory_step_s": 0.046875,
+   "steps_detected": 15
+  },
+  "down_4": {
+   "measured_step_s": 0.063,
+   "theory_step_s": 0.0625,
+   "steps_detected": 15
+  },
+  "up_4": {
+   "measured_step_s": 0.063,
+   "theory_step_s": 0.0625,
+   "steps_detected": 15
+  },
+  "down_5": {
+   "measured_step_s": 0.078,
+   "theory_step_s": 0.078125,
+   "steps_detected": 15
+  },
+  "up_5": {
+   "measured_step_s": 0.07800000000000001,
+   "theory_step_s": 0.078125,
+   "steps_detected": 15
+  },
+  "down_6": {
+   "measured_step_s": 0.09300000000000003,
+   "theory_step_s": 0.09375,
+   "steps_detected": 15
+  },
+  "up_6": {
+   "measured_step_s": 0.09299999999999997,
+   "theory_step_s": 0.09375,
+   "steps_detected": 15
+  },
+  "down_7": {
+   "measured_step_s": 0.1080000000000001,
+   "theory_step_s": 0.109375,
+   "steps_detected": 15
+  },
+  "up_7": {
+   "measured_step_s": 0.10950000000000004,
+   "theory_step_s": 0.109375,
+   "steps_detected": 15
+  }
+ },
+ "pitch": {
+  "0": {
+   "theory_hz": 64.0,
+   "measured_hz": 64.09081953353373,
+   "cents": 2.4549752385668198
+  },
+  "1024": {
+   "theory_hz": 128.0,
+   "measured_hz": 128.02499410691004,
+   "cents": 0.33801894379167
+  },
+  "1750": {
+   "theory_hz": 439.83892617449663,
+   "measured_hz": 439.75796192677274,
+   "cents": -0.3187097742355723
+  },
+  "2017": {
+   "theory_hz": 4228.129032258064,
+   "measured_hz": 4228.100436650934,
+   "cents": -0.011708690947837266
+  }
+ },
+ "summing": {
+  "pu1": {
+   "peak": 0.04623687267303467,
+   "p999": 0.0451592347621918,
+   "rms": 0.02058005211839751
+  },
+  "pu1+pu2": {
+   "peak": 0.09019368886947632,
+   "p999": 0.08909710621833819,
+   "rms": 0.0329658528578406
+  },
+  "pu1+pu2+noise": {
+   "peak": 0.1215360164642334,
+   "p999": 0.1132156504392625,
+   "rms": 0.04016021838573416
+  },
+  "all four": {
+   "peak": 0.1364848017692566,
+   "p999": 0.125035362005234,
+   "rms": 0.04145448437268792
+  },
+  "master_volume_0": {
+   "amplitude": -0.001716423835823072,
+   "ratio_to_master_7": 0.06967474351832875,
+   "theory_ratio": 0.125
+  }
+ },
+ "edge": {},
+ "loopback": {
+  "sample_rate": 192000.0,
+  "coupling_rate_1_s": 17.38429839245226,
+  "tau_ms": 57.52317277493178,
+  "fc_hz": 2.7667970213432667,
+  "edge": {
+   "edges_averaged": 262,
+   "rise_10_90_us": 8.99928102005783,
+   "implied_bandwidth_hz": 38891.9958405467
+  }
+ },
+ "model": "cgb"
+}

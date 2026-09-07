@@ -38,6 +38,7 @@ __pycache__/
 # Capture artefacts (recordings and their analysis stay out of git)
 *.wav
 *_measured.json
+!measurements/**/*_measured.json
 *_truth.json
 *.png
 tools/capture/probe.o

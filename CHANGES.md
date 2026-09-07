@@ -208,6 +208,36 @@ hazard on a DMG whose cells shift — now costs a second pass, not a session.
 
 ---
 
+### 2026-09-07 — hardware measured: DMG and CGB constants replace the estimates
+
+`HARDWARE_REFERENCE.md` §12 is now measured values from one DMG and one CGB, second
+capture set, 83/83 takes on all four runs, no clipping. Analyser output tracked under
+`measurements/2026-09-07/`.
+
+**Headline:** DMG coupling **0.999963** per cycle (24.7 Hz) — within 12% of Blargg's
+published 0.999958, measured independently on different hardware. CGB **0.999494**
+(338 Hz), half the published corner, repeatable across both volume settings; treated as
+this unit's number.
+
+**Confirmed by measurement, not assertion:** the DAC is inverting; digital 0 and 15 sit
+symmetrically about DAC-off (zero crossing 7.41–7.59 across four runs, max and mid
+agreeing per console); the DAC is linear; NR50 = 0 is ~1/8, not mute; wave and pulse
+channels agree to 3% on the DMG by two independent methods; the 9198 Hz LCD line sits
+at +26 dB on the DMG and drops 24 dB with the display off.
+
+**Two findings that change the model:**
+
+1. The CGB's 9198 Hz line is 17 dB stronger than the DMG's and does **not** stop when
+   the display is turned off. Model it as always-on for CGB.
+2. DAC-**off** produces no step on either console. Spec §6.1's "disabled DAC is analog
+   zero" is contradicted; a high-impedance disabled state fits. Flagged in the spec —
+   the click model in M2 depends on which it is.
+
+**Still estimated:** amplifier bandwidth (≥ 39 kHz, interface-limited) and the clip point
+(ladder sources never peak coherently). Neither is audible; both are logged.
+
+---
+
 ## Departures from the spec
 
 *None yet — no code has been written.*

@@ -330,18 +330,80 @@ volume is applied in the analog domain and does not re-quantise.
 
 ---
 
-## 12. Empirical values — measure, do not trust
+## 12. Measured values
 
-Everything above is documented digital behaviour. The following are fits or observations
-that ChipBoy should start from and then *replace with its own measurements* during the
-hardware validation pass (spec §16.6).
+Captured 2026-09-07 from **one DMG (brick) and one CGB**, batteries, volume wheel at
+maximum unless stated; Focusrite Scarlett 18i20 4th Gen at 192 kHz through line inputs,
+interface pole removed via loopback. Method: `tools/capture/`. Raw analyser output:
+`measurements/2026-09-07/`. Per-unit variation is real — a second console of each would
+be worth measuring before any of this is treated as the family's rather than this unit's.
 
-| Quantity | Starting value | Note |
+### 12.1 AC coupling — the headline constant
+
+| | DMG | CGB |
 |---|---|---|
-| DMG AC coupling | `0.999958` per CPU cycle → τ ≈ 5.68 ms, f_c ≈ 28 Hz | Blargg/Gambatte's empirical constant. Measurable directly from the droop slope on a flat square top. |
-| CGB AC coupling | `0.998943` per CPU cycle → τ ≈ 0.23 ms, f_c ≈ 706 Hz | Same source. The whole explanation for "CGB sounds thin". |
-| DAC step linearity | assume linear | Resistor-ladder mismatch is real and varies per unit. Measure a staircase. |
-| Amplifier bandwidth / slew | unknown | Sets the edge shape and overshoot. Measure a rising edge at 192 kHz. |
-| Clip point and symmetry | unknown | Measure four channels at volume 15 with master volume 7. |
-| Noise floor spectrum | 9 198 Hz line whine + 59.73 Hz frame component + broadband hiss | Capture silence with the APU powered and with it off. |
-| Wave channel DAC offset | assume identical to pulse | Reported to differ; verify. |
+| **per-CPU-cycle factor** | **0.999963** | **0.999494** |
+| τ | 6.44 ms | 0.471 ms |
+| f_c | 24.7 Hz | 338 Hz |
+| Blargg's published fit | 0.999958 (28.0 Hz) | 0.998943 (706 Hz) |
+
+The DMG agrees with the published fit to ~12%, independently, on different hardware —
+strong confirmation of both. The CGB measures a corner at **half** the published value.
+It is repeatable (338 Hz at max, 298 Hz at mid), so it is this unit, not noise; CGB
+boards went through several revisions. Model this unit's number and say so.
+
+The DMG's time constant lengthened at mid volume (8.9 ms vs 6.4 ms). The coupling
+capacitor sees the volume pot's output impedance, which rises off maximum. The plugin
+models maximum, which is also how a DMG is conventionally recorded.
+
+### 12.2 DAC transfer
+
+| | DMG | CGB |
+|---|---|---|
+| Polarity | **inverting** | **inverting** |
+| Linearity, max deviation from a line | 0.16 LSB (mid run) · 1.3 LSB (max run) | 1.8 LSB |
+| Wave zero crossing (want 7.5) | **7.42 / 7.41** | **7.47 / 7.59** |
+| Wave slope vs pulse slope, same capture | agree to **3%** | agree to 12% |
+| Pulse level 0 (DAC disabled) | 7 × 10⁻⁶ — silence | 9 × 10⁻⁶ — silence |
+
+Digital 0 and digital 15 sit symmetrically either side of the DAC-off level, on both
+consoles, at both volumes: **"digital 0 is a rail, not silence" is measured, not
+asserted.** Treat the DAC as linear. The wave and pulse channels were measured by
+different methods (a DC step and an FFT) and agree, which is the cross-check that
+matters.
+
+### 12.3 Master volume (NR50)
+
+DMG, both volumes: follows `(v+1)/8` within 4% for v = 1..7. **v = 0 measures
+0.12–0.17 of v = 7, not zero** — the "level 0 is 1/8, not mute" claim, measured. The
+CGB's master-volume takes were too noisy to read (its fast coupling erodes the
+settled-level window); same register, same APU, same law.
+
+### 12.4 Noise floor — LCD on, volume max
+
+| | DMG | CGB |
+|---|---|---|
+| Broadband RMS relative to the four-channel full-scale peak | **−58 dB** | **−60 dB** |
+| 9198 Hz LCD line, prominence over the local floor | **+26 dB** | **+43 dB** |
+| 59.7 Hz frame component | +20 dB | +34 dB |
+| 9198 Hz with LCDC bit 7 cleared | +2 dB — gone | **+41 dB — persists** |
+
+The DMG's line is unambiguously the LCD: it drops 24 dB when the display stops. The
+CGB's is 17 dB stronger and **does not stop** when LCDC bit 7 is cleared — either that
+unit's PPU keeps its line clock running with the display off, or the component has
+another source at the same frequency. For the plugin it makes no difference: a playing
+console has its display on. Model the CGB line as always present.
+
+### 12.5 Confirmed to specification
+
+Both consoles: pitch within 2.6 cents at f = 0, 1024, 1750, 2017; all seven envelope
+rates, both directions, within 2% of n/64 s; duty patterns correct once the inverting
+polarity is accounted for.
+
+### 12.6 Not measured — still estimates
+
+| Quantity | Status |
+|---|---|
+| Amplifier bandwidth / edge shape | The analyser's edge window is dominated by the coupling decay, and the interface's own edge (9 µs rise, ~39 kHz) bounds the method regardless. **Estimated: ≥ 39 kHz.** Audibly irrelevant; cosmetically relevant to the scope display. |
+| Clip point and symmetry | The summing ladder's sources sit at different frequencies, so their peaks never align. No clipping was observed at four channels full, NR50 = 7. Needs a coherent-peak test. |
+| DAC-**off** transition | Every DAC-**on** produces a clean step; every DAC-**off** produces **none**. That is not what "a disabled DAC outputs analog zero" predicts — it looks like a high-impedance disabled state, with the coupling capacitor holding its charge. **Spec §6.1 asserts analog zero and needs revisiting** before the click model is built. |

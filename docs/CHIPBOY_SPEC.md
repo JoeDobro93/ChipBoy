@@ -310,6 +310,14 @@ per channel:  digital 0-15 ──► 4-bit DAC ──► NR51 gate (L / R / both
 - **Digital 0 maps to a rail; a disabled DAC maps to analog zero.** Every click in Game
   Boy music comes from this (`HARDWARE_REFERENCE.md` §9). An implementation where
   "volume 0" means silence is wrong.
+
+  > **Measured 2026-09-07, and this needs revisiting.** The "digital 0 is a rail" half is
+  > confirmed on both consoles (zero crossing 7.4–7.6, `HARDWARE_REFERENCE.md` §12.2).
+  > The "disabled DAC is analog zero" half is not: every DAC-**on** produces a clean
+  > step and every DAC-**off** produces **no step at all**, on both consoles. That is
+  > consistent with a high-impedance disabled state — the coupling capacitor holds its
+  > charge and the output simply stays where it was. If so, the *DAC-off click* does not
+  > exist and only the *DAC-on* click does. Resolve before M2 builds the click model.
 - **The high-pass is applied once, after the sum** — there is one capacitor, not four.
   This is what makes one channel's DC step move another's baseline, and it is why C9
   exists.
