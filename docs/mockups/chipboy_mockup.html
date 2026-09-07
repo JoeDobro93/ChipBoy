@@ -1,0 +1,1061 @@
+<meta charset="utf-8">
+<title>ChipBoy Mockup</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Silkscreen:wght@400;700&display=swap">
+<style>
+  /* ChipBoy plugin mockup. One deliberate dark look: a plugin has a fixed face. */
+  :root {
+    --bg: #131416;
+    --panel: #24272c;
+    --panel-2: #1e2125;
+    --well: #17191c;
+    --raised: #2f3339;
+    --raised-hi: #3b4047;
+    --line: #3a3e45;
+    --line-soft: #2b2f35;
+    --text: #e9e6de;
+    --text-mute: #a3a7ac;
+    --text-dim: #6f747a;
+    --accent: #c9445f;
+    --accent-hi: #e0577a;
+    --accent-soft: rgba(201, 68, 95, 0.18);
+    --pu1: #5ec8ff;
+    --pu2: #ffb340;
+    --wav: #86e28e;
+    --noi: #ff6f91;
+    --lcd: #0b100c;
+    --lcd-grid: #1a271c;
+    --lcd-trace: #9bbc0f;
+    --ok: #6cc46f;
+    --warn: #e5a53b;
+    --bad: #e35d6a;
+    --sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --pixel: 'Silkscreen', 'IBM Plex Mono', monospace;
+    --r: 4px;
+  }
+  html { color-scheme: dark; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--sans); font-size: 13px; line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+  }
+  * { box-sizing: border-box; }
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--accent-hi); outline-offset: 1px; }
+  ::selection { background: var(--accent-soft); }
+
+  .page { max-width: 1240px; margin: 0 auto; padding: 20px 16px 60px; }
+  .lede { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: baseline; color: var(--text-mute); margin: 0 0 14px; }
+  .lede strong { color: var(--text); font-weight: 600; }
+  .lede .tag { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+  .stage { overflow-x: auto; padding-bottom: 8px; }
+
+  /* ---------- window chrome ---------- */
+  .win { width: 1180px; margin: 0 auto; background: var(--panel); border: 1px solid #0c0d0f; border-radius: 6px;
+         box-shadow: 0 18px 50px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.04); overflow: hidden; }
+  .win.voice { width: 560px; margin: 0; }
+  .bar { display: flex; align-items: center; gap: 14px; height: 54px; padding: 0 14px; background: var(--panel-2); border-bottom: 1px solid var(--line-soft); }
+  .wordmark { font-family: var(--pixel); font-size: 15px; letter-spacing: .02em; color: var(--text); display: flex; align-items: center; gap: 8px; }
+  .wordmark small { font-family: var(--sans); font-size: 10px; color: var(--text-dim); letter-spacing: .12em; text-transform: uppercase; }
+  .spacer { flex: 1; }
+  .bar .group { display: flex; align-items: center; gap: 8px; }
+  .label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-dim); }
+
+  /* ---------- controls ---------- */
+  .seg { display: inline-flex; background: var(--well); border: 1px solid var(--line); border-radius: var(--r); padding: 2px; gap: 2px; }
+  .seg button { background: transparent; border: 0; border-radius: 3px; padding: 3px 9px; color: var(--text-mute); font-size: 12px; font-weight: 500; line-height: 1.2; }
+  .seg button:hover { color: var(--text); background: var(--raised); }
+  .seg button[aria-pressed="true"] { background: var(--raised-hi); color: var(--text); box-shadow: inset 0 1px 0 rgba(255,255,255,.06); }
+  .seg.model button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  .seg.mini button { padding: 2px 5px; font-size: 11px; }
+  .btn { background: var(--raised); border: 1px solid var(--line); border-radius: var(--r); padding: 4px 10px; color: var(--text); font-size: 12px; }
+  .btn:hover { background: var(--raised-hi); }
+  .btn.primary { background: var(--accent); border-color: transparent; color: #fff; }
+  .btn.primary:hover { background: var(--accent-hi); }
+  .btn.small { padding: 2px 7px; font-size: 11px; }
+  .btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+  .sel { background: var(--well); border: 1px solid var(--line); border-radius: var(--r); padding: 3px 6px; color: var(--text); font-size: 12px; max-width: 100%; }
+  .sel:hover { border-color: var(--raised-hi); }
+  .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .field > .label { white-space: nowrap; }
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .stepper { display: inline-flex; align-items: center; background: var(--well); border: 1px solid var(--line); border-radius: var(--r); }
+  .stepper button { width: 22px; height: 22px; border: 0; background: transparent; color: var(--text-mute); border-radius: 3px; font-family: var(--mono); }
+  .stepper button:hover { background: var(--raised); color: var(--text); }
+  .stepper output { min-width: 34px; text-align: center; font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .knob { display: inline-flex; flex-direction: column; align-items: center; gap: 3px; width: 50px; user-select: none; cursor: ns-resize; }
+  .knob .dial { width: 34px; height: 34px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #454a52, #22252a 70%); border: 1px solid #111; position: relative; box-shadow: 0 2px 4px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.08); }
+  .knob .dial::after { content: ""; position: absolute; left: 50%; top: 3px; width: 2px; height: 11px; margin-left: -1px; background: var(--k, var(--text)); border-radius: 1px; transform-origin: 50% 14px; transform: rotate(var(--rot, 0deg)); }
+  .knob .arc { position: absolute; inset: -4px; border-radius: 50%; background: conic-gradient(from 225deg, var(--k, var(--accent)) calc(var(--pct, 0) * 270deg), var(--line-soft) calc(var(--pct, 0) * 270deg) 270deg, transparent 270deg); mask: radial-gradient(circle, transparent 60%, #000 61%); -webkit-mask: radial-gradient(circle, transparent 60%, #000 61%); }
+  .knob .val { font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text); }
+  .knob .label { font-size: 9px; }
+  .knob:focus-visible { border-radius: 6px; }
+  .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+  .switch input { appearance: none; width: 30px; height: 16px; border-radius: 8px; background: var(--well); border: 1px solid var(--line); position: relative; margin: 0; cursor: pointer; }
+  .switch input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--text-dim); transition: left .12s; }
+  .switch input:checked { background: var(--accent-soft); border-color: var(--accent); }
+  .switch input:checked::after { left: 16px; background: var(--accent-hi); }
+  .pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; letter-spacing: .04em; background: var(--well); border: 1px solid var(--line); color: var(--text-mute); white-space: nowrap; }
+  .pill.ok { border-color: rgba(108,196,111,.5); color: var(--ok); }
+  .pill.warn { border-color: rgba(229,165,59,.5); color: var(--warn); }
+  .pill.bad { border-color: rgba(227,93,106,.5); color: var(--bad); }
+  .pill.mod { border-color: var(--accent); color: var(--accent-hi); background: var(--accent-soft); }
+  .led { width: 7px; height: 7px; border-radius: 50%; background: #2a2d32; box-shadow: inset 0 0 0 1px rgba(0,0,0,.4); }
+  .led.on { background: var(--c); box-shadow: 0 0 6px var(--c); }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .dim { color: var(--text-dim); }
+  .mute { color: var(--text-mute); }
+  .help { color: var(--text-mute); font-size: 12px; max-width: 62ch; margin: 0; }
+  .help + .help { margin-top: 4px; }
+
+  /* ---------- mixer row ---------- */
+  .mixer { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) 224px; gap: 8px; padding: 10px 12px 12px; background: var(--panel); border-bottom: 1px solid var(--line-soft); }
+  .strip { background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 5px; padding: 8px; display: flex; flex-direction: column; gap: 7px; --c: var(--text); }
+  .strip.selected { border-color: var(--c); box-shadow: 0 0 0 1px var(--c) inset; }
+  .strip .head { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+  .strip .name { font-family: var(--pixel); font-size: 12px; color: var(--c); }
+  .strip .src { margin-left: auto; }
+  .scope { position: relative; background: var(--lcd); border: 1px solid #0a0e0b; border-radius: 3px; overflow: hidden; }
+  .scope canvas { display: block; width: 100%; height: 100%; }
+  .scope .zoom { position: absolute; right: 4px; top: 4px; opacity: 0; transition: opacity .15s; }
+  .scope:hover .zoom, .scope:focus-within .zoom { opacity: 1; }
+  .regs { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); letter-spacing: .02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .regs b { color: var(--text-mute); font-weight: 500; }
+  .strip .quick { display: flex; align-items: flex-end; justify-content: space-between; gap: 2px; }
+  .strip > * { min-width: 0; }
+  .strip .foot { display: flex; align-items: center; gap: 6px; }
+  .strip .foot .btn { padding: 2px 8px; font-family: var(--mono); font-size: 11px; }
+  .strip .foot .btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
+  .master { background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 5px; padding: 8px; display: flex; flex-direction: column; gap: 7px; }
+  .master .name { font-family: var(--pixel); font-size: 12px; color: var(--lcd-trace); }
+  .fader { display: flex; align-items: center; gap: 8px; }
+  .fader input[type="range"] { flex: 1; accent-color: var(--accent); }
+  .fader output { font-family: var(--mono); font-size: 11px; min-width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* ---------- tabs and editor ---------- */
+  .tabs { display: flex; align-items: center; gap: 2px; padding: 6px 12px 0; background: var(--panel); border-bottom: 1px solid var(--line-soft); }
+  .tabs button { background: transparent; border: 1px solid transparent; border-bottom: 0; border-radius: 5px 5px 0 0; padding: 7px 13px; color: var(--text-mute); font-weight: 500; font-size: 12.5px; }
+  .tabs button:hover { color: var(--text); }
+  .tabs button[aria-selected="true"] { background: var(--well); border-color: var(--line-soft); color: var(--text); position: relative; top: 1px; }
+  .tabs .ctx { margin-left: auto; font-size: 12px; color: var(--text-mute); padding-bottom: 6px; }
+  .tabs .ctx b { color: var(--text); font-weight: 500; }
+  .editor { background: var(--well); min-height: 400px; padding: 14px; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  .cols { display: grid; gap: 14px; }
+  .cols.bank { grid-template-columns: 220px 1fr; }
+  .list { background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 5px; overflow: hidden; }
+  .list header { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-bottom: 1px solid var(--line-soft); font-size: 11px; color: var(--text-mute); }
+  .list ul { list-style: none; margin: 0; padding: 4px 0; max-height: 330px; overflow-y: auto; }
+  .list li button { width: 100%; text-align: left; background: transparent; border: 0; padding: 4px 8px; display: flex; gap: 8px; align-items: center; color: var(--text-mute); }
+  .list li button:hover { background: var(--raised); color: var(--text); }
+  .list li button[aria-current="true"] { background: var(--accent-soft); color: var(--text); }
+  .list .slot { font-family: var(--mono); font-size: 11px; color: var(--text-dim); width: 26px; }
+  .list .chip { margin-left: auto; font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-dim); border: 1px solid var(--line-soft); border-radius: 3px; padding: 0 4px; }
+  .card { background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 5px; padding: 12px; }
+  .card h3 { margin: 0 0 10px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-dim); font-weight: 600; }
+  .grid-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px 16px; }
+  .groups { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .groups .card.wide { grid-column: 1 / -1; }
+  .name-input { background: var(--well); border: 1px solid var(--line); border-radius: var(--r); padding: 4px 8px; font-size: 13px; width: 220px; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; font-size: 12px; }
+  .kv dt { color: var(--text-dim); } .kv dd { margin: 0; font-family: var(--mono); }
+
+  /* tracker grids */
+  .tracker { border-collapse: separate; border-spacing: 0; font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .tracker th { font-weight: 500; color: var(--text-dim); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; padding: 4px 6px; text-align: left; border-bottom: 1px solid var(--line-soft); }
+  .tracker td { padding: 0; border-bottom: 1px solid var(--line-soft); }
+  .tracker td.step { padding: 0 8px; color: var(--text-dim); width: 34px; }
+  .tracker td.step.beat { color: var(--text-mute); }
+  .tracker .cell { width: 100%; min-width: 46px; height: 24px; background: transparent; border: 0; border-left: 1px solid var(--line-soft); text-align: left; padding: 0 6px; color: var(--text); font: inherit; }
+  .tracker .cell.blank { color: var(--text-dim); }
+  .tracker .cell:hover { background: var(--raised); }
+  .tracker .cell:focus-visible { outline-offset: -2px; }
+  .tracker .cell.ghost { color: var(--text-dim); font-style: normal; cursor: default; }
+  .tracker tr.play td { background: rgba(201,68,95,.16); }
+  .tracker tr.play td.step { color: var(--accent-hi); }
+  .tracker .ch-head { border-left: 1px solid var(--line-soft); color: var(--c); font-family: var(--pixel); font-size: 10px; letter-spacing: 0; text-transform: none; }
+  .tracker input.cell { cursor: text; }
+  .end-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+
+  /* wave editor */
+  .wavegrid { display: grid; grid-template-columns: repeat(32, 1fr); gap: 1px; background: var(--lcd); border: 1px solid #0a0e0b; padding: 6px; height: 200px; cursor: crosshair; user-select: none; touch-action: none; }
+  .wavegrid .col { position: relative; background: transparent; }
+  .wavegrid .col::before { content: ""; position: absolute; left: 0; right: 0; top: 0; bottom: 0; background: repeating-linear-gradient(to top, transparent 0, transparent calc(100% / 16 - 1px), var(--lcd-grid) calc(100% / 16 - 1px), var(--lcd-grid) calc(100% / 16)); }
+  .wavegrid .col i { position: absolute; left: 1px; right: 1px; bottom: 0; background: var(--wav); opacity: .9; height: calc(var(--v) / 16 * 100%); }
+  .frames { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+  .frames button { width: 40px; height: 30px; background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 3px; font-family: var(--mono); font-size: 11px; color: var(--text-mute); }
+  .frames button[aria-pressed="true"] { border-color: var(--wav); color: var(--wav); }
+  .frames button.empty { color: var(--text-dim); border-style: dashed; }
+
+  /* kits */
+  .samples li button { font-family: var(--mono); }
+
+  /* phrases */
+  .phrase-tools { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+  .chain { display: grid; grid-template-columns: 60px repeat(8, 1fr); gap: 2px; margin-bottom: 12px; font-family: var(--mono); font-size: 11px; }
+  .chain .lbl { color: var(--text-dim); padding: 3px 0; }
+  .chain .bar-h { color: var(--text-dim); text-align: center; padding: 3px 0; }
+  .chain button { background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 3px; padding: 3px; color: var(--text-mute); font-family: var(--mono); }
+  .chain button.cur { border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
+  .chain button.empty { color: var(--text-dim); border-style: dashed; }
+  .popover { position: absolute; z-index: 20; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 10px 30px rgba(0,0,0,.5); padding: 6px; display: grid; grid-template-columns: 1fr 1fr; gap: 2px; width: 320px; }
+  .popover button { background: transparent; border: 0; border-radius: 3px; text-align: left; padding: 4px 8px; color: var(--text-mute); font-size: 12px; display: flex; gap: 8px; align-items: baseline; }
+  .popover button:hover { background: var(--raised); color: var(--text); }
+  .popover button b { font-family: var(--mono); color: var(--text); width: 14px; }
+  .popover button small { color: var(--text-dim); margin-left: auto; font-family: var(--mono); font-size: 10px; }
+  .popover .clear { grid-column: 1 / -1; border-top: 1px solid var(--line-soft); margin-top: 4px; color: var(--accent-hi); }
+
+  /* link */
+  .link-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .slots { display: grid; gap: 6px; }
+  .slot-row { display: grid; grid-template-columns: 44px 1fr auto; align-items: center; gap: 10px; padding: 6px 8px; background: var(--well); border: 1px solid var(--line-soft); border-radius: 4px; }
+  .slot-row .n { font-family: var(--pixel); font-size: 11px; color: var(--c); }
+  figure { margin: 0; }
+  figure svg { width: 100%; height: auto; display: block; color: var(--text-mute); }
+  figcaption { font-size: 11.5px; color: var(--text-dim); margin-top: 6px; }
+
+  /* hardware */
+  .hw-models { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+  .hw-models .card { cursor: pointer; }
+  .hw-models .card[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .hw-models h4 { margin: 0 0 6px; font-family: var(--pixel); font-size: 12px; }
+  .hw-models p { margin: 0; color: var(--text-mute); font-size: 12px; }
+  .toggle-list { display: grid; gap: 8px; }
+  .toggle-row { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; padding: 8px 10px; background: var(--well); border: 1px solid var(--line-soft); border-radius: 4px; }
+  .toggle-row .t { font-weight: 500; }
+  .toggle-row .d { color: var(--text-mute); font-size: 12px; margin-top: 2px; }
+  .toggle-row.off { opacity: .45; }
+  .toggle-row .fact { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); margin-top: 3px; }
+
+  /* status */
+  .status { display: flex; align-items: center; gap: 16px; padding: 6px 14px; background: var(--panel-2); border-top: 1px solid var(--line-soft); font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+  .status b { color: var(--text-mute); font-weight: 500; }
+
+  /* voice window */
+  .voice-wrap { margin-top: 26px; }
+  .voice-wrap .lede { margin-bottom: 10px; }
+  .voice .bar { height: 46px; }
+  .voice .body { padding: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .voice .body .full { grid-column: 1 / -1; }
+  .voice .params { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px 6px; }
+  .audio-note { background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 4px; padding: 6px 10px; font-size: 12px; }
+  .audio-note b { color: var(--text); }
+
+  @media (prefers-reduced-motion: reduce) { .switch input::after { transition: none; } }
+</style>
+
+<div class="page">
+  <p class="lede"><strong>ChipBoy interface mockup</strong> <span>Everything is clickable and changes what you see; nothing makes sound yet. Values are examples.</span> <span class="tag">docs/mockups/chipboy_mockup.html · workshop draft</span></p>
+
+  <div class="stage">
+  <div class="win main" id="main">
+    <header class="bar">
+      <div class="wordmark">ChipBoy <small>DMG APU · 4 voices</small></div>
+      <div class="group" title="Which real machine is emulated. RAW is the clean digital mix of a gaming emulator.">
+        <span class="label">Model</span>
+        <div class="seg model" id="modelSeg" role="group" aria-label="Model">
+          <button aria-pressed="true" data-model="DMG">DMG</button>
+          <button aria-pressed="false" data-model="CGB">CGB</button>
+          <button aria-pressed="false" data-model="RAW">RAW</button>
+        </div>
+      </div>
+      <div class="group">
+        <span class="label">Bank</span>
+        <button class="btn small" id="bankPrev" title="Previous bank">‹</button>
+        <span class="mono" id="bankName">Factory 01</span>
+        <button class="btn small" id="bankNext" title="Next bank">›</button>
+      </div>
+      <div class="spacer"></div>
+      <span class="pill ok" id="stockBadge" title="STOCK: every audible setting is something a real unit does. MODIFIED: a departure in the Hardware tab is on.">STOCK</span>
+      <button class="btn" id="videoBtn" title="Open the visualizer window: the five scopes, no chrome, made for screen capture" aria-pressed="false">Visualizer</button>
+      <button class="btn" id="hexBtn" title="Show values in hex, the LSDj habit. Display only." aria-pressed="false">Hex</button>
+      <button class="btn small" title="Settings: scaling, MIDI input (standalone), tick source">⚙</button>
+    </header>
+
+    <section class="mixer" id="mixer"></section>
+
+    <nav class="tabs" id="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-tab="instrument">Instrument</button>
+      <button role="tab" aria-selected="false" data-tab="tables">Tables</button>
+      <button role="tab" aria-selected="false" data-tab="waves">Waves</button>
+      <button role="tab" aria-selected="false" data-tab="kits">Kits</button>
+      <button role="tab" aria-selected="false" data-tab="phrases">Phrases</button>
+      <button role="tab" aria-selected="false" data-tab="link">Link</button>
+      <button role="tab" aria-selected="false" data-tab="hardware">Hardware</button>
+      <span class="ctx" id="ctx"></span>
+    </nav>
+
+    <section class="editor">
+      <!-- Instrument -->
+      <div class="panel active" data-panel="instrument">
+        <div class="cols bank">
+          <div class="list">
+            <header><span>Instruments · 128 slots</span><span><button class="btn small" title="New instrument in the first empty slot">New</button> <button class="btn small" title="Duplicate">Dup</button></span></header>
+            <ul id="instList"></ul>
+          </div>
+          <div id="instEditor"></div>
+        </div>
+      </div>
+
+      <!-- Tables -->
+      <div class="panel" data-panel="tables">
+        <div class="cols bank">
+          <div class="list">
+            <header><span>Tables · 64 slots</span><button class="btn small">New</button></header>
+            <ul id="tableList"></ul>
+          </div>
+          <div>
+            <div class="row" style="margin-bottom:10px">
+              <input class="name-input" id="tableName" value="Arp minor" aria-label="Table name">
+              <span class="mute" id="tableUsed">Used by 3 instruments — editing changes all of them.</span>
+              <span class="spacer"></span>
+              <span class="label">Step rate</span><span class="mono">1 per tick (24/beat)</span>
+            </div>
+            <table class="tracker" id="tableGrid"></table>
+            <div class="end-row">
+              <span class="label">At the end</span>
+              <div class="seg mini" id="tableEnd" role="group" aria-label="Table end behaviour">
+                <button aria-pressed="true">Loop</button><button aria-pressed="false">Hop to step</button><button aria-pressed="false">Stop and hold</button>
+              </div>
+              <div class="stepper" id="hopStep" hidden><button aria-label="decrease">−</button><output>1</output><button aria-label="increase">+</button></div>
+              <span class="spacer"></span>
+              <p class="help">Type a value to set it, Backspace to blank it. Volume 0–15, transpose ±60 semitones, commands from the palette.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Waves -->
+      <div class="panel" data-panel="waves">
+        <div class="cols bank">
+          <div class="list">
+            <header><span>Waves · 64 slots</span><button class="btn small">New</button></header>
+            <ul id="waveList"></ul>
+          </div>
+          <div>
+            <div class="row" style="margin-bottom:10px">
+              <input class="name-input" id="waveName" value="Triangle → saw" aria-label="Wave name">
+              <span class="label">Frame</span><span class="mono" id="frameLabel">3 of 6</span>
+              <span class="spacer"></span>
+              <span class="label">Shape</span>
+              <div class="seg mini" id="shapes" role="group" aria-label="Generate a shape">
+                <button data-shape="sine">Sine</button><button data-shape="tri">Triangle</button><button data-shape="saw">Saw</button><button data-shape="pulse">Pulse</button>
+              </div>
+              <button class="btn small" id="interp" title="Interpolate the frames between the two selected ones">Interpolate</button>
+            </div>
+            <div class="wavegrid" id="waveGrid" aria-label="32 samples by 16 levels, draw with the mouse"></div>
+            <div class="frames" id="frames"></div>
+            <p class="help" style="margin-top:10px">Draw with the mouse. Each frame is one load of wave RAM — 32 samples, 16 levels, quantised on creation so what you see is what plays. <b>On a DMG a frame change costs a click</b> (DAC off, write, re-trigger); on a CGB it does not.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Kits -->
+      <div class="panel" data-panel="kits">
+        <div class="cols bank">
+          <div class="list">
+            <header><span>Kits · 32 slots</span><button class="btn small">Import…</button></header>
+            <ul id="kitList"></ul>
+          </div>
+          <div class="groups">
+            <div class="card">
+              <h3>Samples · note map</h3>
+              <div class="list samples"><ul id="sampleList"></ul></div>
+            </div>
+            <div class="card">
+              <h3>Selected sample</h3>
+              <div class="grid-fields" id="kitFields"></div>
+              <div class="scope" style="height:70px;margin-top:12px"><canvas id="kitPreview" width="420" height="70"></canvas></div>
+              <p class="help" style="margin-top:8px">The preview is the 4-bit result, not the source file. Playing a sample an octave up plays it twice as fast — one register does both.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Phrases -->
+      <div class="panel" data-panel="phrases">
+        <div class="phrase-tools">
+          <button class="btn primary" id="playBtn" title="Mock transport. In the plugin, the host's transport drives this.">▶ Play</button>
+          <span class="mono" id="pos">1.1.1</span>
+          <span class="label">Steps / bar</span>
+          <div class="seg mini" role="group" aria-label="Steps per bar"><button aria-pressed="false">8</button><button aria-pressed="true">16</button><button aria-pressed="false">32</button></div>
+          <span class="label">Groove</span>
+          <select class="sel" id="groove" aria-label="Groove, ticks per step">
+            <option>6 / 6 — straight</option><option>7 / 5 — light swing</option><option>8 / 4 — heavy swing</option><option>5 / 7 — reverse</option>
+          </select>
+          <span class="spacer"></span>
+          <p class="help">Notes come from the piano roll (shown greyed). Commands fire on their step and latch for the notes that follow — LSDj's effect column with the DAW as the sequencer.</p>
+        </div>
+        <div class="chain" id="chain"></div>
+        <div style="overflow-x:auto"><table class="tracker" id="phraseGrid"></table></div>
+      </div>
+
+      <!-- Link -->
+      <div class="panel" data-panel="link">
+        <div class="link-cols">
+          <div>
+            <div class="card" style="margin-bottom:12px">
+              <h3>This instance</h3>
+              <div class="row" style="margin-bottom:10px">
+                <input class="name-input" id="instName" value="ChipBoy 1" aria-label="Instance name">
+                <span class="mono dim">7f2a…c91e</span>
+                <span class="pill ok">2 voices linked</span>
+              </div>
+              <div class="slots" id="slots"></div>
+            </div>
+            <div class="card">
+              <h3>Voice plugins in this session</h3>
+              <div class="slots" id="voices"></div>
+            </div>
+          </div>
+          <div class="card">
+            <h3>How the link works</h3>
+            <figure>
+              <svg viewBox="0 0 520 300" role="img" aria-label="Voice plugins on their own tracks send notes and parameters through shared memory to the ChipBoy instance on track 1, which alone outputs audio; a display-only return path carries scopes back.">
+                <defs>
+                  <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
+                  <marker id="arrDim" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor" opacity=".5"/></marker>
+                </defs>
+                <g font-family="IBM Plex Sans, system-ui, sans-serif" font-size="11.5" fill="currentColor">
+                  <!-- tracks -->
+                  <rect x="10" y="20" width="150" height="46" rx="4" fill="none" stroke="currentColor"/>
+                  <text x="20" y="38" font-weight="600">Track 2 · Bass</text><text x="20" y="54" opacity=".75">ChipBoy Voice → PU2</text>
+                  <rect x="10" y="84" width="150" height="46" rx="4" fill="none" stroke="currentColor"/>
+                  <text x="20" y="102" font-weight="600">Track 3 · Drums</text><text x="20" y="118" opacity=".75">ChipBoy Voice → NOI</text>
+                  <rect x="10" y="148" width="150" height="46" rx="4" fill="none" stroke="currentColor" stroke-dasharray="4 3"/>
+                  <text x="20" y="166" font-weight="600">Track 1 · ChipBoy</text><text x="20" y="182" opacity=".75">MIDI ch 3 → WAV, omni → PU1</text>
+                  <!-- shared memory -->
+                  <rect x="212" y="52" width="96" height="60" rx="4" fill="none" stroke="currentColor"/>
+                  <text x="260" y="78" text-anchor="middle" font-weight="600">shared</text><text x="260" y="94" text-anchor="middle" font-weight="600">memory</text>
+                  <line x1="160" y1="43" x2="210" y2="70" stroke="currentColor" marker-end="url(#arr)"/>
+                  <line x1="160" y1="107" x2="210" y2="94" stroke="currentColor" marker-end="url(#arr)"/>
+                  <text x="176" y="40" font-size="10" opacity=".8">notes + params</text>
+                  <text x="176" y="122" font-size="10" opacity=".8">one block late</text>
+                  <!-- main -->
+                  <rect x="360" y="30" width="150" height="104" rx="4" fill="none" stroke="#c9445f" stroke-width="1.5"/>
+                  <text x="435" y="52" text-anchor="middle" font-weight="600" fill="#e0577a">ChipBoy</text>
+                  <text x="435" y="70" text-anchor="middle" opacity=".8">APU · bank</text>
+                  <text x="435" y="86" text-anchor="middle" opacity=".8">analog stage</text>
+                  <text x="435" y="102" text-anchor="middle" opacity=".8">one mixer, one cap</text>
+                  <line x1="308" y1="82" x2="358" y2="82" stroke="currentColor" marker-end="url(#arr)"/>
+                  <line x1="160" y1="171" x2="435" y2="171" stroke="currentColor"/>
+                  <line x1="435" y1="171" x2="435" y2="136" stroke="currentColor" marker-end="url(#arr)"/>
+                  <text x="240" y="167" font-size="10" opacity=".8">MIDI on its own track, no link needed</text>
+                  <!-- audio out -->
+                  <line x1="435" y1="30" x2="435" y2="12" stroke="#c9445f" stroke-width="1.5" marker-end="url(#arr)"/>
+                  <text x="447" y="16" font-size="10" fill="#e0577a">stereo out — the only audio</text>
+                  <!-- return path -->
+                  <path d="M360 120 C 300 150, 240 150, 168 140" fill="none" stroke="currentColor" stroke-dasharray="3 3" opacity=".6" marker-end="url(#arrDim)"/>
+                  <text x="196" y="148" font-size="10" opacity=".6">scope + registers, display only</text>
+                  <!-- legend -->
+                  <text x="10" y="232" font-size="10.5" opacity=".8">A Voice claims one channel of one instance by UUID and keeps it across reloads.</text>
+                  <text x="10" y="248" font-size="10.5" opacity=".8">Two Voices claiming the same channel: the first keeps it, the second shows “channel busy”.</text>
+                  <text x="10" y="264" font-size="10.5" opacity=".8">Voice tracks report one block of latency so the host lines everything up.</text>
+                </g>
+              </svg>
+              <figcaption>Notes and parameters flow one way; audio leaves from one place.</figcaption>
+            </figure>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hardware -->
+      <div class="panel" data-panel="hardware">
+        <div class="hw-models" id="hwModels">
+          <button class="card" data-model="DMG" aria-pressed="true"><h4 style="color:var(--wav)">DMG</h4><p>The brick. Wave RAM locked while playing, trigger corruption, DACs that hold. Coupling at 25 Hz — the fat one. Measured 2026-09-07.</p></button>
+          <button class="card" data-model="CGB" aria-pressed="false"><h4 style="color:#c8a2ff">CGB</h4><p>Live wave RAM, no corruption bug. Coupling at 338 Hz — thin, with a louder LCD line. Measured on one unit; its board revision matters.</p></button>
+          <button class="card" data-model="RAW" aria-pressed="false"><h4 style="color:var(--text-mute)">RAW</h4><p>The DMG chip with no analog stage: the clean digital mix a gaming emulator makes. DAC-off is silence, no coupling, no noise, no DC clicks.</p></button>
+        </div>
+        <div class="groups">
+          <div class="card">
+            <h3>Hardware states — legal on a real unit</h3>
+            <div class="toggle-list" id="hwStates"></div>
+          </div>
+          <div class="card">
+            <h3>Departures — light the MODIFIED badge</h3>
+            <div class="toggle-list" id="hwDepartures"></div>
+            <h3 style="margin-top:14px">Display</h3>
+            <div class="toggle-list" id="hwDisplay"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="status">
+      <span id="stModel"><b>DMG</b> · 48 kHz · latency 42 samples (0.9 ms)</span>
+      <span>tick <b>host 24/beat</b></span>
+      <span id="stLink">link <b>2 voices</b></span>
+      <span class="spacer"></span>
+      <span>every value is a register</span>
+    </footer>
+  </div>
+  </div>
+
+  <div class="voice-wrap">
+    <p class="lede"><strong>ChipBoy Voice</strong> <span>the per-track plugin. Same bank, same rules; it just lives where the piano roll is.</span> <button class="btn small" id="voiceToggle" aria-pressed="true">Hide window</button></p>
+    <div class="stage">
+    <div class="win voice" id="voice">
+      <header class="bar">
+        <div class="wordmark">Voice <small>ChipBoy</small></div>
+        <span class="pill ok" id="voiceStatus">Linked · ChipBoy 1 · PU2</span>
+        <div class="spacer"></div>
+        <select class="sel" aria-label="Instance"><option>ChipBoy 1</option><option>ChipBoy 2</option></select>
+        <select class="sel" id="voiceChan" aria-label="Channel"><option>PU1 · taken by MIDI</option><option selected>PU2</option><option>WAV · taken by MIDI</option><option>NOI · Drums</option></select>
+      </header>
+      <div class="body">
+        <div class="audio-note full">Audio comes out of the <b>ChipBoy 1</b> track. This track is silent on purpose.</div>
+        <div>
+          <div class="scope" style="height:96px"><canvas id="voiceScope" width="256" height="96"></canvas></div>
+          <div class="regs" id="voiceRegs" style="margin-top:6px"></div>
+        </div>
+        <div>
+          <div class="field" style="margin-bottom:8px"><span class="label">Instrument</span>
+            <div class="row"><select class="sel" id="voiceInst" style="flex:1"></select>
+              <div class="seg mini" role="group" aria-label="Instrument source"><button aria-pressed="true" title="The bank slot in the linked instance. Editing it changes every channel that uses it.">Linked</button><button aria-pressed="false" title="A private copy in this track's state, pushed to the instance on connect.">Local</button></div>
+            </div></div>
+          <div class="row"><button class="btn small" title="Copy the local instrument into the bank slot">Push to slot</button><button class="btn small" title="Copy the bank slot into the local instrument">Pull from slot</button><button class="btn small primary" id="openEditor">Open editor ↗</button></div>
+        </div>
+        <div class="full params" id="voiceParams"></div>
+      </div>
+      <footer class="status"><span>waiting for host transport</span><span class="spacer"></span><span>latency <b>1 block</b>, reported</span></footer>
+    </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ------------------------------------------------------------------ data */
+const CH = [
+  { id: 'pu1', name: 'PU1', color: 'var(--pu1)', hex: '#5ec8ff', type: 'pulse', source: 'Omni', inst: 2, table: 1, pan: 'LR', level: 12, env: 3, duty: 2, note: 69 },
+  { id: 'pu2', name: 'PU2', color: 'var(--pu2)', hex: '#ffb340', type: 'pulse', source: 'Voice · Bass', inst: 5, table: 0, pan: 'LR', level: 9, env: 2, duty: 1, note: 57 },
+  { id: 'wav', name: 'WAV', color: 'var(--wav)', hex: '#86e28e', type: 'wave', source: 'MIDI 3', inst: 8, table: 0, pan: 'LR', vol: 3, frame: 3, note: 45 },
+  { id: 'noi', name: 'NOI', color: 'var(--noi)', hex: '#ff6f91', type: 'noise', source: 'Voice · Drums', inst: 12, table: 3, pan: 'LR', level: 15, env: 1, width: 15, note: 36 },
+];
+CH.forEach(c => { c.mute = false; c.solo = false; c.amp = 1; c.periods = 2; c.on = false; });
+
+const INSTS = [
+  ['Init pulse', 'pulse'], ['Lead square', 'pulse'], ['Lead 12.5 vib', 'pulse'], ['Pluck 25', 'pulse'], ['Chord arp', 'pulse'],
+  ['Bass 07', 'pulse'], ['Sweep fx', 'pulse'], ['Tri bass', 'wave'], ['Triangle → saw', 'wave'], ['Organ frames', 'wave'],
+  ['Kit 909-ish', 'kit'], ['Hat closed', 'noise'], ['Kick noise', 'noise'], ['Snare 7-bit', 'noise'], ['Crash', 'noise'],
+].map(([name, type], i) => ({
+  slot: i + 1, name, type,
+  duty: [2, 2, 0, 1, 2, 1, 2][i] ?? 2, vol: 12 + (i % 4), dir: i === 6 ? 'up' : 'down', rate: 1 + (i % 7),
+  length: 'off', table: [0, 1, 1, 0, 2, 0, 0, 0, 0, 0, 0, 3, 3, 3, 0][i], pan: 'both',
+  vibShape: 'triangle', vibSpeed: 4, vibDepth: [0, 0, 6, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0][i], vibDelay: 8,
+  transpose: true, noteOff: type === 'kit' ? 'ignore' : 'kill', retrig: 'retrigger',
+  sweepRate: i === 6 ? 3 : 0, sweepDir: 'down', sweepShift: i === 6 ? 2 : 0,
+  wave: 2, frameAdv: 4, frameLoop: 'loop', wvol: 3,
+  width: i === 13 ? 7 : 15, pitchMode: 'map', shift: 5, divisor: 1, nsweep: 0,
+}));
+const TABLES = [['Arp minor', 3], ['Arp major', 2], ['Vol fade', 1], ['Drum hit', 3], ['Kick pitch', 0], ['Slide up', 0]].map(([n, u], i) => ({ slot: i + 1, name: n, used: u,
+  rows: Array.from({ length: 16 }, (_, r) => ({ vol: i === 2 ? Math.max(0, 15 - r) : '', trn: i === 0 ? [0, 3, 7, 12][r % 4] : i === 1 ? [0, 4, 7, 12][r % 4] : i === 3 ? (r < 3 ? 12 - r * 6 : '') : '', c1: i === 3 && r === 0 ? 'S -3' : i === 5 && r === 0 ? 'L 8' : '', c2: i === 4 && r === 0 ? 'P -40' : '' })) }));
+const WAVES = [['Triangle', 1], ['Triangle → saw', 6], ['Organ', 4], ['Square-ish', 1], ['Bass sine', 1]].map(([n, f], i) => ({ slot: i + 1, name: n, frames: f }));
+const KITS = [['909-ish', 6], ['Lo-fi breaks', 12], ['Vox bits', 4]].map(([n, s], i) => ({ slot: i + 1, name: n, samples: s }));
+const SAMPLES = ['KICK', 'SNAR', 'CHAT', 'OHAT', 'CLAP', 'RIDE'].map((n, i) => ({ name: n, note: 36 + i, len: [0.31, 0.22, 0.08, 0.30, 0.15, 0.62][i] }));
+const CMDS = [
+  ['A', 'Envelope', 'vol,rate,dir'], ['C', 'Chord', 'a,b semitones'], ['D', 'Delay', 'ticks 0–15'], ['F', 'Frame', '1–16'], ['H', 'Hop', 'step 1–16'],
+  ['K', 'Kill', 'after ticks'], ['L', 'Slide', 'rate 0–15'], ['M', 'Master vol', 'L,R 0–7'], ['O', 'Pan', 'off/L/R/LR'], ['P', 'Pitch offset', '±127 period'],
+  ['R', 'Retrigger', 'every N ticks'], ['S', 'Sweep / shift', 'signed'], ['V', 'Vibrato', 'speed,depth'], ['W', 'Wave', '1–64'], ['Z', 'Random arg', 'for the last cmd'],
+];
+const CMD_DEFAULT = { A: '12,3,↓', C: '3,7', D: '3', F: '2', H: '1', K: '4', L: '8', M: '5,5', O: 'L', P: '-12', R: '3', S: '-2', V: '4,6', W: '2', Z: '15' };
+
+const state = {
+  model: 'DMG', tab: 'instrument', sel: 0, hex: false, bank: 0,
+  master: { L: 7, R: 7, noise: true, trim: -6 },
+  hw: { lcd: true, bassMod: 'stock', edges: false, tame: false, tameMs: 2, soften: false, trace: 'digital', periods: 2 },
+  playing: false, step: 0, bar: 0,
+  curTable: 0, curWave: 1, curFrame: 2, curKit: 0, curSample: 0,
+};
+const BANKS = ['Factory 01', 'Factory 02 — LSDj-ish', 'My bank'];
+
+// Wave frames: 32 nibbles each; a triangle morphing into a saw over 6 frames.
+const frameData = Array.from({ length: 6 }, (_, f) => Array.from({ length: 32 }, (_, i) => {
+  const tri = i < 16 ? i : 31 - i; const saw = Math.floor(i / 2);
+  return clamp(Math.round(tri * (1 - f / 5) + saw * (f / 5)), 0, 15);
+}));
+
+const phraseCells = {}; // key: `${ch}:${step}:${col}` -> text
+const phraseNotes = { 0: ['A4', '', 'C5', '', 'E5', '', 'C5', '', 'A4', '', 'G4', '', 'E4', '', '', ''], 1: ['A2', '', '', '', 'A2', '', '', '', 'F2', '', '', '', 'G2', '', '', ''], 2: ['A1', '', '', '', '', '', '', '', 'F1', '', '', '', 'G1', '', '', ''], 3: ['C1', 'F#1', 'D1', 'F#1', 'C1', 'F#1', 'D1', 'F#1', 'C1', 'F#1', 'D1', 'F#1', 'C1', 'F#1', 'D1', 'A#1'] };
+Object.assign(phraseCells, { '0:0:ins': '3', '0:0:tbl': '1', '0:4:cmd1': 'V 4,6', '0:8:cmd1': 'R 3', '1:0:ins': '6', '1:0:cmd1': 'L 8', '1:8:cmd2': 'O L', '2:0:ins': '9', '2:0:cmd1': 'F 2', '2:8:cmd1': 'W 3', '3:0:ins': '13', '3:0:cmd1': 'S -2', '3:12:cmd1': 'K 2', '3:15:ins': '14' });
+
+/* ------------------------------------------------------------ helpers */
+const fmt = (v, digits = 2) => state.hex ? v.toString(16).toUpperCase().padStart(digits, '0') : String(v);
+const hz = n => 440 * Math.pow(2, (n - 69) / 12);
+const period = n => clamp(Math.round(2048 - 131072 / hz(n)), 0, 2047);
+const noteName = n => ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'][n % 12] + (Math.floor(n / 12) - 1);
+const h2 = v => v.toString(16).toUpperCase().padStart(2, '0');
+
+function regsFor(c) {
+  const f = period(c.note);
+  if (c.type === 'pulse') {
+    const nr1 = (c.duty << 6) | 0x00, nr2 = (c.level << 4) | (c.env & 7), nr3 = f & 0xFF, nr4 = 0x80 | (f >> 8);
+    const base = c.id === 'pu1' ? 1 : 2;
+    return `<b>NR${base}1</b> ${h2(nr1)} · <b>NR${base}2</b> ${h2(nr2)} · <b>NR${base}3</b> ${h2(nr3)} · <b>NR${base}4</b> ${h2(nr4)}`;
+  }
+  if (c.type === 'wave') return `<b>NR30</b> 80 · <b>NR32</b> ${h2(([0, 3, 2, 1][c.vol]) << 5)} · <b>NR33</b> ${h2(f & 0xFF)} · <b>NR34</b> ${h2(0x80 | (f >> 8))}`;
+  const nr3 = (c.shift ?? 4) << 4 | (c.width === 7 ? 8 : 0) | (c.divisor ?? 1);
+  return `<b>NR42</b> ${h2((c.level << 4) | (c.env & 7))} · <b>NR43</b> ${h2(nr3)} · <b>NR44</b> 80`;
+}
+function couplingTau() {
+  if (state.model === 'RAW') return 0;
+  if (state.model === 'DMG') return 0.00644;
+  return 0.000471 * ({ stock: 1, x10: 10, x47: 47 })[state.hw.bassMod];
+}
+
+/* ------------------------------------------------------------- scopes */
+// Period-locked: `periods` cycles across the width, from the channel's own frequency register.
+function drawScope(cv, c, opts = {}) {
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#0b100c'; ctx.fillRect(0, 0, W, H);
+  // 16-level grid: the DAC's own scale, not dB
+  ctx.strokeStyle = '#1a271c'; ctx.lineWidth = 1;
+  for (let i = 0; i <= 16; i += 4) { const y = 0.5 + Math.round((H - 8) * (1 - i / 16)) + 4; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  const periods = opts.periods ?? c.periods;
+  const N = 512;
+  const samples = new Float32Array(N);
+  const amp = c.on || state.playing ? c.amp : 1;
+  const lvl = c.type === 'wave' ? 15 : Math.round(c.level * amp);
+  const f = hz(c.note);
+  for (let i = 0; i < N; i++) {
+    const ph = (i / N) * periods; const t = ph - Math.floor(ph);
+    let v;
+    if (c.type === 'pulse') { const on = [0.125, 0.25, 0.5, 0.75][c.duty]; v = t < 1 - on ? 0 : lvl; }
+    else if (c.type === 'wave') { const fr = frameData[Math.min(c.frame - 1, frameData.length - 1)]; const s = fr[Math.floor(t * 32)]; v = [0, s, s >> 1, s >> 2][c.vol]; }
+    else { v = noiseBit(Math.floor(ph * (c.width === 7 ? 40 : 96))) ? Math.round(c.level * amp) : 0; }
+    samples[i] = v;
+  }
+  const digital = opts.trace ?? state.hw.trace;
+  const tau = couplingTau();
+  const analog = new Float32Array(N);
+  if (tau > 0) {
+    const dt = (periods / f) / N; const a = Math.exp(-dt / tau);
+    let y = 0, xp = samples[0] - 7.5;
+    // settle over one pass so the picture is periodic
+    for (let k = 0; k < 2; k++) for (let i = 0; i < N; i++) { const x = samples[i] - 7.5; y = a * y + x - xp; xp = x; if (k) analog[i] = y; }
+  }
+  const toY = v => 4 + (H - 8) * (1 - v / 16);
+  const line = (arr, color, width, offset) => {
+    ctx.beginPath(); ctx.lineWidth = width; ctx.strokeStyle = color; ctx.shadowColor = color; ctx.shadowBlur = opts.glow ?? 6;
+    for (let i = 0; i < N; i++) { const x = (i / (N - 1)) * W; const y = toY(arr[i] + offset); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); }
+    ctx.stroke(); ctx.shadowBlur = 0;
+  };
+  const color = opts.color ?? c.hex;
+  if (digital === 'digital' || digital === 'both' || tau === 0) line(samples, color, 1.5, 0);
+  if ((digital === 'analog' || digital === 'both') && tau > 0) line(analog, digital === 'both' ? '#ffffff' : color, 1.2, 7.5);
+  if (!(c.on || state.playing) && !opts.master) { ctx.fillStyle = 'rgba(11,16,12,.4)'; ctx.fillRect(0, 0, W, H); }
+}
+const lfsr = (() => { let s = 0x7fff; const bits = []; for (let i = 0; i < 4096; i++) { const b = (s ^ (s >> 1)) & 1; s = (s >> 1) | (b << 14); bits.push(s & 1 ? 0 : 1); } return bits; })();
+function noiseBit(i) { return lfsr[(i + Math.floor(noiseSeed)) % lfsr.length]; }
+let noiseSeed = 0;
+
+function drawMaster(cv) {
+  const ctx = cv.getContext('2d'); const W = cv.width, H = cv.height;
+  ctx.fillStyle = '#0b100c'; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = '#1a271c'; for (let i = 0; i <= 4; i++) { const y = 0.5 + Math.round(H * i / 4); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  const N = 400; const mix = new Float32Array(N);
+  const soloed = CH.some(c => c.solo);
+  const gain = (state.master.L + 1) / 8;
+  CH.forEach(c => {
+    if (c.mute || (soloed && !c.solo) || c.pan === 'off' || c.pan === 'R') return;
+    const amp = state.playing ? c.amp : 0.35; const f = hz(c.note); const T = 0.012;
+    for (let i = 0; i < N; i++) {
+      const t = (i / N) * T * f; const ph = t - Math.floor(t);
+      let v;
+      if (c.type === 'pulse') v = ph < 1 - [0.125, 0.25, 0.5, 0.75][c.duty] ? 0 : Math.round(c.level * amp);
+      else if (c.type === 'wave') { const s = frameData[Math.min(c.frame - 1, 5)][Math.floor(ph * 32)]; v = [0, s, s >> 1, s >> 2][c.vol]; }
+      else v = noiseBit(Math.floor(t * 4)) ? Math.round(c.level * amp) : 0;
+      mix[i] += (7.5 - v) / 7.5;   // inverting DAC, rail units
+    }
+  });
+  const tau = couplingTau(); const out = new Float32Array(N);
+  if (tau > 0) { const dt = 0.012 / N; const a = Math.exp(-dt / tau); let y = 0, xp = mix[0]; for (let k = 0; k < 2; k++) for (let i = 0; i < N; i++) { y = a * y + mix[i] - xp; xp = mix[i]; if (k) out[i] = y; } }
+  else out.set(mix);
+  ctx.beginPath(); ctx.strokeStyle = '#9bbc0f'; ctx.lineWidth = 1.4; ctx.shadowColor = '#9bbc0f'; ctx.shadowBlur = 6;
+  for (let i = 0; i < N; i++) { const x = (i / (N - 1)) * W; const y = H / 2 - (out[i] * gain) * (H / 2) / 4.2; if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); }
+  ctx.stroke(); ctx.shadowBlur = 0;
+}
+
+/* -------------------------------------------------------- mixer strips */
+function buildMixer() {
+  const root = $('#mixer'); root.innerHTML = '';
+  CH.forEach((c, i) => {
+    const el = document.createElement('div'); el.className = 'strip'; el.style.setProperty('--c', c.color); el.dataset.ch = i;
+    const src = c.source.startsWith('Voice') ? `<span class="pill ok" title="A ChipBoy Voice plugin on another track owns this channel">${c.source}</span>`
+      : `<select class="sel src" aria-label="Source" title="Where this voice's notes come from"><option ${c.source === 'Omni' ? 'selected' : ''}>Omni</option>${[1, 2, 3, 4, 5, 6, 7, 8].map(n => `<option ${c.source === 'MIDI ' + n ? 'selected' : ''}>MIDI ${n}</option>`).join('')}<option>Off</option></select>`;
+    const quick = c.type === 'pulse'
+      ? `${knob('Level', 'level', 0, 15, c.level, i, 'NRx2 bits 7–4: envelope start volume, 16 levels')}${knob('Env', 'env', 0, 7, c.env, i, 'NRx2 bits 2–0: envelope rate, 0 = off, 1–7 = n × 15.6 ms per step')}<div class="field"><span class="label">Duty</span><div class="seg mini duty" role="group">${['12', '25', '50', '75'].map((d, k) => `<button aria-pressed="${c.duty === k}" data-v="${k}" title="NRx1 bits 7–6">${d}</button>`).join('')}</div></div>`
+      : c.type === 'wave'
+        ? `<div class="field"><span class="label">Volume</span><div class="seg mini wvol" role="group">${['mute', '25', '50', '100'].map((d, k) => `<button aria-pressed="${c.vol === k}" data-v="${k}" title="NR32: two bits, no envelope on this channel">${d}</button>`).join('')}</div></div>${knob('Frame', 'frame', 1, 6, c.frame, i, 'Which of the wave\'s frames is loaded. On a DMG a change costs a click.')}`
+        : `${knob('Level', 'level', 0, 15, c.level, i, 'NR42 bits 7–4')}${knob('Env', 'env', 0, 7, c.env, i, 'NR42 bits 2–0')}<div class="field"><span class="label">LFSR</span><div class="seg mini width" role="group"><button aria-pressed="${c.width === 15}" data-v="15" title="NR43 bit 3 clear: 15-bit, noise">15</button><button aria-pressed="${c.width === 7}" data-v="7" title="NR43 bit 3 set: 7-bit, metallic">7</button></div></div>`;
+    el.innerHTML = `
+      <div class="head" title="Select this channel for the editors below"><span class="led" data-led></span><span class="name">${c.name}</span><span class="src">${src}</span></div>
+      <div class="scope" style="height:92px"><canvas width="220" height="92"></canvas>
+        <div class="seg mini zoom" role="group" aria-label="Periods shown">${[1, 2, 4, 8].map(p => `<button aria-pressed="${c.periods === p}" data-p="${p}">${p}</button>`).join('')}</div></div>
+      <div class="regs" data-regs title="The registers this channel is sitting on right now. Hex, because that is what they are.">${regsFor(c)}</div>
+      <div class="row" style="gap:6px"><select class="sel inst" aria-label="Instrument" style="flex:1;min-width:0">${INSTS.filter(x => (c.type === 'wave' ? ['wave', 'kit'] : [c.type]).includes(x.type)).map(x => `<option value="${x.slot}" ${x.slot === c.inst ? 'selected' : ''}>${fmt(x.slot)} ${x.name}</option>`).join('')}</select>
+        <select class="sel tbl" aria-label="Table" title="Table override for this channel; none = the instrument's own table" style="width:72px"><option value="0" ${c.table === 0 ? 'selected' : ''}>tbl –</option>${TABLES.map(t => `<option value="${t.slot}" ${t.slot === c.table ? 'selected' : ''}>tbl ${fmt(t.slot)}</option>`).join('')}</select></div>
+      <div class="quick">${quick}</div>
+      <div class="foot">
+        <div class="seg mini pan" role="group" aria-label="Pan (NR51)" title="NR51: off, left, both, right. There is no pan law.">${['off', 'L', 'LR', 'R'].map(p => `<button aria-pressed="${c.pan === p}" data-v="${p}">${p === 'off' ? '–' : p}</button>`).join('')}</div>
+        <span class="spacer"></span>
+        <button class="btn mute-btn ${c.mute ? 'on' : ''}" aria-pressed="${c.mute}" title="NR51 gate off. Pops like the hardware.">M</button>
+        <button class="btn solo-btn ${c.solo ? 'on' : ''}" aria-pressed="${c.solo}" title="Gates the other three off">S</button>
+      </div>`;
+    root.appendChild(el);
+    // wiring
+    el.querySelector('.head').addEventListener('click', () => select(i));
+    el.querySelectorAll('.zoom button').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); c.periods = +b.dataset.p; el.querySelectorAll('.zoom button').forEach(x => x.setAttribute('aria-pressed', x === b)); }));
+    el.querySelector('.src')?.addEventListener('change', e => { c.source = e.target.value; updateContext(); });
+    el.querySelector('.inst').addEventListener('change', e => { c.inst = +e.target.value; select(i); });
+    el.querySelector('.tbl').addEventListener('change', e => { c.table = +e.target.value; });
+    seg(el.querySelector('.duty'), v => { c.duty = +v; refreshRegs(); });
+    seg(el.querySelector('.wvol'), v => { c.vol = +v; refreshRegs(); });
+    seg(el.querySelector('.width'), v => { c.width = +v; refreshRegs(); });
+    seg(el.querySelector('.pan'), v => { c.pan = v; });
+    el.querySelector('.mute-btn').addEventListener('click', e => { c.mute = !c.mute; e.currentTarget.classList.toggle('on', c.mute); e.currentTarget.setAttribute('aria-pressed', c.mute); });
+    el.querySelector('.solo-btn').addEventListener('click', e => { c.solo = !c.solo; e.currentTarget.classList.toggle('on', c.solo); e.currentTarget.setAttribute('aria-pressed', c.solo); });
+    wireKnobs(el, c);
+  });
+  const m = document.createElement('div'); m.className = 'master';
+  m.innerHTML = `
+    <div class="head row" style="gap:7px"><span class="name">MASTER</span><span class="spacer"></span><span class="pill" id="modelPill">DMG</span></div>
+    <div class="scope" style="height:92px"><canvas id="masterScope" width="220" height="92"></canvas></div>
+    <div class="row" style="justify-content:space-between">
+      <div class="field"><span class="label">Vol L</span><div class="stepper" id="volL"><button aria-label="decrease">−</button><output>${state.master.L === 0 ? "0 (1/8)" : state.master.L}</output><button aria-label="increase">+</button></div></div>
+      <div class="field"><span class="label">Vol R</span><div class="stepper" id="volR"><button aria-label="decrease">−</button><output>${state.master.R === 0 ? "0 (1/8)" : state.master.R}</output><button aria-label="increase">+</button></div></div>
+    </div>
+    <label class="switch" title="The original switch. Hiss, the LCD line and the frame hum, together, as measured."><input type="checkbox" id="noiseSw" ${state.master.noise ? "checked" : ""}><span>Headphone Noise</span></label>
+    <div class="field" title="The one continuous control in the product: a fader after the analog stage, outside the chip"><span class="label">Output trim</span><div class="fader"><input type="range" id="trim" min="-40" max="6" step="0.5" value="${state.master.trim}" aria-label="Output trim in dB"><output id="trimOut">${state.master.trim < 0 ? "−" : state.master.trim > 0 ? "+" : ""}${Math.abs(state.master.trim).toFixed(1)} dB</output></div></div>`;
+  root.appendChild(m);
+  stepper($('#volL'), 0, 7, v => { state.master.L = v; }, v => v === 0 ? '0 (1/8)' : String(v), state.master.L);
+  stepper($('#volR'), 0, 7, v => { state.master.R = v; }, v => v === 0 ? '0 (1/8)' : String(v), state.master.R);
+  $('#noiseSw').addEventListener('change', e => { state.master.noise = e.target.checked; syncHw(); });
+  $('#trim').addEventListener('input', e => { state.master.trim = +e.target.value; $('#trimOut').textContent = (state.master.trim > 0 ? '+' : state.master.trim < 0 ? '−' : '') + Math.abs(state.master.trim).toFixed(1) + ' dB'; });
+  select(state.sel);
+}
+function knob(label, key, min, max, val, ch, tip) {
+  return `<div class="knob" tabindex="0" role="slider" aria-label="${label}" aria-valuemin="${min}" aria-valuemax="${max}" aria-valuenow="${val}" data-key="${key}" data-min="${min}" data-max="${max}" title="${tip}"><div class="dial"><div class="arc"></div></div><span class="val">${val}</span><span class="label">${label}</span></div>`;
+}
+function setKnob(el, v) {
+  const min = +el.dataset.min, max = +el.dataset.max; v = clamp(Math.round(v), min, max);
+  el.dataset.val = v; el.setAttribute('aria-valuenow', v);
+  const pct = (v - min) / (max - min); el.style.setProperty('--pct', pct); el.style.setProperty('--rot', `${-135 + pct * 270}deg`);
+  el.querySelector('.val').textContent = fmt(v);
+  return v;
+}
+function wireKnobs(root, target, onChange) {
+  root.querySelectorAll('.knob').forEach(el => {
+    const key = el.dataset.key; const apply = v => { const nv = setKnob(el, v); if (target) target[key] = nv; onChange?.(key, nv); refreshRegs(); };
+    setKnob(el, target ? target[key] : +el.getAttribute('aria-valuenow'));
+    let y0 = 0, v0 = 0;
+    el.addEventListener('pointerdown', e => { y0 = e.clientY; v0 = +el.dataset.val; el.setPointerCapture(e.pointerId); el.focus(); });
+    el.addEventListener('pointermove', e => { if (!el.hasPointerCapture(e.pointerId)) return; const range = +el.dataset.max - +el.dataset.min; apply(v0 + (y0 - e.clientY) / 120 * range); });
+    el.addEventListener('wheel', e => { e.preventDefault(); apply(+el.dataset.val - Math.sign(e.deltaY)); }, { passive: false });
+    el.addEventListener('keydown', e => { const d = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 }[e.key]; if (d) { e.preventDefault(); apply(+el.dataset.val + d); } });
+  });
+}
+function seg(el, fn) { if (!el) return; el.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { el.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b)); fn(b.dataset.v ?? b.textContent.trim(), b); })); }
+function stepper(el, min, max, fn, show = String, init) {
+  const out = el.querySelector('output'); let v = init ?? (parseInt(out.textContent, 10) || min);
+  const set = nv => { v = clamp(nv, min, max); out.textContent = show(v); fn(v); };
+  el.children[0].addEventListener('click', () => set(v - 1)); el.children[2].addEventListener('click', () => set(v + 1));
+  return set;
+}
+function refreshRegs() { $$('.strip').forEach((el, i) => { el.querySelector('[data-regs]').innerHTML = regsFor(CH[i]); }); $('#voiceRegs').innerHTML = regsFor(CH[1]); }
+function select(i) { state.sel = i; $$('.strip').forEach((el, k) => el.classList.toggle('selected', k === i)); updateContext(); buildInstrumentEditor(); }
+function updateContext() {
+  const c = CH[state.sel]; const inst = INSTS.find(x => x.slot === c.inst);
+  const ctx = $('#ctx');
+  const map = { instrument: `Editing <b>${c.name}</b> · instrument <b>${fmt(inst.slot)} ${inst.name}</b>`, tables: `Table <b>${fmt(TABLES[state.curTable].slot)} ${TABLES[state.curTable].name}</b>`, waves: `Wave <b>${fmt(WAVES[state.curWave].slot)} ${WAVES[state.curWave].name}</b>`, kits: `Kit <b>${fmt(KITS[state.curKit].slot)} ${KITS[state.curKit].name}</b>`, phrases: 'Commands per step, all four channels', link: 'Instance <b>ChipBoy 1</b>', hardware: `Model <b>${state.model}</b>` };
+  ctx.innerHTML = map[state.tab];
+}
+
+/* -------------------------------------------------- instrument editor */
+function buildInstList() {
+  const ul = $('#instList'); ul.innerHTML = INSTS.map(x => `<li><button aria-current="${x.slot === CH[state.sel].inst}" data-slot="${x.slot}"><span class="slot">${fmt(x.slot)}</span>${x.name}<span class="chip">${x.type}</span></button></li>`).join('') + `<li><button class="dim"><span class="slot">${fmt(16)}</span>— empty —</button></li>`;
+  ul.querySelectorAll('button[data-slot]').forEach(b => b.addEventListener('click', () => { const inst = INSTS.find(x => x.slot === +b.dataset.slot); const c = CH[state.sel]; if ((c.type === 'wave' ? ['wave', 'kit'] : [c.type]).includes(inst.type)) { c.inst = inst.slot; $$('.strip')[state.sel].querySelector('.inst').value = inst.slot; } buildInstrumentEditor(inst); }));
+}
+function buildInstrumentEditor(forced) {
+  const c = CH[state.sel]; const inst = forced ?? INSTS.find(x => x.slot === c.inst);
+  buildInstList(); $$('#instList button[data-slot]').forEach(b => b.setAttribute('aria-current', +b.dataset.slot === inst.slot));
+  const K = (label, key, min, max, tip) => knob(label, key, min, max, inst[key], null, tip);
+  const S = (label, key, opts, tip) => `<div class="field"><span class="label">${label}</span><div class="seg mini" data-key="${key}" role="group" title="${tip ?? ''}">${opts.map(o => `<button aria-pressed="${String(inst[key]) === String(o[0])}" data-v="${o[0]}">${o[1]}</button>`).join('')}</div></div>`;
+  const typeOpts = c.type === 'wave' ? [['wave', 'Wave'], ['kit', 'Kit']] : c.type === 'pulse' ? [['pulse', 'Pulse']] : [['noise', 'Noise']];
+  const envRate = inst.rate; const envMs = envRate ? (envRate * 15.625).toFixed(1) + ' ms/step' : 'off';
+  let sound = '';
+  if (inst.type === 'pulse') sound = `
+      ${S('Duty', 'duty', [[0, '12.5'], [1, '25'], [2, '50'], [3, '75']], 'NRx1 bits 7–6')}
+      <div class="field"><span class="label">Duty sequence</span><div class="row"><input class="name-input mono" style="width:150px" value="2 2 1 1 0 0 1 1" aria-label="Duty sequence, one value per tick, looped"><span class="dim" style="font-size:11px">per tick</span></div></div>
+      ${c.id === 'pu1' ? K('Sweep rate', 'sweepRate', 0, 7, 'NR10 bits 6–4 (PU1 only)') + S('Sweep dir', 'sweepDir', [['up', 'Up'], ['down', 'Down']], 'NR10 bit 3') + K('Sweep shift', 'sweepShift', 0, 7, 'NR10 bits 2–0') : '<div class="field"><span class="label">Sweep</span><span class="dim">PU1 only — inert here</span></div>'}`;
+  else if (inst.type === 'wave') sound = `
+      <div class="field"><span class="label">Wave</span><select class="sel">${WAVES.map(w => `<option ${w.slot === inst.wave ? 'selected' : ''}>${fmt(w.slot)} ${w.name} · ${w.frames} fr</option>`).join('')}</select></div>
+      ${K('Frame advance', 'frameAdv', 0, 15, 'Ticks per frame; 0 holds the frame')}
+      ${S('Frame loop', 'frameLoop', [['loop', 'Loop'], ['once', 'One-shot'], ['pingpong', 'Ping-pong']])}
+      ${S('Volume', 'wvol', [[0, 'mute'], [1, '25'], [2, '50'], [3, '100']], 'NR32 — two bits, no envelope on this channel')}`;
+  else if (inst.type === 'kit') sound = `
+      <div class="field"><span class="label">Kit</span><select class="sel">${KITS.map(k => `<option>${fmt(k.slot)} ${k.name} · ${k.samples} samples</option>`).join('')}</select></div>
+      ${S('Loop', 'frameLoop', [['once', 'One-shot'], ['loop', 'Loop'], ['from', 'Loop from point']])}
+      <div class="field"><span class="label">Rate</span><span class="mono">11 468 Hz <span class="dim">(period 1865)</span></span></div>`;
+  else sound = `
+      ${S('LFSR width', 'width', [[15, '15-bit noise'], [7, '7-bit metallic']], 'NR43 bit 3')}
+      ${S('Pitch', 'pitchMode', [['map', 'Note map'], ['manual', 'Manual']], 'The noise grid is coarse and non-monotonic; the map picks the nearest pair per note')}
+      ${K('Clock shift', 'shift', 0, 13, 'NR43 bits 7–4 (manual)')}${K('Divisor', 'divisor', 0, 7, 'NR43 bits 2–0 (manual)')}${K('Noise sweep', 'nsweep', -7, 7, 'Shift steps per tick, repeated NR43 writes')}`;
+  const env = inst.type === 'wave' || inst.type === 'kit' ? '' : `
+    <div class="card"><h3>Envelope <span class="dim" style="letter-spacing:0;text-transform:none;font-weight:400">— one NRx2 write, then the chip runs it</span></h3>
+      <div class="row" style="gap:14px;align-items:flex-start">
+        <div class="row" style="gap:10px">${K('Volume', 'vol', 0, 15, 'NRx2 bits 7–4')}${S('Direction', 'dir', [['down', '↓'], ['up', '↑'], ['off', 'off']], 'NRx2 bit 3')}${K('Rate', 'rate', 0, 7, 'NRx2 bits 2–0: 0 = hold, 1–7 = n × 15.6 ms per step. Seven rates and off is the whole palette.')}</div>
+        <div class="field" style="flex:1"><span class="label">Result · <span class="mono" id="envMs">${envMs}</span></span><div class="scope" style="height:64px"><canvas id="envPreview" width="360" height="64"></canvas></div></div>
+      </div></div>`;
+  $('#instEditor').innerHTML = `
+    <div class="row" style="margin-bottom:12px"><input class="name-input" value="${inst.name}" aria-label="Instrument name"><div class="seg mini" role="group">${typeOpts.map(o => `<button aria-pressed="${inst.type === o[0]}">${o[1]}</button>`).join('')}</div><span class="dim">slot ${fmt(inst.slot)} · used on ${CH.filter(x => x.inst === inst.slot).map(x => x.name).join(', ') || 'no channel'}</span><span class="spacer"></span><button class="btn small">Save to bank</button></div>
+    <div class="groups">
+      <div class="card wide"><h3>Sound</h3><div class="grid-fields">${sound}</div></div>
+      ${env}
+      <div class="card"><h3>Modulation</h3><div class="grid-fields">
+        ${S('Vibrato', 'vibShape', [['triangle', 'Tri'], ['square', 'Sq'], ['sawup', 'Saw↑'], ['sawdown', 'Saw↓']], 'Recomputed each tick as a signed period offset')}
+        ${K('Speed', 'vibSpeed', 1, 15, 'Ticks per step')}${K('Depth', 'vibDepth', 0, 15, 'In raw period units, not cents — wider at high pitch, which is the sound')}${K('Delay', 'vibDelay', 0, 255, 'Ticks before vibrato starts')}
+      </div></div>
+      <div class="card"><h3>Table &amp; note behaviour</h3><div class="grid-fields">
+        <div class="field"><span class="label">Table</span><select class="sel"><option ${inst.table === 0 ? 'selected' : ''}>none</option>${TABLES.map(t => `<option ${t.slot === inst.table ? 'selected' : ''}>${fmt(t.slot)} ${t.name}</option>`).join('')}</select></div>
+        ${S('Transpose', 'transpose', [[true, 'On'], [false, 'Off']], 'Whether the table\'s transpose column applies')}
+        ${S('Note-off', 'noteOff', [['kill', 'Kill'], ['release', 'Release'], ['ignore', 'Ignore']], 'Kill clears the DAC; on this hardware that holds the level and is silent until the next DAC-on')}
+        ${S('Retrigger', 'retrig', [['retrigger', 'Retrigger'], ['legato', 'Legato']], 'Legato writes only the period: no envelope restart, no click')}
+        <div class="field"><span class="label">Length</span><div class="row"><select class="sel"><option>off</option><option>1–64 ticks</option></select></div></div>
+        ${S('Pan', 'pan', [['off', '–'], ['L', 'L'], ['both', 'LR'], ['R', 'R']], 'NR51 default for this instrument')}
+      </div></div>
+    </div>`;
+  wireKnobs($('#instEditor'), inst, (key) => { if (key === 'rate' || key === 'vol') drawEnv(inst); });
+  $$('#instEditor .seg[data-key]').forEach(el => seg(el, v => { inst[el.dataset.key] = isNaN(+v) ? (v === 'true' ? true : v === 'false' ? false : v) : +v; if (el.dataset.key === 'dir') drawEnv(inst); }));
+  drawEnv(inst); updateContext();
+}
+function drawEnv(inst) {
+  const cv = $('#envPreview'); if (!cv) return; const ctx = cv.getContext('2d'); const W = cv.width, H = cv.height;
+  ctx.fillStyle = '#0b100c'; ctx.fillRect(0, 0, W, H); ctx.strokeStyle = '#1a271c';
+  for (let i = 0; i <= 15; i += 5) { const y = 0.5 + Math.round((H - 6) * (1 - i / 15)) + 3; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  const span = 1.0; // seconds shown
+  ctx.beginPath(); ctx.strokeStyle = CH[state.sel].hex; ctx.lineWidth = 1.5; ctx.shadowColor = ctx.strokeStyle; ctx.shadowBlur = 5;
+  let v = inst.vol; const stepS = inst.rate ? inst.rate * 0.015625 : Infinity; const dir = inst.dir === 'up' ? 1 : inst.dir === 'down' ? -1 : 0;
+  for (let x = 0; x < W; x++) { const t = x / W * span; const steps = inst.rate ? Math.floor(t / stepS) : 0; const lv = clamp(inst.vol + dir * steps, 0, 15); const y = 3 + (H - 6) * (1 - lv / 15); if (x) ctx.lineTo(x, y); else ctx.moveTo(x, y); v = lv; }
+  ctx.stroke(); ctx.shadowBlur = 0;
+  ctx.fillStyle = '#6f747a'; ctx.font = '10px IBM Plex Mono, monospace'; ctx.fillText('0', 2, H - 4); ctx.fillText('1 s', W - 22, H - 4);
+  const ms = $('#envMs'); if (ms) ms.textContent = inst.rate ? `${(inst.rate * 15.625).toFixed(1)} ms/step` : 'hold';
+}
+
+/* ------------------------------------------------------------ tables */
+function buildTables() {
+  const ul = $('#tableList'); ul.innerHTML = TABLES.map((t, i) => `<li><button aria-current="${i === state.curTable}" data-i="${i}"><span class="slot">${fmt(t.slot)}</span>${t.name}<span class="chip">${t.used} use${t.used === 1 ? '' : 's'}</span></button></li>`).join('');
+  ul.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { state.curTable = +b.dataset.i; buildTables(); }));
+  const t = TABLES[state.curTable]; $('#tableName').value = t.name; $('#tableUsed').textContent = t.used ? `Used by ${t.used} instrument${t.used === 1 ? '' : 's'} — editing changes all of them.` : 'Not used yet.';
+  const tbl = $('#tableGrid');
+  tbl.innerHTML = `<thead><tr><th>Step</th><th>Vol</th><th>Transpose</th><th>Cmd 1</th><th>Cmd 2</th><th class="dim" style="text-transform:none;letter-spacing:0">→ written as</th></tr></thead><tbody>` +
+    t.rows.map((r, i) => `<tr><td class="step ${i % 4 === 0 ? 'beat' : ''}">${fmt(i + 1)}</td>
+      <td><input class="cell ${r.vol === '' ? 'blank' : ''}" data-col="vol" data-row="${i}" value="${r.vol === '' ? '' : fmt(r.vol)}" placeholder="–" aria-label="Volume step ${i + 1}"></td>
+      <td><input class="cell ${r.trn === '' ? 'blank' : ''}" data-col="trn" data-row="${i}" value="${r.trn === '' ? '' : (r.trn > 0 ? '+' : '') + r.trn}" placeholder="–" aria-label="Transpose step ${i + 1}"></td>
+      <td><button class="cell cmd ${r.c1 ? '' : 'blank'}" data-col="c1" data-row="${i}">${r.c1 || '–'}</button></td>
+      <td><button class="cell cmd ${r.c2 ? '' : 'blank'}" data-col="c2" data-row="${i}">${r.c2 || '–'}</button></td>
+      <td class="dim mono" style="padding:0 8px;font-size:10.5px">${r.vol !== '' ? `NRx2 ← ${h2(r.vol << 4)}` : ''} ${r.trn !== '' ? ` period ${r.trn > 0 ? '+' : ''}${r.trn} st` : ''}</td></tr>`).join('') + '</tbody>';
+  tbl.querySelectorAll('input.cell').forEach(inp => {
+    inp.addEventListener('change', () => { const r = t.rows[+inp.dataset.row]; const v = inp.value.trim(); if (v === '') { r[inp.dataset.col] = ''; } else { const n = parseInt(v, state.hex && inp.dataset.col === 'vol' ? 16 : 10); r[inp.dataset.col] = inp.dataset.col === 'vol' ? clamp(isNaN(n) ? 0 : n, 0, 15) : clamp(isNaN(n) ? 0 : n, -60, 60); } buildTables(); });
+    inp.addEventListener('keydown', e => { if (e.key === 'Backspace' && inp.value === '') { t.rows[+inp.dataset.row][inp.dataset.col] = ''; } if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const nxt = tbl.querySelector(`input[data-col="${inp.dataset.col}"][data-row="${+inp.dataset.row + (e.key === 'ArrowDown' ? 1 : -1)}"]`); nxt?.focus(); nxt?.select(); } });
+  });
+  tbl.querySelectorAll('button.cmd').forEach(b => b.addEventListener('click', () => openPalette(b, v => { t.rows[+b.dataset.row][b.dataset.col] = v; buildTables(); })));
+  seg($('#tableEnd'), (v, b) => { $('#hopStep').hidden = !b.textContent.startsWith('Hop'); });
+  stepper($('#hopStep'), 1, 16, () => {});
+}
+
+/* ---------------------------------------------------- command palette */
+let pop = null;
+function openPalette(anchor, done) {
+  closePalette();
+  pop = document.createElement('div'); pop.className = 'popover'; pop.setAttribute('role', 'menu');
+  pop.innerHTML = CMDS.map(([l, n, a]) => `<button role="menuitem" data-l="${l}"><b>${l}</b>${n}<small>${a}</small></button>`).join('') + `<button class="clear" role="menuitem" data-l="">Clear</button>`;
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect(); pop.style.left = (r.left + scrollX) + 'px'; pop.style.top = (r.bottom + scrollY + 4) + 'px';
+  pop.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { const l = b.dataset.l; done(l ? `${l} ${CMD_DEFAULT[l]}` : ''); closePalette(); }));
+  pop.querySelector('button').focus();
+  setTimeout(() => document.addEventListener('pointerdown', outside, { once: true }));
+}
+function outside(e) { if (pop && !pop.contains(e.target)) closePalette(); }
+function closePalette() { if (pop) { pop.remove(); pop = null; } }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closePalette(); });
+
+/* ------------------------------------------------------------- waves */
+function buildWaves() {
+  const ul = $('#waveList'); ul.innerHTML = WAVES.map((w, i) => `<li><button aria-current="${i === state.curWave}" data-i="${i}"><span class="slot">${fmt(w.slot)}</span>${w.name}<span class="chip">${w.frames} fr</span></button></li>`).join('');
+  ul.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { state.curWave = +b.dataset.i; state.curFrame = 0; buildWaves(); updateContext(); }));
+  const w = WAVES[state.curWave]; $('#waveName').value = w.name; $('#frameLabel').textContent = `${state.curFrame + 1} of ${w.frames}`;
+  const g = $('#waveGrid'); const fr = frameData[Math.min(state.curFrame, 5)];
+  g.innerHTML = fr.map((v, i) => `<div class="col" data-i="${i}"><i style="--v:${v + 1}"></i></div>`).join('');
+  let drawing = false;
+  const paint = e => { const rect = g.getBoundingClientRect(); const i = clamp(Math.floor((e.clientX - rect.left - 6) / ((rect.width - 12) / 32)), 0, 31); const v = clamp(15 - Math.floor((e.clientY - rect.top - 6) / ((rect.height - 12) / 16)), 0, 15); fr[i] = v; g.children[i].firstElementChild.style.setProperty('--v', v + 1); };
+  g.onpointerdown = e => { drawing = true; g.setPointerCapture(e.pointerId); paint(e); };
+  g.onpointermove = e => { if (drawing) paint(e); };
+  g.onpointerup = () => { drawing = false; };
+  const f = $('#frames'); f.innerHTML = Array.from({ length: 16 }, (_, i) => `<button aria-pressed="${i === state.curFrame}" class="${i < w.frames ? '' : 'empty'}" title="${i < w.frames ? `Frame ${i + 1}` : 'Empty frame slot — click to add'}">${i + 1}</button>`).join('');
+  f.querySelectorAll('button').forEach((b, i) => b.addEventListener('click', () => { if (i >= w.frames) w.frames = i + 1; state.curFrame = i; buildWaves(); }));
+  $$('#shapes button').forEach(b => b.onclick = () => { const s = b.dataset.shape; for (let i = 0; i < 32; i++) { const t = i / 32; fr[i] = clamp(Math.round(s === 'sine' ? 7.5 + 7.5 * Math.sin(2 * Math.PI * t) : s === 'tri' ? (t < .5 ? t * 30 : 30 - t * 30) : s === 'saw' ? t * 15 : (t < .5 ? 15 : 0)), 0, 15); } buildWaves(); });
+}
+
+/* -------------------------------------------------------------- kits */
+function buildKits() {
+  const ul = $('#kitList'); ul.innerHTML = KITS.map((k, i) => `<li><button aria-current="${i === state.curKit}" data-i="${i}"><span class="slot">${fmt(k.slot)}</span>${k.name}<span class="chip">${k.samples} smp</span></button></li>`).join('');
+  ul.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { state.curKit = +b.dataset.i; buildKits(); updateContext(); }));
+  const sl = $('#sampleList'); sl.innerHTML = SAMPLES.map((s, i) => `<li><button aria-current="${i === state.curSample}" data-i="${i}"><span class="slot">${noteName(s.note)}</span>${s.name}<span class="chip">${s.len.toFixed(2)} s</span></button></li>`).join('');
+  sl.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { state.curSample = +b.dataset.i; buildKits(); }));
+  const s = SAMPLES[state.curSample];
+  $('#kitFields').innerHTML = `
+    <div class="field"><span class="label">Name</span><input class="name-input" style="width:120px" value="${s.name}" aria-label="Sample name"></div>
+    <div class="field"><span class="label">Note</span><div class="stepper" id="smpNote"><button aria-label="lower">−</button><output>${noteName(s.note)}</output><button aria-label="higher">+</button></div></div>
+    <div class="field"><span class="label">Rate</span><select class="sel" title="Quantised to what the period register allows"><option>11 468 Hz</option><option>8 192 Hz</option><option>16 384 Hz</option><option>22 050 Hz (approx.)</option></select></div>
+    <div class="field"><span class="label">Loop</span><div class="seg mini" role="group"><button aria-pressed="true">One-shot</button><button aria-pressed="false">Loop</button><button aria-pressed="false">From point</button></div></div>
+    <div class="field"><span class="label">Quantise</span><div class="seg mini" role="group" title="Rounding is what a Game Boy does. Dither is offered and labelled as not."><button aria-pressed="true">Round</button><button aria-pressed="false">Dither ✱</button></div></div>
+    <div class="field"><span class="label">Trim</span><span class="mono">0 – ${Math.round(s.len * 11468)} smp</span></div>`;
+  stepper($('#smpNote'), 24, 96, v => { s.note = v; }, v => noteName(v), s.note);
+  $$('#kitFields .seg').forEach(el => seg(el, () => {}));
+  const cv = $('#kitPreview'); const ctx = cv.getContext('2d'); const W = cv.width, H = cv.height;
+  ctx.fillStyle = '#0b100c'; ctx.fillRect(0, 0, W, H); ctx.strokeStyle = '#1a271c'; for (let i = 0; i <= 4; i++) { const y = .5 + Math.round(H * i / 4); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  ctx.beginPath(); ctx.strokeStyle = '#86e28e'; ctx.lineWidth = 1; let seed = state.curSample * 7 + 1;
+  for (let x = 0; x < W; x++) { seed = (seed * 1103515245 + 12345) & 0x7fffffff; const env = Math.exp(-x / (W * (0.15 + state.curSample * 0.07))); const v = Math.round((7.5 + 7.5 * env * ((seed / 0x7fffffff) * 2 - 1))); const y = H * (1 - v / 15); if (x) ctx.lineTo(x, y); else ctx.moveTo(x, y); }
+  ctx.stroke();
+}
+
+/* ------------------------------------------------------------ phrases */
+function buildPhrases() {
+  const chain = $('#chain'); chain.innerHTML = `<div class="lbl"></div>${Array.from({ length: 8 }, (_, b) => `<div class="bar-h">bar ${b + 1}</div>`).join('')}` +
+    CH.map((c, ci) => `<div class="lbl" style="color:${c.hex};font-family:var(--pixel);font-size:10px">${c.name}</div>${Array.from({ length: 8 }, (_, b) => { const p = [[1, 1, 2, 2, 1, 1, 3, 3], [1, 1, 1, 1, 2, 2, 2, 2], [1, '', 1, '', 1, '', 1, ''], [1, 1, 1, 1, 1, 1, 1, 4]][ci][b]; return `<button class="${p === '' ? 'empty' : ''} ${b === state.bar ? 'cur' : ''}" title="${p === '' ? 'No phrase this bar — the channel just plays its notes' : 'Phrase ' + p}">${p === '' ? '·' : fmt(p)}</button>`; }).join('')}`).join('');
+  chain.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {}));
+  const tbl = $('#phraseGrid');
+  const cols = ['note', 'ins', 'tbl', 'cmd1', 'cmd2'];
+  tbl.innerHTML = `<thead><tr><th rowspan="2">Step</th>${CH.map(c => `<th colspan="5" class="ch-head" style="--c:${c.hex}">${c.name}</th>`).join('')}</tr><tr>${CH.map(() => cols.map(k => `<th>${{ note: 'note', ins: 'ins', tbl: 'tbl', cmd1: 'cmd', cmd2: 'cmd' }[k]}</th>`).join('')).join('')}</tr></thead><tbody>` +
+    Array.from({ length: 16 }, (_, s) => `<tr data-step="${s}" class="${state.playing && s === state.step ? 'play' : ''}"><td class="step ${s % 4 === 0 ? 'beat' : ''}">${fmt(s + 1)}</td>${CH.map((c, ci) => cols.map(k => {
+      if (k === 'note') { const n = phraseNotes[ci][s]; return `<td><span class="cell ghost" title="From the piano roll — not editable here">${n || '·'}</span></td>`; }
+      const v = phraseCells[`${ci}:${s}:${k}`] || ''; return `<td><button class="cell ${v ? '' : 'blank'}" data-key="${ci}:${s}:${k}" data-kind="${k}" title="${k === 'ins' ? 'Instrument for the notes from this step on' : k === 'tbl' ? 'Table override from this step on' : 'Command on this step'}">${v || '–'}</button></td>`;
+    }).join('')).join('')}</tr>`).join('') + '</tbody>';
+  tbl.querySelectorAll('button.cell').forEach(b => b.addEventListener('click', () => {
+    const k = b.dataset.kind;
+    if (k === 'cmd1' || k === 'cmd2') openPalette(b, v => { phraseCells[b.dataset.key] = v; buildPhrases(); });
+    else { const cur = +phraseCells[b.dataset.key] || 0; const max = k === 'ins' ? 15 : 6; const nv = (cur + 1) % (max + 1); phraseCells[b.dataset.key] = nv ? String(nv) : ''; buildPhrases(); }
+  }));
+  if (!tbl.dataset.nav) { tbl.dataset.nav = '1'; tbl.addEventListener('keydown', e => { const b = e.target; if (!b.classList.contains('cell') || !b.dataset.key) return; const [ci, s, k] = b.dataset.key.split(':'); const dir = { ArrowDown: [0, 1], ArrowUp: [0, -1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] }[e.key]; if (!dir) return; e.preventDefault(); const kk = cols.indexOf(k) + dir[0]; const ns = clamp(+s + dir[1], 0, 15); const nk = cols[clamp(kk, 1, 4)]; tbl.querySelector(`[data-key="${ci}:${ns}:${nk}"]`)?.focus(); }); }
+}
+
+/* --------------------------------------------------------------- link */
+function buildLink() {
+  $('#slots').innerHTML = CH.map(c => `<div class="slot-row" style="--c:${c.hex}"><span class="n">${c.name}</span><span>${c.source.startsWith('Voice') ? `Claimed by <b>${c.source.slice(8)}</b> (Voice plugin)` : c.source === 'Off' ? 'Off — Phrases lane and tables only' : `${c.source} on this track`}</span>${c.source.startsWith('Voice') ? '<span class="pill ok">linked</span>' : '<span class="pill">free</span>'}</div>`).join('');
+  $('#voices').innerHTML = [['Bass', 'PU2', 'ok', 'linked'], ['Drums', 'NOI', 'ok', 'linked'], ['Pad (old project)', '—', 'warn', 'waiting'], ['Lead 2', 'PU1', 'bad', 'channel busy']].map(([t, ch, cls, s]) => `<div class="slot-row" style="--c:var(--text-mute)"><span class="n" style="font-family:var(--sans);font-size:12px">${ch}</span><span>Track <b>${t}</b></span><span class="pill ${cls}">${s}</span></div>`).join('');
+}
+
+/* ----------------------------------------------------------- hardware */
+function toggleRow(id, title, desc, fact, checked, disabled, extra = '') {
+  return `<div class="toggle-row ${disabled ? 'off' : ''}"><div><div class="t">${title}</div><div class="d">${desc}</div>${fact ? `<div class="fact">${fact}</div>` : ''}</div><div class="row">${extra}<label class="switch"><input type="checkbox" data-hw="${id}" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''}></label></div></div>`;
+}
+function buildHardware() {
+  const raw = state.model === 'RAW', cgb = state.model === 'CGB';
+  $('#hwStates').innerHTML =
+    toggleRow('noise', 'Headphone Noise', 'Hiss, the LCD line and the frame hum, at the measured levels. The original switch.', raw ? 'no analog stage in RAW' : `measured: floor −58 dB, 9198 Hz line +${cgb ? 43 : 26} dB`, state.master.noise, raw) +
+    toggleRow('lcd', 'LCD on', 'Off removes the 9198 Hz whine the way switching the display off does. "Disable the whine" is this.', cgb ? 'this CGB unit kept its line with the display off (+41 dB) — modelled as measured' : 'DMG: line drops 24 dB with LCDC bit 7 clear', state.hw.lcd, raw || !state.master.noise) +
+    toggleRow('edges', 'Volume writes at edges', 'NRx2 writes wait for the low half of the pulse cycle, where a level change is silent. A driver technique, so still stock. Costs up to one period of delay.', 'writes land ≤ 1 period late', state.hw.edges, false) +
+    `<div class="toggle-row ${cgb ? '' : 'off'}"><div><div class="t">CGB bass mod</div><div class="d">The common capacitor swap on the output. Corner scales with the capacitor. Approximation — no modded unit measured.</div><div class="fact">stock 338 Hz · ×10 → 34 Hz · ×47 → 7 Hz</div></div><div class="seg mini" id="bassMod" role="group">${[['stock', 'stock'], ['x10', '×10'], ['x47', '×47']].map(o => `<button aria-pressed="${state.hw.bassMod === o[0]}" data-v="${o[0]}" ${cgb ? '' : 'disabled'}>${o[1]}</button>`).join('')}</div></div>` +
+    toggleRow('prosound', 'Pro Sound tap', 'Output taken before the amplifier and volume wheel. A later version.', 'post-v1', false, true);
+  $('#hwDepartures').innerHTML =
+    toggleRow('tame', 'Tame DAC clicks', 'Crossfades each DAC-on step instead of stepping it. Not what any Game Boy does.', raw ? 'RAW has no DC steps to tame' : '', state.hw.tame, raw, `<div class="stepper" id="tameMs" title="Crossfade length"><button aria-label="shorter">−</button><output>${state.hw.tameMs} ms</output><button aria-label="longer">+</button></div>`) +
+    toggleRow('soften', 'Soften master pops', 'Ramps NR50 changes instead of stepping the DC offset the held DACs sit on.', '', state.hw.soften, raw);
+  $('#hwDisplay').innerHTML = `
+    <div class="toggle-row"><div><div class="t">Scope trace</div><div class="d">Digital is the staircase into the DAC; analog is what leaves the machine.</div></div><div class="seg mini" id="traceSeg" role="group">${[['digital', 'Digital'], ['analog', 'Analog'], ['both', 'Both']].map(o => `<button aria-pressed="${state.hw.trace === o[0]}" data-v="${o[0]}">${o[1]}</button>`).join('')}</div></div>
+    <div class="toggle-row"><div><div class="t">Values</div><div class="d">Decimal everywhere, or hex for the LSDj habit. Registers are always hex.</div></div><div class="seg mini" id="hexSeg" role="group"><button aria-pressed="${!state.hex}" data-v="dec">Decimal</button><button aria-pressed="${state.hex}" data-v="hex">Hex</button></div></div>`;
+  $$('#hwStates input[data-hw], #hwDepartures input[data-hw]').forEach(inp => inp.addEventListener('change', () => { const k = inp.dataset.hw; if (k === 'noise') { state.master.noise = inp.checked; $('#noiseSw').checked = inp.checked; } else state.hw[k] = inp.checked; syncHw(); }));
+  seg($('#bassMod'), v => { state.hw.bassMod = v; });
+  stepper($('#tameMs'), 1, 5, v => { state.hw.tameMs = v; }, v => `${v} ms`, state.hw.tameMs);
+  seg($('#traceSeg'), v => { state.hw.trace = v; });
+  seg($('#hexSeg'), v => setHex(v === 'hex'));
+  $$('#hwModels .card').forEach(b => { b.setAttribute('aria-pressed', b.dataset.model === state.model); b.onclick = () => setModel(b.dataset.model); });
+}
+function syncHw() {
+  const modified = (state.hw.tame || state.hw.soften) && state.model !== 'RAW';
+  const badge = $('#stockBadge'); badge.textContent = modified ? 'MODIFIED' : 'STOCK'; badge.className = 'pill ' + (modified ? 'mod' : 'ok');
+  if (state.tab === 'hardware') buildHardware();
+}
+function setModel(m) {
+  state.model = m;
+  $$('#modelSeg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.model === m));
+  $('#modelPill').textContent = m; $('#modelPill').style.color = m === 'DMG' ? 'var(--wav)' : m === 'CGB' ? '#c8a2ff' : 'var(--text-mute)';
+  $('#stModel').innerHTML = `<b>${m}</b> · 48 kHz · latency ${m === 'RAW' ? '4' : '42'} samples (${m === 'RAW' ? '0.1' : '0.9'} ms)`;
+  syncHw(); updateContext(); if (state.tab === 'hardware') buildHardware();
+}
+function setHex(on) { state.hex = on; $('#hexBtn').setAttribute('aria-pressed', on); buildMixer(); rebuildTab(); }
+
+/* ---------------------------------------------------------------- voice */
+function buildVoice() {
+  const c = CH[1];
+  $('#voiceInst').innerHTML = INSTS.filter(x => x.type === 'pulse').map(x => `<option value="${x.slot}" ${x.slot === c.inst ? 'selected' : ''}>${fmt(x.slot)} ${x.name}</option>`).join('');
+  $('#voiceInst').onchange = e => { c.inst = +e.target.value; $$('.strip')[1].querySelector('.inst').value = c.inst; if (state.sel === 1) buildInstrumentEditor(); };
+  $('#voiceParams').innerHTML = [
+    knob('Level', 'level', 0, 15, c.level, 1, 'Automation lane: Level (0–15)'), knob('Env rate', 'env', 0, 7, c.env, 1, 'Automation lane: Envelope rate'),
+    knob('Transpose', 'transpose', -60, 60, 0, 1, 'Semitones, applied to the period'), knob('Detune', 'detune', -128, 127, 0, 1, 'Raw period units'),
+    knob('Vib speed', 'vibSpeed', 1, 15, 4, 1, ''), knob('Vib depth', 'vibDepth', 0, 15, 0, 1, 'Period units'), knob('Table', 'table', 0, 64, c.table, 1, '0 = the instrument\'s own'), knob('Arp', 'arp', 0, 64, 0, 1, 'A table slot used as an arpeggio'),
+  ].join('') + `
+    <div class="field"><span class="label">Duty</span><div class="seg mini" role="group">${['12', '25', '50', '75'].map((d, k) => `<button aria-pressed="${c.duty === k}" data-v="${k}">${d}</button>`).join('')}</div></div>
+    <div class="field"><span class="label">Pan</span><div class="seg mini" role="group">${['off', 'L', 'LR', 'R'].map(p => `<button aria-pressed="${c.pan === p}" data-v="${p}">${p === 'off' ? '–' : p}</button>`).join('')}</div></div>
+    <div class="field"><span class="label">Velocity</span><select class="sel"><option>→ start volume</option><option>→ instrument bank</option><option>ignored</option></select></div>
+    <div class="field"><span class="label">Live follow</span><label class="switch" title="Parameters apply to the sounding note instead of waiting for the next one"><input type="checkbox"><span>on</span></label></div>`;
+  wireKnobs($('#voiceParams'), null, (k, v) => { if (k in c) { c[k] = v; buildMixer(); } });
+  $$('#voiceParams .seg').forEach(el => seg(el, (v) => { if (['0', '1', '2', '3'].includes(v) && el.previousElementSibling?.textContent === 'Duty') c.duty = +v; else if (['off', 'L', 'LR', 'R'].includes(v)) c.pan = v; buildMixer(); }));
+  $('#voiceRegs').innerHTML = regsFor(c);
+  $('#openEditor').onclick = () => { select(1); showTab('instrument'); $('#main').scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' }); };
+  $('#voiceChan').onchange = e => { const v = e.target.value; const st = $('#voiceStatus'); if (v.includes('taken') || v.includes('Drums')) { st.textContent = 'Channel busy · ' + v.split(' ')[0]; st.className = 'pill bad'; } else { st.textContent = 'Linked · ChipBoy 1 · ' + v; st.className = 'pill ok'; } };
+}
+
+/* ---------------------------------------------------------------- tabs */
+function showTab(t) { state.tab = t; $$('#tabs [role=tab]').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === t)); $$('.panel').forEach(p => p.classList.toggle('active', p.dataset.panel === t)); rebuildTab(); updateContext(); }
+function rebuildTab() { ({ instrument: buildInstrumentEditor, tables: buildTables, waves: buildWaves, kits: buildKits, phrases: buildPhrases, link: buildLink, hardware: buildHardware })[state.tab](); }
+
+/* -------------------------------------------------------- transport */
+const SEQ = [ // per step: [pu1 note, pu2 note, wav note, noise hit]
+  [69, 57, 45, 1], [0, 0, 0, 0], [72, 0, 0, 1], [0, 0, 0, 0], [76, 57, 0, 1], [0, 0, 0, 0], [72, 0, 0, 1], [0, 0, 0, 0],
+  [69, 53, 41, 1], [0, 0, 0, 0], [67, 0, 0, 1], [0, 0, 0, 0], [64, 55, 43, 1], [0, 0, 0, 0], [0, 0, 0, 1], [0, 0, 0, 1],
+];
+let lastTick = 0, acc = 0;
+function tick(now) {
+  if (state.playing) {
+    acc += now - lastTick;
+    while (acc > 125) { acc -= 125; state.step = (state.step + 1) % 16; if (state.step === 0) state.bar = (state.bar + 1) % 8; const s = SEQ[state.step];
+      CH.forEach((c, i) => { const n = i < 3 ? s[i] : (s[3] ? 36 + (state.step % 4 === 0 ? 0 : 6) : 0); if (n) { c.note = n; c.amp = 1; c.on = true; } });
+      $('#pos').textContent = `${state.bar + 1}.${Math.floor(state.step / 4) + 1}.${state.step % 4 + 1}`;
+      if (state.tab === 'phrases') { $$('#phraseGrid tbody tr').forEach(tr => tr.classList.toggle('play', +tr.dataset.step === state.step)); $$('#chain button').forEach((b, k) => b.classList.toggle('cur', (k % 8) === state.bar)); }
+      refreshRegs(); }
+    CH.forEach((c, i) => { const rate = c.type === 'wave' ? 0 : (c.env ? (now - lastTick) / (c.env * 15.625 * 15) : 0); c.amp = Math.max(0.08, c.amp - rate); if (c.type === 'wave') c.amp = 1; });
+    noiseSeed += (now - lastTick) * 0.5;
+  }
+  lastTick = now;
+  $$('.strip').forEach((el, i) => { const c = CH[i]; drawScope(el.querySelector('canvas'), c); el.querySelector('[data-led]').classList.toggle('on', state.playing && c.amp > 0.15); });
+  drawMaster($('#masterScope'));
+  drawScope($('#voiceScope'), CH[1]);
+  if (!reduced) requestAnimationFrame(tick); else setTimeout(() => requestAnimationFrame(tick), 500);
+}
+
+/* ----------------------------------------------------------- wiring */
+$$('#modelSeg button').forEach(b => b.addEventListener('click', () => setModel(b.dataset.model)));
+$$('#tabs [role=tab]').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+$('#playBtn').addEventListener('click', () => { state.playing = !state.playing; $('#playBtn').textContent = state.playing ? '■ Stop' : '▶ Play'; if (!state.playing) { CH.forEach(c => { c.on = false; c.amp = 1; }); $$('#phraseGrid tr').forEach(tr => tr.classList.remove('play')); } });
+$('#hexBtn').addEventListener('click', () => setHex(!state.hex));
+$('#videoBtn').addEventListener('click', e => { const on = e.currentTarget.getAttribute('aria-pressed') !== 'true'; e.currentTarget.setAttribute('aria-pressed', on); e.currentTarget.textContent = on ? 'Visualizer ↗ (open)' : 'Visualizer'; });
+$('#bankPrev').addEventListener('click', () => { state.bank = (state.bank + BANKS.length - 1) % BANKS.length; $('#bankName').textContent = BANKS[state.bank]; });
+$('#bankNext').addEventListener('click', () => { state.bank = (state.bank + 1) % BANKS.length; $('#bankName').textContent = BANKS[state.bank]; });
+$('#voiceToggle').addEventListener('click', e => { const v = $('#voice'); v.hidden = !v.hidden; e.currentTarget.textContent = v.hidden ? 'Show window' : 'Hide window'; e.currentTarget.setAttribute('aria-pressed', !v.hidden); });
+$('#instName').addEventListener('input', e => { $('#voiceStatus').textContent = `Linked · ${e.target.value || 'ChipBoy 1'} · PU2`; });
+
+buildMixer(); buildVoice(); showTab('instrument'); setModel('DMG');
+requestAnimationFrame(t => { lastTick = t; tick(t); });
+})();
+</script>
