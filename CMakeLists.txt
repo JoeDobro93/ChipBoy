@@ -27,6 +27,7 @@ add_library(chipboy_core STATIC
     Source/core/Render/Renderer.cpp
     Source/core/Render/Reference.cpp
     Source/core/Bank/Bank.cpp
+    Source/core/Driver/Clock.cpp
     Source/core/Driver/Driver.cpp
     Source/core/Tracker/Player.cpp)
 target_include_directories(chipboy_core PUBLIC Source)
@@ -69,6 +70,7 @@ if(CHIPBOY_BUILD_TESTS)
         Tests/SameSuiteTests.cpp
         Tests/RenderTests.cpp
         Tests/DriverTests.cpp
+        Tests/ClockTests.cpp
         Tests/TrackerTests.cpp
         Tests/LinkTests.cpp
         Tests/HardwareTests.cpp)
