@@ -8,7 +8,13 @@ using namespace juce;
 using namespace chipboy::ui;
 
 namespace {
-constexpr int kToolsHeight = 44;
+/// The head of the tab: two rows of tools with the help under them on the
+/// left, the bar chain beside them on the right, so the lane below keeps as
+/// much of a fixed window as it can get.
+constexpr int kToolRow = 26, kToolGap = 6, kChainWidth = 340;
+constexpr int kHeadHeight = ui::ChainStrip::preferredHeight();
+/// Song start is held in tenths of a second so a stepper can reach it.
+constexpr int kStartSteps = 10, kStartMax = 600 * kStartSteps;
 struct GroovePreset { int id; uint8_t a, b; const char* text; };
 const GroovePreset kPresets[] = {
     { 1, 6, 6, "6 / 6 \xe2\x80\x94 straight" },
@@ -27,13 +33,20 @@ PhrasesPanel::PhrasesPanel(ChipBoyProcessor& p)
       stepsLabel_("Steps / bar", Fonts::caption(10.0f), colours::textDim),
       grooveLabel_("Groove", Fonts::caption(10.0f), colours::textDim),
       rec_(String(CharPointer_UTF8("\xe2\x97\x8f Rec"))), export_("Export .gb" + String(CharPointer_UTF8("\xe2\x80\xa6"))),
-      steps_({ "8", "16", "32" })
+      steps_({ "8", "16", "32" }),
+      tempoLabel_("Tempo", Fonts::caption(10.0f), colours::textDim),
+      songTempoLabel_("Song BPM", Fonts::caption(10.0f), colours::textDim),
+      startLabel_("Start", Fonts::caption(10.0f), colours::textDim),
+      beatsLabel_("Beats", Fonts::caption(10.0f), colours::textDim),
+      tempoSource_({ "Host", "Song" }),
+      quantise_("Quantise MIDI notes to ticks")
 {
-    stepsLabel_.setUpperCase(true);
-    grooveLabel_.setUpperCase(true);
+    for (auto* l : { &stepsLabel_, &grooveLabel_, &tempoLabel_, &songTempoLabel_, &startLabel_, &beatsLabel_ }) l->setUpperCase(true);
     playLed_.setColour(colours::ok);
     playLed_.setInterceptsMouseClicks(false, false);
-    for (auto* c : std::initializer_list<Component*>{ &playLed_, &playText_, &pos_, &rec_, &stepsLabel_, &steps_, &grooveLabel_, &groove_, &export_, &help_, &scroll_ }) addAndMakeVisible(c);
+    for (auto* c : std::initializer_list<Component*>{ &playLed_, &playText_, &pos_, &rec_, &stepsLabel_, &steps_, &grooveLabel_, &groove_, &export_,
+                                                     &tempoLabel_, &tempoSource_, &songTempoLabel_, &songTempo_, &startLabel_, &songStart_,
+                                                     &beatsLabel_, &beats_, &quantise_, &help_, &scroll_ }) addAndMakeVisible(c);
 
     rec_.setTooltip("Record arm: while the transport runs, incoming MIDI notes and the parameter values in force are written into the cells of channels set to Trk.");
     rec_.setClickingTogglesState(true);
@@ -52,12 +65,37 @@ PhrasesPanel::PhrasesPanel(ChipBoyProcessor& p)
     export_.setEnabled(false);
     export_.setTooltip("Later: compile this song " + String(CharPointer_UTF8("\xe2\x80\x94")) + " tracker, bank, waves, kits " + String(CharPointer_UTF8("\xe2\x80\x94")) + " into a playback ROM for real hardware. The tracker is kept self-contained for it.");
 
+    // Tempo (docs/COMMANDS_AND_TEMPO.md section 4). Ticks are always 24 to
+    // the beat; this row says whose beat, and where the song's own starts.
+    tempoSource_.setMini(true);
+    tempoSource_.setOptionTooltip(0, "Ticks follow the host's tempo and its beats. Scrubbing is exact; tempo automation is the host's own track.");
+    tempoSource_.setOptionTooltip(1, "The song owns its tempo: the Song BPM below plus the T commands in its cells. The host's bars become a ruler.");
+    tempoSource_.attach(param(processor, ids::tempoSource));
+    songTempo_.setTooltip("The song's base tempo, 40-255 BPM. T commands in cells move it from there.");
+    songTempo_.attach(param(processor, ids::songTempo));
+    songStart_.setRange(0, kStartMax, 0);
+    songStart_.setTooltip("Where tick 0 of the song sits on the host's timeline, in seconds");
+    songStart_.setTextFunction([](int v) { return String(double(v) / kStartSteps, 1) + " s"; });
+    songStart_.onChange = [this](int v) { editSong([v](tracker::Song& s) { s.songStartSeconds = double(v) / kStartSteps; }); };
+    beats_.setRange(1, 16, 4);
+    beats_.setTooltip("How many beats the song's own bar holds; in Host mode the host's time signature says instead");
+    beats_.onChange = [this](int v) { editSong([v](tracker::Song& s) { s.beatsPerBar = double(v); }); };
+    quantise_.setTooltip("MIDI notes wait for the next tick; cells always sit on ticks.");
+    quantise_.attach(param(processor, ids::notesOnTick));
+    tempoWatch_ = std::make_unique<ParamWatch>(param(processor, ids::tempoSource), [this](float v) {
+        songMode_ = v > 0.5f;
+        songStart_.setEnabled(songMode_);
+        beats_.setEnabled(songMode_);
+        startLabel_.setColour(songMode_ ? colours::textDim : colours::lineSoft);
+        beatsLabel_.setColour(songMode_ ? colours::textDim : colours::lineSoft);
+    });
+
     RichText h;
     h.plain("Per channel, ").bold("Roll").plain(" shows the piano roll's notes, greyed; ").bold("Trk").plain(" plays the tracker's own notes and ignores incoming MIDI. Commands fire on their step and latch for the notes that follow.");
     help_.setText(h);
 
-    auto stack = std::make_unique<Stack>(12);
-    stack->add(std::make_unique<Hold>(chain_, ChainStrip::preferredHeight()));
+    addAndMakeVisible(chain_);
+    auto stack = std::make_unique<Stack>(0);
     stack->add(std::make_unique<Hold>(grid_, PhraseGrid::preferredHeight()));
     scroll_.setContent(std::move(stack));
 
@@ -132,6 +170,17 @@ void PhrasesPanel::refreshViews()
     const int spb = s ? int(s->stepsPerBar) : 16;
     steps_.setSelected(spb == 8 ? 0 : spb == 32 ? 2 : 1, dontSendNotification);
     syncGroove();
+    syncTempo();
+}
+
+/// The song's own timeline: the two fields that live in the song rather than
+/// in a parameter, read back after every edit and after a recording.
+void PhrasesPanel::syncTempo()
+{
+    const auto s = processor.song();
+    if (!s) return;
+    songStart_.setValue(std::clamp(int(std::lround(s->songStartSeconds * kStartSteps)), 0, kStartMax), dontSendNotification);
+    beats_.setValue(std::clamp(int(std::lround(s->beatsPerBar)), 1, 16), dontSendNotification);
 }
 
 void PhrasesPanel::syncGroove()
@@ -232,25 +281,48 @@ void PhrasesPanel::tick()
 void PhrasesPanel::resized()
 {
     auto area = getLocalBounds();
-    auto tools = area.removeFromTop(kToolsHeight).withTrimmedBottom(10);
-    const int h = tools.getHeight();
-    auto place = [&](Component& c, int w, int ch) { c.setBounds(tools.removeFromLeft(w).withSizeKeepingCentre(w, ch)); };
-    place(playLed_, 8, 8);
-    tools.removeFromLeft(6);
-    place(playText_, 56, h);
-    place(pos_, 64, h);
-    tools.removeFromLeft(6);
-    place(rec_, 64, 24);
-    tools.removeFromLeft(14);
-    place(stepsLabel_, 68, h);
-    place(steps_, steps_.preferredWidth(), steps_.preferredHeight());
-    tools.removeFromLeft(14);
-    place(grooveLabel_, 52, h);
-    place(groove_, 170, 24);
-    tools.removeFromLeft(12);
-    place(export_, 96, 24);
-    tools.removeFromLeft(16);
-    help_.setBounds(tools);
+    auto head = area.removeFromTop(kHeadHeight);
+    chain_.setBounds(head.removeFromRight(std::min(kChainWidth, head.getWidth() / 2)));
+    head.removeFromRight(16);
+    auto top = head.removeFromTop(kToolRow);
+    head.removeFromTop(kToolGap);
+    auto bottom = head.removeFromTop(kToolRow);
+    head.removeFromTop(kToolGap);
+    auto place = [](Rectangle<int>& row, Component& c, int w, int ch) { c.setBounds(row.removeFromLeft(w).withSizeKeepingCentre(w, ch)); };
+    auto label = [&place](Rectangle<int>& row, TextLine& t) { place(row, t, t.preferredWidth() + 6, kToolRow); };
+
+    // the transport, the arm, and what a step is worth
+    place(top, playLed_, 8, 8);
+    top.removeFromLeft(6);
+    place(top, playText_, 54, kToolRow);
+    place(top, pos_, 60, kToolRow);
+    top.removeFromLeft(6);
+    place(top, rec_, 62, 24);
+    top.removeFromLeft(14);
+    label(top, stepsLabel_);
+    place(top, steps_, steps_.preferredWidth(), steps_.preferredHeight());
+    top.removeFromLeft(14);
+    label(top, grooveLabel_);
+    place(top, groove_, std::min(160, std::max(0, top.getWidth() - 104)), 24);
+    top.removeFromLeft(12);
+    place(top, export_, std::min(92, top.getWidth()), 24);
+
+    // the tempo group (docs/COMMANDS_AND_TEMPO.md section 4)
+    label(bottom, tempoLabel_);
+    place(bottom, tempoSource_, tempoSource_.preferredWidth(), tempoSource_.preferredHeight());
+    bottom.removeFromLeft(12);
+    label(bottom, songTempoLabel_);
+    place(bottom, songTempo_, 84, Stepper::kHeight);
+    bottom.removeFromLeft(12);
+    label(bottom, startLabel_);
+    place(bottom, songStart_, 84, Stepper::kHeight);
+    bottom.removeFromLeft(12);
+    label(bottom, beatsLabel_);
+    place(bottom, beats_, 62, Stepper::kHeight);
+    bottom.removeFromLeft(14);
+    place(bottom, quantise_, std::max(0, bottom.getWidth()), Toggle::kHeight);
+
+    help_.setBounds(head);
     scroll_.setBounds(area);
 }
 
