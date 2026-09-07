@@ -133,7 +133,8 @@ void TablesPanel::rebuildList()
 {
     const auto b = processor.bank();
     if (!b) return;
-    std::vector<SlotRow> rows(size_t(bank::kTableSlots));
+    std::vector<SlotRow> rows;
+    rows.resize(size_t(bank::kTableSlots));
     for (int k = 0; k < bank::kTableSlots; ++k) {
         const auto& t = b->tables[size_t(k)];
         auto& r = rows[size_t(k)];

@@ -142,7 +142,8 @@ void KitsPanel::rebuildList()
 {
     const auto b = processor.bank();
     if (!b) return;
-    std::vector<SlotRow> rows(size_t(bank::kKitSlots));
+    std::vector<SlotRow> rows;
+    rows.resize(size_t(bank::kKitSlots));
     for (int k = 0; k < bank::kKitSlots; ++k) {
         const auto& kit = b->kits[size_t(k)];
         auto& r = rows[size_t(k)];

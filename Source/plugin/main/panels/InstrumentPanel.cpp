@@ -244,7 +244,8 @@ void InstrumentPanel::rebuildList()
     if (!b) return;
     const auto s = processor.song();
     const std::vector<int> uses = computeUses(*b, s.get());
-    std::vector<SlotRow> rows(size_t(bank::kInstrumentSlots));
+    std::vector<SlotRow> rows;
+    rows.resize(size_t(bank::kInstrumentSlots));
     for (int k = 0; k < bank::kInstrumentSlots; ++k) {
         const auto& i = b->instruments[size_t(k)];
         auto& r = rows[size_t(k)];

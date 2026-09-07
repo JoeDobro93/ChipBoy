@@ -187,7 +187,8 @@ void WavesPanel::rebuildList()
 {
     const auto b = processor.bank();
     if (!b) return;
-    std::vector<SlotRow> rows(size_t(bank::kWaveSlots));
+    std::vector<SlotRow> rows;
+    rows.resize(size_t(bank::kWaveSlots));
     for (int k = 0; k < bank::kWaveSlots; ++k) {
         const auto& w = b->waves[size_t(k)];
         auto& r = rows[size_t(k)];
