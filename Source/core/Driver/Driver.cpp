@@ -624,8 +624,10 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
                 v.sweepRate = uint8_t(c.a & 7);
                 v.sweepDown = (c.a & 128) ? true : v.inst.sweepDown;
                 v.sweepShift = uint8_t(c.b & 7);
-                emit(0xFF10, uint8_t((v.sweepRate << 4) | (v.sweepDown ? 8 : 0) | v.sweepShift), true);
-                if (live) writePeriod(ch, true);       // the sweep unit reloads on the trigger
+                if (live) {
+                    emit(0xFF10, uint8_t((v.sweepRate << 4) | (v.sweepDown ? 8 : 0) | v.sweepShift), true);
+                    writePeriod(ch, true);             // the sweep unit reloads on the trigger
+                }
             }
             break;
         }
