@@ -369,6 +369,10 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     g.customHz = pTickHz_ ? double(pTickHz_->load()) : 60.0;
     g.volumeAtEdges = paramInt(pEdges_) != 0;
     driver_.setGlobal(g);
+    {
+        const uint32_t solo = soloMask_.load(), mute = muteMask_.load();
+        driver_.setGateMask((solo ? solo : 15u) & ~mute & 15u);
+    }
 
     // --- transport ------------------------------------------------------
     driver::Transport t;
@@ -448,10 +452,7 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     // --- drive the chip -------------------------------------------------
     writes_.clear();
     driver_.process(events_.data(), events_.size(), uint32_t(n), frames_, t, cycleAt_, writes_);
-    for (const auto& w : writes_) {
-        apu_.runTo(std::max(w.cycle, apu_.cycle()));
-        apu_.write(w.addr, w.value);
-    }
+    applyWrites();
     apu_.runTo(std::max(renderer_.cycleForFrame(frames_ + uint64_t(n)), apu_.cycle()));
     for (int ch = 0; ch < 4; ++ch) channelLevels[size_t(ch)].store(apu_.dacOn(ch) ? apu_.level(ch) : -1);
 
@@ -467,6 +468,34 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     frames_ += uint64_t(n);
     prevBlock_ = n;
     lastHostFrame_ = hostFrame;
+}
+
+void ChipBoyProcessor::applyWrites()
+{
+    // Writes arrive in cycle order. A quiet-edge marker asks for the rest of
+    // its channel's burst to wait for the pulse output's low half: those
+    // writes move later, which can put them after other channels' writes,
+    // so the moved ones are re-sorted before they are applied.
+    for (size_t i = 0; i < writes_.size(); ++i) {
+        const auto& w = writes_[i];
+        if (w.addr != driver::Driver::kAlignToQuietEdge) continue;
+        apu_.runTo(std::max(w.cycle, apu_.cycle()));
+        const uint64_t delay = apu_.cyclesUntilPulseLow(w.value & 1);
+        if (delay == 0) continue;
+        const int ch = w.value & 1;
+        const uint16_t lo = uint16_t(0xFF10 + ch * 5), hi = uint16_t(lo + 4);
+        for (size_t j = i + 1; j < writes_.size(); ++j) {
+            if (writes_[j].addr == driver::Driver::kAlignToQuietEdge) break;
+            if (writes_[j].addr >= lo && writes_[j].addr <= hi) writes_[j].cycle += delay;
+        }
+        // Only the tail from here can be out of order now.
+        std::stable_sort(writes_.begin() + long(i + 1), writes_.end(), [](const driver::RegWrite& a, const driver::RegWrite& b) { return a.cycle < b.cycle; });
+    }
+    for (const auto& w : writes_) {
+        if (w.addr == driver::Driver::kAlignToQuietEdge) continue;
+        apu_.runTo(std::max(w.cycle, apu_.cycle()));
+        apu_.write(w.addr, w.value);
+    }
 }
 
 /* ------------------------------------------------------------- state */

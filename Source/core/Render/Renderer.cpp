@@ -94,7 +94,7 @@ void Renderer::recomputeCoefficients()
         const double tauCycles = -1.0 / std::log(a);
         a = std::exp(-1.0 / (tauCycles * (opt_.bassMod == 1 ? 10.0 : 47.0)));
     }
-    if (bypass_) a = std::exp(-2.0 * kPi * 5.0 / double(kCpuHz));
+    if (bypass_) a = std::exp(-2.0 * kPi * 1.0 / double(kCpuHz));   // RAW: a 1 Hz DC blocker, nothing a note can hear
     hpCoef_ = std::pow(a, cyclesPerWork_);
     // The measured floor is an RMS over 0-96 kHz; keep the spectral density.
     hissPerSample_ = model_.hissRms * std::sqrt(fsWork_ / 192000.0) * kSqrt3;

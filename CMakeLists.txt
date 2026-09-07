@@ -70,7 +70,8 @@ if(CHIPBOY_BUILD_TESTS)
         Tests/RenderTests.cpp
         Tests/DriverTests.cpp
         Tests/TrackerTests.cpp
-        Tests/LinkTests.cpp)
+        Tests/LinkTests.cpp
+        Tests/HardwareTests.cpp)
     target_link_libraries(chipboy_tests PRIVATE chipboy_core chipboy_harness Catch2::Catch2WithMain)
     target_compile_definitions(chipboy_tests PRIVATE
         CHIPBOY_TEST_ROM_DIR="${CHIPBOY_TEST_ROM_DIR}"

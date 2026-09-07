@@ -88,6 +88,12 @@ public:
     /// A Voice asked the window to show this channel (-1 none); reading clears it.
     int takeFocusRequest() { return focusRequest_.exchange(-1); }
 
+    /// Mute and solo are NR51 gates (UI_DESIGN section 2) and pop like the hardware.
+    void setChannelMute(int ch, bool on) { uint32_t m = muteMask_.load(); m = on ? (m | (1u << (ch & 3))) : (m & ~(1u << (ch & 3))); muteMask_.store(m); }
+    bool channelMute(int ch) const { return (muteMask_.load() >> (ch & 3)) & 1; }
+    void setChannelSolo(int ch, bool on) { uint32_t m = soloMask_.load(); m = on ? (m | (1u << (ch & 3))) : (m & ~(1u << (ch & 3))); soloMask_.store(m); }
+    bool channelSolo(int ch) const { return (soloMask_.load() >> (ch & 3)) & 1; }
+
     // tracker
     void setRecordArm(bool on) { recordArm_.store(on); }
     bool recordArm() const { return recordArm_.load(); }
@@ -141,6 +147,9 @@ private:
     std::array<uint32_t, 4> localSeq_{};
     std::array<bool, 4> localOn_{};
     std::atomic<int> focusRequest_{ -1 };
+
+    std::atomic<uint32_t> muteMask_{ 0 }, soloMask_{ 0 };
+    void applyWrites();
 
     // tracker / record
     link::Spsc<tracker::RecordMessage, 1024> recordFifo_;

@@ -242,8 +242,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool legato)
             if (ch == 0) emit(regAddr(0, 0), uint8_t((v.sweepRate << 4) | (v.sweepDown ? 8 : 0) | v.sweepShift), true);
             const uint8_t len = core.length ? uint8_t(64 - std::min<int>(64, core.length)) : 0;
             emit(regAddr(ch, 1), uint8_t((v.duty << 6) | (len & 0x3F)), true);
-            v.dacOn = true;
-            writeEnvelope(ch, false);
+            writeEnvelope(ch, false);   // sets dacOn; the previous state decides the quiet-edge marker
             writePeriod(ch, true);
             break;
         }
@@ -385,6 +384,9 @@ void Driver::writeEnvelope(int ch, bool trigger)
     // Rewriting NRx2 on a running channel is zombie mode; a driver that wants
     // a clean level change writes the register and then retriggers, which
     // restarts the envelope but keeps the duty phase (reference section 4).
+    // With "volume writes at edges" the plugin moves this burst to the low
+    // half of the pulse cycle, where a level change is silent.
+    if (global_.volumeAtEdges && v.active && v.dacOn && (ch == 0 || ch == 1) && v.inst.type == InstrumentType::Pulse) emit(kAlignToQuietEdge, uint8_t(ch), true);
     emit(regAddr(ch, 2), nr2, true);
     v.dacOn = (nr2 & 0xF8) != 0;
     v.volume = v.envVol;
@@ -398,8 +400,9 @@ void Driver::writeEnvelope(int ch, bool trigger)
 void Driver::writeNr51()
 {
     uint8_t bits = 0;
-    for (int ch = 0; ch < 4; ++ch) bits |= panBitsFor(v_[size_t(ch)].pan, ch);
+    for (int ch = 0; ch < 4; ++ch) if (gateMask_ & (1u << ch)) bits |= panBitsFor(v_[size_t(ch)].pan, ch);
     emit(0xFF25, bits);
+    gateDirty_ = false;
 }
 
 void Driver::writeNr50(uint8_t l, uint8_t r) { emit(0xFF24, uint8_t(((l & 7) << 4) | (r & 7))); }
@@ -665,6 +668,7 @@ void Driver::tickAll()
 {
     // Master volume from the parameters, when they change (an M command holds until then).
     if (global_.masterL != masterL_ || global_.masterR != masterR_) { masterL_ = global_.masterL; masterR_ = global_.masterR; writeNr50(masterL_, masterR_); }
+    if (gateDirty_) writeNr51();
     for (int ch = 0; ch < 4; ++ch) tick(ch);
     ++tickCount_;
 }

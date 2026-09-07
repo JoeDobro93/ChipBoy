@@ -104,6 +104,15 @@ public:
     /// While recording, incoming MIDI plays on tracker channels too (the
     /// lane is muted by the player meanwhile).
     void setRecording(bool on) { recording_ = on; }
+    /// Mute / solo as NR51 gates (bit per channel, 1 = audible). Takes effect
+    /// on the next tick, and pops like the hardware does.
+    void setGateMask(uint32_t enabledMask) { const uint8_t m = uint8_t(enabledMask & 15); if (m != gateMask_) { gateMask_ = m; gateDirty_ = true; } }
+    uint32_t gateMask() const { return gateMask_; }
+
+    /// A write list marker (spec 12.3, "volume writes at edges"): the plugin
+    /// delays the writes that follow it, on the same channel, to the next
+    /// cycle where that pulse channel's output is low (Apu::cyclesUntilPulseLow).
+    static constexpr uint16_t kAlignToQuietEdge = 0xFFFF;
     void setParams(int ch, const ChannelParams& p) { params_[size_t(ch & 3)] = p; }
     const ChannelParams& params(int ch) const { return params_[size_t(ch & 3)]; }
 
@@ -203,6 +212,8 @@ private:
     const tracker::Song* song_ = nullptr;
     std::array<const bank::Instrument*, 4> local_{};
     bool recording_ = false;
+    uint8_t gateMask_ = 15;
+    bool gateDirty_ = false;
     Console model_ = Console::DMG;
     double sampleRate_ = 48000.0;
     GlobalParams global_;

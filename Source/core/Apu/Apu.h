@@ -85,6 +85,12 @@ public:
     bool    powered() const { return powered_; }
     uint8_t frameStep() const { return frameStep_; }
 
+    /// Cycles until pulse channel `ch` (0 or 1) next outputs its low level:
+    /// 0 if it is low now, or not running. A driver that writes NRx2 there
+    /// changes the level while the output is zero, so nothing steps
+    /// (spec 12.3, "volume writes at edges").
+    uint64_t cyclesUntilPulseLow(int ch) const;
+
 private:
     struct Square {
         uint8_t  reg[5]{};

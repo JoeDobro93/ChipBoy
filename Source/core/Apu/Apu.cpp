@@ -667,4 +667,22 @@ void Apu::emit(int ch)
     events_.push_back({cycle_, uint8_t(ch), lv, dc});
 }
 
+
+uint64_t Apu::cyclesUntilPulseLow(int ch) const
+{
+    const Square& s = sq_[ch & 1];
+    if (!s.enabled || !s.dac) return 0;
+    const uint8_t pattern = kDuty[s.duty];
+    if (!((pattern >> (7 - s.dutyPos)) & 1)) return 0;         // low now
+    const int32_t p = squarePeriod(s.freq);
+    uint64_t t = uint64_t(std::max<int32_t>(0, s.timer));       // to the next duty step
+    uint8_t pos = s.dutyPos;
+    for (int i = 0; i < 8; ++i) {
+        pos = uint8_t((pos + 1) & 7);
+        if (!((pattern >> (7 - pos)) & 1)) return t;
+        t += uint64_t(p);
+    }
+    return 0;                                                   // every step high: cannot happen with these duties
+}
+
 } // namespace chipboy
