@@ -754,6 +754,7 @@ void Driver::stepTable(int ch)
         if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) { v.waveLevel = uint8_t(std::clamp<int>(s.vol / 4, 0, 3)); if (v.active) writeEnvelope(ch, false); }
         else { v.envVol = uint8_t(s.vol); if (v.active) writeEnvelope(ch, true); }
     }
+    v.lastCmd = {};                               // Z randomises the command before it on this step
     if (s.cmd1.cmd != Cmd::None) applyCommand(ch, s.cmd1, true);
     if (s.cmd2.cmd != Cmd::None) applyCommand(ch, s.cmd2, true);
     if (!v.tableOn) return;                       // H 0 stopped it
