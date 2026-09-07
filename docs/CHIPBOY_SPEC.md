@@ -124,10 +124,14 @@ DAC on/off steps, AC coupling and its droop, envelope stepping, wave-RAM reload 
 pitch quantisation, the noise channel's non-monotonic pitch grid. These are not
 "character" controls, not amounts, not toggles.
 
-**C8 — Exactly one switch changes what you hear: Headphone Noise.**
-On/off, in the main plugin, defaulting to on. It controls the analog noise-floor model
-(§6.4) and nothing else. Every other switch in the product is workflow or display, never
-accuracy.
+**C8 — The defaults are a stock machine, and every audible departure says so.**
+Headphone Noise (on/off, default on) controls the noise-floor model (§6.4). The Hardware
+panel's other audible controls are of two kinds: *hardware states* a real unit can be in
+(LCD off, the CGB capacitor mod, a driver that lands volume writes on the quiet half of
+the cycle), which keep the instance STOCK; and *departures* no Game Boy makes (de-click,
+softened master pops), which are opt-in and light MODIFIED in the header of the instance
+using them. Nothing is smoothed or corrected silently. *Revised 2026-09-07 by the UI
+workshop (`UI_DESIGN.md` §5); the original rule was "exactly one switch".*
 
 **C9 — Stereo output only. No per-channel outputs.**
 The four DACs share one summing node and one coupling capacitor, and their interaction —
@@ -355,7 +359,7 @@ The difference is not only tonal:
 
 | | DMG | CGB |
 |---|---|---|
-| AC coupling | f_c ≈ 28 Hz — fat | f_c ≈ 706 Hz — thin |
+| AC coupling | f_c 25 Hz (measured) — fat | f_c 338 Hz (measured, this unit) — thin |
 | Wave RAM while running | not writable; a frame change costs a DAC-off, a write and a re-trigger | writable live; updates tear if they race the read pointer |
 | Wave RAM corruption on trigger | present | absent |
 
@@ -363,6 +367,13 @@ So **the wave channel behaves differently between models**, not merely sounds di
 frame changes and kit streaming click on DMG and need not on CGB. Both are real hardware
 behaviour, so both are fixed within their model. A patch records which model it was
 designed for, and the UI says so when it is loaded under the other.
+
+**RAW** is the third position on the same switch: the DMG chip with the analog stage
+bypassed. Squares are squares, the wave channel is its 32-step staircase, DAC-off is
+silence, DACs map 0–15 to −1…+1, and there is no coupling, no sag, no DC offset, no clip
+and no noise floor — the plain digital mix a gaming emulator produces. It models what
+listeners learned these sounds from rather than a machine, and it is a position rather
+than a set of toggles so that a patch can name it. *Added 2026-09-07 (D11).*
 
 MGB and AGB remain post-v1 (§17) — no hardware to measure.
 
@@ -599,6 +610,8 @@ Lettering is LSDj-familiar; **behaviour is defined here**, and arguments are bas
 | `S` | signed | PU1: set sweep. NOI: step the clock shift per tick. Inert elsewhere. |
 | `V` | speed 1–15, depth 0–15 | Set vibrato |
 | `W` | wave 1–64 | Select wave slot (WAV only) |
+| `M` | L 0–7, R 0–7 | Master volume (NR50). Hardware-legal; steps the DC offset exactly as the hardware does |
+| `Z` | 0–255 | Randomise the argument of the previous command on this step, LSDj-style |
 
 ### 9.7 Waves and frames
 
@@ -819,6 +832,12 @@ is a display format, not an accuracy switch, so it does not conflict with **C8**
 | Master volume L / R | 0–7 each (NR50; 0 is 1/8, not mute) |
 | Output trim | continuous dB — the one continuous control (**C3**) |
 | Headphone noise | on / off (**C8**) |
+| Model | DMG / CGB / RAW (§6.5) |
+| LCD | on / off — off removes the 9198 Hz line as switching the display off does |
+| CGB bass mod | stock / ×10 / ×47 capacitor (`UI_DESIGN.md` §5) |
+| Volume writes at edges | on / off — NRx2 writes land on the quiet half-cycle |
+| De-click | off, or a 0.5–5 ms crossfade of DAC-on steps — a departure (**C8**) |
+| Soften master pops | on / off — a departure (**C8**) |
 | Tick source | host-synced / V-blank / custom |
 | Ticks per beat *(host-synced)* | 1–48 |
 | Tick rate *(custom)* | 1–240 Hz |
@@ -884,7 +903,18 @@ project load order audible.
   the audience already reads.
 - **Kit editor.** Import, trim, note map, playback rate, per-sample preview showing the
   4-bit result rather than the source.
-- **Global.** Master volume L/R, output trim, headphone noise, tick source, link mode.
+- **Global.** Master volume L/R, output trim, headphone noise, de-click, tick source,
+  link mode.
+- **Phrases.** A tracker: per channel a note, instrument, table and two command columns,
+  sixteen steps to a phrase, phrases chained by bar, following the host transport. A
+  channel's notes come either from the piano roll (shown, not editable) or from the
+  tracker; a record arm writes incoming MIDI and the current parameter values into the
+  cells. Kept self-contained so a song can later leave for a playback ROM (§15.3).
+- **Visualizer.** A separate resizable window with the five scopes and no chrome, for
+  screen capture.
+
+The screens themselves are specified in `UI_DESIGN.md` and drawn in the interactive
+mockup under `docs/mockups/`; everything shown there ships in v1.
 
 ### 13.2 Voice plugin
 
@@ -955,6 +985,17 @@ keep it cheap later, and the rules that apply when it is built.
 - **Parity claims are tested against LSDj itself**, not against anyone's memory of it.
   Until that testing exists, ChipBoy's behaviour is defined by this document and the
   resemblance is described as familiarity, not compatibility.
+
+---
+
+### 15.3 Playback ROM export — post-v1, door kept open
+
+The tracker (§13.1) plus the bank describe a complete song without the host: notes,
+instruments, tables, commands, waves and kits. That is deliberate. A later version can
+compile that description into a `.gb` playback ROM with its own driver, so a song made
+in a DAW plays on real hardware. Two rules follow now: the tracker holds everything the
+song needs (host automation is *recorded* into cells, never referenced from them), and
+no tracker feature is added that the chip could not execute from a ROM.
 
 ---
 
@@ -1073,12 +1114,13 @@ must link no JUCE module.
 | **M3** | Main plugin shell: VST3/AU/Standalone, direct MIDI, no driver features. Validate against hardware captures here, while the signal path is still trivial to inspect. | ● |
 | **M4** | Bank + driver: instruments, envelopes, vibrato, tables, arpeggios, sweep. | ● |
 | **M5** | Voice plugin + link transport + pairing. | ● |
-| **M6** | Waves, frames, kits, importer. | ● |
-| **M7** | Interface: scopes, editors, bank browser. | ● |
+| **M6** | Waves, frames, kits, importer; the tracker (Phrases) with record arm. | ● |
+| **M7** | Interface: everything in the mockup — strips, scopes, editors, Phrases, Link, Hardware, the visualizer window, the Voice window. | ● |
 | **M8** | Hardware validation pass (§16.6) for **both DMG and CGB**, model selection (§6.5), noise-floor model, release preparation. | ● |
 | — | LSDj import/export (§15) | post-v1 |
 | — | Further models: MGB, AGB, Pro Sound tap | post-v1 — no hardware to measure |
 | — | `.vgm` / `.gbs` playback | post-v1 |
+| — | Playback ROM export (§15.3) | post-v1 |
 
 M1 before anything audible is deliberate. An APU that passes the test ROMs and then gets
 an analog stage is a different project from an analog stage that gets an APU retrofitted
@@ -1099,3 +1141,9 @@ into it.
 | **D7** | Hex display option for LSDj users? | Yes. Display only, so **C8** is unaffected. |
 | **D8** | ~~Post-v1 model order.~~ **Resolved.** | **DMG and CGB both ship in v1** (§6.5) — both consoles are available to measure, and CGB changes wave-channel *behaviour*, not only tone. MGB and AGB stay post-v1 for want of hardware. |
 | **D9** | Default kit note map: chromatic or GM drum map? | Chromatic, since pitch and playback rate are the same control (§9.8) and a drum map implies a per-note pitch the chip cannot give. |
+| **D10** | ~~Tracker with a note column, or commands only?~~ **Resolved 2026-09-07.** | Full tracker with note column and record arm (§13.1), so a song can later leave for a ROM (§15.3). |
+| **D11** | ~~RAW mode.~~ **Resolved 2026-09-07.** | Third model position: the DMG chip with the analog stage bypassed (§6.5). |
+| **D12** | ~~Ship the departures (de-click, softened master pops) in v1?~~ **Resolved 2026-09-07.** | Yes, behind the MODIFIED badge, with de-click also on the master strip (**C8**). |
+| **D13** | ~~Default channel routing.~~ **Resolved 2026-09-07.** | PU1 omni, PU2 / WAV / NOI on MIDI 2–4 (`UI_DESIGN.md` §1). |
+| **D14** | Keyswitches on by default? | Off; one click enables them and the strip shows the reserved octave. |
+| **D15** | ~~Visualizer window in v1?~~ **Resolved 2026-09-07.** | Yes (§13.1). |

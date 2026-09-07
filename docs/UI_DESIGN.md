@@ -196,28 +196,33 @@ the hardware's ranges, and none of the cartridge limits (C10).
 
 ---
 
-## 7. The Phrases lane — the tracker column, without the tracker
+## 7. The Phrases lane — a tracker that follows the host
 
-LSDj expresses most of its character through the effect column: a command on a step,
-next to a note. A DAW has no such column. Three doors lead to the same driver:
+LSDj expresses most of its character through the tracker screen: a note, an instrument
+and commands on a step. ChipBoy has that screen. It is a tracker with the DAW as its
+transport, and it is the part of the product that can later leave the DAW entirely
+(§10, D10).
 
-1. **Automation and CC lanes** for anything continuous-ish (level, transpose, vibrato).
-2. **Note-embedded** data (velocity, keyswitches, pitch bend, note-off).
-3. **The Phrases lane**: a tracker-style step grid per channel that **follows the host
-   transport**. Sixteen steps per phrase (a bar of sixteenths by default), columns for
-   instrument, table and two commands, and a ghost column showing the notes the piano
-   roll is sending at each step, so a command sits visibly next to the note it will hit.
-   Phrases are chained along the timeline by bar, LSDj-style, with a groove (6/6, 7/5,
-   8/4 ticks per step…) per phrase for swing.
+Per channel: a **note** column, **instrument**, **table** and two **command** columns;
+sixteen steps to a phrase (a bar of sixteenths by default), phrases chained along the
+timeline by bar, a groove (6/6, 7/5, 8/4 ticks per step…) per phrase for swing. Cells
+fire at their step's tick and latch for the notes that follow — exactly the tracker
+behaviour.
 
-A cell fires at its step's tick, latches like any other parameter, and applies to the
-notes that follow — exactly the tracker behaviour, with the DAW as the sequencer.
+**Two sources of notes, one switch per channel.** *Piano roll* shows the notes the DAW is
+sending, greyed and not editable here, so a command sits next to the note it will hit.
+*Tracker* makes the channel play the lane's own notes and ignore incoming MIDI. A song
+can mix the two — lead from the piano roll, drums from the tracker.
 
-**Why not a full built-in tracker with a note column?** Two sources of notes compete:
-the piano roll's editing, quantise, humanise and MIDI recording against a grid that
-cannot see them. The lane takes what the DAW is bad at (per-step commands) and leaves
-notes where the DAW is good. The data model does not forbid a note column later; if the
-lane is loved, it can grow one. **Decision needed — D-UI-1.**
+**Record.** With the transport running and the record arm on, incoming MIDI notes and
+the parameter values in force at each step are written into the cells of channels set to
+Tracker. That is how a piano-roll performance, automation included, becomes a
+self-contained tracker song — the form a playback ROM will need (§10). Recording captures
+what the driver actually did, so nothing is lost in translation.
+
+Three doors still lead to the driver, and they coexist: automation and CC lanes for
+sweeps; note-embedded data (velocity, keyswitches, pitch bend, note-off); and the lane
+for per-step commands. Whichever wrote the register last wins at the tick.
 
 ---
 
@@ -246,16 +251,16 @@ who want a Game Boy on a keyboard without a DAW.
 
 ---
 
-## 10. Decisions needed
+## 10. Decisions taken (2026-09-07)
 
-| # | Question | Recommendation |
+| # | Question | Outcome |
 |---|---|---|
-| D-UI-1 | Phrases lane with commands only, or a full note-capable tracker? | Commands only in v1 (§7) |
-| D-UI-2 | RAW = DMG chip with clean output, or a separate chip selector for RAW? | DMG chip; add a chip selector only if asked |
-| D-UI-3 | Ship the two departures (tame clicks, soften master pops) in v1? | Yes, behind the MODIFIED badge |
-| D-UI-4 | Default routing: PU1 omni + MIDI 2/3/4, or all four on MIDI 1–4? | PU1 omni, so the first key press sounds |
-| D-UI-5 | Keyswitches on by default? | Off; one click to enable, and the strip shows the reserved octave |
-| D-UI-6 | Visualizer window in v1? | Yes — it is the same scope code in another window |
+| D-UI-1 | Phrases lane with commands only, or a full tracker? | **Full tracker** with a note column and a record arm (§7), so a song can later be exported as a `.gb` playback ROM (spec §15.3, post-v1) |
+| D-UI-2 | What RAW is | **DMG chip, analog stage bypassed** — ideal squares, the 32-step wave staircase, no sag, no DC, no noise (§5) |
+| D-UI-3 | Ship the departures in v1? | **Yes**, and de-click gets a switch on the master strip as well as in the Hardware tab |
+| D-UI-4 | Default routing | **As mocked**: PU1 omni, PU2 / WAV / NOI on MIDI 2–4 |
+| D-UI-5 | Keyswitches on by default? | **Off**; one click enables them and the strip shows the reserved octave (§4 explains what they are) |
+| D-UI-6 | Visualizer window in v1? | **Yes** — and everything in the mockup ships in v1 |
 
-Once agreed, spec §12.3, §13 and C8 are revised to match, with the change recorded in
-`CHANGES.md`.
+Spec §6.5, §9.6, §12.3, §13, §15.3, §17, §18 and constraint C8 carry these; the change is
+recorded in `CHANGES.md`.

@@ -133,6 +133,13 @@
   .fader input[type="range"] { flex: 1; accent-color: var(--accent); }
   .fader output { font-family: var(--mono); font-size: 11px; min-width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
 
+  /* ---------- visualizer ---------- */
+  .video { background: #000; padding: 10px 12px 12px; border-bottom: 1px solid var(--line-soft); }
+  .video-tools { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .video-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .video-grid canvas { display: block; width: 100%; height: auto; background: #000; border: 1px solid #141414; }
+  .video-grid .master { grid-column: 1 / -1; }
+
   /* ---------- tabs and editor ---------- */
   .tabs { display: flex; align-items: center; gap: 2px; padding: 6px 12px 0; background: var(--panel); border-bottom: 1px solid var(--line-soft); }
   .tabs button { background: transparent; border: 1px solid transparent; border-bottom: 0; border-radius: 5px 5px 0 0; padding: 7px 13px; color: var(--text-mute); font-weight: 500; font-size: 12.5px; }
@@ -274,6 +281,19 @@
       <button class="btn small" title="Settings: scaling, MIDI input (standalone), tick source">⚙</button>
     </header>
 
+    <section class="video" id="video" hidden>
+      <div class="video-tools">
+        <span class="label">Visualizer</span>
+        <span class="label">Ground</span><div class="seg mini" id="vidGround" role="group"><button aria-pressed="true" data-v="black">Black</button><button aria-pressed="false" data-v="lcd">LCD</button></div>
+        <span class="label">Line</span><div class="seg mini" id="vidLine" role="group"><button aria-pressed="false" data-v="1">Thin</button><button aria-pressed="true" data-v="2">Medium</button><button aria-pressed="false" data-v="3">Thick</button></div>
+        <span class="spacer"></span><span class="dim">In the plugin this is its own resizable window; the mockup shows it inline.</span>
+      </div>
+      <div class="video-grid">
+        <canvas data-vid="0" width="560" height="200"></canvas><canvas data-vid="1" width="560" height="200"></canvas>
+        <canvas data-vid="2" width="560" height="200"></canvas><canvas data-vid="3" width="560" height="200"></canvas>
+        <canvas id="vidMaster" class="master" width="1148" height="120"></canvas>
+      </div>
+    </section>
     <section class="mixer" id="mixer"></section>
 
     <nav class="tabs" id="tabs" role="tablist">
@@ -378,6 +398,7 @@
       <div class="panel" data-panel="phrases">
         <div class="phrase-tools">
           <button class="btn primary" id="playBtn" title="Mock transport. In the plugin, the host's transport drives this.">▶ Play</button>
+          <button class="btn" id="recBtn" aria-pressed="false" title="Record arm: while the transport runs, incoming MIDI notes and the parameter values in force are written into the cells of channels set to Trk.">● Rec</button>
           <span class="mono" id="pos">1.1.1</span>
           <span class="label">Steps / bar</span>
           <div class="seg mini" role="group" aria-label="Steps per bar"><button aria-pressed="false">8</button><button aria-pressed="true">16</button><button aria-pressed="false">32</button></div>
@@ -385,8 +406,9 @@
           <select class="sel" id="groove" aria-label="Groove, ticks per step">
             <option>6 / 6 — straight</option><option>7 / 5 — light swing</option><option>8 / 4 — heavy swing</option><option>5 / 7 — reverse</option>
           </select>
+          <button class="btn" disabled title="Later: compile this song — tracker, bank, waves, kits — into a playback ROM for real hardware. The tracker is kept self-contained for it.">Export .gb…</button>
           <span class="spacer"></span>
-          <p class="help">Notes come from the piano roll (shown greyed). Commands fire on their step and latch for the notes that follow — LSDj's effect column with the DAW as the sequencer.</p>
+          <p class="help">Per channel, <b>Roll</b> shows the piano roll's notes, greyed; <b>Trk</b> plays the tracker's own notes and ignores incoming MIDI. Commands fire on their step and latch for the notes that follow.</p>
         </div>
         <div class="chain" id="chain"></div>
         <div style="overflow-x:auto"><table class="tracker" id="phraseGrid"></table></div>
@@ -474,7 +496,7 @@
             <div class="toggle-list" id="hwStates"></div>
           </div>
           <div class="card">
-            <h3>Departures — light the MODIFIED badge</h3>
+            <h3>Departures — not what any Game Boy does; the header reads MODIFIED while one is on</h3>
             <div class="toggle-list" id="hwDepartures"></div>
             <h3 style="margin-top:14px">Display</h3>
             <div class="toggle-list" id="hwDisplay"></div>
@@ -572,7 +594,9 @@ const state = {
   model: 'DMG', tab: 'instrument', sel: 0, hex: false, bank: 0,
   master: { L: 7, R: 7, noise: true, trim: -6 },
   hw: { lcd: true, bassMod: 'stock', edges: false, tame: false, tameMs: 2, soften: false, trace: 'digital', periods: 2 },
-  playing: false, step: 0, bar: 0,
+  playing: false, step: 0, bar: 0, recording: false,
+  noteMode: ['roll', 'tracker', 'roll', 'tracker'],
+  vid: { ground: 'black', width: 2 },
   curTable: 0, curWave: 1, curFrame: 2, curKit: 0, curSample: 0,
 };
 const BANKS = ['Factory 01', 'Factory 02 — LSDj-ish', 'My bank'];
@@ -592,6 +616,7 @@ const fmt = (v, digits = 2) => state.hex ? v.toString(16).toUpperCase().padStart
 const hz = n => 440 * Math.pow(2, (n - 69) / 12);
 const period = n => clamp(Math.round(2048 - 131072 / hz(n)), 0, 2047);
 const noteName = n => ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'][n % 12] + (Math.floor(n / 12) - 1);
+const noteMidi = name => { const m = /^([A-G]#?)(-?\d+)$/.exec(name); if (!m) return 60; return (parseInt(m[2], 10) + 1) * 12 + ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'].indexOf(m[1]); };
 const h2 = v => v.toString(16).toUpperCase().padStart(2, '0');
 
 function regsFor(c) {
@@ -617,9 +642,10 @@ function drawScope(cv, c, opts = {}) {
   const ctx = cv.getContext('2d');
   const W = cv.width, H = cv.height;
   ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = '#0b100c'; ctx.fillRect(0, 0, W, H);
+  const black = opts.ground === 'black';
+  ctx.fillStyle = black ? '#000' : '#0b100c'; ctx.fillRect(0, 0, W, H);
   // 16-level grid: the DAC's own scale, not dB
-  ctx.strokeStyle = '#1a271c'; ctx.lineWidth = 1;
+  ctx.strokeStyle = black ? '#161616' : '#1a271c'; ctx.lineWidth = 1;
   for (let i = 0; i <= 16; i += 4) { const y = 0.5 + Math.round((H - 8) * (1 - i / 16)) + 4; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
   const periods = opts.periods ?? c.periods;
   const N = 512;
@@ -651,18 +677,20 @@ function drawScope(cv, c, opts = {}) {
     ctx.stroke(); ctx.shadowBlur = 0;
   };
   const color = opts.color ?? c.hex;
-  if (digital === 'digital' || digital === 'both' || tau === 0) line(samples, color, 1.5, 0);
-  if ((digital === 'analog' || digital === 'both') && tau > 0) line(analog, digital === 'both' ? '#ffffff' : color, 1.2, 7.5);
-  if (!(c.on || state.playing) && !opts.master) { ctx.fillStyle = 'rgba(11,16,12,.4)'; ctx.fillRect(0, 0, W, H); }
+  const lw = opts.width ?? 1;
+  if (digital === 'digital' || digital === 'both' || tau === 0) line(samples, color, 1.5 * lw, 0);
+  if ((digital === 'analog' || digital === 'both') && tau > 0) line(analog, digital === 'both' ? '#ffffff' : color, 1.2 * lw, 7.5);
+  if (!(c.on || state.playing) && !opts.video) { ctx.fillStyle = 'rgba(11,16,12,.4)'; ctx.fillRect(0, 0, W, H); }
 }
 const lfsr = (() => { let s = 0x7fff; const bits = []; for (let i = 0; i < 4096; i++) { const b = (s ^ (s >> 1)) & 1; s = (s >> 1) | (b << 14); bits.push(s & 1 ? 0 : 1); } return bits; })();
 function noiseBit(i) { return lfsr[(i + Math.floor(noiseSeed)) % lfsr.length]; }
 let noiseSeed = 0;
 
-function drawMaster(cv) {
+function drawMaster(cv, opts = {}) {
   const ctx = cv.getContext('2d'); const W = cv.width, H = cv.height;
-  ctx.fillStyle = '#0b100c'; ctx.fillRect(0, 0, W, H);
-  ctx.strokeStyle = '#1a271c'; for (let i = 0; i <= 4; i++) { const y = 0.5 + Math.round(H * i / 4); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  const black = opts.ground === 'black';
+  ctx.fillStyle = black ? '#000' : '#0b100c'; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = black ? '#161616' : '#1a271c'; for (let i = 0; i <= 4; i++) { const y = 0.5 + Math.round(H * i / 4); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
   const N = 400; const mix = new Float32Array(N);
   const soloed = CH.some(c => c.solo);
   const gain = (state.master.L + 1) / 8;
@@ -681,7 +709,7 @@ function drawMaster(cv) {
   const tau = couplingTau(); const out = new Float32Array(N);
   if (tau > 0) { const dt = 0.012 / N; const a = Math.exp(-dt / tau); let y = 0, xp = mix[0]; for (let k = 0; k < 2; k++) for (let i = 0; i < N; i++) { y = a * y + mix[i] - xp; xp = mix[i]; if (k) out[i] = y; } }
   else out.set(mix);
-  ctx.beginPath(); ctx.strokeStyle = '#9bbc0f'; ctx.lineWidth = 1.4; ctx.shadowColor = '#9bbc0f'; ctx.shadowBlur = 6;
+  ctx.beginPath(); ctx.strokeStyle = '#9bbc0f'; ctx.lineWidth = 1.4 * (opts.width ?? 1); ctx.shadowColor = '#9bbc0f'; ctx.shadowBlur = opts.glow ?? 6;
   for (let i = 0; i < N; i++) { const x = (i / (N - 1)) * W; const y = H / 2 - (out[i] * gain) * (H / 2) / 4.2; if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); }
   ctx.stroke(); ctx.shadowBlur = 0;
 }
@@ -736,11 +764,13 @@ function buildMixer() {
       <div class="field"><span class="label">Vol R</span><div class="stepper" id="volR"><button aria-label="decrease">−</button><output>${state.master.R === 0 ? "0 (1/8)" : state.master.R}</output><button aria-label="increase">+</button></div></div>
     </div>
     <label class="switch" title="The original switch. Hiss, the LCD line and the frame hum, together, as measured."><input type="checkbox" id="noiseSw" ${state.master.noise ? "checked" : ""}><span>Headphone Noise</span></label>
+    <label class="switch" title="Crossfades each DAC-on step over a few milliseconds. Not what a Game Boy does: the header reads MODIFIED while it is on. Also in the Hardware tab."><input type="checkbox" id="declickSw" ${state.hw.tame ? "checked" : ""}><span>De-click</span></label>
     <div class="field" title="The one continuous control in the product: a fader after the analog stage, outside the chip"><span class="label">Output trim</span><div class="fader"><input type="range" id="trim" min="-40" max="6" step="0.5" value="${state.master.trim}" aria-label="Output trim in dB"><output id="trimOut">${state.master.trim < 0 ? "−" : state.master.trim > 0 ? "+" : ""}${Math.abs(state.master.trim).toFixed(1)} dB</output></div></div>`;
   root.appendChild(m);
   stepper($('#volL'), 0, 7, v => { state.master.L = v; }, v => v === 0 ? '0 (1/8)' : String(v), state.master.L);
   stepper($('#volR'), 0, 7, v => { state.master.R = v; }, v => v === 0 ? '0 (1/8)' : String(v), state.master.R);
   $('#noiseSw').addEventListener('change', e => { state.master.noise = e.target.checked; syncHw(); });
+  $('#declickSw').addEventListener('change', e => { state.hw.tame = e.target.checked; syncHw(); });
   $('#trim').addEventListener('input', e => { state.master.trim = +e.target.value; $('#trimOut').textContent = (state.master.trim > 0 ? '+' : state.master.trim < 0 ? '−' : '') + Math.abs(state.master.trim).toFixed(1) + ' dB'; });
   select(state.sel);
 }
@@ -937,12 +967,23 @@ function buildPhrases() {
   chain.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {}));
   const tbl = $('#phraseGrid');
   const cols = ['note', 'ins', 'tbl', 'cmd1', 'cmd2'];
-  tbl.innerHTML = `<thead><tr><th rowspan="2">Step</th>${CH.map(c => `<th colspan="5" class="ch-head" style="--c:${c.hex}">${c.name}</th>`).join('')}</tr><tr>${CH.map(() => cols.map(k => `<th>${{ note: 'note', ins: 'ins', tbl: 'tbl', cmd1: 'cmd', cmd2: 'cmd' }[k]}</th>`).join('')).join('')}</tr></thead><tbody>` +
+  tbl.innerHTML = `<thead><tr><th rowspan="2">Step</th>${CH.map((c, ci) => `<th colspan="5" class="ch-head" style="--c:${c.hex}">${c.name} <span class="seg mini notemode" data-ci="${ci}" role="group" title="Where this channel's notes come from"><button aria-pressed="${state.noteMode[ci] === 'roll'}" data-v="roll">Roll</button><button aria-pressed="${state.noteMode[ci] === 'tracker'}" data-v="tracker">Trk</button></span></th>`).join('')}</tr><tr>${CH.map(() => cols.map(k => `<th>${{ note: 'note', ins: 'ins', tbl: 'tbl', cmd1: 'cmd', cmd2: 'cmd' }[k]}</th>`).join('')).join('')}</tr></thead><tbody>` +
     Array.from({ length: 16 }, (_, s) => `<tr data-step="${s}" class="${state.playing && s === state.step ? 'play' : ''}"><td class="step ${s % 4 === 0 ? 'beat' : ''}">${fmt(s + 1)}</td>${CH.map((c, ci) => cols.map(k => {
-      if (k === 'note') { const n = phraseNotes[ci][s]; return `<td><span class="cell ghost" title="From the piano roll — not editable here">${n || '·'}</span></td>`; }
+      if (k === 'note') {
+        const n = phraseNotes[ci][s];
+        if (state.noteMode[ci] === 'roll') return `<td><span class="cell ghost" title="From the piano roll. Set Trk to write notes here.">${n || '·'}</span></td>`;
+        return `<td><button class="cell note ${n ? '' : 'blank'}" data-note="${ci}:${s}" style="color:${n && n !== 'OFF' ? c.hex : 'inherit'}" title="Click: up a semitone · Shift-click: down · Backspace: clear · Delete: note off">${n || '–'}</button></td>`;
+      }
       const v = phraseCells[`${ci}:${s}:${k}`] || ''; return `<td><button class="cell ${v ? '' : 'blank'}" data-key="${ci}:${s}:${k}" data-kind="${k}" title="${k === 'ins' ? 'Instrument for the notes from this step on' : k === 'tbl' ? 'Table override from this step on' : 'Command on this step'}">${v || '–'}</button></td>`;
     }).join('')).join('')}</tr>`).join('') + '</tbody>';
-  tbl.querySelectorAll('button.cell').forEach(b => b.addEventListener('click', () => {
+  tbl.querySelectorAll('.notemode').forEach(el => seg(el, v => { state.noteMode[+el.dataset.ci] = v; buildPhrases(); }));
+  tbl.querySelectorAll('button.note').forEach(b => {
+    const [ci, s] = b.dataset.note.split(':').map(Number);
+    const set = v => { phraseNotes[ci][s] = v; buildPhrases(); tbl.querySelector(`[data-note="${ci}:${s}"]`)?.focus(); };
+    b.addEventListener('click', e => { const cur = phraseNotes[ci][s]; const m = cur && cur !== 'OFF' ? noteMidi(cur) : 59; set(noteName(clamp(m + (e.shiftKey ? -1 : 1), 24, 107))); });
+    b.addEventListener('keydown', e => { if (e.key === 'Backspace') { e.preventDefault(); set(''); } else if (e.key === 'Delete') { e.preventDefault(); set('OFF'); } });
+  });
+  tbl.querySelectorAll('button.cell[data-kind]').forEach(b => b.addEventListener('click', () => {
     const k = b.dataset.kind;
     if (k === 'cmd1' || k === 'cmd2') openPalette(b, v => { phraseCells[b.dataset.key] = v; buildPhrases(); });
     else { const cur = +phraseCells[b.dataset.key] || 0; const max = k === 'ins' ? 15 : 6; const nv = (cur + 1) % (max + 1); phraseCells[b.dataset.key] = nv ? String(nv) : ''; buildPhrases(); }
@@ -974,7 +1015,7 @@ function buildHardware() {
   $('#hwDisplay').innerHTML = `
     <div class="toggle-row"><div><div class="t">Scope trace</div><div class="d">Digital is the staircase into the DAC; analog is what leaves the machine.</div></div><div class="seg mini" id="traceSeg" role="group">${[['digital', 'Digital'], ['analog', 'Analog'], ['both', 'Both']].map(o => `<button aria-pressed="${state.hw.trace === o[0]}" data-v="${o[0]}">${o[1]}</button>`).join('')}</div></div>
     <div class="toggle-row"><div><div class="t">Values</div><div class="d">Decimal everywhere, or hex for the LSDj habit. Registers are always hex.</div></div><div class="seg mini" id="hexSeg" role="group"><button aria-pressed="${!state.hex}" data-v="dec">Decimal</button><button aria-pressed="${state.hex}" data-v="hex">Hex</button></div></div>`;
-  $$('#hwStates input[data-hw], #hwDepartures input[data-hw]').forEach(inp => inp.addEventListener('change', () => { const k = inp.dataset.hw; if (k === 'noise') { state.master.noise = inp.checked; $('#noiseSw').checked = inp.checked; } else state.hw[k] = inp.checked; syncHw(); }));
+  $$('#hwStates input[data-hw], #hwDepartures input[data-hw]').forEach(inp => inp.addEventListener('change', () => { const k = inp.dataset.hw; if (k === 'noise') { state.master.noise = inp.checked; $('#noiseSw').checked = inp.checked; } else state.hw[k] = inp.checked; const d = $('#declickSw'); if (d) d.checked = !!state.hw.tame; syncHw(); }));
   seg($('#bassMod'), v => { state.hw.bassMod = v; });
   stepper($('#tameMs'), 1, 5, v => { state.hw.tameMs = v; }, v => `${v} ms`, state.hw.tameMs);
   seg($('#traceSeg'), v => { state.hw.trace = v; });
@@ -1032,7 +1073,8 @@ function tick(now) {
     while (acc > 125) { acc -= 125; state.step = (state.step + 1) % 16; if (state.step === 0) state.bar = (state.bar + 1) % 8; const s = SEQ[state.step];
       CH.forEach((c, i) => { const n = i < 3 ? s[i] : (s[3] ? 36 + (state.step % 4 === 0 ? 0 : 6) : 0); if (n) { c.note = n; c.amp = 1; c.on = true; } });
       $('#pos').textContent = `${state.bar + 1}.${Math.floor(state.step / 4) + 1}.${state.step % 4 + 1}`;
-      if (state.tab === 'phrases') { $$('#phraseGrid tbody tr').forEach(tr => tr.classList.toggle('play', +tr.dataset.step === state.step)); $$('#chain button').forEach((b, k) => b.classList.toggle('cur', (k % 8) === state.bar)); }
+      if (state.recording) CH.forEach((c, i) => { if (state.noteMode[i] !== 'tracker') return; const n = i < 3 ? s[i] : (s[3] ? 36 + (state.step % 4 === 0 ? 0 : 6) : 0); if (n) { phraseNotes[i][state.step] = noteName(n); const key = `${i}:${state.step}:ins`; if (!phraseCells[key]) phraseCells[key] = String(c.inst); } });
+      if (state.tab === 'phrases') { if (state.recording) buildPhrases(); else { $$('#phraseGrid tbody tr').forEach(tr => tr.classList.toggle('play', +tr.dataset.step === state.step)); $$('#chain button').forEach((b, k) => b.classList.toggle('cur', (k % 8) === state.bar)); } }
       refreshRegs(); }
     CH.forEach((c, i) => { const rate = c.type === 'wave' ? 0 : (c.env ? (now - lastTick) / (c.env * 15.625 * 15) : 0); c.amp = Math.max(0.08, c.amp - rate); if (c.type === 'wave') c.amp = 1; });
     noiseSeed += (now - lastTick) * 0.5;
@@ -1041,6 +1083,10 @@ function tick(now) {
   $$('.strip').forEach((el, i) => { const c = CH[i]; drawScope(el.querySelector('canvas'), c); el.querySelector('[data-led]').classList.toggle('on', state.playing && c.amp > 0.15); });
   drawMaster($('#masterScope'));
   drawScope($('#voiceScope'), CH[1]);
+  if (!$('#video').hidden) {
+    $$('#video canvas[data-vid]').forEach(cv => drawScope(cv, CH[+cv.dataset.vid], { video: true, glow: 10, ground: state.vid.ground, width: state.vid.width }));
+    drawMaster($('#vidMaster'), { ground: state.vid.ground, width: state.vid.width, glow: 10 });
+  }
   if (!reduced) requestAnimationFrame(tick); else setTimeout(() => requestAnimationFrame(tick), 500);
 }
 
@@ -1049,7 +1095,10 @@ $$('#modelSeg button').forEach(b => b.addEventListener('click', () => setModel(b
 $$('#tabs [role=tab]').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
 $('#playBtn').addEventListener('click', () => { state.playing = !state.playing; $('#playBtn').textContent = state.playing ? '■ Stop' : '▶ Play'; if (!state.playing) { CH.forEach(c => { c.on = false; c.amp = 1; }); $$('#phraseGrid tr').forEach(tr => tr.classList.remove('play')); } });
 $('#hexBtn').addEventListener('click', () => setHex(!state.hex));
-$('#videoBtn').addEventListener('click', e => { const on = e.currentTarget.getAttribute('aria-pressed') !== 'true'; e.currentTarget.setAttribute('aria-pressed', on); e.currentTarget.textContent = on ? 'Visualizer ↗ (open)' : 'Visualizer'; });
+$('#recBtn').addEventListener('click', e => { state.recording = !state.recording; e.currentTarget.setAttribute('aria-pressed', state.recording); e.currentTarget.style.color = state.recording ? 'var(--accent-hi)' : ''; });
+$('#videoBtn').addEventListener('click', e => { const on = e.currentTarget.getAttribute('aria-pressed') !== 'true'; e.currentTarget.setAttribute('aria-pressed', on); e.currentTarget.textContent = on ? 'Visualizer (open)' : 'Visualizer'; $('#video').hidden = !on; });
+seg($('#vidGround'), v => { state.vid.ground = v; });
+seg($('#vidLine'), v => { state.vid.width = +v; });
 $('#bankPrev').addEventListener('click', () => { state.bank = (state.bank + BANKS.length - 1) % BANKS.length; $('#bankName').textContent = BANKS[state.bank]; });
 $('#bankNext').addEventListener('click', () => { state.bank = (state.bank + 1) % BANKS.length; $('#bankName').textContent = BANKS[state.bank]; });
 $('#voiceToggle').addEventListener('click', e => { const v = $('#voice'); v.hidden = !v.hidden; e.currentTarget.textContent = v.hidden ? 'Show window' : 'Hide window'; e.currentTarget.setAttribute('aria-pressed', !v.hidden); });

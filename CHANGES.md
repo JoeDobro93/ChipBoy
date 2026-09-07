@@ -26,6 +26,27 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-07 — UI workshop: decisions taken (C8, §6.5, §9.6, §12.3, §13, §15.3, §17, §18)
+
+**Changed:** `docs/UI_DESIGN.md` and the interactive mockup `docs/mockups/chipboy_mockup.html`
+are now the interface specification; §13 points at them and everything in them ships in
+v1. The six workshop decisions (D10–D15 in §18):
+
+- The Phrases lane is a **full tracker** — note column, record arm, per-channel choice of
+  piano-roll or tracker notes — so a song can later be exported as a playback ROM. §15.3
+  records the two rules that keep that door open.
+- **RAW** joins the model switch: the DMG chip with the analog stage bypassed.
+- **C8 is revised.** The one-switch rule becomes "defaults are a stock machine; every
+  audible departure is opt-in, labelled, and lights MODIFIED". The departures (de-click,
+  softened master pops) ship in v1; de-click is also on the master strip.
+- `M` (master volume) and `Z` (random argument) join the command set.
+- Default routing PU1 omni, PU2 / WAV / NOI on MIDI 2–4. Keyswitches off by default.
+  Visualizer window in v1.
+
+**Why:** the owner's answers in the workshop. **Considered:** keeping commands-only in
+the lane to avoid two note sources; rejected because the ROM-export goal needs the
+tracker to hold the whole song, and recording makes the two sources one.
+
 ### 2026-09-07 — M2: analog stage and renderer (§5.2, §6, §7, §16.2–16.4)
 
 **Built:** `Source/core/Analog/AnalogModel.h` — the constants per console, each marked
