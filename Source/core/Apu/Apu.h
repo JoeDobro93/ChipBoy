@@ -8,6 +8,8 @@
 // dmg_sound test ROMs, run through the harness in Source/tools/harness.
 #pragma once
 
+#include "core/Console.h"
+
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -41,6 +43,12 @@ public:
 
     /// State after the boot ROM has run: APU on, NR51 = $F3, NR50 = $77.
     void reset();
+
+    /// DMG or CGB (spec section 6.5). CGB: wave RAM is reachable while the
+    /// channel plays -- the access lands on the byte being played -- there
+    /// is no trigger corruption, and PCM12/PCM34 read the DAC inputs.
+    void    setModel(Console m) { model_ = m; }
+    Console model() const { return model_; }
 
     /// Advance to an absolute cycle, emitting events as channel outputs change.
     /// Uses next-event scheduling: nothing is ticked per cycle.
@@ -153,6 +161,7 @@ private:
     bool     skipNextTick_ = false; ///< power-on with divider bit 12 set: first tick is skipped
     uint16_t divider_ = 0;
     uint64_t cycle_ = 0;
+    Console  model_ = Console::DMG;
 
     std::vector<ApuEvent> events_;
     std::vector<MixEvent> mixEvents_;

@@ -47,7 +47,6 @@ void Renderer::prepare(double hostSampleRate, const AnalogModel& model, int maxB
     cyclesPerWork_ = double(kCpuHz) / fsWork_;
     workPerCycle_ = fsWork_ / double(kCpuHz);
     kernel_ = Kernel::design(fsWork_, model.ampCutoffHz);
-    hpCoef_ = std::pow(model.couplingPerCycle, cyclesPerWork_);
 
     fir_ = designLowpass(kDecimatorTaps, 0.23, 96.0);
     firTaps_ = int(fir_.size());
@@ -65,13 +64,42 @@ void Renderer::prepare(double hostSampleRate, const AnalogModel& model, int maxB
         s.firHist.assign(fn, 0.0f);
     }
 
-    // The measured floor is an RMS over 0-96 kHz; keep the spectral density.
-    hissPerSample_ = model.hissRms * std::sqrt(fsWork_ / 192000.0) * kSqrt3;
     auto inc = [&](double hz) { return uint64_t(std::ldexp(hz / fsWork_, 64)); };
     lineInc_  = inc(model.lcdLineHz);
     line2Inc_ = inc(2.0 * model.lcdLineHz);
     frameInc_ = inc(model.frameHz);
+    recomputeCoefficients();
     reset();
+}
+
+void Renderer::setModel(const AnalogModel& m, bool bypassAnalog)
+{
+    model_ = m;
+    bypass_ = bypassAnalog;
+    recomputeCoefficients();
+}
+
+void Renderer::setOptions(const Options& o)
+{
+    opt_ = o;
+    recomputeCoefficients();
+}
+
+void Renderer::recomputeCoefficients()
+{
+    // Coupling: the model's per-cycle factor, lengthened by the CGB capacitor
+    // swap (corner scales with the capacitor). RAW gets a 5 Hz DC blocker.
+    double a = model_.couplingPerCycle;
+    if (model_.console == Console::CGB && opt_.bassMod) {
+        const double tauCycles = -1.0 / std::log(a);
+        a = std::exp(-1.0 / (tauCycles * (opt_.bassMod == 1 ? 10.0 : 47.0)));
+    }
+    if (bypass_) a = std::exp(-2.0 * kPi * 5.0 / double(kCpuHz));
+    hpCoef_ = std::pow(a, cyclesPerWork_);
+    // The measured floor is an RMS over 0-96 kHz; keep the spectral density.
+    hissPerSample_ = model_.hissRms * std::sqrt(fsWork_ / 192000.0) * kSqrt3;
+    lineScale_ = opt_.lcd ? 1.0 : 0.0;
+    declickSamples_ = opt_.declickMs > 0.0f ? std::max(1, int(std::lround(double(opt_.declickMs) * 1e-3 * fsWork_))) : 0;
 }
 
 void Renderer::reset()
@@ -122,7 +150,15 @@ void Renderer::addStep(Side& s, double position, double height)
     }
 }
 
-void Renderer::updateSides(uint64_t cycle)
+void Renderer::addRamp(Side& s, double position, double height, int samples)
+{
+    // A departure: the step spread over `samples` working samples as equal
+    // sub-steps, each band-limited. Sums to exactly the step.
+    const double part = height / samples;
+    for (int k = 0; k < samples; ++k) addStep(s, position + k, part);
+}
+
+void Renderer::updateSides(uint64_t cycle, int rampSamples)
 {
     for (int i = 0; i < 2; ++i) {
         const double v = sideValue(i);
@@ -132,6 +168,8 @@ void Renderer::updateSides(uint64_t cycle)
             // The starting state, not a transition: the stage was already there.
             side_[i].integrator = v;
             side_[i].hpIn = v;
+        } else if (rampSamples > 1) {
+            addRamp(side_[i], double(cycle) * workPerCycle_, h, rampSamples);
         } else {
             addStep(side_[i], double(cycle) * workPerCycle_, h);
         }
@@ -142,11 +180,19 @@ void Renderer::updateSides(uint64_t cycle)
 void Renderer::applyChannel(const ApuEvent& e)
 {
     const int c = e.channel & 3;
+    const bool turningOn = e.dacOn && !dacOn_[c];
     // A disabled DAC holds its last output; it does not return to zero
-    // (reference section 9, measured 2026-09-07).
+    // (reference section 9, measured 2026-09-07). RAW returns to zero.
     if (e.dacOn) dacVal_[c] = dacValue(e.level);
+    else if (bypass_) dacVal_[c] = 0.0;
     dacOn_[c] = e.dacOn;
-    updateSides(e.cycle);
+    int ramp = 0;
+    if (declickSamples_ > 0 && !bypass_) {
+        const uint64_t m = uint64_t(double(e.cycle) * workPerCycle_);
+        if (turningOn) declickUntil_[c] = m + uint64_t(declickSamples_);
+        if (m < declickUntil_[c]) ramp = declickSamples_;
+    }
+    updateSides(e.cycle, ramp);
 }
 
 void Renderer::applyMix(const MixEvent& e)
@@ -156,7 +202,7 @@ void Renderer::applyMix(const MixEvent& e)
     nr50_ = e.nr50;
     nr51_ = e.nr51;
     powered_ = e.powered;
-    updateSides(e.cycle);
+    updateSides(e.cycle, (opt_.softenMaster && !bypass_) ? std::max(1, int(fsWork_ * 0.005)) : 0);
 }
 
 void Renderer::render(Apu& apu, float* outL, float* outR, int nFrames)
@@ -192,24 +238,25 @@ void Renderer::renderWorking(uint64_t m1, float* outL, float* outR)
         // Noise floor, shared components (the LCD and frame lines are common
         // to both sides; the hiss is not).
         double lines = 0.0;
-        if (noise_) {
+        const bool noise = opt_.noise && !bypass_;
+        if (noise) {
             linePhase_ += lineInc_; line2Phase_ += line2Inc_; framePhase_ += frameInc_;
             const double s = std::ldexp(1.0, -64) * 2.0 * kPi;
-            lines = model_.lcdLineAmp  * std::sin(double(linePhase_)  * s)
-                  + model_.lcdLine2Amp * std::sin(double(line2Phase_) * s)
-                  + model_.frameAmp    * std::sin(double(framePhase_) * s);
+            lines = (model_.lcdLineAmp  * std::sin(double(linePhase_)  * s)
+                  +  model_.lcdLine2Amp * std::sin(double(line2Phase_) * s)) * lineScale_
+                  +  model_.frameAmp    * std::sin(double(framePhase_) * s);
         }
         for (int side = 0; side < 2; ++side) {
             Side& s = side_[side];
             float& slot = s.ring[m & ringMask_];
             s.integrator += double(slot);
             slot = 0.0f;
-            const double x = softClip(s.integrator, model_);
+            const double x = bypass_ ? s.integrator : softClip(s.integrator, model_);
             const double y = hpCoef_ * s.hpOut + x - s.hpIn;
             s.hpIn = x;
             s.hpOut = y;
             double v = y;
-            if (noise_) {
+            if (noise) {
                 const uint64_t z = hash64((m * 2 + uint64_t(side)) ^ seed_);
                 const double u = (double(z & 0xFFFF) + double((z >> 16) & 0xFFFF)
                                 + double((z >> 32) & 0xFFFF) + double(z >> 48)) / 65536.0 - 2.0;

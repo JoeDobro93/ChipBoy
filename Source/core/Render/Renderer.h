@@ -48,8 +48,26 @@ public:
     uint64_t framesRendered() const { return frames_; }
 
     /// Headphone Noise (spec C8): the one switch. Default on.
-    void setNoise(bool on) { noise_ = on; }
-    bool noise() const { return noise_; }
+    void setNoise(bool on) { opt_.noise = on; }
+    bool noise() const { return opt_.noise; }
+
+    /// The Hardware panel (UI_DESIGN section 5). Hardware states and
+    /// departures alike; the badge logic lives in the plugin.
+    struct Options {
+        bool    noise = true;        ///< Headphone Noise
+        bool    lcd = true;          ///< off removes the LCD line
+        uint8_t bassMod = 0;         ///< CGB capacitor swap: 0 stock, 1 x10, 2 x47
+        float   declickMs = 0.0f;    ///< > 0: crossfade DAC-on steps (a departure)
+        bool    softenMaster = false;///< ramp NR50 changes (a departure)
+    };
+    void setOptions(const Options& o);
+    const Options& options() const { return opt_; }
+
+    /// Switch the emulated console without reallocating: coefficients and
+    /// levels only. `bypassAnalog` is RAW: no coupling, clip, noise or DAC
+    /// hold -- the plain digital mix with a DC blocker.
+    void setModel(const AnalogModel& m, bool bypassAnalog);
+    bool bypassed() const { return bypass_; }
 
     const AnalogModel& model() const { return model_; }
     double hostSampleRate() const { return fsHost_; }
@@ -72,8 +90,10 @@ private:
     uint64_t cycleForWork(uint64_t m) const;
     void applyChannel(const ApuEvent& e);
     void applyMix(const MixEvent& e);
-    void updateSides(uint64_t cycle);
+    void updateSides(uint64_t cycle, int rampSamples = 0);
     void addStep(Side& s, double position, double height);
+    void addRamp(Side& s, double position, double height, int samples);
+    void recomputeCoefficients();
     double sideValue(int side) const;
     void renderWorking(uint64_t m1, float* outL, float* outR);
 
@@ -89,6 +109,11 @@ private:
     double cyclesPerWork_ = 0.0, workPerCycle_ = 0.0;
     double hpCoef_ = 1.0;
     double hissPerSample_ = 0.0;
+    double lineScale_ = 1.0;
+    bool   bypass_ = false;
+    Options opt_;
+    int    declickSamples_ = 0;
+    uint64_t declickUntil_[4] = { 0, 0, 0, 0 };
     uint64_t lineInc_ = 0, line2Inc_ = 0, frameInc_ = 0;
     uint64_t linePhase_ = 0, line2Phase_ = 0, framePhase_ = 0;
 
@@ -99,7 +124,6 @@ private:
     bool    dacOn_[4]{};
     uint8_t nr50_ = 0, nr51_ = 0;
     bool    powered_ = false;
-    bool    noise_ = true;
     uint64_t seed_ = 0x243F6A8885A308D3ull;
 };
 

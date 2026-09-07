@@ -25,7 +25,10 @@ add_library(chipboy_core STATIC
     Source/core/Apu/Apu.cpp
     Source/core/Render/Kernel.cpp
     Source/core/Render/Renderer.cpp
-    Source/core/Render/Reference.cpp)
+    Source/core/Render/Reference.cpp
+    Source/core/Bank/Bank.cpp
+    Source/core/Driver/Driver.cpp
+    Source/core/Tracker/Player.cpp)
 target_include_directories(chipboy_core PUBLIC Source)
 target_compile_features(chipboy_core PUBLIC cxx_std_20)
 if(MSVC)
@@ -64,7 +67,9 @@ if(CHIPBOY_BUILD_TESTS)
         Tests/ApuTests.cpp
         Tests/BlarggTests.cpp
         Tests/SameSuiteTests.cpp
-        Tests/RenderTests.cpp)
+        Tests/RenderTests.cpp
+        Tests/DriverTests.cpp
+        Tests/TrackerTests.cpp)
     target_link_libraries(chipboy_tests PRIVATE chipboy_core chipboy_harness Catch2::Catch2WithMain)
     target_compile_definitions(chipboy_tests PRIVATE
         CHIPBOY_TEST_ROM_DIR="${CHIPBOY_TEST_ROM_DIR}"
@@ -90,6 +95,51 @@ if(CHIPBOY_BUILD_TESTS)
     catch_discover_tests(chipboy_tests)
 endif()
 
+# ---------------------------------------------------------------------------
+# plugins -- JUCE 8. Only the plugin shell and the interface live here; the
+# chip, the analog stage, the driver, the bank and the tracker are the core
+# above and know nothing of JUCE (spec rule L1).
+# ---------------------------------------------------------------------------
 if(CHIPBOY_BUILD_PLUGIN)
-    message(FATAL_ERROR "The plugin targets arrive in M3; the core and harness are M1.")
+    option(CHIPBOY_COPY_PLUGINS "Copy built plugins into the user's plugin folders after each build" OFF)
+    FetchContent_Declare(JUCE
+        GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+        GIT_TAG        8.0.15
+        GIT_SHALLOW    TRUE)
+    FetchContent_MakeAvailable(JUCE)
+
+    set(CHIPBOY_FORMATS VST3 Standalone)
+    if(APPLE)
+        list(APPEND CHIPBOY_FORMATS AU)
+    endif()
+
+    juce_add_plugin(ChipBoy
+        PRODUCT_NAME "ChipBoy"
+        COMPANY_NAME "ChipBoy"
+        BUNDLE_ID com.chipboy.chipboy
+        PLUGIN_MANUFACTURER_CODE Chpb
+        PLUGIN_CODE Chby
+        FORMATS ${CHIPBOY_FORMATS}
+        IS_SYNTH TRUE
+        NEEDS_MIDI_INPUT TRUE
+        NEEDS_MIDI_OUTPUT FALSE
+        IS_MIDI_EFFECT FALSE
+        EDITOR_WANTS_KEYBOARD_FOCUS TRUE
+        COPY_PLUGIN_AFTER_BUILD ${CHIPBOY_COPY_PLUGINS}
+        VST3_CATEGORIES Instrument Synth
+        AU_MAIN_TYPE kAudioUnitType_MusicDevice)
+    target_sources(ChipBoy PRIVATE
+        Source/plugin/shared/Parameters.cpp
+        Source/plugin/shared/BankJson.cpp
+        Source/plugin/main/ChipBoyProcessor.cpp)
+    target_include_directories(ChipBoy PRIVATE Source)
+    target_compile_definitions(ChipBoy PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_REPORT_APP_USAGE=0
+        JUCE_MODAL_LOOPS_PERMITTED=0)
+    target_link_libraries(ChipBoy
+        PRIVATE chipboy_core juce::juce_audio_utils juce::juce_audio_processors juce::juce_gui_extra
+        PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 endif()

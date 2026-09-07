@@ -6,11 +6,11 @@
 // sum to +-4.0.
 #pragma once
 
+#include "core/Console.h"
+
 #include <cstdint>
 
 namespace chipboy {
-
-enum class Console : uint8_t { DMG = 0, CGB = 1 };
 
 struct AnalogModel {
     Console console = Console::DMG;

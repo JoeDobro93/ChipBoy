@@ -298,7 +298,7 @@ void Apu::triggerWave()
     // Section 10.2: DMG wave-RAM corruption. If the channel is running and
     // this trigger lands on the cycle it fetches a byte, the first bytes of
     // wave RAM are overwritten from the byte about to be read.
-    if (w.enabled && w.timer > 0 && w.timer <= kWaveCorruptWindow) {
+    if (model_ == Console::DMG && w.enabled && w.timer > 0 && w.timer <= kWaveCorruptWindow) {
         const unsigned offset = ((w.position + 1) & 31) >> 1;
         if (offset < 4) {
             w.ram[0] = w.ram[offset];
@@ -526,7 +526,7 @@ void Apu::write(uint16_t addr, uint8_t v)
         // being fetched, not the one addressed.
         if (!wave_.enabled) {
             wave_.ram[addr & 0x0F] = v;
-        } else if (cycle_ - wave_.lastFetchCycle <= kWaveAccessWindow) {
+        } else if (model_ == Console::CGB || cycle_ - wave_.lastFetchCycle <= kWaveAccessWindow) {
             wave_.ram[wave_.position >> 1] = v;
         }
         return;
@@ -566,9 +566,15 @@ uint8_t Apu::read(uint16_t addr)
 {
     if (addr >= 0xFF30 && addr <= 0xFF3F) {
         if (!wave_.enabled) return wave_.ram[addr & 0x0F];
-        if (cycle_ - wave_.lastFetchCycle <= kWaveAccessWindow)
+        if (model_ == Console::CGB || cycle_ - wave_.lastFetchCycle <= kWaveAccessWindow)
             return wave_.ram[wave_.position >> 1];
         return 0xFF;
+    }
+    if (model_ == Console::CGB && (addr == 0xFF76 || addr == 0xFF77)) {
+        // PCM12 / PCM34: the digital inputs of the DACs, 0 for a channel that is off.
+        const int a = addr == 0xFF76 ? 0 : 2;
+        const uint8_t lo = channelActive(a) ? level(a) : 0, hi = channelActive(a + 1) ? level(a + 1) : 0;
+        return uint8_t(lo | (hi << 4));
     }
     if (addr < 0xFF10 || addr > 0xFF2F) return 0xFF;
     const int idx = addr - 0xFF10;
