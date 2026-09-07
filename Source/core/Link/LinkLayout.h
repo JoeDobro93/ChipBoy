@@ -25,7 +25,7 @@
 namespace chipboy::link {
 
 constexpr uint32_t kMagic = 0x4B4C4243u;      ///< "CBLK"
-constexpr uint32_t kVersion = 1;
+constexpr uint32_t kVersion = 2;
 constexpr uint32_t kUuidChars = 40;
 constexpr uint32_t kNameChars = 64;
 constexpr uint32_t kInstNameChars = 16;
@@ -144,6 +144,7 @@ struct ChannelSlot {
 
     // --- main -> Voice, display only (section 11.7) ------------------------
     std::atomic<uint64_t> state{ 0 };            ///< packed, see packState()
+    std::atomic<uint64_t> state2{ 0 };           ///< the running state, see packState2()
     ScopeRing scope;
 };
 
@@ -189,6 +190,41 @@ inline void unpackState(uint64_t s, driver::VoiceView& v)
     v.note = uint8_t(s >> 48);
     v.instrument = uint8_t(s >> 56);
     v.period = uint16_t(v.regs[3] | ((v.regs[4] & 7) << 8));
+}
+
+/// The running state (docs/COMMANDS_AND_TEMPO.md section 3): what the two
+/// command slots and the instrument have actually done to the channel.
+inline uint64_t packState2(const driver::VoiceView& v)
+{
+    uint64_t s = 0;
+    s |= uint64_t(v.envVol & 15);
+    s |= uint64_t(v.envRate & 7) << 4;
+    s |= uint64_t(v.envDir ? 1 : 0) << 7;
+    s |= uint64_t(v.vibSpeed & 15) << 8;
+    s |= uint64_t(v.vibDepth & 15) << 12;
+    s |= uint64_t(uint16_t(v.pitchOffset)) << 16;
+    s |= uint64_t(v.pan & 3) << 32;
+    s |= uint64_t(v.duty & 3) << 34;
+    s |= uint64_t(v.tableSlot & 127) << 36;
+    s |= uint64_t(v.tableStep & 15) << 43;
+    s |= uint64_t(v.frame & 31) << 47;
+    s |= uint64_t(v.groove) << 52;
+    return s;
+}
+inline void unpackState2(uint64_t s, driver::VoiceView& v)
+{
+    v.envVol = uint8_t(s & 15);
+    v.envRate = uint8_t((s >> 4) & 7);
+    v.envDir = uint8_t((s >> 7) & 1);
+    v.vibSpeed = uint8_t((s >> 8) & 15);
+    v.vibDepth = uint8_t((s >> 12) & 15);
+    v.pitchOffset = int16_t(uint16_t((s >> 16) & 0xFFFF));
+    v.pan = uint8_t((s >> 32) & 3);
+    v.duty = uint8_t((s >> 34) & 3);
+    v.tableSlot = uint8_t((s >> 36) & 127);
+    v.tableStep = uint8_t((s >> 43) & 15);
+    v.frame = uint8_t((s >> 47) & 31);
+    v.groove = uint8_t((s >> 52) & 255);
 }
 
 /// Copy a C string field out of a region without trusting its termination.

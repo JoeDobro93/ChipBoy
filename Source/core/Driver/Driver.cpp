@@ -30,6 +30,12 @@ uint8_t panBitsFor(Pan p, int ch)
 // NR32 volume code from the 0-3 level (mute, 25, 50, 100).
 uint8_t nr32Code(uint8_t level) { static const uint8_t c[4] = { 0, 3, 2, 1 }; return uint8_t(c[level & 3] << 5); }
 
+// NRx1's length bits from an instrument's length (0 = no length counter).
+uint8_t lengthCode6(uint16_t length) { return length ? uint8_t(uint8_t(64 - std::min<int>(64, length)) & 0x3F) : 0; }
+
+// A command argument read as a signed step: 0-127 up, 128-255 down.
+int16_t signedArg(int x) { return int16_t(x < 128 ? x : x - 256); }
+
 } // namespace
 
 /* ------------------------------------------------------------ pitch */
@@ -83,7 +89,7 @@ void Driver::reset()
     for (auto& s : shadow_) s = 0;
     for (auto& k : known_) k = false;     // the first write of anything lands
     masterL_ = masterR_ = 255;
-    tickCount_ = 0; haveTick_ = false; lastTickFrame_ = 0;
+    tickCount_ = 0;
     pendingCount_ = 0;
     for (auto& vw : view_) vw = VoiceView{};
 }
@@ -123,26 +129,61 @@ const Instrument* Driver::resolveInstrument(int ch, uint8_t vel)
 
 void Driver::latch(int ch)
 {
+    // The running state starts as the instrument's; the level and pan
+    // parameters sit on top, and the command slots on top of those.
     Voice& v = v_[size_t(ch)];
     v.p = params_[size_t(ch)];
     const auto& p = v.p;
     const auto& i = v.inst;
-    v.envVol = p.envVol != 255 ? p.envVol : i.envVol;
-    v.envRate = p.envRate != 255 ? p.envRate : i.envRate;
-    v.envDir = p.envDir != 255 ? EnvDir(p.envDir & 1) : i.envDir;
-    v.duty = p.duty != 255 ? uint8_t(p.duty & 3) : i.duty;
-    v.sweepRate = p.sweepRate != 255 ? p.sweepRate : i.sweepRate;
-    v.sweepShift = p.sweepShift != 255 ? p.sweepShift : i.sweepShift;
-    v.sweepDown = p.sweepDir != 255 ? (p.sweepDir != 0) : i.sweepDown;
-    v.lfsr7 = p.lfsr != 255 ? (p.lfsr != 0) : i.lfsr7;
+    v.envVol = i.envVol; v.envRate = i.envRate; v.envDir = i.envDir;
+    v.duty = i.duty;
+    v.sweepRate = i.sweepRate; v.sweepShift = i.sweepShift; v.sweepDown = i.sweepDown;
+    v.lfsr7 = i.lfsr7;
     v.noiseShift = i.noiseShift; v.noiseDiv = i.noiseDivisor; v.noiseSweep = i.noiseSweep;
     v.pan = p.pan != 255 ? Pan(p.pan & 3) : i.pan;
     v.vibShape = i.vib.shape;
-    v.vibSpeed = p.vibSpeed != 255 ? std::max<uint8_t>(1, p.vibSpeed) : std::max<uint8_t>(1, i.vib.speed);
-    v.vibDepth = p.vibDepth != 255 ? p.vibDepth : i.vib.depth;
+    v.vibSpeed = std::max<uint8_t>(1, i.vib.speed);
+    v.vibDepth = i.vib.depth;
     v.vibDelay = i.vib.delay;
-    v.waveSlot = p.wave ? p.wave : i.wave;
+    v.waveSlot = i.wave;
+    v.waveLevel = i.waveLevel;
     v.lengthCode = i.length;
+}
+
+void Driver::applyLevelParam(int ch)
+{
+    Voice& v = v_[size_t(ch)];
+    if (v.p.level == 255) return;                       // the instrument's own
+    if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) v.waveLevel = uint8_t(v.p.level & 3);
+    else v.envVol = uint8_t(v.p.level & 15);
+}
+
+InstrumentType Driver::defaultType(int ch) { return ch == 2 ? InstrumentType::Wave : ch == 3 ? InstrumentType::Noise : InstrumentType::Pulse; }
+bool Driver::typeFits(int ch, InstrumentType t)
+{
+    // A channel can only host its own kind (section 9.2).
+    return (ch < 2 && t == InstrumentType::Pulse) || (ch == 2 && (t == InstrumentType::Wave || t == InstrumentType::Kit)) || (ch == 3 && t == InstrumentType::Noise);
+}
+
+/// Load the instrument on a sounding channel: the tracker's instrument column
+/// and Live follow both do this, and the slots in force then apply on top.
+void Driver::reloadInstrument(int ch)
+{
+    Voice& v = v_[size_t(ch)];
+    const Instrument* inst = resolveInstrument(ch, v.vel);
+    InstrumentCore core = inst ? *inst : Instrument::defaults(defaultType(ch));
+    if (!typeFits(ch, core.type)) core = Instrument::defaults(defaultType(ch));
+    v.inst = core; v.haveInst = true;
+    latch(ch);
+    applyLevelParam(ch);
+    const uint8_t tbl = v.tableOverride ? v.tableOverride : core.table;
+    v.tableSlot = tbl; v.tableStep = 0; v.tableOn = tbl && bank_ && bank_->table(tbl);
+    fireSlots(ch);
+    if (v.active) {
+        if (core.type == InstrumentType::Pulse) emit(regAddr(ch, 1), uint8_t((v.duty << 6) | (core.length ? uint8_t(64 - std::min<int>(64, core.length)) & 0x3F : 0)));
+        writeEnvelope(ch, core.type == InstrumentType::Pulse || core.type == InstrumentType::Noise);
+        writeNr51();
+    }
 }
 
 /* -------------------------------------------------------------- notes */
@@ -159,22 +200,24 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
         if (note >= base && note < base + 12) { v.ksInstrument = uint8_t(note - base + 1); return; }
     }
     if (v.heldCount < v.held.size()) v.held[v.heldCount++] = note;
+    // The parameters' slots are in force from here; a cell's columns then
+    // write over them, and fireSlots() applies the result in order.
+    syncSlots(ch);
     if (cell) {
         if (cell->inst) v.ksInstrument = cell->inst;        // a cell's instrument column selects like a keyswitch
-        // A delay command on the cell postpones the start.
-        if (cell->cmd1.cmd == Cmd::D || cell->cmd2.cmd == Cmd::D) {
-            const auto& d = cell->cmd1.cmd == Cmd::D ? cell->cmd1 : cell->cmd2;
-            v.pendingOn = true; v.pendingNote = note; v.pendingVel = vel; v.delay = int16_t(std::max<int>(0, d.a));
+        if (cell->table) v.tableOverride = cell->table;      // the channel's table override, from this step on
+        // A cell's commands are the slots from this step on (section 3).
+        if (cell->cmd1.cmd != Cmd::None) v.slot[0] = cell->cmd1;
+        if (cell->cmd2.cmd != Cmd::None) v.slot[1] = cell->cmd2;
+    }
+    // D postpones the start, whether it came from a cell or a slot.
+    for (int i = 0; i < 2; ++i)
+        if (v.slot[size_t(i)].cmd == Cmd::D) {
+            v.pendingOn = true; v.pendingNote = note; v.pendingVel = vel; v.delay = int16_t(std::clamp<int>(v.slot[size_t(i)].a, 0, 255));
             return;
         }
-    }
     const bool legato = v.active && v.haveInst && v.inst.legato;
     startVoice(ch, note, vel, legato);
-    if (cell) {
-        if (cell->table) { v.tableSlot = cell->table; v.tableStep = 0; v.tableOn = bank_ && bank_->table(cell->table); }
-        if (cell->cmd1.cmd != Cmd::None && cell->cmd1.cmd != Cmd::D) applyCommand(ch, cell->cmd1, false);
-        if (cell->cmd2.cmd != Cmd::None && cell->cmd2.cmd != Cmd::D) applyCommand(ch, cell->cmd2, false);
-    }
 }
 
 void Driver::noteOff(int ch, uint8_t note)
@@ -202,26 +245,27 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool legato)
     const Instrument* inst = resolveInstrument(ch, vel);
     InstrumentCore core;
     if (inst) core = *inst;
-    else core = Instrument::defaults(ch == 2 ? InstrumentType::Wave : ch == 3 ? InstrumentType::Noise : InstrumentType::Pulse);
-    // A channel can only host its own kind (section 9.2).
-    const bool typeOk = (ch < 2 && core.type == InstrumentType::Pulse) || (ch == 2 && (core.type == InstrumentType::Wave || core.type == InstrumentType::Kit)) || (ch == 3 && core.type == InstrumentType::Noise);
-    if (!typeOk) core = Instrument::defaults(ch == 2 ? InstrumentType::Wave : ch == 3 ? InstrumentType::Noise : InstrumentType::Pulse);
+    else core = Instrument::defaults(defaultType(ch));
+    if (!typeFits(ch, core.type)) core = Instrument::defaults(defaultType(ch));
 
     const bool wasActive = v.active;
     v.inst = core; v.haveInst = true;
     latch(ch);
     v.note = note; v.vel = vel; v.active = true; v.killed = false;
     v.ticks = 0; v.vibPos = 0; v.pOffset = 0; v.sliding = false; v.chordN = 0; v.chordIdx = 0;
-    v.dutyIdx = 0; v.kill = -1; v.retrigEvery = 0; v.retrigCount = 0; v.lastCmd = {};
+    v.dutyIdx = 0; v.kill = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.lastCmd = {}; v.frameIdx = 0;
     v.rng = v.rng * 1664525u + 1013904223u + note;
     // volume from velocity
     if (v.p.velocityMode == 0 && (core.type == InstrumentType::Pulse || core.type == InstrumentType::Noise)) v.envVol = levelFromVelocity(vel);
-    if (v.p.level != 255) { if (core.type == InstrumentType::Wave || core.type == InstrumentType::Kit) v.inst.waveLevel = uint8_t(v.p.level & 3); else v.envVol = uint8_t(v.p.level & 15); }
+    applyLevelParam(ch);
     // table
-    const uint8_t tbl = v.p.table ? v.p.table : core.table;
+    const uint8_t tbl = v.tableOverride ? v.tableOverride : core.table;
     v.tableSlot = tbl; v.tableStep = 0; v.tableOn = tbl && bank_ && bank_->table(tbl);
-    v.arpSlot = v.p.arp; v.arpStep = 0;
     if (core.dutySeqLen) v.duty = uint8_t(core.dutySeq[0] & 3);
+    // instrument, then its table, then CMD1 and CMD2: the slots in force apply
+    // to every note in their span (section 3). Their registers go out with the
+    // note's own writes below rather than twice.
+    fireSlots(ch);
 
     const int base = computePeriod(ch);
     if (base < 0 && core.type != InstrumentType::Noise && core.type != InstrumentType::Kit) {
@@ -249,8 +293,9 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool legato)
         case InstrumentType::Wave: {
             const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr;
             const Frame* f = w && !w->frames.empty() ? &w->frames[0] : nullptr;
-            v.frameIdx = 0; v.frameCount = 0; v.frameDir = 1; v.kitOn = false; v.streamActive = false;
-            if (v.p.frame && w) v.frameIdx = uint8_t(std::min<int>(v.p.frame - 1, int(w->frames.size()) - 1));
+            v.frameCount = 0; v.frameDir = 1; v.kitOn = false; v.streamActive = false;
+            if (w && !w->frames.empty()) v.frameIdx = uint8_t(std::min<int>(v.frameIdx, int(w->frames.size()) - 1));
+            else v.frameIdx = 0;
             static const Frame silent{};
             if (w && !w->frames.empty()) f = &w->frames[v.frameIdx];
             loadFrame(ch, f ? *f : silent, true);
@@ -320,13 +365,12 @@ int Driver::computePeriod(int ch)
         const double semis = p.transpose + v.bend;
         const double r = rate * std::pow(2.0, semis / 12.0);
         const double per = 2048.0 - 2097152.0 / std::max(1024.0, r);
-        return std::clamp(int(std::lround(per)) + p.detune + v.pOffset, 0, 2047);
+        return std::clamp(int(std::lround(per)) + v.pOffset, 0, 2047);
     }
     double note = v.note + p.transpose + v.bend;
     if (v.chordN) note += v.chord[v.chordIdx % v.chordN];
-    // table / arp transpose columns
-    if (v.tableOn && v.inst.transpose) { const Table* t = bank_->table(v.tableSlot); if (t) { const auto& s = t->steps[v.tableStep]; if (s.hasTranspose) note += s.transpose; } }
-    if (v.arpSlot) { const Table* a = bank_ ? bank_->table(v.arpSlot) : nullptr; if (a) { const auto& s = a->steps[v.arpStep]; if (s.hasTranspose) note += s.transpose; } }
+    // the table's transpose column
+    if (v.tableOn && v.inst.transpose && bank_) { const Table* t = bank_->table(v.tableSlot); if (t) { const auto& s = t->steps[v.tableStep]; if (s.hasTranspose) note += s.transpose; } }
     int per = periodForNote(note, v.inst.type == InstrumentType::Wave);
     if (per < 0) return -1;
     // vibrato: signed period offset, recomputed per tick (section 8.4)
@@ -341,7 +385,7 @@ int Driver::computePeriod(int ch)
             case VibShape::SawDown:  { const int cyc = step * 2; vib = int(std::lround((1.0 - double(pos % cyc) / cyc * 2.0) * v.vibDepth)); break; }
         }
     }
-    per += p.detune + v.pOffset + vib;
+    per += v.pOffset + vib;
     if (v.sliding) per = v.basePeriod;    // slides own the period until they arrive
     return std::clamp(per, 0, 2047);
 }
@@ -352,7 +396,7 @@ void Driver::writePeriod(int ch, bool trigger)
     if (v.inst.type == InstrumentType::Noise) {
         uint8_t s, d;
         if (v.inst.noiseManual) { s = v.noiseShift; d = v.noiseDiv; }
-        else { s = uint8_t(noiseShiftMap_[size_t(std::clamp(int(v.note) + v.p.transpose, 0, 127))]); d = uint8_t(noiseDivMap_[size_t(std::clamp(int(v.note) + v.p.transpose, 0, 127))]); s = uint8_t(std::clamp(int(s) + int(v.noiseShift) - 5 + v.pOffset, 0, 13)); }
+        else { const int n = std::clamp(int(v.note) + v.p.transpose, 0, 127); s = uint8_t(noiseShiftMap_[size_t(n)]); d = uint8_t(noiseDivMap_[size_t(n)]); s = uint8_t(std::clamp(int(s) + int(v.noiseShift) - 5, 0, 13)); }
         v.noiseShift = s; v.noiseDiv = d;
         emit(regAddr(3, 3), uint8_t((s << 4) | (v.lfsr7 ? 8 : 0) | (d & 7)));
         if (trigger) emit(regAddr(3, 4), uint8_t(0x80 | (v.inst.length ? 0x40 : 0)), true);
@@ -377,7 +421,7 @@ void Driver::writeEnvelope(int ch, bool trigger)
 {
     Voice& v = v_[size_t(ch)];
     if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) {
-        emit(regAddr(2, 2), nr32Code(v.inst.waveLevel));
+        emit(regAddr(2, 2), nr32Code(v.waveLevel));
         return;
     }
     const uint8_t nr2 = uint8_t((v.envVol << 4) | (v.envDir == EnvDir::Up ? 8 : 0) | (v.envRate & 7));
@@ -533,42 +577,166 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
     Voice& v = v_[size_t(ch)];
     Command c = cIn;
     if (c.cmd == Cmd::Z) {
-        // Randomise the previous command's argument by up to the given amount.
-        if (v.lastCmd.cmd == Cmd::None) return;
-        v.rng = v.rng * 1664525u + 1013904223u;
-        c = v.lastCmd; c.a = int16_t(c.a + int((v.rng >> 16) % uint32_t(std::max<int>(1, cIn.a + 1))));
+        // In a table step Z randomises the command before it on that step; in
+        // a slot it randomises the other slot, at every note-on (fireSlots).
+        if (!fromTable || v.lastCmd.cmd == Cmd::None) return;
+        c = v.lastCmd; c.a = randomArg(ch, cIn.a);
     }
     v.lastCmd = c;
+    const bool pulse = v.inst.type == InstrumentType::Pulse;
+    const bool wave = v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit;
+    // Inside a note-on the commands only set the running state: the note's own
+    // writes carry it out, so a slot does not cost a second burst or a pop.
+    const bool live = v.active && !inNoteOn_;
     switch (c.cmd) {
-        case Cmd::A: {
-            v.envVol = uint8_t(std::clamp<int>(c.a, 0, 15)); v.envRate = uint8_t(std::clamp<int>(c.b, 0, 7)); v.envDir = c.c ? EnvDir::Up : EnvDir::Down;
-            if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) v.inst.waveLevel = uint8_t(std::clamp<int>(c.a / 4, 0, 3));
-            if (v.active) writeEnvelope(ch, v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Noise);
+        case Cmd::A:                                  // table select, 0 stops
+            if (c.a <= 0) v.tableOn = false;
+            else { v.tableSlot = uint8_t(std::clamp<int>(c.a, 1, kTableSlots)); v.tableStep = 0; v.tableOn = bank_ && bank_->table(v.tableSlot); }
+            break;
+        case Cmd::C: v.chord[0] = 0; v.chord[1] = uint8_t(std::clamp<int>(c.a, 0, 60)); v.chord[2] = uint8_t(std::clamp<int>(c.b, 0, 60)); v.chordN = c.b ? 3 : (c.a ? 2 : 0); v.chordIdx = 0; break;
+        case Cmd::D: if (fromTable) v.delay = int16_t(std::clamp<int>(c.a, 0, 255)); break;   // a slot's D is read at the note-on
+        case Cmd::E: {
+            // Envelope: volume in x; y is the speed, 0-7 decaying, 8-15 rising.
+            if (wave) { v.waveLevel = uint8_t(std::clamp<int>(c.a, 0, 3)); if (live) writeEnvelope(ch, false); }
+            else {
+                v.envVol = uint8_t(std::clamp<int>(c.a, 0, 15));
+                v.envRate = uint8_t(c.b & 7);
+                v.envDir = (c.b & 8) ? EnvDir::Up : EnvDir::Down;
+                // A rewrite of NRx2 alone is zombie mode; the retrigger keeps
+                // the level honest and the duty phase intact (reference 4).
+                if (live) writeEnvelope(ch, pulse || v.inst.type == InstrumentType::Noise);
+            }
             break;
         }
-        case Cmd::C: v.chord[0] = 0; v.chord[1] = uint8_t(std::clamp<int>(c.a, 0, 15)); v.chord[2] = uint8_t(std::clamp<int>(c.b, 0, 15)); v.chordN = c.b ? 3 : (c.a ? 2 : 0); v.chordIdx = 0; break;
-        case Cmd::D: if (fromTable) v.delay = int16_t(std::max<int>(0, c.a)); break;
-        case Cmd::F: if (v.inst.type == InstrumentType::Wave) { const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr; if (w && !w->frames.empty()) { v.frameIdx = uint8_t(std::clamp<int>(c.a - 1, 0, int(w->frames.size()) - 1)); v.frameCount = 0; if (v.active) loadFrame(ch, w->frames[v.frameIdx], model_ == Console::DMG); } } break;
+        case Cmd::F: if (v.inst.type == InstrumentType::Wave) { const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr; if (w && !w->frames.empty()) { v.frameIdx = uint8_t(std::clamp<int>(c.a - 1, 0, int(w->frames.size()) - 1)); v.frameCount = 0; if (live) loadFrame(ch, w->frames[v.frameIdx], model_ == Console::DMG); } } break;
+        case Cmd::G: case Cmd::T: break;              // timeline: the Player and the Clock own these
         case Cmd::H: if (fromTable) { if (c.a <= 0) v.tableOn = false; else v.tableStep = uint8_t(std::clamp<int>(c.a - 1, 0, 15)); } break;
-        case Cmd::K: v.kill = int16_t(std::max<int>(0, c.a)); break;
+        case Cmd::K: v.kill = int16_t(std::clamp<int>(c.a, 0, 255)); break;
         case Cmd::L: v.slideRate = uint8_t(std::clamp<int>(c.a, 0, 15)); v.sliding = v.slideRate > 0; v.slideTarget = int16_t(std::clamp(periodForNote(v.note + v.p.transpose, v.inst.type == InstrumentType::Wave), 0, 2047)); break;
         case Cmd::M: writeNr50(uint8_t(std::clamp<int>(c.a, 0, 7)), uint8_t(std::clamp<int>(c.b, 0, 7))); break;
         case Cmd::O: v.pan = Pan(std::clamp<int>(c.a, 0, 3)); writeNr51(); break;
-        case Cmd::P: v.pOffset = int16_t(std::clamp<int>(c.a, -128, 127)); if (v.active) writePeriod(ch, false); break;
-        case Cmd::R: v.retrigEvery = uint8_t(std::clamp<int>(c.a, 0, 15)); v.retrigCount = 0; break;
+        case Cmd::P: v.pOffset = int16_t(std::clamp<int>(c.a, 0, 255) - 128); if (live) writePeriod(ch, false); break;
+        case Cmd::R: v.retrigEvery = uint8_t(std::clamp<int>(c.b, 0, 255)); v.retrigStep = signedArg(c.a); v.retrigCount = 0; break;
         case Cmd::S: {
-            if (ch == 0) {
-                v.sweepRate = 1; v.sweepDown = c.a < 0; v.sweepShift = uint8_t(std::clamp<int>(std::abs(c.a), 0, 7));
+            // PU1's sweep. The direction is the instrument's unless x asks for
+            // down; on WAV and NOI there is no sweep unit, so S is inert.
+            if (ch == 0 && pulse) {
+                v.sweepRate = uint8_t(c.a & 7);
+                v.sweepDown = (c.a & 128) ? true : v.inst.sweepDown;
+                v.sweepShift = uint8_t(c.b & 7);
                 emit(0xFF10, uint8_t((v.sweepRate << 4) | (v.sweepDown ? 8 : 0) | v.sweepShift), true);
-                if (v.active) writePeriod(ch, true);
-            } else if (ch == 3) {
-                v.noiseSweep = int8_t(std::clamp<int>(c.a, -7, 7));
+                if (live) writePeriod(ch, true);       // the sweep unit reloads on the trigger
             }
             break;
         }
         case Cmd::V: v.vibSpeed = uint8_t(std::clamp<int>(c.a, 1, 15)); v.vibDepth = uint8_t(std::clamp<int>(c.b, 0, 15)); v.vibDelay = 0; break;
-        case Cmd::W: if (v.inst.type == InstrumentType::Wave) { const Wave* w = bank_ ? bank_->wave(uint8_t(c.a)) : nullptr; if (w && !w->frames.empty()) { v.waveSlot = uint8_t(c.a); v.frameIdx = 0; v.frameCount = 0; if (v.active) loadFrame(ch, w->frames[0], model_ == Console::DMG); } } break;
+        case Cmd::W: {
+            // Duty on the pulses, wave slot on WAV: one letter, the thing the
+            // channel's waveform actually is.
+            if (wave) {
+                const Wave* w = bank_ ? bank_->wave(uint8_t(std::clamp<int>(c.a, 1, kWaveSlots))) : nullptr;
+                if (w && !w->frames.empty()) { v.waveSlot = uint8_t(std::clamp<int>(c.a, 1, kWaveSlots)); v.frameIdx = 0; v.frameCount = 0; if (live) loadFrame(ch, w->frames[0], model_ == Console::DMG); }
+            } else if (pulse) {
+                v.duty = uint8_t(c.a & 3);
+                if (live) emit(regAddr(ch, 1), uint8_t((v.duty << 6) | lengthCode6(v.inst.length)));
+            }
+            break;
+        }
         default: break;
+    }
+}
+
+/// A slot going back to none puts the command's persistent effect back
+/// (section 3): the instrument's value, zero, the parameter's, or off.
+void Driver::revertCommand(int ch, Cmd cmd)
+{
+    Voice& v = v_[size_t(ch)];
+    const auto& i = v.inst;
+    const bool pulse = i.type == InstrumentType::Pulse;
+    const bool wave = i.type == InstrumentType::Wave || i.type == InstrumentType::Kit;
+    const bool live = v.active && !inNoteOn_;
+    switch (cmd) {
+        case Cmd::A: v.tableOn = false; break;                    // A none stops the table
+        case Cmd::E:
+            if (wave) { v.waveLevel = i.waveLevel; applyLevelParam(ch); if (live) writeEnvelope(ch, false); }
+            else { v.envVol = i.envVol; v.envRate = i.envRate; v.envDir = i.envDir; applyLevelParam(ch); if (live) writeEnvelope(ch, pulse || i.type == InstrumentType::Noise); }
+            break;
+        case Cmd::F:
+            if (i.type == InstrumentType::Wave) { const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr; v.frameIdx = 0; v.frameCount = 0; if (live && w && !w->frames.empty()) loadFrame(ch, w->frames[0], model_ == Console::DMG); }
+            break;
+        case Cmd::M: writeNr50(global_.masterL, global_.masterR); break;
+        case Cmd::O: v.pan = v.p.pan != 255 ? Pan(v.p.pan & 3) : i.pan; writeNr51(); break;
+        case Cmd::P: v.pOffset = 0; if (live) writePeriod(ch, false); break;
+        case Cmd::S:
+            if (ch == 0 && pulse) {
+                v.sweepRate = i.sweepRate; v.sweepDown = i.sweepDown; v.sweepShift = i.sweepShift;
+                emit(0xFF10, uint8_t((v.sweepRate << 4) | (v.sweepDown ? 8 : 0) | v.sweepShift), true);
+            }
+            break;
+        case Cmd::V: v.vibSpeed = std::max<uint8_t>(1, i.vib.speed); v.vibDepth = i.vib.depth; v.vibDelay = i.vib.delay; break;
+        case Cmd::W:
+            if (wave) { const Wave* w = bank_ ? bank_->wave(i.wave) : nullptr; v.waveSlot = i.wave; v.frameIdx = 0; v.frameCount = 0; if (live && w && !w->frames.empty()) loadFrame(ch, w->frames[0], model_ == Console::DMG); }
+            else if (pulse) { v.duty = i.duty; if (live) emit(regAddr(ch, 1), uint8_t((v.duty << 6) | lengthCode6(i.length))); }
+            break;
+        default: break;                                            // C D H K L R Z G T leave nothing behind
+    }
+}
+
+int16_t Driver::randomArg(int ch, int max)
+{
+    Voice& v = v_[size_t(ch)];
+    v.rng = v.rng * 1664525u + 1013904223u;
+    return int16_t((v.rng >> 16) % uint32_t(std::max(1, max + 1)));
+}
+
+/// The slot as it applies to this note: Z in the other slot replaces x with a
+/// fresh random value up to its own x (section 2).
+Command Driver::slotForNoteOn(int ch, int i)
+{
+    Voice& v = v_[size_t(ch)];
+    Command c = v.slot[size_t(i)];
+    const Command& other = v.slot[size_t(i ^ 1)];
+    if (c.cmd != Cmd::None && c.cmd != Cmd::Z && other.cmd == Cmd::Z) c.a = randomArg(ch, other.a);
+    return c;
+}
+
+void Driver::fireSlots(int ch)
+{
+    const bool was = inNoteOn_;
+    inNoteOn_ = true;
+    for (int i = 0; i < 2; ++i) {
+        const Command c = slotForNoteOn(ch, i);
+        if (c.cmd == Cmd::None || c.cmd == Cmd::Z || c.cmd == Cmd::D) continue;   // D was read before the note started
+        applyCommand(ch, c, false);
+    }
+    inNoteOn_ = was;
+}
+
+/// Take the parameters' slots as the ones in force, without firing them: what
+/// a note-on does, because fireSlots() is about to apply them in order.
+void Driver::syncSlots(int ch)
+{
+    Voice& v = v_[size_t(ch)];
+    const auto& p = params_[size_t(ch)];
+    if (p.table != v.tableParam) { v.tableParam = p.table; v.tableOverride = p.table; }
+    for (int i = 0; i < 2; ++i)
+        if (!sameCmd(p.cmd[i], v.slotParam[size_t(i)])) { v.slotParam[size_t(i)] = p.cmd[i]; v.slot[size_t(i)] = p.cmd[i]; }
+}
+
+/// A slot fires at the next tick when its value changes, and reverts when it
+/// goes to none. Tracker cells write the same slots, so they are one path.
+void Driver::updateSlots(int ch)
+{
+    Voice& v = v_[size_t(ch)];
+    const auto& p = params_[size_t(ch)];
+    if (p.table != v.tableParam) { v.tableParam = p.table; v.tableOverride = p.table; }
+    for (int i = 0; i < 2; ++i) {
+        if (sameCmd(p.cmd[i], v.slotParam[size_t(i)])) continue;
+        const Cmd was = v.slot[size_t(i)].cmd;
+        v.slotParam[size_t(i)] = p.cmd[i];
+        v.slot[size_t(i)] = p.cmd[i];
+        if (p.cmd[i].cmd == Cmd::None) { if (was != Cmd::None) revertCommand(ch, was); continue; }
+        applyCommand(ch, p.cmd[i], false);
     }
 }
 
@@ -581,7 +749,7 @@ void Driver::stepTable(int ch)
     if (v.delay > 0) { --v.delay; return; }
     const TableStep& s = t->steps[v.tableStep];
     if (s.vol >= 0) {
-        if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) { v.inst.waveLevel = uint8_t(std::clamp<int>(s.vol / 4, 0, 3)); if (v.active) writeEnvelope(ch, false); }
+        if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) { v.waveLevel = uint8_t(std::clamp<int>(s.vol / 4, 0, 3)); if (v.active) writeEnvelope(ch, false); }
         else { v.envVol = uint8_t(s.vol); if (v.active) writeEnvelope(ch, true); }
     }
     if (s.cmd1.cmd != Cmd::None) applyCommand(ch, s.cmd1, true);
@@ -601,17 +769,24 @@ void Driver::stepTable(int ch)
 void Driver::tick(int ch)
 {
     Voice& v = v_[size_t(ch)];
-    if (v.p.liveFollow && v.haveInst) {
-        // Parameters apply to the sounding note: re-latch and push differences.
+    // A slot whose value changed fires here, at the tick after the change.
+    updateSlots(ch);
+    if (params_[size_t(ch)].liveFollow && v.haveInst) {
+        // Live follow: instrument, table, level, pan and transpose apply to the
+        // sounding note instead of waiting for the next one (section 3).
         const ChannelParams before = v.p;
-        latch(ch);
+        v.p = params_[size_t(ch)];
         if (v.active) {
-            if (before.level != v.p.level || before.envVol != v.p.envVol || before.envRate != v.p.envRate || before.envDir != v.p.envDir) {
-                if (v.p.level != 255) { if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) v.inst.waveLevel = uint8_t(v.p.level & 3); else v.envVol = uint8_t(v.p.level & 15); }
+            if (before.instrument != v.p.instrument) { reloadInstrument(ch); return; }
+            if (before.table != v.p.table || v.tableOverride != v.tableSlot) {
+                const uint8_t tbl = v.tableOverride ? v.tableOverride : v.inst.table;
+                if (tbl != v.tableSlot) { v.tableSlot = tbl; v.tableStep = 0; v.tableOn = tbl && bank_ && bank_->table(tbl); }
+            }
+            if (before.level != v.p.level) {
+                applyLevelParam(ch);
                 writeEnvelope(ch, v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Noise);
             }
-            if (before.duty != v.p.duty && v.inst.type == InstrumentType::Pulse) emit(regAddr(ch, 1), uint8_t((v.duty << 6) | (v.inst.length ? (64 - std::min<int>(64, v.inst.length)) & 0x3F : 0)));
-            if (before.pan != v.p.pan) writeNr51();
+            if (before.pan != v.p.pan) { v.pan = v.p.pan != 255 ? Pan(v.p.pan & 3) : v.inst.pan; writeNr51(); }
         }
     }
     // pending delayed start
@@ -623,16 +798,15 @@ void Driver::tick(int ch)
     ++v.ticks;
     // kill countdown
     if (v.kill >= 0) { if (v.kill == 0) { stopVoice(ch, true); v.kill = -1; return; } --v.kill; }
-    // table and arpeggio
+    // table and chord
     stepTable(ch);
     if (!v.active) return;
-    if (v.arpSlot) { const Table* a = bank_ ? bank_->table(v.arpSlot) : nullptr; if (a) v.arpStep = uint8_t((v.arpStep + 1) & 15); else v.arpSlot = 0; }
     if (v.chordN) v.chordIdx = uint8_t((v.chordIdx + 1) % v.chordN);
     // duty sequence
     if (v.inst.type == InstrumentType::Pulse && v.inst.dutySeqLen) {
         v.dutyIdx = uint8_t((v.dutyIdx + 1) % v.inst.dutySeqLen);
         const uint8_t d = uint8_t(v.inst.dutySeq[v.dutyIdx] & 3);
-        if (d != v.duty) { v.duty = d; emit(regAddr(ch, 1), uint8_t((d << 6) | (v.inst.length ? (64 - std::min<int>(64, v.inst.length)) & 0x3F : 0))); }
+        if (d != v.duty) { v.duty = d; emit(regAddr(ch, 1), uint8_t((d << 6) | lengthCode6(v.inst.length))); }
     }
     // vibrato phase
     if (v.ticks >= v.vibDelay) ++v.vibPos;
@@ -644,11 +818,17 @@ void Driver::tick(int ch)
     }
     // noise sweep
     if (v.inst.type == InstrumentType::Noise && v.noiseSweep) { v.noiseShift = uint8_t(std::clamp<int>(int(v.noiseShift) + v.noiseSweep, 0, 13)); v.inst.noiseManual = true; }
-    // retrigger
+    // retrigger, and its volume step per repeat
     bool retrig = false;
-    if (v.retrigEvery) { if (++v.retrigCount >= v.retrigEvery) { v.retrigCount = 0; retrig = true; } }
+    if (v.retrigEvery) {
+        if (++v.retrigCount >= v.retrigEvery) {
+            v.retrigCount = 0; retrig = true;
+            if (v.retrigStep && v.inst.type != InstrumentType::Wave && v.inst.type != InstrumentType::Kit)
+                v.envVol = uint8_t(std::clamp<int>(int(v.envVol) + v.retrigStep, 0, 15));
+        }
+    }
     // wave frames
-    if (v.inst.type == InstrumentType::Wave && v.inst.frameAdvance && !v.p.frame) {
+    if (v.inst.type == InstrumentType::Wave && v.inst.frameAdvance) {
         if (++v.frameCount >= v.inst.frameAdvance) {
             v.frameCount = 0;
             const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr;
@@ -701,15 +881,18 @@ void Driver::handleEvent(const NoteEvent& e)
         case NoteEvent::NoteOff: noteOff(ch, e.a); break;
         case NoteEvent::PitchBend: v.bend = double(e.value) / 8192.0 * 2.0; if (v.active) writePeriod(ch, false); break;
         case NoteEvent::Control:
-            if (e.a == 1) { v.vibDepth = uint8_t(e.b / 8); if (!v.p.liveFollow) params_[size_t(ch)].vibDepth = v.vibDepth; }
-            else if (e.a == 7 && v.active) { if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) { v.inst.waveLevel = uint8_t(e.b / 32); writeEnvelope(ch, false); } else { v.envVol = uint8_t(e.b / 8); writeEnvelope(ch, true); } }
+            if (e.a == 1) v.vibDepth = uint8_t(e.b / 8);       // the mod wheel is vibrato depth
+            else if (e.a == 7 && v.active) { if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) { v.waveLevel = uint8_t(e.b / 32); writeEnvelope(ch, false); } else { v.envVol = uint8_t(e.b / 8); writeEnvelope(ch, true); } }
             else if (e.a == 120 || e.a == 123) { v.heldCount = 0; if (v.active) stopVoice(ch, true); }
             break;
         case NoteEvent::AllNotesOff: v.heldCount = 0; if (v.active) stopVoice(ch, true); break;
         case NoteEvent::Command:
-            // A tracker cell with no note: its columns apply from here on.
-            if (e.inst) v.ksInstrument = e.inst;
-            if (e.table) { v.tableSlot = e.table; v.tableStep = 0; v.tableOn = v.active && bank_ && bank_->table(e.table); }
+            // A tracker cell with no note: its columns are the slots from here
+            // on, and its instrument column reloads the instrument first.
+            if (e.table) { v.tableOverride = e.table; if (v.active) { v.tableSlot = e.table; v.tableStep = 0; v.tableOn = bank_ && bank_->table(e.table); } }
+            if (e.cmd1.cmd != Cmd::None) v.slot[0] = e.cmd1;
+            if (e.cmd2.cmd != Cmd::None) v.slot[1] = e.cmd2;
+            if (e.inst && e.inst != v.ksInstrument) { v.ksInstrument = e.inst; if (v.haveInst) { reloadInstrument(ch); break; } }
             if (e.cmd1.cmd != Cmd::None) applyCommand(ch, e.cmd1, false);
             if (e.cmd2.cmd != Cmd::None) applyCommand(ch, e.cmd2, false);
             break;
@@ -719,58 +902,18 @@ void Driver::handleEvent(const NoteEvent& e)
 /* ------------------------------------------------------------ process */
 
 void Driver::process(const NoteEvent* events, size_t n, uint32_t numSamples, uint64_t frameAbs,
-                     const Transport& t, const std::function<uint64_t(uint64_t)>& cycleAt,
+                     const TickPoint* ticks, size_t nTicks,
+                     const std::function<uint64_t(uint64_t)>& cycleAt,
                      std::vector<RegWrite>& out)
 {
     out_ = &out;
     const uint64_t blockEnd = frameAbs + numSamples;
 
-    // --- tick boundaries in this block, from absolute positions ---------
-    std::array<uint32_t, kMaxTicksPerBlock> ticks{}; int nTicks = 0;
-    if (global_.tick == TickSource::Host) {
-        const double bpm = t.valid && t.bpm > 1.0 ? t.bpm : lastBpm_;
-        lastBpm_ = bpm;
-        const double tpb = std::max<int>(1, global_.ticksPerBeat);
-        const double framesPerTick = sampleRate_ * 60.0 / (bpm * tpb);
-        if (t.valid && t.playing) {
-            // Tick k sits at ppq k/tpb; find those inside [ppqStart, ppqEnd).
-            const double ppqPerFrame = bpm / 60.0 / sampleRate_;
-            const double ppqStart = t.ppq, ppqEnd = t.ppq + numSamples * ppqPerFrame;
-            double k = std::ceil(ppqStart * tpb - 1e-9);
-            for (; nTicks < kMaxTicksPerBlock; k += 1.0) {
-                const double ppq = k / tpb;
-                if (ppq >= ppqEnd) break;
-                const double f = (ppq - ppqStart) / ppqPerFrame;
-                const uint32_t off = uint32_t(std::max(0.0, std::floor(f + 1e-6)));
-                if (off >= numSamples) break;
-                ticks[size_t(nTicks++)] = off;
-            }
-            haveTick_ = false;   // free-running phase restarts when the transport stops
-        } else {
-            // Stopped: free-run at the tempo from the absolute frame count.
-            double k = haveTick_ ? std::floor((double(lastTickFrame_) + framesPerTick) / framesPerTick) : std::ceil(double(frameAbs) / framesPerTick);
-            for (; nTicks < kMaxTicksPerBlock; k += 1.0) {
-                const uint64_t f = uint64_t(std::llround(k * framesPerTick));
-                if (f >= blockEnd) break;
-                if (f >= frameAbs) { ticks[size_t(nTicks++)] = uint32_t(f - frameAbs); lastTickFrame_ = f; haveTick_ = true; }
-            }
-        }
-    } else {
-        const double hz = global_.tick == TickSource::VBlank ? 59.7275 : std::clamp(global_.customHz, 1.0, 240.0);
-        const double framesPerTick = sampleRate_ / hz;
-        double k = std::ceil(double(frameAbs) / framesPerTick - 1e-9);
-        for (; nTicks < kMaxTicksPerBlock; k += 1.0) {
-            const uint64_t f = uint64_t(std::llround(k * framesPerTick));
-            if (f >= blockEnd) break;
-            if (f >= frameAbs) ticks[size_t(nTicks++)] = uint32_t(f - frameAbs);
-        }
-    }
-
-    // --- events at their own cycles, ticks in between ---------------------
-    // Notes, bends and controllers land where the host put them (sample
-    // accurate); the tick only drives what a driver runs from its interrupt:
-    // tables, vibrato, frames, envelopes-by-command. A DAW-played note
-    // quantised to a 24-per-beat grid would be up to 21 ms late or short.
+    // Events land where the host put them (sample accurate); the tick drives
+    // what a driver runs from its interrupt: tables, vibrato, frames, the
+    // command slots. With notes-on-tick the note-ons and note-offs wait for
+    // the next tick as a tracker's do -- bends and controllers never do, and
+    // tracker cells already sit on ticks.
     size_t ei = 0;
     auto moveTo = [&](uint64_t c) { if (c != cycle_) { cycle_ = c; burst_ = 0; } };
     auto runEvent = [&](const NoteEvent& e) {
@@ -778,14 +921,23 @@ void Driver::process(const NoteEvent* events, size_t n, uint32_t numSamples, uin
         moveTo(cycleAt(frameAbs + off));
         handleEvent(e);
     };
-    for (int k = 0; k < nTicks; ++k) {
-        const uint32_t off = ticks[size_t(k)];
-        while (ei < n && events[ei].offset <= off) runEvent(events[ei++]);
+    auto waits = [this](const NoteEvent& e) {
+        return notesOnTick_ && e.source == NoteEvent::Midi && (e.kind == NoteEvent::NoteOn || e.kind == NoteEvent::NoteOff);
+    };
+    auto hold = [&](const NoteEvent& e) {
+        if (pendingCount_ < pending_.size()) pending_[pendingCount_++] = e;
+        else runEvent(e);                      // more held notes than a block can want: play it now
+    };
+
+    for (size_t k = 0; k < nTicks; ++k) {
+        const uint32_t off = std::min<uint32_t>(ticks[k].offset, numSamples ? numSamples - 1 : 0);
+        while (ei < n && events[ei].offset <= off) { const NoteEvent& e = events[ei++]; if (waits(e)) hold(e); else runEvent(e); }
         moveTo(cycleAt(frameAbs + off));
+        for (size_t i = 0; i < pendingCount_; ++i) handleEvent(pending_[i]);   // notes that were waiting for a tick
+        pendingCount_ = 0;
         tickAll();
     }
-    while (ei < n) runEvent(events[ei++]);
-    pendingCount_ = 0;
+    while (ei < n) { const NoteEvent& e = events[ei++]; if (waits(e)) hold(e); else runEvent(e); }
 
     // --- wave RAM streaming, cycle domain ---------------------------------
     scheduleStreams(cycleAt(frameAbs), cycleAt(blockEnd));
@@ -802,9 +954,13 @@ void Driver::refreshView(int ch)
     w.active = v.active; w.dacOn = v.dacOn; w.note = v.note; w.velocity = v.vel;
     w.instrument = v.ksInstrument ? v.ksInstrument : v.p.instrument;
     w.period = uint16_t(std::max<int16_t>(0, v.lastPeriod));
-    w.volume = (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) ? v.inst.waveLevel : v.volume;
+    w.volume = (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) ? v.waveLevel : v.volume;
     w.duty = v.duty; w.frame = uint8_t(v.frameIdx + 1);
     w.tableSlot = v.tableOn ? v.tableSlot : 0; w.tableStep = v.tableStep;
+    // The running state the strip prints under the two slots (section 3).
+    w.envVol = v.envVol; w.envRate = v.envRate; w.envDir = v.envDir == EnvDir::Up ? 1 : 0;
+    w.vibSpeed = v.vibSpeed; w.vibDepth = v.vibDepth;
+    w.pitchOffset = v.pOffset; w.pan = uint8_t(v.pan);
     for (int r = 0; r < 5; ++r) w.regs[r] = known_[size_t(ch * 5 + r)] ? shadow_[size_t(ch * 5 + r)] : 0;
 }
 

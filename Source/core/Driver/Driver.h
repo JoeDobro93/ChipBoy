@@ -12,6 +12,7 @@
 
 #include "core/Analog/AnalogModel.h"
 #include "core/Bank/Bank.h"
+#include "core/Driver/Clock.h"
 #include "core/Tracker/Song.h"
 
 #include <array>
@@ -21,37 +22,26 @@
 
 namespace chipboy::driver {
 
-enum class TickSource : uint8_t { Host = 0, VBlank = 1, Custom = 2 };
-
-/// Per-channel performance parameters (spec section 12.4). 255 (or 0 where
-/// noted) means "use the instrument's value"; the plugin maps host parameters
-/// onto this.
+/// The channel, as the window shows it (docs/COMMANDS_AND_TEMPO.md section 3):
+/// an instrument, a table, a few performance fields and two command slots.
+/// Everything the old override lanes did arrives through a command now.
 struct ChannelParams {
     uint8_t  instrument = 0;     ///< 0 none (type default), 1-128
     uint8_t  table = 0;          ///< 0 = instrument's table, else override
     uint8_t  level = 255;        ///< PU/NOI 0-15, WAV 0-3, 255 = instrument's
     uint8_t  pan = 255;          ///< bank::Pan, 255 = instrument's
-    uint8_t  wave = 0;           ///< 0 = instrument's wave slot
-    uint8_t  frame = 0;          ///< 0 = automatic, else 1-16
     int8_t   transpose = 0;      ///< semitones
-    int16_t  detune = 0;         ///< raw period units
-    uint8_t  vibSpeed = 255, vibDepth = 255;
-    uint8_t  arp = 0;            ///< table slot used for its transpose column
-    uint8_t  envVol = 255, envDir = 255, envRate = 255;
-    uint8_t  duty = 255;
-    uint8_t  sweepRate = 255, sweepDir = 255, sweepShift = 255;
-    uint8_t  lfsr = 255;         ///< 0 15-bit, 1 7-bit
+    bank::Command cmd[2];        ///< the two slots, in the order they apply
     bool     liveFollow = false;
     uint8_t  velocityMode = 0;   ///< 0 -> start volume, 1 -> instrument bank, 2 ignored
     bool     keyswitch = false;
+    uint8_t  reserved[6] = {};   ///< the link region copies this whole struct: keep its size fixed
 };
+static_assert(sizeof(ChannelParams) == 32);
 
 struct GlobalParams {
-    uint8_t    masterL = 7, masterR = 7;
-    TickSource tick = TickSource::Host;
-    uint8_t    ticksPerBeat = 24;
-    double     customHz = 59.7275;
-    bool       volumeAtEdges = false;   ///< M8: NRx2 writes wait for the quiet half-cycle
+    uint8_t masterL = 7, masterR = 7;
+    bool    volumeAtEdges = false;   ///< M8: NRx2 writes wait for the quiet half-cycle
 };
 
 struct NoteEvent {
@@ -70,14 +60,8 @@ struct NoteEvent {
 
 struct RegWrite { uint64_t cycle; uint16_t addr; uint8_t value; };
 
-struct Transport {
-    bool   valid = false;        ///< the host gave a position
-    bool   playing = false;
-    double bpm = 120.0;
-    double ppq = 0.0;            ///< at the block start
-};
-
-/// What the UI shows per channel.
+/// What the UI shows per channel: the registers, and the running state the
+/// strip prints under the two command slots (section 3).
 struct VoiceView {
     bool     active = false, dacOn = false, outOfRange = false;
     uint8_t  note = 0, velocity = 0, instrument = 0;
@@ -85,6 +69,13 @@ struct VoiceView {
     uint8_t  volume = 0, duty = 0, frame = 0;
     uint8_t  tableSlot = 0, tableStep = 0;
     uint8_t  regs[5] = { 0, 0, 0, 0, 0 };
+    // running state
+    uint8_t  envVol = 0, envRate = 0, envDir = 0;   ///< dir 0 down, 1 up
+    uint8_t  vibSpeed = 0, vibDepth = 0;
+    int16_t  pitchOffset = 0;
+    uint8_t  pan = 0;                                ///< bank::Pan
+    uint8_t  groove = kNoGroove;                     ///< the Player's, published here for the strip
+    static constexpr uint8_t kNoGroove = 255;        ///< the phrase's own
 };
 
 class Driver {
@@ -115,12 +106,22 @@ public:
     static constexpr uint16_t kAlignToQuietEdge = 0xFFFF;
     void setParams(int ch, const ChannelParams& p) { params_[size_t(ch & 3)] = p; }
     const ChannelParams& params(int ch) const { return params_[size_t(ch & 3)]; }
+    /// The command in force in a slot: the parameter, or the last tracker cell
+    /// that wrote it. This is what the recorder writes (section 5).
+    const bank::Command& slot(int ch, int i) const { return v_[size_t(ch & 3)].slot[size_t(i & 1)]; }
+    /// Quantise MIDI notes to ticks (section 4). Bends and controllers never
+    /// wait; tracker cells are always on ticks anyway.
+    void setNotesOnTick(bool on) { notesOnTick_ = on; }
+    /// The groove the Player has in force, for the running-state line.
+    void setViewGroove(int ch, uint8_t g) { view_[size_t(ch & 3)].groove = g; }
 
-    /// One block. `events` sorted by offset; `cycleAt(absoluteFrame)` maps a
-    /// frame to the APU cycle exactly as the renderer does. Writes are
-    /// appended to `out` in cycle order.
+    /// One block. `events` sorted by offset; `ticks` are this block's tick
+    /// boundaries from the Clock; `cycleAt(absoluteFrame)` maps a frame to the
+    /// APU cycle exactly as the renderer does. Writes are appended to `out` in
+    /// cycle order.
     void process(const NoteEvent* events, size_t n, uint32_t numSamples, uint64_t frameAbs,
-                 const Transport& t, const std::function<uint64_t(uint64_t)>& cycleAt,
+                 const TickPoint* ticks, size_t nTicks,
+                 const std::function<uint64_t(uint64_t)>& cycleAt,
                  std::vector<RegWrite>& out);
 
     const VoiceView& view(int ch) const { return view_[size_t(ch & 3)]; }
@@ -148,10 +149,11 @@ private:
         uint32_t ticks = 0;
         int32_t  vibPos = 0; uint8_t vibSpeed = 0, vibDepth = 0; bank::VibShape vibShape = bank::VibShape::Triangle; uint8_t vibDelay = 0;
         uint8_t  tableSlot = 0, tableStep = 0; bool tableOn = false;
-        uint8_t  arpSlot = 0, arpStep = 0;
+        uint8_t  tableOverride = 0, tableParam = 0;   ///< in force (parameter or cell), and the parameter it came from
         uint8_t  chord[3] = { 0, 0, 0 }; uint8_t chordN = 0, chordIdx = 0;
         uint8_t  dutyIdx = 0, duty = 2;
         uint8_t  envVol = 15, envRate = 0; bank::EnvDir envDir = bank::EnvDir::Down;
+        uint8_t  waveLevel = 3;            ///< WAV/KIT running level, 0 mute .. 3 full
         uint8_t  volume = 15;              ///< last written level
         uint8_t  sweepRate = 0, sweepShift = 0; bool sweepDown = false;
         uint8_t  noiseShift = 5, noiseDiv = 1; bool lfsr7 = false; int8_t noiseSweep = 0;
@@ -171,7 +173,9 @@ private:
         // held notes for last-note priority
         std::array<uint8_t, 16> held{}; uint8_t heldCount = 0;
         uint8_t  ksInstrument = 0;
-        bank::Command lastCmd;
+        bank::Command lastCmd;                        ///< for Z inside a table step
+        bank::Command slot[2], slotParam[2];          ///< in force, and the parameter it came from
+        int16_t  retrigStep = 0;                      ///< R: volume change per retrigger
         uint32_t rng = 1;
         // model of the wave channel timer, for streaming
         uint64_t nextFetch = 0; uint32_t fetchPeriod = 0; uint32_t fetchIndex = 0; bool timerValid = false;
@@ -198,6 +202,16 @@ private:
     void writeNr51();
     void writeNr50(uint8_t l, uint8_t r);
     void applyCommand(int ch, const bank::Command& c, bool fromTable);
+    void revertCommand(int ch, bank::Cmd cmd);
+    void updateSlots(int ch);                 ///< a slot whose value changed fires at this tick
+    void syncSlots(int ch);                   ///< adopt the parameters' slots without firing them
+    void fireSlots(int ch);                   ///< and again at every note-on
+    bank::Command slotForNoteOn(int ch, int i);        ///< with Z's randomised argument
+    int16_t randomArg(int ch, int max);
+    void applyLevelParam(int ch);
+    void reloadInstrument(int ch);            ///< a cell's instrument column, or Live follow
+    static bank::InstrumentType defaultType(int ch);
+    static bool typeFits(int ch, bank::InstrumentType t);
     void stepTable(int ch);
     void loadFrame(int ch, const bank::Frame& f, bool trigger);
     void updateWaveTimer(int ch, uint16_t freq, bool trigger);
@@ -224,8 +238,10 @@ private:
     std::array<bool, 0x30>    known_{};
     uint8_t masterL_ = 255, masterR_ = 255;
     uint64_t tickCount_ = 0;
-    uint64_t lastTickFrame_ = 0; bool haveTick_ = false;
-    double   lastBpm_ = 120.0;
+    bool     notesOnTick_ = false;
+    bool     inNoteOn_ = false;   ///< commands set state; the note's own writes carry it
+    /// Notes waiting for the next tick while notes-on-tick is on; they survive
+    /// a block boundary, so the tick they wait for may be in the next block.
     std::array<NoteEvent, 256> pending_{}; size_t pendingCount_ = 0;
     std::array<int8_t, 128> noiseShiftMap_{}, noiseDivMap_{};
 };
