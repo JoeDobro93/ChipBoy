@@ -7,7 +7,7 @@
 // streaming scheduler, which a real driver also runs off a timer (section 8.2).
 //
 // Plain C++20. Knows the bank and the song; knows nothing of MIDI buffers,
-// hosts or JUCE -- the plugin translates.
+// hosts or the plugin framework -- the plugin translates.
 #pragma once
 
 #include "core/Analog/AnalogModel.h"

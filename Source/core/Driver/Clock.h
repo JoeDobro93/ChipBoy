@@ -15,7 +15,7 @@
 // With the transport stopped both sources free-run at the current tempo, so
 // live playing still has tables and vibrato.
 //
-// Plain C++20: no allocation, no JUCE, nothing but the standard library.
+// Plain C++20: no allocation, nothing but the standard library.
 #pragma once
 
 #include <array>
