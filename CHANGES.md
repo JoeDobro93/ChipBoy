@@ -32,7 +32,8 @@ intended product rather than a progress report.
 measured or estimated. `Source/core/Render` — the band-limited step kernel (Kaiser
 windowed sinc at twice the host rate with the amplifier's low-pass folded in), the fast
 renderer, and the brute-force reference. `chipboy_demo` renders a built-in tune to WAV;
-`chipboy_runrom --wav` renders any ROM's audio. Tests: block-size determinism (32, 64,
+`chipboy_runrom --wav` renders any ROM's audio. Both take `--cgb`, which selects the
+CGB's analog constants only — the core is still the DMG core until model selection (M8). Tests: block-size determinism (32, 64,
 128, 2048, a varying size, and a block larger than the renderer's own buffer — all
 bit-identical), the fast/reference null (−122 dB against a −90 dB requirement), the
 DAC-hold behaviour, a golden render, and a golden hash of the APU's event stream.

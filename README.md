@@ -67,14 +67,16 @@ The plugin targets arrive in M3 (`-DCHIPBOY_BUILD_PLUGIN=ON` is a no-op until th
 
 ```
 build/chipboy_demo tune.wav                 # a built-in tune, DMG, noise floor on
-build/chipboy_demo tune.wav --cgb           # the same tune through the CGB model
+build/chipboy_demo tune.wav --cgb           # the same tune through the CGB analog constants
 build/chipboy_demo tune.wav --no-noise      # Headphone Noise off: the only switch
 build/chipboy_runrom game.gb 20 --wav out.wav   # any ROM's audio, run headless
 ```
 
 Output is 16-bit stereo at 48 kHz (`--rate` changes it). The tune ends every note the
 way a DMG driver has to — by disabling the DAC — so what you hear at each re-trigger is
-the hardware's own click, not an effect.
+the hardware's own click, not an effect. `--cgb` swaps in the CGB's measured coupling
+and noise floor only; the CGB's own APU differences (live wave RAM, no corruption bug)
+arrive with model selection in M8.
 
 ## Planned targets
 
