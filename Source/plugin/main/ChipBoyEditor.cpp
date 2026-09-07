@@ -16,7 +16,7 @@ using namespace juce;
 using namespace chipboy::ui;
 
 namespace {
-constexpr int kTabsHeight = 34, kEditorPad = 14, kTabBarWidth = 640;
+constexpr int kTabsHeight = 34, kEditorPad = 12, kTabBarWidth = 640;
 const Identifier kScaleProp("ui_scale");
 const char* kTabNames[] = { "Instrument", "Tables", "Waves", "Kits", "Phrases", "Link", "Hardware" };
 }
