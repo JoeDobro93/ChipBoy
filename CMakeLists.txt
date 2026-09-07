@@ -140,6 +140,7 @@ if(CHIPBOY_BUILD_PLUGIN)
         set(CHIPBOY_HAVE_ASSETS 0)
     endif()
 
+    set(CHIPBOY_MODAL_LOOPS 0)   # console test tools set this to 1 to pump the message loop
     function(chipboy_configure_plugin target)
         target_include_directories(${target} PRIVATE Source)
         target_compile_definitions(${target} PUBLIC
@@ -149,7 +150,7 @@ if(CHIPBOY_BUILD_PLUGIN)
             JUCE_VST3_CAN_REPLACE_VST2=0
             JUCE_REPORT_APP_USAGE=0
             JUCE_DISPLAY_SPLASH_SCREEN=0
-            JUCE_MODAL_LOOPS_PERMITTED=0)
+            JUCE_MODAL_LOOPS_PERMITTED=${CHIPBOY_MODAL_LOOPS})
         target_link_libraries(${target}
             PRIVATE chipboy_core ${CHIPBOY_ASSET_TARGET} juce::juce_audio_utils juce::juce_audio_processors juce::juce_gui_extra
             PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
@@ -204,6 +205,7 @@ if(CHIPBOY_BUILD_PLUGIN)
         ${CHIPBOY_PLUGIN_SHARED_SOURCES} ${CHIPBOY_MAIN_SOURCES}
         tools/paramdump/main.cpp)
     target_compile_definitions(chipboy_paramdump PRIVATE
+        CHIPBOY_NO_PLUGIN_FILTER=1
         JUCE_STANDALONE_APPLICATION=1
         JucePlugin_Name="ChipBoy" JucePlugin_Manufacturer="ChipBoy" JucePlugin_ManufacturerCode=0x43687062 JucePlugin_PluginCode=0x43686279
         JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0 JucePlugin_IsMidiEffect=0
@@ -211,4 +213,22 @@ if(CHIPBOY_BUILD_PLUGIN)
         JucePlugin_Build_VST3=0 JucePlugin_Build_AU=0 JucePlugin_Build_Standalone=0
         JucePlugin_MaxNumInputChannels=0 JucePlugin_MaxNumOutputChannels=2 JucePlugin_PreferredChannelConfigurations= )
     chipboy_configure_plugin(chipboy_paramdump)
+
+    # --- chipboy_linktest: both plugins in one process, talking through a
+    # region file (spec 16.5) -------------------------------------------------
+    juce_add_console_app(chipboy_linktest PRODUCT_NAME "chipboy_linktest")
+    target_sources(chipboy_linktest PRIVATE
+        ${CHIPBOY_PLUGIN_SHARED_SOURCES} ${CHIPBOY_MAIN_SOURCES} ${CHIPBOY_VOICE_SOURCES}
+        tools/linktest/main.cpp)
+    target_compile_definitions(chipboy_linktest PRIVATE
+        CHIPBOY_NO_PLUGIN_FILTER=1
+        JUCE_STANDALONE_APPLICATION=1
+        JucePlugin_Name="ChipBoy" JucePlugin_Manufacturer="ChipBoy" JucePlugin_ManufacturerCode=0x43687062 JucePlugin_PluginCode=0x43686279
+        JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0 JucePlugin_IsMidiEffect=0
+        JucePlugin_EditorRequiresKeyboardFocus=1 JucePlugin_Version=0.1.0 JucePlugin_VersionCode=0x100 JucePlugin_VersionString="0.1.0"
+        JucePlugin_Build_VST3=0 JucePlugin_Build_AU=0 JucePlugin_Build_Standalone=0
+        JucePlugin_MaxNumInputChannels=0 JucePlugin_MaxNumOutputChannels=2 JucePlugin_PreferredChannelConfigurations= )
+    set(CHIPBOY_MODAL_LOOPS 1)
+    chipboy_configure_plugin(chipboy_linktest)
+    set(CHIPBOY_MODAL_LOOPS 0)
 endif()

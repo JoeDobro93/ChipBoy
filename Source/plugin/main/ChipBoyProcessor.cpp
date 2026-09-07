@@ -537,7 +537,9 @@ void ChipBoyProcessor::setStateInformation(const void* data, int size)
 
 } // namespace chipboy::plugin
 
+#ifndef CHIPBOY_NO_PLUGIN_FILTER
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new chipboy::plugin::ChipBoyProcessor();
 }
+#endif

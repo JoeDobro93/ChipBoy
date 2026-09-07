@@ -744,6 +744,18 @@ drive an AU main. The payload is a few dozen bytes per tick, so the cost is irre
 - A version field is checked on connect; mismatched versions refuse to link and say so
   rather than misinterpreting the layout.
 
+*As built (M5, 2026-09-07):* the region is a memory-mapped **file** per main instance,
+`<temp>/chipboy-link/<uuid>.cbl`, rather than a named shared-memory object: the same
+coherence (`MAP_SHARED` / a file mapping), a lifetime the file system manages, and any
+process of the same user can map it, including a VST3 Voice driving an AU main. There is
+no separate directory region; the Voice lists the folder. A host whose sandbox gives it
+a private temp folder cannot see other processes' regions (deferred: platform
+shared-memory names). Voice events carry the host's sample position; the main applies an
+event from host block *N* during its block *N+1* (§11.4), holds events that arrive early,
+and, when the host reports no position or the transport is stopped, applies events at
+once with one block of jitter. Layout and helpers: `Source/core/Link/LinkLayout.h`;
+`chipboy_linktest` runs both plugins in one process against a region (§16.5).
+
 ### 11.4 Latency, and why it is one block
 
 Hosts do not guarantee the order in which tracks are processed, and the order can change.
@@ -835,7 +847,7 @@ is a display format, not an accuracy switch, so it does not conflict with **C8**
 | Model | DMG / CGB / RAW (§6.5) |
 | LCD | on / off — off removes the 9198 Hz line as switching the display off does |
 | CGB bass mod | stock / ×10 / ×47 capacitor (`UI_DESIGN.md` §5) |
-| Volume writes at edges | on / off — NRx2 writes land on the quiet half-cycle |
+| Volume writes at edges | on / off — NRx2 writes land on the quiet half-cycle. *As built:* the driver marks a level change on a sounding pulse channel; the plugin moves that burst to the next cycle where the duty output is low (`Apu::cyclesUntilPulseLow`), so the level changes while the output is zero |
 | De-click | off, or a 0.5–5 ms crossfade of DAC-on steps — a departure (**C8**) |
 | Soften master pops | on / off — a departure (**C8**) |
 | Tick source | host-synced / V-blank / custom |

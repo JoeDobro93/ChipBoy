@@ -2,6 +2,9 @@
 
 #include "plugin/shared/BankJson.h"
 
+#include <mutex>
+#include <set>
+
 namespace chipboy::plugin {
 
 using namespace juce;
@@ -12,6 +15,13 @@ constexpr const char* kPrefix = "v_";
 constexpr const char* kSourceId = "inst_source";
 constexpr int kTimerMs = 100;
 constexpr int kParamsRefreshBlocks = 32;
+
+// Voices alive in this process, by UUID: a duplicated track copies its
+// state, and two Voices with one UUID would fight over a claim (11.5).
+std::mutex& registryMutex() { static std::mutex m; return m; }
+std::set<String>& registry() { static std::set<String> s; return s; }
+bool registerUuid(const String& u) { std::lock_guard<std::mutex> l(registryMutex()); return registry().insert(u).second; }
+void unregisterUuid(const String& u) { std::lock_guard<std::mutex> l(registryMutex()); registry().erase(u); }
 }
 
 AudioProcessorValueTreeState::ParameterLayout VoiceProcessor::createLayout()
@@ -31,6 +41,7 @@ VoiceProcessor::VoiceProcessor()
     pSource_ = apvts.getRawParameterValue(kSourceId);
     local_ = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Local");
     local_.used = true;
+    registerUuid(uuid_);
     startTimer(kTimerMs);
 }
 
@@ -38,6 +49,7 @@ VoiceProcessor::~VoiceProcessor()
 {
     stopTimer();
     link_.release();
+    unregisterUuid(uuid_);
 }
 
 void VoiceProcessor::prepareToPlay(double, int) {}
@@ -236,7 +248,12 @@ void VoiceProcessor::setStateInformation(const void* data, int size)
 {
     const ValueTree root = ValueTree::readFromData(data, size_t(size));
     if (!root.isValid() || !root.hasType("ChipBoyVoiceState")) return;
-    if (root.hasProperty("uuid")) uuid_ = root["uuid"].toString();
+    if (root.hasProperty("uuid")) {
+        const String saved = root["uuid"].toString();
+        // Take the saved identity unless another live Voice already has it
+        // (a duplicated track): then this one keeps its fresh UUID.
+        if (saved.isNotEmpty() && saved != uuid_ && registerUuid(saved)) { unregisterUuid(uuid_); uuid_ = saved; }
+    }
     if (root.hasProperty("name")) trackName_ = root["name"].toString();
     const ValueTree params_ = root.getChildWithName(apvts.state.getType());
     if (params_.isValid()) apvts.replaceState(params_);
@@ -249,7 +266,9 @@ void VoiceProcessor::setStateInformation(const void* data, int size)
 
 } // namespace chipboy::plugin
 
+#ifndef CHIPBOY_NO_PLUGIN_FILTER
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new chipboy::plugin::VoiceProcessor();
 }
+#endif
