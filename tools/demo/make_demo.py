@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """ChipBoy demo project generator.
 
-Writes three files under Demo/ (or --out):
+Writes four files under Demo/ (or --out):
 
   chipboy_demo.mid    a Standard MIDI File, format 1, 960 ticks per quarter,
                       120 BPM, 4/4, 16 bars. One track per hardware channel on
@@ -9,7 +9,13 @@ Writes three files under Demo/ (or --out):
                       NOI drums.
   ChipBoy Demo.rpp    a Reaper project: one track holding the ChipBoy VST3, the
                       same notes as one MIDI item, and automation envelopes for
-                      the parameters the demo shows off.
+                      the command slots and the few channel fields the demo
+                      shows off.
+  ChipBoy Demo (song tempo).rpp
+                      the same track with Tempo source = Song and Song tempo =
+                      150, so the tracker's ticks run faster than the host's
+                      120 BPM, and a T command in PU1's second slot that drops
+                      the song's tempo to 100 for bars 9-12.
   PARAMETERS.md       the plugin's host-visible parameter table in host order,
                       with the normalised values Reaper stores and the VST3
                       parameter ids JUCE derives.
@@ -23,10 +29,11 @@ Standard library only. Deterministic: two runs give byte-identical files.
                       file holding its output.
 
 The parameter order is the order Source/plugin/shared/Parameters.cpp adds the
-parameters (addGlobalParameters, then addChannelParameters for channels 1-4,
-whose per-kind conditionals decide which ids exist for a channel). JUCE hands
-the list to VST3 hosts in that order; the wrapper's own Bypass parameter and
-its MIDI-CC emulation parameters come after it.
+parameters: addGlobalParameters, then addChannelParameters for channels 1-4.
+Every channel has the same fifteen (docs/COMMANDS_AND_TEMPO.md section 3) and
+only Level differs between the kinds. JUCE hands the list to VST3 hosts in that
+order; the wrapper's own Bypass parameter and its MIDI-CC emulation parameters
+come after it.
 """
 
 import argparse
@@ -35,6 +42,7 @@ import os
 import struct
 import subprocess
 import sys
+import textwrap
 import uuid
 
 # ---------------------------------------------------------------------------
@@ -49,6 +57,12 @@ TICKS_PER_BAR = PPQ * BEATS_PER_BAR
 TOTAL_TICKS = TICKS_PER_BAR * BARS
 SECONDS_PER_BEAT = 60.0 / BPM
 SONG_SECONDS = BARS * BEATS_PER_BAR * SECONDS_PER_BEAT   # 32 s
+
+# The second project's tempo: the song owns it, so the tracker's ticks are
+# 150 x 24 / 60 = 60 Hz against the host's 48 Hz, and a T command in a slot
+# drops it to 100 for bars 9-12 (docs/COMMANDS_AND_TEMPO.md section 4).
+SONG_TEMPO = 150
+SONG_TEMPO_DROP = 100
 
 # The plugin's VST3 identity: JucePlugin_ManufacturerCode 'Chpb' and
 # JucePlugin_PluginCode 'Chby' (CMakeLists.txt), which JUCE turns into the
@@ -86,6 +100,20 @@ def ticks(beats):
 # ---------------------------------------------------------------------------
 # the parameter table (Source/plugin/shared/Parameters.cpp, in add order)
 # ---------------------------------------------------------------------------
+
+# The letters a command slot can hold, in the order Parameters.cpp builds the
+# choice: "none", then the enum's order without H (tables only). A lane stores
+# the index. What x and y mean is per letter -- docs/COMMANDS_AND_TEMPO.md
+# section 2.
+CMD_CHOICES = ["none", "A", "C", "D", "E", "F", "G", "K", "L", "M",
+               "O", "P", "R", "S", "T", "V", "W", "Z"]
+CMD = {letter: index for index, letter in enumerate(CMD_CHOICES)}
+
+
+def env_y(rate, rising=False):
+    """The E command's y: the speed in 0-7, plus 8 for a rising envelope."""
+    return (rate & 7) | (8 if rising else 0)
+
 
 class Param:
     def __init__(self, pid, name, kind, lo, hi, default, choices=None, note=""):
@@ -134,23 +162,25 @@ def parameter_table():
     boolean("declick", "De-click", False)
     real("declick_ms", "De-click ms", 0.5, 5.0, 2.0, "ms")
     boolean("soften", "Soften Master Pops", False)
-    choice("tick_source", "Tick Source", ["Host", "V-blank", "Custom"], 0)
-    integer("ticks_per_beat", "Ticks Per Beat", 1, 48, 24)
-    real("tick_hz", "Tick Rate", 1.0, 240.0, 60.0, "Hz")
+    # Tempo (docs/COMMANDS_AND_TEMPO.md section 4): ticks are always 24 to the
+    # beat, and the only choice left is where the beat comes from.
+    choice("tempo_source", "Tempo Source", ["Host", "Song"], 0)
+    integer("song_tempo", "Song Tempo", 40, 255, 120, "BPM; the Song source's base tempo")
+    boolean("notes_on_tick", "Quantise Notes To Ticks", False)
     boolean("link", "Link Mode", False)
     boolean("hex", "Hex Display", False)
 
-    # addChannelParameters, channels 1-4 with withSource = true
+    # addChannelParameters, channels 1-4 with withSource = true. A channel is a
+    # tracker row (section 3): an instrument, a table, the four performance
+    # fields, two command slots of three parameters each, and the three
+    # switches. Only Level differs between the kinds.
     kinds = ["pulse1", "pulse2", "wave", "noise"]
     names = ["PU1 ", "PU2 ", "WAV ", "NOI "]
     source_default = {"pulse1": 0, "pulse2": 2, "wave": 3, "noise": 4}
     instrument_default = {"pulse1": 1, "pulse2": 3, "wave": 7, "noise": 11}
     for ch, kind in enumerate(kinds):
         px, nm = "ch%d_" % (ch + 1), names[ch]
-        pulse = kind in ("pulse1", "pulse2")
         wave = kind == "wave"
-        noise = kind == "noise"
-        pu1 = kind == "pulse1"
         sources = ["Omni"] + ["MIDI %d" % i for i in range(1, 17)] + ["Off"]
         choice(px + "source", nm + "Source", sources, source_default[kind])
         integer(px + "instrument", nm + "Instrument", 0, 128, instrument_default[kind], "0 = none")
@@ -160,31 +190,16 @@ def parameter_table():
         else:
             integer(px + "level", nm + "Level", 0, 16, 16, "16 = the instrument's")
         choice(px + "pan", nm + "Pan", ["off", "L", "R", "both", "inst"], 4)
-        if wave:
-            integer(px + "wave", nm + "Wave", 0, 64, 0, "0 = the instrument's")
-            integer(px + "frame", nm + "Frame", 0, 16, 0, "0 = automatic")
         integer(px + "transpose", nm + "Transpose", -60, 60, 0, "semitones")
-        integer(px + "detune", nm + "Detune", -128, 127, 0, "period units")
-        integer(px + "vib_speed", nm + "Vibrato Speed", 0, 15, 0, "0 = the instrument's")
-        integer(px + "vib_depth", nm + "Vibrato Depth", 0, 16, 16, "16 = the instrument's")
-        integer(px + "arp", nm + "Arpeggio", 0, 64, 0, "0 = none, else a table slot")
-        if pulse or noise:
-            integer(px + "env_vol", nm + "Envelope Volume", 0, 16, 16, "16 = the instrument's")
-            choice(px + "env_dir", nm + "Envelope Direction", ["down", "up", "inst"], 2)
-            integer(px + "env_rate", nm + "Envelope Rate", 0, 8, 8, "8 = the instrument's")
-        if pulse:
-            choice(px + "duty", nm + "Duty", ["12.5%", "25%", "50%", "75%", "inst"], 4)
-        if pu1:
-            integer(px + "sweep_rate", nm + "Sweep Rate", 0, 8, 8, "8 = the instrument's")
-            choice(px + "sweep_dir", nm + "Sweep Direction", ["up", "down", "inst"], 2)
-            integer(px + "sweep_shift", nm + "Sweep Shift", 0, 8, 8, "8 = the instrument's")
-        if noise:
-            choice(px + "lfsr", nm + "LFSR", ["15-bit", "7-bit", "inst"], 2)
+        for slot in (1, 2):
+            choice("%scmd%d_type" % (px, slot), "%sCMD%d" % (nm, slot), CMD_CHOICES, 0)
+            integer("%scmd%d_x" % (px, slot), "%sCMD%d x" % (nm, slot), 0, 255, 0, "the letter's x")
+            integer("%scmd%d_y" % (px, slot), "%sCMD%d y" % (nm, slot), 0, 255, 0, "the letter's y")
         boolean(px + "live_follow", nm + "Live Follow", False)
         choice(px + "velocity", nm + "Velocity", ["start volume", "instrument bank", "ignored"], 0)
         boolean(px + "keyswitch", nm + "Keyswitches", False)
 
-    assert len(table) == 85, len(table)
+    assert len(table) == 76, len(table)
     return table
 
 
@@ -226,6 +241,10 @@ BEND_CENTRE = 8192
 SLOT_SQUARE_LEAD, SLOT_PLUCK, SLOT_BASS25 = 1, 2, 3
 SLOT_TRIANGLE_BASS, SLOT_SAW, SLOT_ORGAN_FRAMES, SLOT_TRI_TO_SAW = 7, 8, 9, 10
 SLOT_KICK, SLOT_SNARE, SLOT_HAT_CLOSED, SLOT_HAT_OPEN, SLOT_CRASH = 11, 12, 13, 14, 15
+
+# Factory waves, the slots a W command names on the wave channel: 1 Triangle,
+# 2 Saw, 3 Sine, 4 Pulse 25, 5 Organ (four frames), 6 Tri to saw (six frames).
+WAVE_TRIANGLE, WAVE_SAW, WAVE_TRI_TO_SAW = 1, 2, 6
 
 # Keyswitch octaves (Source/core/Driver/Driver.cpp, keyswitchBase): notes
 # base..base+11 select slots 1..12 and never sound. Pulse channels: base 24.
@@ -315,7 +334,8 @@ def build_song():
     ]
     for pitch, start, length in theme:
         s.note(PU1, pitch, bar(1, start), length, lead)
-    # Bars 5-8: long notes under the mod wheel (CC1 = vibrato depth 0-15).
+    # Bars 5-8: long notes under PU1's second command slot (V, vibrato) with
+    # the mod wheel (CC1 = vibrato depth 0-15) riding the depth between notes.
     sustained = [
         (81, 0, 2), (76, 2, 2),
         (77, 4, 2), (72, 6, 1), (74, 7, 1),
@@ -333,7 +353,8 @@ def build_song():
         s.cc(PU1, 1, mod_wheel_value(beat), ticks(beat))
         beat += 0.25
     s.cc(PU1, 1, 0, ticks(bar(9)))
-    # Bars 9-12: eighth notes; the duty changes per bar through automation.
+    # Bars 9-12: eighth notes; the duty changes per bar through PU1's first
+    # command slot (W, one duty per bar).
     eighths = [
         (69, 0), (69, .5), (72, 1), (76, 1.5), (81, 2), (79, 2.5), (76, 3), (72, 3.5),
         (77, 4), (77, 4.5), (81, 5), (77, 5.5), (76, 6), (74, 6.5), (72, 7), (74, 7.5),
@@ -447,23 +468,79 @@ class Envelope:
 EARLY = 0.01   # seconds before a bar line, so a value is in force for the bar's first note
 
 
-def build_envelopes():
+def build_envelopes(song_tempo=False):
+    """The lanes the demo draws.
+
+    Everything the performance does is either a command slot -- a letter, an x
+    and a y, in force until the letter changes -- or one of the few channel
+    fields left (docs/COMMANDS_AND_TEMPO.md section 3). A slot fires at the next
+    tick when any of its three parameters changes, and again at every note-on
+    after the instrument and its table, so a letter set for a bar shapes every
+    note in that bar; putting the letter back to none reverts what it changed to
+    the instrument's own value.
+
+    With song_tempo the project runs on the song's clock instead of the host's,
+    and PU1's second slot carries T for bars 9-12.
+    """
     b = lambda n: seconds(bar(n)) - EARLY
-    return [
-        Envelope("ch1_source", [(0, 1)]),                       # PU1 stops being omni: MIDI 1
-        Envelope("ch3_keyswitch", [(0, 1)]),
-        Envelope("ch4_keyswitch", [(0, 1)]),
-        Envelope("ch4_velocity", [(0, 1)]),                     # instrument bank
-        Envelope("ch2_instrument", [(0, SLOT_PLUCK)]),
-        Envelope("ch1_duty", [(0, 4), (b(9), 0), (b(10), 1), (b(11), 2), (b(12), 3), (b(13), 4)]),
-        Envelope("ch2_env_rate", [(0, 8), (b(9), 1), (b(11), 4), (b(13), 8)]),
-        Envelope("ch3_wave", [(0, 0), (b(9), 2), (b(10), 6), (b(13), 0)]),
-        Envelope("ch3_frame", [(0, 0), (b(10), 1), (b(11), 3), (b(12), 6), (b(13), 0)]),
-        Envelope("master_l", [(0, 7), (seconds(bar(8, 2)), 5), (seconds(bar(8, 3)), 3), (b(9), 7)]),
-        Envelope("master_r", [(0, 7), (seconds(bar(8, 2)), 5), (seconds(bar(8, 3)), 3), (b(9), 7)]),
-        Envelope("declick", [(0, 0), (b(14), 1), (b(15), 0)]),
-        Envelope("model", [(0, 0), (b(15), 1), (b(16), 2)]),
-    ]
+    out = []
+    add = lambda pid, points: out.append(Envelope(pid, points))
+
+    if song_tempo:
+        # The song owns the tempo: the tracker's ticks run at 150 BPM against
+        # the host's 120, and the T below overrides the base from bar 9.
+        add("tempo_source", [(0, 1)])                           # Song
+        add("song_tempo", [(0, SONG_TEMPO)])
+
+    # What the channels are before a note plays.
+    add("ch1_source", [(0, 1)])                                 # PU1 stops being omni: MIDI 1
+    add("ch3_keyswitch", [(0, 1)])
+    add("ch4_keyswitch", [(0, 1)])
+    add("ch4_velocity", [(0, 1)])                               # instrument bank: velocity picks the drum
+    add("ch2_instrument", [(0, SLOT_PLUCK)])
+
+    # PU1 CMD1 = W: the duty, one per bar through bars 9-12, then back to the
+    # instrument's 50 %.
+    add("ch1_cmd1_type", [(0, CMD["none"]), (b(9), CMD["W"]), (b(13), CMD["none"])])
+    add("ch1_cmd1_x", [(0, 0), (b(9), 0), (b(10), 1), (b(11), 2), (b(12), 3), (b(13), 0)])
+
+    # PU1 CMD2 = V: vibrato over bars 5-8, speed and depth in the slot's x and
+    # y, the mod wheel still riding the depth between notes. In the song-tempo
+    # project the same lane then becomes T for bars 9-12: one slot, two letters,
+    # never at the same time.
+    cmd2_type = [(0, CMD["none"]), (b(5), CMD["V"])]
+    cmd2_x = [(0, 0), (b(5), 3), (b(7), 6)]
+    cmd2_y = [(0, 0), (b(5), 2), (b(7), 4), (b(9), 0)]
+    if song_tempo:
+        cmd2_type += [(b(9), CMD["T"]), (b(13), CMD["none"])]
+        cmd2_x += [(b(9), SONG_TEMPO_DROP), (b(13), 0)]
+    else:
+        cmd2_type += [(b(9), CMD["none"])]
+        cmd2_x += [(b(9), 0)]
+    add("ch1_cmd2_type", cmd2_type)
+    add("ch1_cmd2_x", cmd2_x)
+    add("ch1_cmd2_y", cmd2_y)
+
+    # PU2 CMD1 = E: the envelope, alternating pluck and long by the bar. While
+    # E is in force it sets the start volume, so the bass's velocity accents
+    # step aside for four bars.
+    add("ch2_cmd1_type", [(0, CMD["none"]), (b(9), CMD["E"]), (b(13), CMD["none"])])
+    add("ch2_cmd1_x", [(0, 0), (b(9), 15), (b(10), 11), (b(11), 15), (b(12), 12), (b(13), 0)])
+    add("ch2_cmd1_y", [(0, 0), (b(9), env_y(3)), (b(10), env_y(0)), (b(11), env_y(2)), (b(12), env_y(0)), (b(13), 0)])
+
+    # WAV CMD1 = W (the wave slot) and CMD2 = F (the frame): saw for bar 9, then
+    # the six-frame Tri-to-saw walked from its triangle end to its saw end.
+    add("ch3_cmd1_type", [(0, CMD["none"]), (b(9), CMD["W"]), (b(13), CMD["none"])])
+    add("ch3_cmd1_x", [(0, 0), (b(9), WAVE_SAW), (b(10), WAVE_TRI_TO_SAW), (b(13), 0)])
+    add("ch3_cmd2_type", [(0, CMD["none"]), (b(10), CMD["F"]), (b(13), CMD["none"])])
+    add("ch3_cmd2_x", [(0, 0), (b(10), 1), (b(11), 3), (b(12), 6), (b(13), 0)])
+
+    # The master strip and the hardware.
+    add("master_l", [(0, 7), (seconds(bar(8, 2)), 5), (seconds(bar(8, 3)), 3), (b(9), 7)])
+    add("master_r", [(0, 7), (seconds(bar(8, 2)), 5), (seconds(bar(8, 3)), 3), (b(9), 7)])
+    add("declick", [(0, 0), (b(14), 1), (b(15), 0)])
+    add("model", [(0, 0), (b(15), 1), (b(16), 2)])
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -545,7 +622,10 @@ def vst_chunk_lines():
     return [base64.b64encode(header).decode("ascii"), base64.b64encode(trailer).decode("ascii")]
 
 
-def write_rpp(path, song, envelopes, table):
+def write_rpp(path, song, envelopes, table, tag=""):
+    # tag keeps the two projects' GUIDs apart while the derivation stays the
+    # same: uuid5 of the fixed namespace over "chipboy-demo/" + the name.
+    g = lambda name: guid(tag + name)
     by_id = {p.pid: (i, p) for i, p in enumerate(table)}
     number = reaper_vst3_number(VST3_CID)
     L = []
@@ -588,7 +668,7 @@ def write_rpp(path, song, envelopes, table):
     w('  MASTER_FX 1')
     w('  MASTER_SEL 0')
     # --- the track --------------------------------------------------------
-    w('  <TRACK %s' % guid("track"))
+    w('  <TRACK %s' % g("track"))
     w('    NAME ChipBoy')
     w('    PEAKCOL 16576')
     w('    BEAT -1')
@@ -607,7 +687,7 @@ def write_rpp(path, song, envelopes, table):
     w('    INQ 0 0 0 0.5 100 0 0 100')
     w('    NCHAN 2')
     w('    FX 1')
-    w('    TRACKID %s' % guid("track"))
+    w('    TRACKID %s' % g("track"))
     w('    PERF 0')
     w('    MIDIOUT -1')
     w('    MAINSEND 1 0')
@@ -621,11 +701,11 @@ def write_rpp(path, song, envelopes, table):
         w('        ' + line)
     w('      >')
     w('      FLOATPOS 0 0 0 0')
-    w('      FXID %s' % guid("fx"))
+    w('      FXID %s' % g("fx"))
     for env in envelopes:
         index, p = by_id[env.pid]
         w('      <PARMENV %d:%d 0 1 0.5 "%s / ChipBoy"' % (index, vst3_param_id(p.pid), p.name))
-        w('        EGUID %s' % guid("env/" + env.pid))
+        w('        EGUID %s' % g("env/" + env.pid))
         w('        ACT 1 -1')
         w('        VIS 1 1 1')
         w('        LANEHEIGHT 0 0')
@@ -647,18 +727,18 @@ def write_rpp(path, song, envelopes, table):
     w('      FADEOUT 0 0 0 0 0 0 0')
     w('      MUTE 0 0')
     w('      SEL 0')
-    w('      IGUID %s' % guid("item"))
+    w('      IGUID %s' % g("item"))
     w('      IID 1')
     w('      NAME "ChipBoy demo (MIDI channels 1-4)"')
     w('      VOLPAN 1 0 1 -1')
     w('      SOFFS 0 0')
     w('      PLAYRATE 1 1 0 -1 0 0.0025')
     w('      CHANMODE 0')
-    w('      GUID %s' % guid("take"))
+    w('      GUID %s' % g("take"))
     w('      <SOURCE MIDI')
     w('        HASDATA 1 %d QN' % PPQ)
     w('        CCINTERP 32')
-    w('        POOLEDEVTS %s' % guid("pooledevts"))
+    w('        POOLEDEVTS %s' % g("pooledevts"))
     last = 0
     for tick, _prio, ch, kind, a, b in song.sorted_events():
         delta = tick - last
@@ -674,7 +754,7 @@ def write_rpp(path, song, envelopes, table):
         w('        E %d %02x %02x %02x' % (delta, status, a, b))
     w('        E %d b0 7b 00' % (TOTAL_TICKS - last))       # all notes off closes the source
     w('        CCINTERP 32')
-    w('        GUID %s' % guid("source"))
+    w('        GUID %s' % g("source"))
     w('        IGNTEMPO 0 %d %d 4' % (BPM, BEATS_PER_BAR))
     w('        SRCCOLOR 0')
     w('        VELLANE -1 100 0')
@@ -688,21 +768,25 @@ def write_rpp(path, song, envelopes, table):
         f.write("\n".join(L) + "\n")
 
 
-def write_parameters_md(path, table):
+def write_parameters_md(path, table, envelopes, song_tempo_envelopes):
+    ids = lambda es: ", ".join("`%s`" % e.pid for e in es)
+    extra = [e for e in song_tempo_envelopes if e.pid not in {x.pid for x in envelopes}]
     L = []
     w = L.append
     w("# ChipBoy parameters, in host order")
     w("")
     w("Generated by `tools/demo/make_demo.py`. The order is the order")
     w("`Source/plugin/shared/Parameters.cpp` adds the parameters: the globals from")
-    w("`addGlobalParameters`, then channels 1-4 from `addChannelParameters`, whose")
-    w("per-kind conditionals decide which ids a channel has (only the wave channel")
-    w("has Wave and Frame; only pulse channels have Duty; only PU1 has the sweep;")
-    w("only NOI has LFSR). JUCE presents the list to VST3 hosts in exactly this")
-    w("order; the wrapper's own Bypass parameter and, after it, its MIDI CC")
-    w("emulation parameters follow the 85 below. `chipboy_paramdump` (a CMake target")
-    w("of the plugin build) prints the same table from the running code, and")
-    w("`make_demo.py --paramdump <path>` checks this file against it.")
+    w("`addGlobalParameters`, then channels 1-4 from `addChannelParameters`. Every")
+    w("channel has the same fifteen -- source, instrument, table, level, pan,")
+    w("transpose, two command slots of three parameters each, live follow, velocity")
+    w("and keyswitches -- and only Level differs between the kinds (0-16 on the")
+    w("pulse and noise channels, 0-4 on the wave channel). JUCE presents the list to")
+    w("VST3 hosts in exactly this order; the wrapper's own Bypass parameter and,")
+    w("after it, its MIDI CC emulation parameters follow the %d below." % len(table))
+    w("`chipboy_paramdump` (a CMake target of the plugin build) prints the same table")
+    w("from the running code, and `make_demo.py --paramdump <path>` checks this file")
+    w("against it.")
     w("")
     w("The **index** is what Reaper's `PARMENV` lines use. The **VST3 id** is what")
     w("JUCE derives from the id string (`String::hashCode()` with the top bit")
@@ -719,15 +803,67 @@ def write_parameters_md(path, table):
             default += " (%s)" % p.choices[int(p.default)]
         w("| %d | `%s` | %s | %s | %s | %d |" % (i, p.pid, p.name, p.range_text(), default, vst3_param_id(p.pid)))
     w("")
-    w("Per-channel parameters carry an extra position meaning \"use the instrument's")
-    w("value\" (the top value of Level, Vibrato Depth, Envelope Volume/Rate, Sweep")
-    w("Rate/Shift; the `inst` choice of Pan, Envelope Direction, Duty, Sweep")
-    w("Direction, LFSR; 0 of Table, Wave, Vibrato Speed). Automation overrides the")
-    w("instrument only where a lane is drawn away from that position.")
+    w("## The two command slots")
     w("")
-    w("The demo project automates: `ch1_source`, `ch3_keyswitch`, `ch4_keyswitch`,")
-    w("`ch4_velocity`, `ch2_instrument`, `ch1_duty`, `ch2_env_rate`, `ch3_wave`,")
-    w("`ch3_frame`, `master_l`, `master_r`, `declick`, `model`.")
+    w("A slot is three parameters -- the letter, `x` and `y` -- and it is *in force*")
+    w("rather than momentary. It fires at the next tick whenever one of the three")
+    w("changes, and again at every note-on, after the instrument and its table, so a")
+    w("letter drawn across a bar shapes every note in that bar. Put the letter back")
+    w("to `none` and what it changed reverts to the instrument's own value (`E` `F`")
+    w("`O` `S` `V` `W`), to zero (`P`), to the parameter (`M`), or stops (`A`, `G`).")
+    w("CMD1 is applied before CMD2.")
+    w("")
+    w("| Letter | Meaning | x | y |")
+    w("|---|---|---|---|")
+    for letter, meaning, x, y in [
+        ("A", "table", "table slot 1-64, 0 stops", "-"),
+        ("C", "chord", "semitones", "semitones"),
+        ("D", "delay", "ticks", "-"),
+        ("E", "envelope", "volume 0-15 (wave level 0-3 on WAV)", "0-7 decay, 8-15 attack"),
+        ("F", "frame", "frame 1-16 (WAV)", "-"),
+        ("G", "groove", "groove slot 1-16, 0 straight", "-"),
+        ("K", "kill", "ticks after the note-on", "-"),
+        ("L", "slide", "rate 0-15", "-"),
+        ("M", "master volume", "left 0-7", "right 0-7"),
+        ("O", "pan", "0 off, 1 L, 2 R, 3 both", "-"),
+        ("P", "pitch offset", "0-255, signed x - 128 period units", "-"),
+        ("R", "retrigger", "volume step per retrigger", "every y ticks"),
+        ("S", "sweep (PU1)", "rate 0-7, +128 for down", "shift 0-7"),
+        ("T", "tempo", "40-255 BPM, Song source only", "-"),
+        ("V", "vibrato", "speed 1-15", "depth 0-15"),
+        ("W", "wave", "duty 0-3 on a pulse, wave slot 1-64 on WAV", "-"),
+        ("Z", "random", "randomises the other slot's x, up to x", "-"),
+    ]:
+        w("| `%s` | %s | %s | %s |" % (letter, meaning, x, y))
+    w("")
+    w("`H` (hop) exists in table steps only, so it is not in the lane's choice; the")
+    w("full definitions are in [`../docs/COMMANDS_AND_TEMPO.md`](../docs/COMMANDS_AND_TEMPO.md)")
+    w("section 2.")
+    w("")
+    w("## The rest of the channel")
+    w("")
+    w("Three fields carry a position meaning \"use the instrument's value\": the top")
+    w("value of Level (16, or 4 on WAV), the `inst` choice of Pan, and 0 of Table.")
+    w("Automation overrides the instrument only where a lane is drawn away from that")
+    w("position. Everything a lane used to override silently -- duty, envelope,")
+    w("sweep, wave, frame, vibrato, arpeggio, detune, LFSR width -- is now the")
+    w("instrument's alone, or arrives as a command.")
+    w("")
+    w("Ticks are 24 to the beat, from **Tempo Source** (`tempo_source`): the host's")
+    w("tempo, or the song's own **Song Tempo** (`song_tempo`, 40-255 BPM) with `T`")
+    w("commands over it. **Quantise Notes To Ticks** (`notes_on_tick`) holds incoming")
+    w("note-ons and note-offs until the next tick; bends and controllers are never")
+    w("quantised, and tracker cells are always on ticks.")
+    w("")
+    w("## What the demo automates")
+    w("")
+    for line in textwrap.wrap("`ChipBoy Demo.rpp` draws " + ids(envelopes) + ".", 78):
+        w(line)
+    w("")
+    for line in textwrap.wrap("`ChipBoy Demo (song tempo).rpp` draws the same lanes plus "
+                              + ids(extra) + ", and PU1's second slot carries `T` for bars"
+                              " 9-12 instead of going back to none at bar 9.", 78):
+        w(line)
     w("")
     w("VST3 class id of ChipBoy: `%s`; Reaper's number for it: `%d`." % (VST3_CID, reaper_vst3_number(VST3_CID)))
     with open(path, "w", newline="\n", encoding="utf-8") as f:
@@ -771,13 +907,16 @@ def main():
     table = parameter_table()
     song = build_song()
     envelopes = build_envelopes()
+    song_tempo_envelopes = build_envelopes(song_tempo=True)
     out = os.path.normpath(args.out)
     os.makedirs(out, exist_ok=True)
     write_midi(os.path.join(out, "chipboy_demo.mid"), song)
     write_rpp(os.path.join(out, "ChipBoy Demo.rpp"), song, envelopes, table)
-    write_parameters_md(os.path.join(out, "PARAMETERS.md"), table)
+    write_rpp(os.path.join(out, "ChipBoy Demo (song tempo).rpp"), song, song_tempo_envelopes, table, "song-tempo/")
+    write_parameters_md(os.path.join(out, "PARAMETERS.md"), table, envelopes, song_tempo_envelopes)
     n = len(song.events)
-    print("wrote %s: %d MIDI events, %d envelopes, %d parameters" % (out, n, len(envelopes), len(table)))
+    print("wrote %s: %d MIDI events, %d + %d envelopes, %d parameters"
+          % (out, n, len(envelopes), len(song_tempo_envelopes), len(table)))
     ok = True
     if args.paramdump:
         ok = check_against_paramdump(args.paramdump, table)

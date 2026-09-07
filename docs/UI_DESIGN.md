@@ -119,10 +119,41 @@ columns: automate *Instrument* on the track, play notes against it, and each not
 the instrument that was current when it started. *Live follow*, per channel, flips that
 for sweeps meant to be heard.
 
-**Per-channel parameters** (spec §12.4) appear as automation lanes on the Voice's track,
-or on the ChipBoy track when the channel is MIDI-sourced. Every one is discrete and the
-host draws them as steps. This is the whole list, and it is short on purpose: the
-instrument bank holds the sound; automation holds the performance.
+**The lane set** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §3, which supersedes
+spec §12.4) appears on the Voice's track, or on the ChipBoy track when the channel is
+MIDI-sourced. It is the tracker row and nothing else:
+
+| Lane | What it is |
+|---|---|
+| Source | Omni / MIDI 1–16 / Off — the main plugin only |
+| Instrument | 0 none, or 1–128; latched at note-on, or live |
+| Table | 0 the instrument's, or 1–64 |
+| Level | 0–15 or the instrument's (PU, NOI); mute / 25 / 50 / 100 % or the instrument's (WAV) |
+| Pan | off / L / R / both / the instrument's |
+| Transpose | −60…+60 semitones |
+| CMD1 type, x, y | a letter and two arguments, 0–255 each |
+| CMD2 type, x, y | the same |
+| Live follow | Instrument, Table, Level, Pan and Transpose apply now instead of at the next note |
+| Velocity | start volume / instrument bank / ignored |
+| Keyswitches | on/off; the octave 24–35 (pulse) or 12–23 (wave, noise) selects slots 1–12 |
+
+Every one is discrete and the host draws them as steps. It is short on purpose: the
+instrument holds the sound, and the two **command slots** hold the performance. A slot is
+a letter with two base-10 arguments — `W` duty or wave, `E` envelope, `V` vibrato, `A`
+table, `F` frame, `T` tempo, and the rest of LSDj's set — and it is *in force*: it fires
+at the next tick when the letter, `x` or `y` changes, and again at every note-on after
+the instrument and its table, so a letter drawn across a bar shapes every note in it.
+Setting the letter to *none* reverts what it changed to the instrument's value. There are
+no lanes for duty, envelope, sweep, wave, frame, vibrato, arpeggio, detune or LFSR width
+any more: those were the lanes that silently overrode the instrument, and their absence is
+the point.
+
+**Tempo** (§4 of the same document). Ticks are always 24 to the beat. *Tempo source* is
+**Host** — ticks on multiples of 1/24 of the host's beat, exact under scrubbing — or
+**Song**, where the plugin keeps its own *Song tempo* (40–255 BPM) with `T` commands over
+it and the host's bars are only a ruler. *Quantise MIDI notes to ticks*, off by default,
+holds note-ons and note-offs until the next tick; bends and controllers are never
+quantised.
 
 ---
 
@@ -207,7 +238,19 @@ Per channel: a **note** column, **instrument**, **table** and two **command** co
 sixteen steps to a phrase (a bar of sixteenths by default), phrases chained along the
 timeline by bar, a groove (6/6, 7/5, 8/4 ticks per step…) per phrase for swing. Cells
 fire at their step's tick and latch for the notes that follow — exactly the tracker
-behaviour.
+behaviour. A cell's two commands are the channel's two command slots written from that
+step on, so the lane and the automation lane are one mechanism, not two.
+
+**The clock lives here.** Ticks are 24 to the beat and a straight step is six of them, as
+LSDj. The tab holds *Tempo source* (Host or Song), *Song tempo*, the song start and the
+*Quantise MIDI notes to ticks* toggle; the status bar says which is in force —
+"tempo host 120" or "tempo song 150". In Song mode the position at any host time is the
+integral of the song's own tempo map — the base tempo plus its `T` cells at known ticks —
+so a jump to bar 9 lands on the step playing through would have reached, and a playback
+ROM could reproduce it. Automating the *Song tempo* parameter (or holding a `T` in an
+automation slot) is the approximate form: the plugin integrates while playing and
+re-anchors on a locate with the value it sees there. See
+[`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §4.
 
 **Two sources of notes, one switch per channel.** *Piano roll* shows the notes the DAW is
 sending, greyed and not editable here, so a command sits next to the note it will hit.

@@ -26,6 +26,52 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-07 — the demo and the documents follow the new model (§8.1, §8.2, §12.3, §12.4)
+
+Stage 3 of the revision above: nothing in the code changed, the demo project and every
+document that described the old parameter set did.
+
+**Changed:**
+
+- **`tools/demo/make_demo.py` regenerated for the new parameter set.** The embedded
+  table is the built one — 16 globals and 15 lanes per channel, 76 parameters — and
+  `--paramdump` reports it identical to what `chipboy_paramdump` prints. `Demo/PARAMETERS.md`
+  now also carries the command letters and what `x` and `y` mean for each.
+- **The tune is the same sixteen bars at 120 BPM** (`Demo/chipboy_demo.mid` is unchanged,
+  byte for byte); what it automates is the channel model. PU1's duty is CMD1 = `W`, one
+  duty per bar over bars 9–12; PU1's vibrato in bars 5–8 is CMD2 = `V` with speed and
+  depth in `x` and `y`, the mod wheel still riding the depth between notes; PU2's
+  envelope is CMD1 = `E` alternating pluck and long by the bar; WAV's wave slot and frame
+  are `W` and `F` over the keyswitched instruments; NOI keeps its keyswitches and
+  velocity-selected drums. Every letter goes back to *none* by bar 13, so the revert to
+  the instrument's own value is audible. The model switch DMG → CGB → RAW and the
+  de-click toggle over the last bars are where they were.
+- **A second Reaper project, `Demo/ChipBoy Demo (song tempo).rpp`:** the same track with
+  *Tempo source* = **Song** and *Song tempo* = **150**, so the tracker's ticks run at
+  60 Hz against the host's 48, and a `T` in PU1's second slot dropping the song to 100 for
+  bars 9–12. One slot carries two letters in turn — `V` for bars 5–8, `T` for bars 9–12 —
+  which is the clearest demonstration that a slot is a lane, not a fixed control. The
+  GUIDs of the two projects differ; the derivation (uuid5 of a fixed namespace) is
+  unchanged, and both files are still byte-identical between runs.
+- **Documents.** `Demo/README.md` has a new bar-by-bar table, a section on what to listen
+  for in the song-tempo project, and FL Studio notes that say which lanes to draw;
+  `README.md`'s "Playing it" describes the tracker row, the two slots and the tempo model;
+  `docs/UI_DESIGN.md` §4 lists the lane set and §7 says the clock lives in the Phrases
+  tab; spec §12.3 and §12.4 carry the built parameter sets, and §8.1/§8.2 say the tick is
+  24 to the beat from the tempo source.
+
+**Why:** the demo is the only executable description of the parameter set, and it was
+describing lanes that no longer exist. The second project exists because the tempo model
+is the half of the revision that a screenshot cannot show: two projects side by side, one
+on each clock, make the difference audible in a minute.
+
+**Considered:** regenerating the tune as well (the notes were not the problem, and a
+byte-identical `.mid` keeps the diff readable); one project with the tempo source
+automated mid-song (it would demonstrate the re-anchoring caveat instead of the model).
+
+**Not done:** an `.flp` for FL Studio — the format is binary and undocumented, so the
+README explains the lanes to draw by hand instead.
+
 ### 2026-09-07 — commands, channel lanes and tempo (§8.1, §8.2, §9.6, §12.3, §12.4)
 
 The design is [`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md), agreed on the

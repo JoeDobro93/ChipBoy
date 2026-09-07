@@ -422,9 +422,12 @@ Game Boy waveforms.
 ### 8.1 The tick
 
 *Superseded by [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §4:* the tick is
-always 24 to the beat, and the only choice is where the beat comes from — **Tempo
-source: Host or Song**. The V-blank and custom rates and the ticks-per-beat setting are
-gone; the table below is what was originally specified.
+always **24 to the beat**, and the only choice is whose beat — **Tempo source: Host or
+Song**. In Host mode a tick sits at every multiple of 1/24 of the host's beat position;
+in Song mode the rate is the song's own tempo × 24 / 60 Hz, from a base tempo (the
+**Song tempo** parameter, 40–255 BPM) with `T` commands over it. The V-blank and custom
+rates and the ticks-per-beat setting are gone; the table below is what was originally
+specified.
 
 | Source | Rate | Notes |
 |---|---|---|
@@ -440,6 +443,12 @@ Tick boundaries are computed from the absolute sample position of the transport 
 free-running counter when the host is stopped), never accumulated per block — see §7.1.
 
 ### 8.2 What happens on a tick
+
+*Amended by [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §3 and §4:* ticks are
+24 per beat and come from the tempo source (§8.1), and what step 1 samples is the lane
+set of that document — a command slot fires at the tick where its letter, `x` or `y`
+changed, and again at every note-on. Notes themselves are sample-accurate unless
+*Quantise MIDI notes to ticks* is on.
 
 In this order, for each of the four channels:
 
@@ -851,54 +860,62 @@ is a display format, not an accuracy switch, so it does not conflict with **C8**
 
 ### 12.3 Main plugin parameters
 
-*Superseded in part by [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §3 and §4:*
-the tick controls are replaced by **Tempo source**, **Song tempo** and **Quantise notes
-to ticks**, and the per-channel set is the one in §12.4 below as amended there.
+*Replaced by [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §3 and §4 where they
+differ:* the tick controls are gone and **Tempo source**, **Song tempo** and **Quantise
+notes to ticks** take their place. This is the built set — sixteen globals, then the
+§12.4 channel set four times, 76 parameters in all; `chipboy_paramdump` prints them in
+host order and `Demo/PARAMETERS.md` is generated from that list.
 
 | Parameter | Range |
 |---|---|
+| Model | DMG / CGB / RAW (§6.5) |
 | Master volume L / R | 0–7 each (NR50; 0 is 1/8, not mute) |
 | Output trim | continuous dB — the one continuous control (**C3**) |
 | Headphone noise | on / off (**C8**) |
-| Model | DMG / CGB / RAW (§6.5) |
 | LCD | on / off — off removes the 9198 Hz line as switching the display off does |
 | CGB bass mod | stock / ×10 / ×47 capacitor (`UI_DESIGN.md` §5) |
 | Volume writes at edges | on / off — NRx2 writes land on the quiet half-cycle. *As built:* the driver marks a level change on a sounding pulse channel; the plugin moves that burst to the next cycle where the duty output is low (`Apu::cyclesUntilPulseLow`), so the level changes while the output is zero |
-| De-click | off, or a 0.5–5 ms crossfade of DAC-on steps — a departure (**C8**) |
+| De-click | on / off — a crossfade of DAC-on steps, a departure (**C8**) |
+| De-click ms | 0.5–5 ms |
 | Soften master pops | on / off — a departure (**C8**) |
-| Tick source | host-synced / V-blank / custom |
-| Ticks per beat *(host-synced)* | 1–48 |
-| Tick rate *(custom)* | 1–240 Hz |
+| Tempo source | Host / Song — ticks are 24 per beat either way (§8.1) |
+| Song tempo | 40–255 BPM, the Song source's base; `T` commands override it |
+| Quantise notes to ticks | on / off, default off |
 | Link mode | on / off (§11.4) |
-| Per channel × 4 | the same set as §12.4, used when no Voice plugin has claimed the channel |
+| Hex display | on / off (§12.2) |
+| Per channel × 4 | the set in §12.4, used when no Voice plugin has claimed the channel |
 
 ### 12.4 Voice plugin parameters
 
-*Superseded by [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §3:* the channel is
-instrument, table, level, pan, transpose, two command slots, live follow, velocity and
-keyswitches. The override lanes below — wave, frame, detune, vibrato, arpeggio,
-envelope, duty, sweep, LFSR — are gone; they live in the instrument or arrive as a
-command (W, F, P, V, A/C, E, S).
+*Replaced by [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §3:* the channel is a
+visible tracker row — an instrument, a table, the four performance fields, two command
+slots and three switches. The override lanes that used to sit here — wave, frame,
+detune, vibrato, arpeggio, envelope, duty, sweep, LFSR width — are gone: they live in the
+instrument, or arrive as a command (`W`, `F`, `P`, `V`, `A`/`C`, `E`, `S`). Both plugins
+carry this same set; only the main plugin has Source.
 
 All automatable, all discrete, all latched at note-on unless Live follow is set (§10.1).
 
 | Parameter | Range |
 |---|---|
-| Instrument | 1–128, or none |
-| Table override | none, or 1–64 |
-| Level | 0–15 (PU/NOI) or mute/25/50/100 (WAV) |
-| Pan | off / L / R / both |
-| Wave *(WAV)* | 1–64 |
-| Frame *(WAV)* | 1–16 |
+| Source *(main plugin only)* | Omni / MIDI 1–16 / Off |
+| Instrument | 0 none, or 1–128 |
+| Table | 0 the instrument's, or 1–64 |
+| Level | 0–15, 16 = the instrument's (PU, NOI); mute / 25 / 50 / 100 %, 4 = the instrument's (WAV) |
+| Pan | off / L / R / both / the instrument's |
 | Transpose | −60…+60 semitones |
-| Detune | −128…+127 raw period units |
-| Vibrato speed / depth | 1–15 / 0–15 |
-| Arpeggio | none, or 1–64 (a table slot) |
-| Envelope volume / direction / rate | 0–15 / down-up-off / 0–7 |
-| Duty *(PULSE)* | 12.5 / 25 / 50 / 75 % |
-| Sweep rate / direction / shift *(PU1)* | 0–7 / up-down / 0–7 |
-| LFSR width *(NOI)* | 15-bit / 7-bit |
+| CMD1 type / x / y | none, or `A C D E F G K L M O P R S T V W Z`; `x` and `y` 0–255 each |
+| CMD2 type / x / y | the same |
 | Live follow | on / off |
+| Velocity | start volume / instrument bank / ignored |
+| Keyswitches | on / off — the octave 24–35 (pulse) or 12–23 (wave, noise) selects slots 1–12 |
+
+A slot is *in force*, not momentary: it fires at the next tick when one of its three
+parameters changes, and again at every note-on after the instrument and its table, so
+every note in its span gets it; setting the letter to none reverts what it changed to the
+instrument's value. What `x` and `y` mean is per letter — the table is
+[`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §2, and `H` (hop) is a table step's
+command only, so it is not offered in a slot.
 
 Every one of these also responds to a MIDI CC, for hosts and workflows where CC lanes
 are easier to draw than automation lanes. Same values, same tick quantisation.

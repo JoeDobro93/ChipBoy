@@ -35,10 +35,19 @@ tracker that follows the host transport and records, two plugins linked through 
 memory, the Hardware panel's options, and the window from the mockup with its
 visualizer. It has been compiled and tested on Linux (61 core tests, the link
 integration test, VST3 and Standalone builds); the Windows and macOS builds run in CI
-but have not yet been played in a DAW. Expect first-run bugs; the documents remain the
-source of truth:
+but have not yet been played in a DAW.
+
+**Revised on 2026-09-07:** the channel is now a visible tracker row — an instrument, a
+table and two command slots — instead of a row of lanes that silently overrode the
+instrument, and the driver's tick is fixed at 24 to the beat with one switch for whose
+beat it is, the host's or the song's. The design is
+[`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md) and it supersedes the spec
+where they differ; projects and banks from before it are not migrated.
+
+Expect first-run bugs; the documents remain the source of truth:
 
 - [`docs/CHIPBOY_SPEC.md`](docs/CHIPBOY_SPEC.md) — the build specification, and the source of truth.
+- [`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md) — commands, the channel's lanes and the tempo model; supersedes the spec where they differ.
 - [`docs/UI_DESIGN.md`](docs/UI_DESIGN.md) — the interface, its reasons, and the decisions taken.
 - [`docs/HARDWARE_REFERENCE.md`](docs/HARDWARE_REFERENCE.md) — DMG APU registers, timing, and the measured analog behaviour the emulation has to reproduce.
 - [`docs/LICENSING.md`](docs/LICENSING.md) — third-party obligations and the licence decision still to be made.
@@ -105,26 +114,50 @@ checks the whole path (`ctest --test-dir build -C Release -R linktest`).
 
 1. Put **ChipBoy** on a track and play. PU1 answers every MIDI channel (omni); PU2, WAV
    and NOI answer MIDI channels 2, 3 and 4. Change any channel's source in its strip.
-2. Velocity sets the envelope's start volume, the mod wheel sets vibrato depth, pitch
-   bend moves the period. Automate the channel parameters (instrument, table, level,
-   pan, duty, envelope, sweep, wave, frame, transpose, detune, vibrato, arpeggio, LFSR
-   width); each note takes the values in force when it starts, or follows them live with
-   *Live follow*.
-3. For one track per voice: put a **ChipBoy Voice** on another track, turn **Link mode**
+2. **A channel is a tracker row**, and its automation lanes are that row: *Instrument*,
+   *Table*, *Level*, *Pan*, *Transpose*, two **command slots**, *Live follow*,
+   *Velocity* and *Keyswitches*. That is the whole list. The instrument holds the sound —
+   there are no lanes quietly overriding its duty, envelope, sweep, wave, frame, vibrato,
+   arpeggio or detune. Each note takes the values in force when it starts, or follows
+   them live with *Live follow*.
+3. **The two command slots** are LSDj's letters with base-10 arguments: `W` duty on a
+   pulse channel and the wave slot on WAV, `E` envelope, `V` vibrato, `A` table, `F`
+   frame, `C` chord, `L` slide, `R` retrigger, `P` pitch offset, `O` pan, `S` PU1's
+   sweep, `K` kill, `D` delay, `M` master volume, `G` groove, `T` tempo, `Z` random. A
+   slot is three parameters — the letter, `x` and `y` — and it is *in force*, not
+   momentary: it fires at the next tick when one of the three changes, and again at every
+   note-on after the instrument and its table. Put the letter back to *none* and what it
+   changed reverts to the instrument's own value. The strip shows the meaning
+   ("vol 12 · down 3"), never a packed byte, with the running state under it, so an
+   automation move is visible as the slot changing and the state following.
+4. Velocity sets the envelope's start volume — or selects an instrument, or is ignored,
+   per channel — the mod wheel sets vibrato depth, and pitch bend moves the period.
+5. **Tempo.** Ticks, which tables, vibrato, wave frames and tracker steps all run on, are
+   always 24 to the beat. *Tempo source* (in the Phrases tab) chooses whose beat:
+   **Host**, the default, where a tick sits at every multiple of 1/24 of the host's beat
+   and scrubbing is exact; or **Song**, where the plugin keeps its own *Song tempo*
+   (40–255 BPM, automatable) with `T` commands over it, and the host's bars are only a
+   ruler. *Quantise MIDI notes to ticks* (default off) holds note-ons and note-offs until
+   the next tick, for the tracker's feel; bends and controllers are never quantised, and
+   tracker cells are always on ticks.
+6. For one track per voice: put a **ChipBoy Voice** on another track, turn **Link mode**
    on in ChipBoy's Link tab (the host re-compensates for one block of latency), and
    pick the instance and channel in the Voice. The Voice's track stays silent; the audio
    comes out of the ChipBoy track. Its parameters are the same set, as automation lanes
    where you expect them.
-4. **Keyswitches** (per channel, off by default): notes 24–35 on a pulse channel and
+7. **Keyswitches** (per channel, off by default): notes 24–35 on a pulse channel and
    12–23 on the wave and noise channels select instrument slots 1–12 without sounding.
-5. The **Phrases** tab is a tracker on the host's transport. Set a channel to *Trk* to
-   play its lane; arm *Rec* to write what you play, with the parameters in force, into
-   the cells.
-6. The **Hardware** tab holds the model switch (DMG / CGB / RAW), the hardware states
+8. The **Phrases** tab is a tracker on that same clock. Set a channel to *Trk* to play
+   its lane; arm *Rec* to write what you play — the note, the instrument, the table and
+   both command slots as they stand at each step — into the cells, so a recorded song
+   carries its own tempo and groove.
+9. The **Hardware** tab holds the model switch (DMG / CGB / RAW), the hardware states
    (headphone noise, LCD line, CGB bass mod, volume writes at edges) and the two
    departures (de-click, soften master pops), which light the MODIFIED badge.
-7. `Demo/ChipBoy Demo.rpp` opens in Reaper with the tune and its automation; the same
-   tune is in `Demo/chipboy_demo.mid` for any other host (see `Demo/README.md`).
+10. `Demo/ChipBoy Demo.rpp` opens in Reaper with the tune and its automation, and
+    `Demo/ChipBoy Demo (song tempo).rpp` runs the same track on the song's clock at 150
+    BPM with a `T` that drops it to 100 for four bars; the tune alone is in
+    `Demo/chipboy_demo.mid` for any other host (see `Demo/README.md`).
 
 ## Building the core and its tests
 
