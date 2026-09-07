@@ -166,8 +166,9 @@ public:
     int selected() const;
     void setKindColours(std::function<juce::Colour(int kind)> fn);
     std::function<void(int slot)> onSelect;
+    std::function<void(int slot)> onDoubleClick;   ///< a double click on a row (the panel decides what it means)
     std::function<void(int slot, const juce::String& name)> onRename;
-    void beginRename();                   ///< open the in-place editor on the selected row
+    void beginRename();                   ///< open the in-place editor on the selected row (Enter or F2)
     static constexpr int kRowHeight = 26;
     void resized() override; void paint(juce::Graphics&) override;
     bool keyPressed(const juce::KeyPress&) override;

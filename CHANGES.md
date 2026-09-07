@@ -26,6 +26,26 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-07 — notes are sample-accurate, the tick drives the rest (§8.2)
+
+**Changed:**
+
+- **Note-ons, note-offs, bends and controllers are applied at their own sample offset**
+  inside the block, not sampled at the next driver tick. The tick keeps everything a
+  real driver runs from its interrupt: tables, vibrato, wave frames and the phrase
+  commands.
+
+**Why:** the spec's tick is 60 Hz (§8.2) but the notes reaching it come from a host,
+not from a phrase grid. Quantising every note-on to the tick made a played or
+DAW-sequenced note up to one tick (16.7 ms) late, and shortened or lengthened it by as
+much again — audible as flam on anything tight, and it moved with the block size.
+Nothing on the hardware needs a note to start on the tick: the tick exists so tables
+and vibrato step at a fixed rate, and they still do.
+
+**Considered:** keeping the tick quantisation and shortening the tick (changes every
+table and vibrato rate); interpolating the note's start inside the tick (the same
+latency, hidden).
+
 ### 2026-09-07 — M3–M8: the plugin as built (§8, §9, §11, §12, §13, §14)
 
 **Changed:**

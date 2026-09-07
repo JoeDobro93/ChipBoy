@@ -95,8 +95,8 @@ breathing rather than as the trace sliding.
 - **Zoom:** 1, 2, 4 or 8 periods. Noise uses a fixed time window.
 - **The master scope** shows the actual output, with the clicks and the droop.
 - **Visualizer window.** A separate, resizable, clean window — the four scopes stacked
-  or tiled, plus the master, no chrome, adjustable line weight, black or LCD ground —
-  made for screen capture. Same data, so it costs nothing extra to render.
+  or tiled, plus the master, no chrome, adjustable line weight, black or LCD ground,
+  and the analog, digital or both traces (analog by default) — made for screen capture. Same data, so it costs nothing extra to render.
 
 ---
 

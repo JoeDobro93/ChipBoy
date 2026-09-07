@@ -49,10 +49,11 @@ private:
     std::unique_ptr<TextLine> waveLevelLabel_, frameLabel_;
     std::unique_ptr<ui::Segmented> waveLevel_;
     std::unique_ptr<ui::Stepper> frame_;
-    juce::TextButton mute_, solo_;
+    juce::TextButton mute_, solo_, keyswitch_;
     ui::Stepper table_;
     ui::Segmented pan_;
     std::unique_ptr<SegmentedParam> panParam_;
+    std::unique_ptr<juce::ButtonParameterAttachment> keyswitchAtt_;
     std::unique_ptr<juce::ParameterAttachment> sourceAtt_;
     int sourceValue_ = 0;
     const bank::Bank* namesFor_ = nullptr;

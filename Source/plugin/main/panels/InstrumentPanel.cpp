@@ -8,7 +8,7 @@ using namespace juce;
 using namespace chipboy::ui;
 
 namespace {
-constexpr int kListWidth = 220, kGap = 14, kListHeader = 28;
+constexpr int kListWidth = 220, kGap = 14, kListHeader = 28, kListButtons = 26;
 
 String envMsText(int rate) { return rate > 0 ? String(rate * 15.625, 1) + " ms/step" : String("hold"); }
 String dash() { return String(CharPointer_UTF8("\xe2\x80\x93")); }
@@ -118,9 +118,13 @@ InstrumentPanel::InstrumentPanel(ChipBoyProcessor& p)
     addAndMakeVisible(listTitle_);
     addAndMakeVisible(newBtn_);
     addAndMakeVisible(dupBtn_);
+    addAndMakeVisible(assignBtn_);
     addAndMakeVisible(scroll_);
     list_.setKindColours([](int kind) { return instrumentKindColour(kind); });
-    list_.onSelect = [this](int slot) { selectSlot(slot); };
+    // A click only picks what the editor shows; a double click hands the slot
+    // to the channel, so browsing the bank never changes what is playing.
+    list_.onSelect = [this](int slot) { showSlot(slot); };
+    list_.onDoubleClick = [this](int slot) { assignSlot(slot); };
     list_.onRename = [this](int slot, const String& name) {
         const int s = std::clamp(slot, 1, bank::kInstrumentSlots);
         const int ch = channel;
@@ -138,11 +142,13 @@ InstrumentPanel::InstrumentPanel(ChipBoyProcessor& p)
     newBtn_.onClick = [this] { newInstrument(); };
     dupBtn_.setTooltip("Duplicate the selected instrument into the first empty slot");
     dupBtn_.onClick = [this] { duplicate(); };
+    assignBtn_.onClick = [this] { assignSlot(slot_); };
 
     const int v = paramValue(processor, channelParamId(channel, ids::instrument));
     slot_ = v >= 1 ? v : 1;
     rebuildList();
     rebuildEditor();
+    refreshAssignButton();
 }
 
 InstrumentPanel::~InstrumentPanel() = default;
@@ -174,6 +180,7 @@ void InstrumentPanel::bankChanged()
     const auto& inst = b->instruments[size_t(slot_ - 1)];
     if (inst.used != builtUsed_ || (inst.used && int(inst.type) != builtType_) || slot_ != builtSlot_) rebuildEditor();
     else if (b.get() != selfBank_) syncValues();
+    refreshAssignButton();
     updateUsedOn();
     contextChanged();
 }
@@ -207,10 +214,12 @@ void InstrumentPanel::resized()
     auto area = getLocalBounds();
     auto left = area.removeFromLeft(kListWidth);
     auto head = left.removeFromTop(kListHeader);
-    dupBtn_.setBounds(head.removeFromRight(40).reduced(0, 3));
-    newBtn_.setBounds(head.removeFromRight(44).reduced(2, 3));
     listTitle_.setBounds(head.withTrimmedLeft(8));
-    list_.setBounds(left);
+    auto buttons = left.removeFromTop(kListButtons).reduced(0, 2);
+    dupBtn_.setBounds(buttons.removeFromRight(40).reduced(2, 0));
+    newBtn_.setBounds(buttons.removeFromRight(44).reduced(2, 0));
+    assignBtn_.setBounds(buttons);
+    list_.setBounds(left.withTrimmedTop(4));
     area.removeFromLeft(kGap);
     scroll_.setBounds(area);
 }
@@ -267,20 +276,33 @@ void InstrumentPanel::showSlot(int slot)
     slot_ = std::clamp(slot, 1, bank::kInstrumentSlots);
     if (list_.selected() != slot_) list_.setSelected(slot_, dontSendNotification);
     rebuildEditor();
+    refreshAssignButton();
     contextChanged();
 }
 
-void InstrumentPanel::selectSlot(int slot)
+void InstrumentPanel::assignSlot(int slot)
 {
-    slot_ = std::clamp(slot, 1, bank::kInstrumentSlots);
+    showSlot(slot);
     const auto b = processor.bank();
     const bank::Instrument* inst = b ? b->instrument(slot_) : nullptr;
     if (inst && instrumentFitsChannel(inst->type, channel)) {
         lastChannelInst_[size_t(channel)] = slot_;
         setParam(param(processor, channelParamId(channel, ids::instrument)), float(slot_));
+        updateUsedOn();
+        rebuildList();
     }
-    rebuildEditor();
-    contextChanged();
+}
+
+void InstrumentPanel::refreshAssignButton()
+{
+    const String ch = colours::channelName(channel);
+    assignBtn_.setButtonText("Assign to " + ch);
+    const auto b = processor.bank();
+    const bank::Instrument* inst = b ? b->instrument(slot_) : nullptr;
+    const bool fits = inst != nullptr && instrumentFitsChannel(inst->type, channel);
+    assignBtn_.setEnabled(fits);
+    assignBtn_.setTooltip(fits ? "Give slot " + ValueFormat::number(slot_) + " to " + ch + ". Double-clicking the row does the same."
+                               : inst == nullptr ? "The selected slot is empty" : "A " + instrumentTypeName(inst->type) + " instrument does not fit " + ch);
 }
 
 void InstrumentPanel::newInstrument()
@@ -294,7 +316,7 @@ void InstrumentPanel::newInstrument()
     processor.mutateBank([slot, t, name](bank::Bank& bk) { bk.instruments[size_t(slot - 1)] = bank::Instrument::defaults(t, name.toRawUTF8()); });
     selfBank_ = processor.bank().get();
     rebuildList();
-    selectSlot(slot);
+    assignSlot(slot);
 }
 
 void InstrumentPanel::duplicate()
@@ -381,7 +403,9 @@ void InstrumentPanel::rebuildEditor()
     w_->head = head.get();
     head->name.onChange = [this](const String& n) { edit([n](bank::Instrument& i) { i.name = n.toStdString(); }); };
     head->type.onChange = [this](int t) {
-        edit([t](bank::Instrument& i) { const std::string n = i.name; i = bank::Instrument::defaults(bank::InstrumentType(std::clamp(t, 0, 3)), n.c_str()); });
+        // Only the type changes: every type's fields live in the instrument, so
+        // switching back finds them as they were (nothing is reset).
+        edit([t](bank::Instrument& i) { i.type = bank::InstrumentType(std::clamp(t, 0, 3)); });
         rebuildEditor();
     };
     stack->add(std::move(head));

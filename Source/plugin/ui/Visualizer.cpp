@@ -17,10 +17,10 @@ struct VisualizerWindow::Impl {
     struct Content : juce::Component, juce::Timer {
         plugin::ScopeBuffers& buffers;
         std::function<double()> cornerHz;
-        Segmented ground, line, layout;
+        Segmented ground, line, trace, layout;
         ScopeView scopes[4];
         MasterScope master;
-        juce::Rectangle<int> titleRect, groundRect, lineRect, layoutRect;
+        juce::Rectangle<int> titleRect, groundRect, lineRect, traceRect, layoutRect;
         double lastCorner = -1.0;
 
         Content(plugin::ScopeBuffers& b, std::function<double()> fn) : buffers(b), cornerHz(std::move(fn))
@@ -28,21 +28,26 @@ struct VisualizerWindow::Impl {
             setOpaque(true);
             ground.setOptions({ "Black", "LCD" });
             line.setOptions({ "Thin", "Medium", "Thick" });
+            trace.setOptions({ "Analog", "Digital", "Both" });
             layout.setOptions({ "Tiled 2" + juce::String::charToString(0x00d7) + "2", "Stacked" });
-            for (auto* s : { &ground, &line, &layout }) { s->setMini(true); addAndMakeVisible(*s); }
+            for (auto* s : { &ground, &line, &trace, &layout }) { s->setMini(true); addAndMakeVisible(*s); }
             line.setSelected(1, juce::dontSendNotification);
             ground.setTooltip("Black for capture, or the LCD green of the mixer's scopes");
             line.setTooltip("Line weight");
+            trace.setOptionTooltip(0, "What leaves the machine after the coupling capacitor");
+            trace.setOptionTooltip(1, "The 4-bit staircase going into the DAC");
+            trace.setOptionTooltip(2, "Both traces");
+            trace.setTooltip("Which trace the four channel scopes draw");
             layout.setTooltip("The four channels tiled two by two, or stacked");
             ground.onChange = [this](int) { applyGround(); };
             line.onChange = [this](int) { applyLine(); };
+            trace.onChange = [this](int) { applyTrace(); };
             layout.onChange = [this](int) { resized(); };
             for (int ch = 0; ch < 4; ++ch) {
                 auto& s = scopes[ch];
                 s.setChannel(ch);
                 s.setChrome(false);
                 s.setPeriods(8);
-                s.setTrace(ScopeView::Trace::Both);
                 s.setIdleDim(false);
                 s.setSource({ &buffers.channels[size_t(ch)], &buffers.state[size_t(ch)], &buffers.latestCycle });
                 addAndMakeVisible(s);
@@ -51,6 +56,7 @@ struct VisualizerWindow::Impl {
             addAndMakeVisible(master);
             applyGround();
             applyLine();
+            applyTrace();
             pollCorner();
             startTimerHz(4);
         }
@@ -76,6 +82,13 @@ struct VisualizerWindow::Impl {
             for (auto& s : scopes) s.setLineWidth(w);
             master.setLineWidth(w);
         }
+        void applyTrace()
+        {
+            // Analog first: it is the signal that leaves the machine. In RAW
+            // the corner is 0 and ScopeView falls back to the digital trace.
+            static constexpr ScopeView::Trace kOrder[3] = { ScopeView::Trace::Analog, ScopeView::Trace::Digital, ScopeView::Trace::Both };
+            for (auto& s : scopes) s.setTrace(kOrder[juce::jlimit(0, 2, trace.selected())]);
+        }
 
         void paint(juce::Graphics& g) override
         {
@@ -83,6 +96,7 @@ struct VisualizerWindow::Impl {
             draw::caption(g, "Visualizer", titleRect);
             draw::caption(g, "Ground", groundRect);
             draw::caption(g, "Line", lineRect);
+            draw::caption(g, "Trace", traceRect);
             draw::caption(g, "Layout", layoutRect);
         }
 
@@ -96,6 +110,8 @@ struct VisualizerWindow::Impl {
             ground.setBounds(tools.removeFromLeft(ground.preferredWidth())); tools.removeFromLeft(10);
             lineRect = tools.removeFromLeft(captionWidth("Line")); tools.removeFromLeft(10);
             line.setBounds(tools.removeFromLeft(line.preferredWidth())); tools.removeFromLeft(10);
+            traceRect = tools.removeFromLeft(captionWidth("Trace")); tools.removeFromLeft(10);
+            trace.setBounds(tools.removeFromLeft(trace.preferredWidth())); tools.removeFromLeft(10);
             layoutRect = tools.removeFromLeft(captionWidth("Layout")); tools.removeFromLeft(10);
             layout.setBounds(tools.removeFromLeft(layout.preferredWidth()));
             b.removeFromTop(8);

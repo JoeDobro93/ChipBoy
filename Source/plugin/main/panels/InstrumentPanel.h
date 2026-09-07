@@ -27,8 +27,9 @@ private:
     class EnvPreview;
     class HeadRow;
 
-    void showSlot(int slot);                    ///< show the editor for a slot
-    void selectSlot(int slot);                  ///< a list click: show, and give it to the channel when it fits
+    void showSlot(int slot);                    ///< show the editor for a slot (a single click)
+    void assignSlot(int slot);                  ///< show it and give it to the channel when it fits (double click, Assign)
+    void refreshAssignButton();
     void rebuildList();
     void rebuildEditor();
     void syncValues();
@@ -42,7 +43,7 @@ private:
 
     ui::SlotList list_;
     TextLine listTitle_;
-    juce::TextButton newBtn_, dupBtn_;
+    juce::TextButton newBtn_, dupBtn_, assignBtn_;
     ScrollBlock scroll_;
     std::unique_ptr<Widgets> w_;
     int slot_ = 1;

@@ -472,9 +472,16 @@ void Driver::kitNextChunk(int ch, std::array<uint8_t, 16>& chunk, bool& ended)
 void Driver::scheduleStreams(uint64_t cycleStart, uint64_t cycleEnd)
 {
     Voice& v = v_[2];
-    if (!v.timerValid || !v.dacOn) return;
-    if (!v.kitOn && !v.streamActive) return;
-    // Walk the channel's fetches through this block.
+    if (!v.timerValid || !v.dacOn || v.fetchPeriod == 0) return;
+    // The fetch model advances every block, streaming or not, so a frame
+    // change that arrives later finds the read pointer where it really is.
+    // (Walking only while streaming let the model go stale, and a CGB frame
+    // change then spent its bytes on fetches that were already in the past.)
+    if (v.nextFetch + uint64_t(v.fetchPeriod) * 64 < cycleStart) {
+        const uint64_t k = (cycleStart - v.nextFetch) / v.fetchPeriod;
+        v.nextFetch += k * v.fetchPeriod;
+        v.fetchIndex = uint32_t((v.fetchIndex + k) & 31);
+    }
     int guard = 0;
     while (v.nextFetch < cycleEnd && guard++ < 200000) {
         const uint64_t t = v.nextFetch;
@@ -759,25 +766,26 @@ void Driver::process(const NoteEvent* events, size_t n, uint32_t numSamples, uin
         }
     }
 
-    // --- merge pending events (from the previous block) with this block's -
-    size_t pi = 0, ei = 0;
-    auto nextEvent = [&](uint32_t upTo, const NoteEvent*& e) -> bool {
-        if (pi < pendingCount_) { e = &pending_[pi]; return true; }              // pending always first
-        if (ei < n && events[ei].offset <= upTo) { e = &events[ei]; return true; }
-        return false;
+    // --- events at their own cycles, ticks in between ---------------------
+    // Notes, bends and controllers land where the host put them (sample
+    // accurate); the tick only drives what a driver runs from its interrupt:
+    // tables, vibrato, frames, envelopes-by-command. A DAW-played note
+    // quantised to a 24-per-beat grid would be up to 21 ms late or short.
+    size_t ei = 0;
+    auto moveTo = [&](uint64_t c) { if (c != cycle_) { cycle_ = c; burst_ = 0; } };
+    auto runEvent = [&](const NoteEvent& e) {
+        const uint32_t off = numSamples ? std::min<uint32_t>(e.offset, numSamples - 1) : 0;
+        moveTo(cycleAt(frameAbs + off));
+        handleEvent(e);
     };
     for (int k = 0; k < nTicks; ++k) {
         const uint32_t off = ticks[size_t(k)];
-        cycle_ = cycleAt(frameAbs + off); burst_ = 0;
-        const NoteEvent* e = nullptr;
-        while (nextEvent(off, e)) { handleEvent(*e); if (pi < pendingCount_) ++pi; else ++ei; }
+        while (ei < n && events[ei].offset <= off) runEvent(events[ei++]);
+        moveTo(cycleAt(frameAbs + off));
         tickAll();
     }
-    // Events after the last tick wait for the next block's first tick.
-    size_t keep = 0;
-    for (size_t i = pi; i < pendingCount_ && keep < pending_.size(); ++i) pending_[keep++] = pending_[i];
-    for (size_t i = ei; i < n && keep < pending_.size(); ++i) { pending_[keep] = events[i]; pending_[keep].offset = 0; ++keep; }
-    pendingCount_ = keep;
+    while (ei < n) runEvent(events[ei++]);
+    pendingCount_ = 0;
 
     // --- wave RAM streaming, cycle domain ---------------------------------
     scheduleStreams(cycleAt(frameAbs), cycleAt(blockEnd));

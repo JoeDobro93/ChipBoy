@@ -15,6 +15,13 @@ const char* kSoloTip = "Gates the other three off (NR51). Pops like the hardware
 const char* kPanTip = "NR51: off, left, both, right, or the instrument's own. There is no pan law.";
 const char* kTableTip = "Table override for this channel; inst = the instrument's own table";
 const char* kInstTip = "The instrument this channel's notes latch at note-on; automate it to switch per note";
+/// The reserved octave is one below the channel's playable floor.
+juce::String keyswitchTip(int ch)
+{
+    const int base = ch < 2 ? 24 : 12;
+    return "Keyswitches: notes " + juce::String(base) + juce::String(CharPointer_UTF8("\xe2\x80\x93")) + juce::String(base + 11)
+         + " select instrument slots 1" + juce::String(CharPointer_UTF8("\xe2\x80\x93")) + "12 and never sound";
+}
 }
 
 /* ------------------------------------------------------ ChannelStrip */
@@ -24,12 +31,12 @@ ChannelStrip::ChannelStrip(ChipBoyProcessor& p, int ch)
       name_(colours::channelName(ch), Fonts::pixel(12.0f), colours::channel(ch)),
       sourceBox_(source_),
       instrumentName_({}, Fonts::sans(12.0f), colours::textMute),
-      mute_("M"), solo_("S"),
+      mute_("M"), solo_("S"), keyswitch_("KS"),
       pan_({ String(CharPointer_UTF8("\xe2\x80\x93")), "L", "LR", "R", "inst" })
 {
     led_.setColour(colours::channel(ch));
     led_.setInterceptsMouseClicks(false, false);
-    for (auto* c : std::initializer_list<Component*>{ &led_, &name_, &sourceBox_, &scope_, &regs_, &instrument_, &instrumentName_, &mute_, &solo_, &table_, &pan_ })
+    for (auto* c : std::initializer_list<Component*>{ &led_, &name_, &sourceBox_, &scope_, &regs_, &instrument_, &instrumentName_, &mute_, &solo_, &keyswitch_, &table_, &pan_ })
         addAndMakeVisible(c);
 
     // source badge: a menu bound to the channel's source parameter
@@ -92,6 +99,11 @@ ChannelStrip::ChannelStrip(ChipBoyProcessor& p, int ch)
     solo_.setTooltip(kSoloTip);
     solo_.setClickingTogglesState(true);
     solo_.onClick = [this] { processor_.setChannelSolo(ch_, solo_.getToggleState()); };
+
+    // keyswitches: the reserved octave picks an instrument instead of sounding
+    keyswitch_.setTooltip(keyswitchTip(ch_));
+    keyswitch_.setClickingTogglesState(true);
+    keyswitchAtt_ = std::make_unique<ButtonParameterAttachment>(param(processor_, channelParamId(ch_, ids::keyswitch)), keyswitch_);
 
     // pan: the parameter's order is off, L, R, both, inst; the display's is the hardware's
     pan_.setMini(true);
@@ -211,16 +223,18 @@ void ChannelStrip::resized()
     instrument_.setBounds(x, y, instrument_.preferredWidth(), kRow);
     instrumentName_.setBounds(x + instrument_.preferredWidth() + 6, y, w - instrument_.preferredWidth() - 6, kRow);
     y += kRow + kGap;
-    // quick controls, with mute / solo stacked at the right edge
-    mute_.setBounds(x + w - 24, y + 2, 24, 22);
-    solo_.setBounds(x + w - 24, y + 30, 24, 22);
+    // quick controls, with mute / solo / keyswitch stacked at the right edge
+    const int bw = 26, bh = 20;
+    mute_.setBounds(x + w - bw, y + 1, bw, bh);
+    solo_.setBounds(x + w - bw, y + 25, bw, bh);
+    keyswitch_.setBounds(x + w - bw, y + 49, bw, bh);
     if (level_ && envRate_) {
         level_->setBounds(x, y, Knob::kWidth, Knob::kHeight);
         envRate_->setBounds(x + Knob::kWidth + 6, y, Knob::kWidth, Knob::kHeight);
     }
     if (waveLevel_ && frame_) {
         waveLevelLabel_->setBounds(x, y, 80, 12);
-        waveLevel_->setBounds(x, y + 12, std::min(waveLevel_->preferredWidth(), w - 32), waveLevel_->preferredHeight());
+        waveLevel_->setBounds(x, y + 12, std::min(waveLevel_->preferredWidth(), w - bw - 8), waveLevel_->preferredHeight());
         frameLabel_->setBounds(x, y + 40, 44, kRow);
         frame_->setBounds(x + 46, y + 40, frame_->preferredWidth(), kRow);
     }

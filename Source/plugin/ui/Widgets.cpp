@@ -653,7 +653,13 @@ struct SlotList::Impl {
             const int r = rowAt(e.y);
             if (r >= 0) im.selectRow(r, juce::sendNotification);
         }
-        void mouseDoubleClick(const juce::MouseEvent& e) override { const int r = rowAt(e.y); if (r >= 0) im.beginRename(r); }
+        void mouseDoubleClick(const juce::MouseEvent& e) override
+        {
+            const int r = rowAt(e.y);
+            if (r < 0) return;
+            im.selectRow(r, juce::sendNotification);
+            if (im.owner.onDoubleClick) im.owner.onDoubleClick(im.rows[size_t(r)].slot);
+        }
     };
 
     SlotList& owner;

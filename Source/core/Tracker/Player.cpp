@@ -40,8 +40,15 @@ void Player::process(const driver::Transport& t, uint32_t numSamples, std::vecto
     const int stepsPerBar = std::clamp<int>(song_->stepsPerBar, 4, kSteps);
 
     for (int ch = 0; ch < 4; ++ch) {
-        if (song_->noteSource[size_t(ch)] != NoteSource::Tracker) continue;
-        if (muteMask_ & (1u << ch)) { lastNote_[ch] = 0; continue; }
+        const bool lane = song_->noteSource[size_t(ch)] == NoteSource::Tracker && !(muteMask_ & (1u << ch));
+        if (!lane) {
+            // Leaving the lane (source switched to the piano roll, or muted for
+            // recording) must not leave its last note ringing. A note-off from
+            // the tracker would be filtered on a piano-roll channel, so this
+            // is an all-notes-off, which every channel accepts.
+            if (lastNote_[ch]) { NoteEvent e; e.kind = NoteEvent::AllNotesOff; e.source = NoteEvent::Tracker; e.channel = uint8_t(ch); out.push_back(e); lastNote_[ch] = 0; }
+            continue;
+        }
         // bars touching this block
         const int barFirst = int(std::floor((ppqStart - ppqPerFrame) / beatsPerBar_));
         const int barLast = int(std::floor((ppqEnd + ppqPerFrame) / beatsPerBar_));
@@ -58,9 +65,13 @@ void Player::process(const driver::Transport& t, uint32_t numSamples, std::vecto
                 const long long offFrames = std::llround((stepPpq - ppqStart) / ppqPerFrame);
                 if (offFrames < 0 || offFrames >= (long long)numSamples) continue;
                 pos_[size_t(ch)] = { bar, s, slot };
-                if (!ph) continue;
-                const Cell& c = ph->steps[size_t(s)];
                 const uint32_t off = uint32_t(offFrames);
+                if (!ph) {
+                    // A bar with no phrase is silence: end the note at its first step.
+                    if (s == 0 && lastNote_[ch]) { NoteEvent e; e.offset = off; e.channel = uint8_t(ch); e.source = NoteEvent::Tracker; e.kind = NoteEvent::NoteOff; e.a = lastNote_[ch]; out.push_back(e); lastNote_[ch] = 0; }
+                    continue;
+                }
+                const Cell& c = ph->steps[size_t(s)];
                 if (c.note == 0 && c.inst == 0 && c.table == 0 && c.cmd1.cmd == bank::Cmd::None && c.cmd2.cmd == bank::Cmd::None) continue;
                 NoteEvent e;
                 e.offset = off; e.channel = uint8_t(ch); e.source = NoteEvent::Tracker;
