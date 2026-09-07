@@ -12,17 +12,13 @@ uint8_t q4(double x) { return uint8_t(std::clamp(int(std::lround(7.5 + 7.5 * x))
 
 const char* cmdLetter(Cmd c)
 {
-    static const char* L[] = { "", "A", "C", "D", "F", "H", "K", "L", "M", "O", "P", "R", "S", "V", "W", "Z" };
-    return L[int(c) < 16 ? int(c) : 0];
+    static const char* L[] = { "", "A", "C", "D", "E", "F", "G", "H", "K", "L", "M", "O", "P", "R", "S", "T", "V", "W", "Z" };
+    return L[int(c) <= kCmdCount ? int(c) : 0];
 }
 Cmd cmdFromLetter(char c)
 {
-    switch (c) {
-        case 'A': return Cmd::A; case 'C': return Cmd::C; case 'D': return Cmd::D; case 'F': return Cmd::F;
-        case 'H': return Cmd::H; case 'K': return Cmd::K; case 'L': return Cmd::L; case 'M': return Cmd::M;
-        case 'O': return Cmd::O; case 'P': return Cmd::P; case 'R': return Cmd::R; case 'S': return Cmd::S;
-        case 'V': return Cmd::V; case 'W': return Cmd::W; case 'Z': return Cmd::Z; default: return Cmd::None;
-    }
+    for (int i = 1; i <= kCmdCount; ++i) if (cmdLetter(Cmd(i))[0] == c) return Cmd(i);
+    return Cmd::None;
 }
 
 Instrument Instrument::defaults(InstrumentType t, const char* name)
@@ -143,7 +139,7 @@ Bank Bank::factory()
     auto noise = [&](int slot, const char* name, uint8_t vol, uint8_t rate, bool lfsr7, uint8_t shift, uint8_t div) {
         auto& i = I[size_t(slot - 1)]; i = Instrument::defaults(InstrumentType::Noise, name);
         i.envVol = vol; i.envDir = EnvDir::Down; i.envRate = rate; i.lfsr7 = lfsr7; i.noiseManual = true; i.noiseShift = shift; i.noiseDivisor = div; return &i; };
-    auto* kick = noise(11, "Kick", 15, 1, false, 6, 3);   kick->table = 4;
+    auto* kick = noise(11, "Kick", 15, 1, false, 6, 3);   kick->table = 4; kick->noiseSweep = -1;
     noise(12, "Snare", 13, 2, false, 4, 4);
     noise(13, "Hat closed", 9, 1, true, 1, 4);
     auto* hatOpen = noise(14, "Hat open", 9, 4, true, 1, 4); (void)hatOpen;
@@ -155,7 +151,9 @@ Bank Bank::factory()
     b.tables[0] = makeTable("Arp minor", { 0, 3, 7, 12, 0, 3, 7, 12, 0, 3, 7, 12, 0, 3, 7, 12 });
     b.tables[1] = makeTable("Arp major", { 0, 4, 7, 12, 0, 4, 7, 12, 0, 4, 7, 12, 0, 4, 7, 12 });
     { Table t; t.used = true; t.name = "Vol fade"; for (int i = 0; i < 16; ++i) t.steps[size_t(i)].vol = int8_t(15 - i); t.end = TableEnd::Stop; b.tables[2] = t; }
-    { Table t; t.used = true; t.name = "Kick pitch"; t.steps[0].cmd1 = { Cmd::S, -2, 0, 0 }; t.steps[1].cmd1 = { Cmd::S, -1, 0, 0 }; t.steps[2].cmd1 = { Cmd::S, -1, 0, 0 }; t.end = TableEnd::Stop; b.tables[3] = t; }
+    // The kick's pitch drop is the instrument's own noise sweep now that S is
+    // PU1 only; the table shapes its level instead.
+    { Table t; t.used = true; t.name = "Kick shape"; const int8_t v[] = { 15, 12, 8, 4 }; for (int i = 0; i < 4; ++i) t.steps[size_t(i)].vol = v[i]; t.end = TableEnd::Stop; b.tables[3] = t; }
     { Table t; t.used = true; t.name = "Slide up"; t.steps[0].cmd1 = { Cmd::L, 6, 0, 0 }; t.steps[0].hasTranspose = true; t.steps[0].transpose = -12; t.end = TableEnd::Stop; b.tables[4] = t; }
     { Table t; t.used = true; t.name = "Octave hop"; t.steps[0].hasTranspose = true; t.steps[0].transpose = 12; t.steps[1].hasTranspose = true; t.steps[1].transpose = 0; t.end = TableEnd::Loop; b.tables[5] = t; }
 

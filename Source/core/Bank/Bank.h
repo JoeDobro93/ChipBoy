@@ -29,18 +29,22 @@ enum class FrameLoop : uint8_t { Loop = 0, Once = 1, PingPong = 2 };
 enum class KitLoop : uint8_t { Once = 0, Loop = 1, FromPoint = 2 };
 enum class TableEnd : uint8_t { Loop = 0, Hop = 1, Stop = 2 };
 
-/// Commands, LSDj lettering, ChipBoy semantics (section 9.6). Arguments are
-/// base 10 and mean what the table below says:
-///   A vol 0-15, rate 0-7, dir (0 down, 1 up)   C a, b semitones      D ticks
-///   F frame 1-16      H step 1-16 (0 stops)     K ticks               L rate 0-15
-///   M left 0-7, right 0-7                       O pan 0-3 (off L R both)
-///   P period offset -128..127                   R every N ticks       S signed
-///   V speed 1-15, depth 0-15                    W wave 1-64           Z max
-enum class Cmd : uint8_t { None = 0, A, C, D, F, H, K, L, M, O, P, R, S, V, W, Z };
+/// Commands, LSDj lettering, ChipBoy semantics (docs/COMMANDS_AND_TEMPO.md
+/// section 2). Both arguments are 0-255; the letter says what they mean:
+///   A table slot 1-64, 0 stops              C x, y semitones        D ticks
+///   E vol 0-15, y 0-7 decay / 8-15 attack   F frame 1-16            G groove 1-16, 0 straight
+///   H step 1-16 (0 stops), tables only      K ticks after note-on   L rate 0-15
+///   M left 0-7, right 0-7                   O pan 0-3 (off L R both)
+///   P offset x - 128 period units           R x volume step, y ticks
+///   S rate 0-7, shift 0-7 (x >= 128 down)   T BPM 40-255            V speed 1-15, depth 0-15
+///   W duty 0-3 (pulse) / wave slot (WAV)    Z max, randomises the other slot
+enum class Cmd : uint8_t { None = 0, A, C, D, E, F, G, H, K, L, M, O, P, R, S, T, V, W, Z };
+constexpr int kCmdCount = 18;                ///< letters, not counting None
 struct Command {
     Cmd     cmd = Cmd::None;
-    int16_t a = 0, b = 0, c = 0;
+    int16_t a = 0, b = 0, c = 0;             ///< a, b are the spec's x and y; c is internal
 };
+inline bool sameCmd(const Command& a, const Command& b) { return a.cmd == b.cmd && a.a == b.a && a.b == b.b && a.c == b.c; }
 const char* cmdLetter(Cmd c);
 Cmd cmdFromLetter(char c);
 
