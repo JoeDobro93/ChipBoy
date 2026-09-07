@@ -83,6 +83,49 @@ TEST_CASE("packed channel state survives the trip", "[link]")
     CHECK(back.period == 0x7C1);
 }
 
+TEST_CASE("the running state survives the second word", "[link]")
+{
+    // docs/COMMANDS_AND_TEMPO.md section 3: what the slots did, next to the
+    // registers. A layout change here is what kVersion 2 is for.
+    CHECK(kVersion == 2);
+    driver::VoiceView v;
+    v.envVol = 11; v.envRate = 5; v.envDir = 1;
+    v.vibSpeed = 3; v.vibDepth = 7;
+    v.pitchOffset = -37;
+    v.pan = 2; v.duty = 3; v.frame = 9;
+    v.tableSlot = 64; v.tableStep = 12;
+    v.groove = 4;
+    driver::VoiceView back;
+    unpackState2(packState2(v), back);
+    CHECK(back.envVol == 11); CHECK(back.envRate == 5); CHECK(back.envDir == 1);
+    CHECK(back.vibSpeed == 3); CHECK(back.vibDepth == 7);
+    CHECK(back.pitchOffset == -37);
+    CHECK(back.pan == 2); CHECK(back.duty == 3); CHECK(back.frame == 9);
+    CHECK(back.tableSlot == 64); CHECK(back.tableStep == 12);
+    CHECK(back.groove == 4);
+    driver::VoiceView none;
+    none.groove = driver::VoiceView::kNoGroove;
+    unpackState2(packState2(none), back);
+    CHECK(back.groove == driver::VoiceView::kNoGroove);
+}
+
+TEST_CASE("the channel a Voice sends is the new one", "[link]")
+{
+    // A Voice sends its whole channel through the region: two command slots
+    // and no override lanes (section 3).
+    Snapshot<driver::ChannelParams> snap;
+    driver::ChannelParams p;
+    p.instrument = 9; p.table = 3; p.level = 12; p.pan = 1; p.transpose = -5;
+    p.cmd[0] = { bank::Cmd::E, 12, 11, 0 };
+    p.cmd[1] = { bank::Cmd::W, 2, 0, 0 };
+    snap.write(p);
+    driver::ChannelParams q;
+    REQUIRE(snap.read(q));
+    CHECK(q.instrument == 9); CHECK(q.table == 3); CHECK(q.transpose == -5);
+    CHECK(q.cmd[0].cmd == bank::Cmd::E); CHECK(q.cmd[0].a == 12); CHECK(q.cmd[0].b == 11);
+    CHECK(q.cmd[1].cmd == bank::Cmd::W);
+}
+
 TEST_CASE("heartbeats age out", "[link]")
 {
     CHECK(fresh(1000, 1000 + kHeartbeatStaleMs - 1));

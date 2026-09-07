@@ -2,6 +2,7 @@
 // options (spec sections 6.5, 12.3; UI_DESIGN section 5).
 #include "core/Apu/Apu.h"
 #include "core/Bank/Bank.h"
+#include "core/Driver/Clock.h"
 #include "core/Driver/Driver.h"
 #include "core/Render/Renderer.h"
 #include "core/Tracker/Song.h"
@@ -194,21 +195,27 @@ TEST_CASE("the driver asks for the quiet edge, and mute is an NR51 gate", "[hard
     tracker::Song song;
     Driver d;
     d.prepare(48000.0, &bank, &song, Console::DMG);
-    GlobalParams g; g.tick = TickSource::Custom; g.customHz = 240.0; g.volumeAtEdges = true;
+    GlobalParams g; g.volumeAtEdges = true;
     d.setGlobal(g);
     ChannelParams p; p.instrument = 1; d.setParams(0, p);
     auto cycleAt = [](uint64_t f) { return f * uint64_t(kCpuHz) / 48000; };
     std::vector<RegWrite> out;
-    Transport t;
+    // A tick every 200 frames (240 Hz at 48 kHz), the rate these writes count in.
+    int64_t tick = 0;
+    auto ticksFor = [&tick](uint64_t frameAbs, uint32_t n) {
+        std::vector<TickPoint> v;
+        for (uint64_t f = ((frameAbs + 199) / 200) * 200; f < frameAbs + n; f += 200) v.push_back({ uint32_t(f - frameAbs), tick++ });
+        return v;
+    };
 
     NoteEvent on; on.kind = NoteEvent::NoteOn; on.channel = 0; on.a = 60; on.b = 100;
-    d.process(&on, 1, 4800, 0, t, cycleAt, out);
+    { const auto tk = ticksFor(0, 4800); d.process(&on, 1, 4800, 0, tk.data(), tk.size(), cycleAt, out); }
     const bool markedAtStart = std::any_of(out.begin(), out.end(), [](const RegWrite& w) { return w.addr == Driver::kAlignToQuietEdge; });
     CHECK_FALSE(markedAtStart);                 // a fresh note has nothing to pop
 
     out.clear();
     NoteEvent cc; cc.kind = NoteEvent::Control; cc.channel = 0; cc.a = 7; cc.b = 64;   // level change on a playing note
-    d.process(&cc, 1, 4800, 4800, t, cycleAt, out);
+    { const auto tk = ticksFor(4800, 4800); d.process(&cc, 1, 4800, 4800, tk.data(), tk.size(), cycleAt, out); }
     auto marker = std::find_if(out.begin(), out.end(), [](const RegWrite& w) { return w.addr == Driver::kAlignToQuietEdge; });
     REQUIRE(marker != out.end());
     CHECK(marker->value == 0);
@@ -219,13 +226,13 @@ TEST_CASE("the driver asks for the quiet edge, and mute is an NR51 gate", "[hard
     // Mute: the next tick rewrites NR51 without channel 0's bits.
     out.clear();
     d.setGateMask(0b1110);
-    d.process(nullptr, 0, 4800, 9600, t, cycleAt, out);
+    { const auto tk = ticksFor(9600, 4800); d.process(nullptr, 0, 4800, 9600, tk.data(), tk.size(), cycleAt, out); }
     auto nr51 = std::find_if(out.rbegin(), out.rend(), [](const RegWrite& w) { return w.addr == NR51; });
     REQUIRE(nr51 != out.rend());
     CHECK((nr51->value & 0x11) == 0);
     out.clear();
     d.setGateMask(15);
-    d.process(nullptr, 0, 4800, 14400, t, cycleAt, out);
+    { const auto tk = ticksFor(14400, 4800); d.process(nullptr, 0, 4800, 14400, tk.data(), tk.size(), cycleAt, out); }
     nr51 = std::find_if(out.rbegin(), out.rend(), [](const RegWrite& w) { return w.addr == NR51; });
     REQUIRE(nr51 != out.rend());
     CHECK((nr51->value & 0x11) == 0x11);

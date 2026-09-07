@@ -1,11 +1,13 @@
 // ChipBoy -- driver tests (spec section 8, 9, 10).
 #include "core/Bank/Bank.h"
+#include "core/Driver/Clock.h"
 #include "core/Driver/Driver.h"
 #include "core/Apu/Apu.h"
 #include "core/Render/Renderer.h"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -19,23 +21,43 @@ struct Rig {
     Bank bank = Bank::factory();
     tracker::Song song;
     Driver drv;
+    Clock clock;
     render::Renderer ren;
     std::vector<RegWrite> writes;
     uint64_t frame = 0;
+    uint64_t tick = 0;
     double rate = 48000.0;
+    double tickHz = 240.0;      ///< the free-running tick these tests count in
     Rig(Console model = Console::DMG)
     {
         ren.prepare(rate, AnalogModel::forConsole(model), 4096);
         drv.prepare(rate, &bank, &song, model);
+        clock.prepare(rate);
         writes.reserve(4096);
-        // A fast free-running tick so every small block contains one.
-        GlobalParams g; g.tick = TickSource::Custom; g.customHz = 240.0; drv.setGlobal(g);
+    }
+    /// Tick boundaries for a block, at `tickHz`, from the absolute frame.
+    std::vector<TickPoint> ticksFor(uint32_t n)
+    {
+        std::vector<TickPoint> out;
+        const double framesPerTick = rate / tickHz;
+        double k = std::ceil(double(frame) / framesPerTick - 1e-9);
+        for (;; k += 1.0) {
+            const uint64_t f = uint64_t(std::llround(k * framesPerTick));
+            if (f >= frame + n) break;
+            if (f >= frame) out.push_back({ uint32_t(f - frame), int64_t(tick++) });
+        }
+        return out;
     }
     /// Run one block of `n` frames with these events; returns the writes.
-    std::vector<RegWrite> block(std::vector<NoteEvent> ev, uint32_t n, Transport t = {})
+    std::vector<RegWrite> block(std::vector<NoteEvent> ev, uint32_t n)
+    {
+        const auto ticks = ticksFor(n);
+        return block(std::move(ev), n, ticks);
+    }
+    std::vector<RegWrite> block(std::vector<NoteEvent> ev, uint32_t n, const std::vector<TickPoint>& ticks)
     {
         writes.clear();
-        drv.process(ev.data(), ev.size(), n, frame, t, [this](uint64_t f) { return ren.cycleForFrame(f); }, writes);
+        drv.process(ev.data(), ev.size(), n, frame, ticks.data(), ticks.size(), [this](uint64_t f) { return ren.cycleForFrame(f); }, writes);
         frame += n;
         return writes;
     }
@@ -108,7 +130,7 @@ TEST_CASE("tables step once per tick and stop at the end when told", "[driver]")
 {
     Rig r;
     ChannelParams p; p.instrument = 5; r.drv.setParams(0, p);   // Chord arp: table 1 (0 3 7 12 ...)
-    GlobalParams g; g.tick = TickSource::Custom; g.customHz = 100.0; r.drv.setGlobal(g);
+    r.tickHz = 100.0;
     r.block({ Rig::on(0, 60, 100) }, 480);     // one tick at 100 Hz in 10 ms
     std::vector<int> periods;
     for (int i = 0; i < 6; ++i) {
@@ -188,7 +210,6 @@ TEST_CASE("the tick grid is independent of block size", "[driver]")
         Rig r;
         ChannelParams p; p.instrument = 5; r.drv.setParams(0, p);   // arpeggio table: many writes
         ChannelParams q; q.instrument = 11; r.drv.setParams(3, q);
-        GlobalParams g; g.tick = TickSource::Host; g.ticksPerBeat = 24; r.drv.setGlobal(g);
         std::vector<RegWrite> all;
         const uint32_t total = 48000;
         for (uint32_t f = 0; f < total; f += block) {
@@ -198,7 +219,9 @@ TEST_CASE("the tick grid is independent of block size", "[driver]")
             if (f <= 1000 && f + n > 1000) ev.push_back(Rig::on(3, 36, 120, 1000 - f));
             if (f <= 30000 && f + n > 30000) ev.push_back(Rig::off(0, 62, 30000 - f));
             Transport t; t.valid = true; t.playing = true; t.bpm = 120.0; t.ppq = double(f) / 48000.0 * 2.0;
-            auto w = r.block(ev, n, t);
+            r.clock.process(t, n, f);
+            std::vector<TickPoint> ticks(r.clock.ticks(), r.clock.ticks() + r.clock.tickCount());
+            auto w = r.block(ev, n, ticks);
             all.insert(all.end(), w.begin(), w.end());
         }
         return all;
@@ -212,6 +235,162 @@ TEST_CASE("the tick grid is independent of block size", "[driver]")
         CHECK(a[i].cycle == b[i].cycle); CHECK(a[i].addr == b[i].addr); CHECK(a[i].value == b[i].value);
         CHECK(a[i].cycle == c[i].cycle); CHECK(a[i].addr == c[i].addr); CHECK(a[i].value == c[i].value);
     }
+}
+
+TEST_CASE("E, W, P, S and A write what the letter says", "[driver][commands]")
+{
+    // The command table of docs/COMMANDS_AND_TEMPO.md section 2, as registers.
+    SECTION("E is the envelope: volume in x, speed and direction in y") {
+        Rig r;
+        ChannelParams p; p.instrument = 1; p.cmd[0] = { Cmd::E, 10, 3, 0 }; r.drv.setParams(0, p);
+        auto w = r.block({ Rig::on(0, 69, 127) }, 512);
+        CHECK(last(w, 0xFF12)->value == 0xA3);          // vol 10, down, rate 3
+        p.cmd[0] = { Cmd::E, 10, 11, 0 };               // y >= 8: rising
+        r.drv.setParams(0, p);
+        w = r.block({}, 512);
+        CHECK(last(w, 0xFF12)->value == 0xAB);
+    }
+    SECTION("E on the wave channel is its two-bit level") {
+        Rig r;
+        ChannelParams p; p.instrument = 7; p.cmd[0] = { Cmd::E, 1, 0, 0 }; r.drv.setParams(2, p);
+        auto w = r.block({ Rig::on(2, 48, 100) }, 512);
+        CHECK(last(w, 0xFF1C)->value == 0x60);          // NR32 code for 25 %
+    }
+    SECTION("W is duty on a pulse and a wave slot on WAV") {
+        Rig r;
+        ChannelParams p; p.instrument = 1; p.cmd[0] = { Cmd::W, 1, 0, 0 }; r.drv.setParams(0, p);
+        auto w = r.block({ Rig::on(0, 69, 100) }, 512);
+        CHECK(last(w, 0xFF11)->value == 0x40);          // duty 25 %
+        Rig r2;
+        ChannelParams q; q.instrument = 7; q.cmd[0] = { Cmd::W, 2, 0, 0 }; r2.drv.setParams(2, q);   // wave slot 2: saw
+        w = r2.block({ Rig::on(2, 48, 100) }, 512);
+        std::vector<uint8_t> ram;
+        for (const auto& x : w) if (x.addr >= 0xFF30 && x.addr <= 0xFF3F) ram.push_back(x.value);
+        REQUIRE(ram.size() == 16);
+        CHECK(ram[0] == 0x00);                          // the saw starts at zero and climbs
+        CHECK(ram[15] == 0xFF);
+    }
+    SECTION("P is a signed period offset around 128") {
+        Rig r;
+        ChannelParams p; p.instrument = 1; p.cmd[0] = { Cmd::P, 128 + 10, 0, 0 }; r.drv.setParams(0, p);
+        r.block({ Rig::on(0, 69, 100) }, 512);
+        CHECK(r.drv.view(0).period == 1760);            // A4 is 1750
+        CHECK(r.drv.view(0).pitchOffset == 10);
+        p.cmd[0] = { Cmd::P, 128 - 10, 0, 0 };
+        r.drv.setParams(0, p);
+        r.block({}, 512);
+        CHECK(r.drv.view(0).period == 1740);
+    }
+    SECTION("S is PU1's sweep, down when x asks for it") {
+        Rig r;
+        ChannelParams p; p.instrument = 1; p.cmd[0] = { Cmd::S, 3, 2, 0 }; r.drv.setParams(0, p);
+        auto w = r.block({ Rig::on(0, 69, 100) }, 512);
+        CHECK(last(w, 0xFF10)->value == 0x32);          // rate 3, up, shift 2
+        p.cmd[0] = { Cmd::S, 128 + 3, 2, 0 };
+        r.drv.setParams(0, p);
+        w = r.block({}, 512);
+        CHECK(last(w, 0xFF10)->value == 0x3A);          // the same, downward
+    }
+    SECTION("A selects a table and 0 stops it") {
+        Rig r;
+        ChannelParams p; p.instrument = 1; p.cmd[0] = { Cmd::A, 6, 0, 0 }; r.drv.setParams(0, p);
+        r.block({ Rig::on(0, 60, 100) }, 512);
+        CHECK(r.drv.view(0).tableSlot == 6);
+        p.cmd[0] = { Cmd::A, 0, 0, 0 };
+        r.drv.setParams(0, p);
+        r.block({}, 512);
+        CHECK(r.drv.view(0).tableSlot == 0);
+    }
+}
+
+TEST_CASE("a slot fires when it changes, again at each note-on, and reverts", "[driver][commands]")
+{
+    Rig r;
+    ChannelParams p; p.instrument = 1; r.drv.setParams(0, p);      // Square lead: vol 13, rate 0
+    auto w = r.block({ Rig::on(0, 69, 127) }, 512);
+    REQUIRE(last(w, 0xFF12) != nullptr);
+    CHECK(last(w, 0xFF12)->value == 0xF0);                         // velocity 127
+
+    // Changing a slot fires it at the next tick, with no note involved.
+    p.cmd[1] = { Cmd::E, 4, 0, 0 };
+    r.drv.setParams(0, p);
+    w = r.block({}, 512);
+    REQUIRE(last(w, 0xFF12) != nullptr);
+    CHECK(last(w, 0xFF12)->value == 0x40);
+    CHECK(r.drv.view(0).envVol == 4);
+    // Unchanged, it does not fire again.
+    w = r.block({}, 512);
+    CHECK_FALSE(has(w, 0xFF12));
+
+    // It applies to the next note too, after the instrument has loaded.
+    r.block({ Rig::off(0, 69) }, 512);
+    w = r.block({ Rig::on(0, 69, 127) }, 512);
+    CHECK(last(w, 0xFF12)->value == 0x40);                         // not the velocity's 0xF0
+
+    // None reverts to the instrument's envelope.
+    p.cmd[1] = {};
+    r.drv.setParams(0, p);
+    w = r.block({}, 512);
+    REQUIRE(last(w, 0xFF12) != nullptr);
+    CHECK(last(w, 0xFF12)->value == 0xD0);                         // the instrument's vol 13
+    CHECK(r.drv.slot(0, 1).cmd == Cmd::None);
+}
+
+TEST_CASE("Z randomises the other slot at every note-on", "[driver][commands]")
+{
+    Rig r;
+    ChannelParams p; p.instrument = 1;
+    p.cmd[0] = { Cmd::E, 15, 0, 0 };
+    p.cmd[1] = { Cmd::Z, 15, 0, 0 };
+    p.velocityMode = 2;                                            // velocity out of the way
+    r.drv.setParams(0, p);
+    std::vector<int> volumes;
+    for (int i = 0; i < 16; ++i) {
+        auto w = r.block({ Rig::on(0, 69, 100) }, 512);
+        if (const auto* nr2 = last(w, 0xFF12)) volumes.push_back(nr2->value >> 4);
+        r.block({ Rig::off(0, 69) }, 512);
+    }
+    REQUIRE(volumes.size() >= 8);
+    std::sort(volumes.begin(), volumes.end());
+    CHECK(volumes.front() >= 0);
+    CHECK(volumes.back() <= 15);
+    CHECK(volumes.front() != volumes.back());                      // it really is random
+    // Without Z the same note gives the same volume every time.
+    Rig s;
+    ChannelParams q; q.instrument = 1; q.cmd[0] = { Cmd::E, 15, 0, 0 }; q.velocityMode = 2;
+    s.drv.setParams(0, q);
+    s.block({ Rig::on(0, 69, 100) }, 512);
+    CHECK(s.drv.view(0).envVol == 15);
+}
+
+TEST_CASE("notes on ticks wait for the tick; off, they are sample accurate", "[driver][commands]")
+{
+    // One tick, at frame 300 of the block.
+    const std::vector<TickPoint> ticks { { 300, 0 } };
+    // The note's burst starts at the cycle the note was applied at; the
+    // writes that follow it are spaced like a CPU writing them.
+    auto burstStart = [](const std::vector<RegWrite>& w) { return w.empty() ? uint64_t(0) : w.front().cycle; };
+    Rig off;
+    ChannelParams p; p.instrument = 1; off.drv.setParams(0, p);
+    auto w = off.block({ Rig::on(0, 69, 100, 10) }, 512, ticks);
+    CHECK(burstStart(w) == off.ren.cycleForFrame(10));             // where the host put it
+
+    Rig on;
+    on.drv.setParams(0, p);
+    on.drv.setNotesOnTick(true);
+    w = on.block({ Rig::on(0, 69, 100, 10) }, 512, ticks);
+    CHECK(burstStart(w) == on.ren.cycleForFrame(300));             // held for the tick
+    CHECK(on.drv.view(0).active);
+
+    // A note that arrives after the block's last tick waits for the next block.
+    Rig late;
+    late.drv.setParams(0, p);
+    late.drv.setNotesOnTick(true);
+    w = late.block({ Rig::on(0, 69, 100, 400) }, 512, ticks);
+    CHECK_FALSE(late.drv.view(0).active);
+    w = late.block({}, 512, { { 100, 1 } });
+    CHECK(late.drv.view(0).active);
+    CHECK(burstStart(w) == late.ren.cycleForFrame(512 + 100));
 }
 
 TEST_CASE("keyswitches select instruments and never sound", "[driver]")
