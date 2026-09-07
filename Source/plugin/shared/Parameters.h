@@ -62,6 +62,24 @@ int       choiceFromCmd(bank::Cmd c);
 /// window and the tooltips.
 juce::String commandArgText(const bank::Command& c);
 
+/// What a letter's arguments are: how many, the range each one takes and
+/// what a fresh command starts at. One table for the lane's steppers, the
+/// grids' typed entry and the palette (docs/COMMANDS_AND_TEMPO.md section 2).
+struct CommandInfo {
+    char        letter;
+    const char* name;        ///< "Envelope"
+    const char* args;        ///< "vol, 0-7 down / 8-15 up"
+    int         nargs;       ///< 1 or 2
+    int         lo[2], hi[2], def[2];
+};
+/// Every letter, H included; null for Cmd::None.
+const CommandInfo* commandInfo(bank::Cmd c);
+/// A fresh command of this letter, with the arguments a palette would give it.
+bank::Command defaultCommand(bank::Cmd c);
+/// Whether a letter does anything on this channel (the table in section 2).
+/// Any -- the Voice plugin, whose channel moves -- takes every letter.
+bool commandAppliesTo(bank::Cmd c, ChannelKind kind);
+
 juce::String channelPrefix(int channel);   ///< "ch1_" .. "ch4_"
 juce::String channelParamId(int channel, const char* id);
 

@@ -194,7 +194,7 @@ private:
 /// The table editor: 16 steps of volume, transpose and two commands
 /// (spec 9.5). Keyboard: type digits to set, Backspace blanks, letters
 /// pick a command in the command columns, Tab/arrows move.
-class TableGrid : public juce::Component {
+class TableGrid : public juce::Component, public juce::TooltipClient {
 public:
     TableGrid();
     ~TableGrid() override;
@@ -202,6 +202,7 @@ public:
     const bank::Table& table() const;
     void setPlayingStep(int step);     ///< -1 none
     std::function<void(const bank::Table&)> onChange;
+    juce::String getTooltip() override;   ///< the hovered cell: what the column is, and what the command says
     static constexpr int kRowHeight = 22, kHeaderHeight = 22;
     static constexpr int preferredHeight() { return kHeaderHeight + bank::kTableSteps * kRowHeight; }
     void resized() override; void paint(juce::Graphics&) override;
@@ -215,7 +216,7 @@ private:
 /// The Phrases lane: four channels side by side, 16 steps of note,
 /// instrument, table and two commands for one bar (UI_DESIGN section 7).
 /// Column headers carry the Roll / Trk source switch.
-class PhraseGrid : public juce::Component {
+class PhraseGrid : public juce::Component, public juce::TooltipClient {
 public:
     PhraseGrid();
     ~PhraseGrid() override;
@@ -226,6 +227,7 @@ public:
     std::function<void(int ch, int step, const tracker::Cell&)> onCellChange;
     std::function<void(int ch, tracker::NoteSource)> onSourceChange;
     std::function<void(int ch, int groove)> onGrooveChange;    ///< per-phrase groove slot, 0 straight
+    juce::String getTooltip() override;   ///< the hovered cell: what the column is, and what the command says
     static constexpr int kRowHeight = 22, kHeaderHeight = 48;
     static constexpr int preferredHeight() { return kHeaderHeight + tracker::kSteps * kRowHeight; }
     void resized() override; void paint(juce::Graphics&) override;

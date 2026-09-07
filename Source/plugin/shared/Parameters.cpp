@@ -81,6 +81,58 @@ String commandArgText(const bank::Command& c)
     return {};
 }
 
+namespace {
+/// In the enum's order, H included: the ranges every editor of a command
+/// obeys (docs/COMMANDS_AND_TEMPO.md section 2).
+constexpr CommandInfo kCmdInfo[bank::kCmdCount] = {
+    { 'A', "Table",         "slot 1-64, 0 stops",        1, { 0, 0 }, { 64, 0 },    { 1, 0 } },
+    { 'C', "Chord",         "x, y semitones",            2, { 0, 0 }, { 60, 60 },   { 3, 7 } },
+    { 'D', "Delay",         "ticks",                     1, { 0, 0 }, { 255, 0 },   { 3, 0 } },
+    { 'E', "Envelope",      "vol, 0-7 down / 8-15 up",   2, { 0, 0 }, { 15, 15 },   { 12, 3 } },
+    { 'F', "Frame",         "1-16",                      1, { 1, 0 }, { 16, 0 },    { 2, 0 } },
+    { 'G', "Groove",        "slot 1-16, 0 straight",     1, { 0, 0 }, { 16, 0 },    { 1, 0 } },
+    { 'H', "Hop",           "step 1-16, 0 stops",        1, { 0, 0 }, { 16, 0 },    { 1, 0 } },
+    { 'K', "Kill",          "after ticks",               1, { 0, 0 }, { 255, 0 },   { 4, 0 } },
+    { 'L', "Slide",         "rate 0-15",                 1, { 0, 0 }, { 15, 0 },    { 8, 0 } },
+    { 'M', "Master vol",    "L, R 0-7",                  2, { 0, 0 }, { 7, 7 },     { 5, 5 } },
+    { 'O', "Pan",           "off / L / R / LR",          1, { 0, 0 }, { 3, 0 },     { 1, 0 } },
+    { 'P', "Pitch offset",  "0-255, centre 128",         1, { 0, 0 }, { 255, 0 },   { 116, 0 } },
+    { 'R', "Retrigger",     "vol step, every y ticks",   2, { 0, 0 }, { 255, 255 }, { 0, 3 } },
+    { 'S', "Sweep",         "rate, shift (x>=128 down)", 2, { 0, 0 }, { 255, 7 },   { 2, 2 } },
+    { 'T', "Tempo",         "BPM 40-255",                1, { 40, 0 }, { 255, 0 },  { 120, 0 } },
+    { 'V', "Vibrato",       "speed 1-15, depth 0-15",    2, { 1, 0 }, { 15, 15 },   { 4, 6 } },
+    { 'W', "Wave",          "duty 0-3, or wave 1-64",    1, { 0, 0 }, { 64, 0 },    { 1, 0 } },
+    { 'Z', "Random arg",    "max, for the other slot",   1, { 0, 0 }, { 255, 0 },   { 15, 0 } },
+};
+} // namespace
+
+const CommandInfo* commandInfo(bank::Cmd c)
+{
+    const int i = int(c) - 1;   // Cmd::A == 1 .. Cmd::Z == 18, the table's order
+    return i >= 0 && i < bank::kCmdCount ? &kCmdInfo[size_t(i)] : nullptr;
+}
+
+bank::Command defaultCommand(bank::Cmd c)
+{
+    bank::Command out;
+    out.cmd = c;
+    if (const auto* info = commandInfo(c)) { out.a = int16_t(info->def[0]); out.b = int16_t(info->def[1]); }
+    return out;
+}
+
+bool commandAppliesTo(bank::Cmd c, ChannelKind kind)
+{
+    if (kind == ChannelKind::Any) return true;
+    const bool pulse = kind == ChannelKind::Pulse1 || kind == ChannelKind::Pulse2;
+    const bool wave = kind == ChannelKind::Wave;
+    if (c == bank::Cmd::H) return false;                  // hop only means anything inside a table
+    if (c == bank::Cmd::F) return wave;                   // frames belong to a wave
+    if (c == bank::Cmd::S) return kind == ChannelKind::Pulse1;   // only PU1 has NR10
+    // C, L, P, V and W all need a period the noise channel does not have.
+    if (c == bank::Cmd::C || c == bank::Cmd::L || c == bank::Cmd::P || c == bank::Cmd::V || c == bank::Cmd::W) return pulse || wave;
+    return true;
+}
+
 String channelPrefix(int channel) { return "ch" + String(channel + 1) + "_"; }
 String channelParamId(int channel, const char* id) { return channelPrefix(channel) + id; }
 

@@ -11,6 +11,7 @@
 // comma l period continue into the next octave, q 2 w 3 e r 5 t 6 y 7 u are
 // the octave above and i 9 o 0 p the one above that; minus enters note off;
 // Ctrl/Alt with + or - changes the octave.
+#include "plugin/shared/Parameters.h"
 #include "plugin/ui/Widgets.h"
 
 #include <cmath>
@@ -20,57 +21,25 @@ namespace chipboy::ui {
 namespace {
 
 // ---------------------------------------------------------------------------
-// commands (spec 9.6): argument counts, ranges and the palette defaults
+// commands: the letters, their argument ranges and the palette's defaults all
+// come from one table (plugin::commandInfo), so a cell, a lane stepper and
+// the palette agree (docs/COMMANDS_AND_TEMPO.md section 2).
 // ---------------------------------------------------------------------------
-struct CmdInfo { char letter; const char* name; const char* args; int nargs; int lo[3]; int hi[3]; int def[3]; };
+using plugin::commandInfo;
+using plugin::defaultCommand;
 
-constexpr CmdInfo kCmds[18] = {
-    { 'A', "Table",         "slot 1-64, 0 stops",       1, { 0, 0, 0 },     { 64, 0, 0 },   { 1, 0, 0 } },
-    { 'C', "Chord",         "x, y semitones",           2, { 0, 0, 0 },     { 60, 60, 0 },  { 3, 7, 0 } },
-    { 'D', "Delay",         "ticks",                    1, { 0, 0, 0 },     { 255, 0, 0 },  { 3, 0, 0 } },
-    { 'E', "Envelope",      "vol, 0-7 down / 8-15 up",  2, { 0, 0, 0 },     { 15, 15, 0 },  { 12, 3, 0 } },
-    { 'F', "Frame",         "1-16",                     1, { 1, 0, 0 },     { 16, 0, 0 },   { 2, 0, 0 } },
-    { 'G', "Groove",        "slot 1-16, 0 straight",    1, { 0, 0, 0 },     { 16, 0, 0 },   { 1, 0, 0 } },
-    { 'H', "Hop",           "step 1-16, 0 stops",       1, { 0, 0, 0 },     { 16, 0, 0 },   { 1, 0, 0 } },
-    { 'K', "Kill",          "after ticks",              1, { 0, 0, 0 },     { 255, 0, 0 },  { 4, 0, 0 } },
-    { 'L', "Slide",         "rate 0-15",                1, { 0, 0, 0 },     { 15, 0, 0 },   { 8, 0, 0 } },
-    { 'M', "Master vol",    "L, R 0-7",                 2, { 0, 0, 0 },     { 7, 7, 0 },    { 5, 5, 0 } },
-    { 'O', "Pan",           "off / L / R / LR",         1, { 0, 0, 0 },     { 3, 0, 0 },    { 1, 0, 0 } },
-    { 'P', "Pitch offset",  "0-255, centre 128",        1, { 0, 0, 0 },     { 255, 0, 0 },  { 116, 0, 0 } },
-    { 'R', "Retrigger",     "vol step, every y ticks",  2, { 0, 0, 0 },     { 255, 255, 0 },{ 0, 3, 0 } },
-    { 'S', "Sweep",         "rate, shift (x>=128 down)",2, { 0, 0, 0 },     { 255, 7, 0 },  { 2, 2, 0 } },
-    { 'T', "Tempo",         "BPM 40-255",               1, { 40, 0, 0 },    { 255, 0, 0 },  { 120, 0, 0 } },
-    { 'V', "Vibrato",       "speed 1-15, depth 0-15",   2, { 1, 0, 0 },     { 15, 15, 0 },  { 4, 6, 0 } },
-    { 'W', "Wave",          "duty 0-3, or wave 1-64",   1, { 0, 0, 0 },     { 64, 0, 0 },   { 1, 0, 0 } },
-    { 'Z', "Random arg",    "max, for the other slot",  1, { 0, 0, 0 },     { 255, 0, 0 },  { 15, 0, 0 } },
-};
-
-const CmdInfo* cmdInfo(bank::Cmd c)
-{
-    const int i = int(c) - 1;   // Cmd::A == 1 .. Cmd::Z == 18, the table's order
-    return i >= 0 && i < bank::kCmdCount ? &kCmds[i] : nullptr;
-}
-
-int cmdArg(const bank::Command& c, int i) { return i == 0 ? c.a : i == 1 ? c.b : c.c; }
+int cmdArg(const bank::Command& c, int i) { return i == 0 ? c.a : c.b; }
 void setCmdArg(bank::Command& c, int i, int v)
 {
     const auto v16 = int16_t(v);
-    if (i == 0) c.a = v16; else if (i == 1) c.b = v16; else c.c = v16;
+    if (i == 0) c.a = v16; else c.b = v16;
 }
 
-bank::Command defaultCommand(bank::Cmd cmd)
-{
-    bank::Command c;
-    c.cmd = cmd;
-    if (const auto* info = cmdInfo(cmd)) for (int i = 0; i < 3; ++i) setCmdArg(c, i, info->def[i]);
-    return c;
-}
-
-/// "V 4,6", "O L", "A 12,3,down-arrow". Command arguments are base 10 by
-/// definition (spec 9.6), so they stay decimal in hex display.
+/// "V 4,6", "O L", "P -12". Command arguments are base 10 by definition
+/// (spec 9.6), so they stay decimal in hex display.
 juce::String cmdText(const bank::Command& c)
 {
-    const auto* info = cmdInfo(c.cmd);
+    const auto* info = commandInfo(c.cmd);
     if (info == nullptr) return {};
     juce::String s = juce::String::charToString(juce::juce_wchar(info->letter)) + " ";
     for (int i = 0; i < info->nargs; ++i) {
@@ -80,6 +49,19 @@ juce::String cmdText(const bank::Command& c)
         else if (c.cmd == bank::Cmd::P && i == 0) s += juce::String(v - 128);   // P is signed around 128
         else s += juce::String(v);
     }
+    return s;
+}
+
+/// What a cell says when the pointer rests on it: the letter, its name and
+/// what its arguments mean right now.
+juce::String cmdTooltip(const bank::Command& c)
+{
+    const auto* info = commandInfo(c.cmd);
+    if (info == nullptr) return "A command: type a letter, or double-click for the palette";
+    juce::String s = juce::String::charToString(juce::juce_wchar(info->letter)) + "  " + info->name
+                   + juce::String(juce::CharPointer_UTF8(" \xe2\x80\x94 ")) + info->args;
+    const juce::String meaning = plugin::commandArgText(c);
+    if (meaning.isNotEmpty()) s += juce::String(juce::CharPointer_UTF8("\n\xe2\x86\x92 ")) + meaning;
     return s;
 }
 
@@ -202,7 +184,7 @@ bool editCmd(bank::Command& c, const juce::KeyPress& k, Entry& e)
         e.reset();
         return true;
     }
-    const auto* info = cmdInfo(c.cmd);
+    const auto* info = commandInfo(c.cmd);
     if (info == nullptr) return false;
     if (ch == ',' || ch == '.') { e.arg = (e.arg + 1) % info->nargs; e.acc = 0; e.count = 0; return true; }
     const int a = juce::jlimit(0, info->nargs - 1, e.arg);
@@ -224,7 +206,7 @@ bool sameCell(const tracker::Cell& a, const tracker::Cell& b)
 
 bool wheelCmd(bank::Command& c, int delta, int arg)
 {
-    const auto* info = cmdInfo(c.cmd);
+    const auto* info = commandInfo(c.cmd);
     if (info == nullptr) return false;
     const int a = juce::jlimit(0, info->nargs - 1, arg);
     setCmdArg(c, a, juce::jlimit(info->lo[a], info->hi[a], cmdArg(c, a) + delta));
@@ -236,9 +218,10 @@ void showCommandPalette(juce::Component& target, juce::Rectangle<int> cellArea, 
 {
     juce::PopupMenu m;
     for (int i = 0; i < bank::kCmdCount; ++i) {
-        juce::PopupMenu::Item item(juce::String::charToString(juce::juce_wchar(kCmds[i].letter)) + "   " + kCmds[i].name);
+        const auto* info = commandInfo(bank::Cmd(i + 1));
+        juce::PopupMenu::Item item(juce::String::charToString(juce::juce_wchar(info->letter)) + "   " + info->name);
         item.itemID = i + 1;
-        item.shortcutKeyDescription = kCmds[i].args;
+        item.shortcutKeyDescription = info->args;
         m.addItem(item);
     }
     m.addSeparator();
@@ -450,6 +433,18 @@ struct TableGrid::Impl {
             changed(row);
         });
     }
+
+    juce::String tooltip() const
+    {
+        const int row = core.hoverRow, col = core.hoverCol;
+        if (row < 0 || row >= core.rows || col < 0 || col >= int(core.cols.size())) return {};
+        const auto& c = core.cols[size_t(col)];
+        const auto& s = table.steps[size_t(row)];
+        if (c.kind == Kind::Vol) return "Volume at this step, 0-15; blank leaves it alone";
+        if (c.kind == Kind::Transpose) return "Semitones added to the note at this step; blank leaves it alone";
+        if (c.kind == Kind::Cmd) return cmdTooltip(c.ch == 0 ? s.cmd1 : s.cmd2);
+        return {};
+    }
 };
 
 TableGrid::TableGrid() : impl_(std::make_unique<Impl>(*this))
@@ -458,6 +453,8 @@ TableGrid::TableGrid() : impl_(std::make_unique<Impl>(*this))
     setSize(420, preferredHeight());
 }
 TableGrid::~TableGrid() = default;
+
+juce::String TableGrid::getTooltip() { return impl_->tooltip(); }
 
 void TableGrid::setTable(const bank::Table& t) { impl_->table = t; repaint(); }
 const bank::Table& TableGrid::table() const { return impl_->table; }
@@ -697,6 +694,20 @@ struct PhraseGrid::Impl {
         });
     }
 
+    juce::String tooltip() const
+    {
+        const int row = core.hoverRow, col = core.hoverCol;
+        if (row < 0 || row >= core.rows || col < 0 || col >= int(core.cols.size())) return {};
+        const auto& c = core.cols[size_t(col)];
+        const auto& cell = cells[size_t(c.ch)][size_t(row)];
+        if (c.kind == Kind::Ghost) return "The piano roll's note as this bar played. Set the channel to Trk to type notes here.";
+        if (c.kind == Kind::Note) return "The note this step plays; minus enters a note off";
+        if (c.kind == Kind::Inst) return "Instrument slot to load at this step; blank keeps the one in force";
+        if (c.kind == Kind::Table) return "Table override for this step; blank keeps the instrument's own";
+        if (c.kind == Kind::Cmd) return cmdTooltip(cmdSlot(col) == 0 ? cell.cmd1 : cell.cmd2);
+        return {};
+    }
+
     void openGrooveMenu(int ch)
     {
         juce::PopupMenu m;
@@ -750,6 +761,8 @@ PhraseGrid::PhraseGrid() : impl_(std::make_unique<Impl>(*this))
     setSize(1050, preferredHeight());
 }
 PhraseGrid::~PhraseGrid() = default;
+
+juce::String PhraseGrid::getTooltip() { return impl_->tooltip(); }
 
 void PhraseGrid::setSong(std::shared_ptr<const tracker::Song> song, int bar)
 {
