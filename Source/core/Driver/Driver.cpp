@@ -115,6 +115,7 @@ uint8_t Driver::levelFromVelocity(uint8_t vel) const { return uint8_t(std::min(1
 const Instrument* Driver::resolveInstrument(int ch, uint8_t vel)
 {
     const auto& p = params_[size_t(ch)];
+    if (local_[size_t(ch)] && !v_[size_t(ch)].ksInstrument) return local_[size_t(ch)];
     int slot = v_[size_t(ch)].ksInstrument ? v_[size_t(ch)].ksInstrument : p.instrument;
     if (p.velocityMode == 1 && slot) slot += vel / 8;           // velocity -> instrument bank of 16
     return bank_ ? bank_->instrument(slot) : nullptr;
@@ -151,7 +152,7 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
     Voice& v = v_[size_t(ch)];
     const auto& p = params_[size_t(ch)];
     // Keyswitch octave: selects an instrument, never sounds.
-    const Instrument* cur = bank_ ? bank_->instrument(p.instrument) : nullptr;
+    const Instrument* cur = local_[size_t(ch)] ? local_[size_t(ch)] : bank_ ? bank_->instrument(p.instrument) : nullptr;
     const InstrumentType t = cur ? cur->type : (ch == 2 ? InstrumentType::Wave : ch == 3 ? InstrumentType::Noise : InstrumentType::Pulse);
     if (p.keyswitch) {
         const int base = keyswitchBase(t);
@@ -677,7 +678,9 @@ void Driver::handleEvent(const NoteEvent& e)
     // Channels playing from the tracker ignore the piano roll and vice versa.
     if (song_) {
         const bool trackerCh = song_->noteSource[size_t(ch)] == tracker::NoteSource::Tracker;
-        if ((e.kind == NoteEvent::NoteOn || e.kind == NoteEvent::NoteOff) && trackerCh != (e.source == NoteEvent::Tracker)) return;
+        const bool note = e.kind == NoteEvent::NoteOn || e.kind == NoteEvent::NoteOff;
+        if (note && e.source == NoteEvent::Tracker && !trackerCh) return;
+        if (note && e.source == NoteEvent::Midi && trackerCh && !recording_) return;
     }
     switch (e.kind) {
         case NoteEvent::NoteOn:

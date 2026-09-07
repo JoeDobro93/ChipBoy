@@ -69,7 +69,8 @@ if(CHIPBOY_BUILD_TESTS)
         Tests/SameSuiteTests.cpp
         Tests/RenderTests.cpp
         Tests/DriverTests.cpp
-        Tests/TrackerTests.cpp)
+        Tests/TrackerTests.cpp
+        Tests/LinkTests.cpp)
     target_link_libraries(chipboy_tests PRIVATE chipboy_core chipboy_harness Catch2::Catch2WithMain)
     target_compile_definitions(chipboy_tests PRIVATE
         CHIPBOY_TEST_ROM_DIR="${CHIPBOY_TEST_ROM_DIR}"
@@ -113,6 +114,47 @@ if(CHIPBOY_BUILD_PLUGIN)
         list(APPEND CHIPBOY_FORMATS AU)
     endif()
 
+    # Sources both plugins compile. JUCE modules are compiled into each plugin
+    # target, so the shared code is simply compiled twice rather than linked
+    # from a library.
+    file(GLOB CHIPBOY_PLUGIN_SHARED_SOURCES CONFIGURE_DEPENDS
+        Source/plugin/shared/*.cpp
+        Source/plugin/ui/*.cpp)
+    file(GLOB CHIPBOY_MAIN_SOURCES CONFIGURE_DEPENDS
+        Source/plugin/main/*.cpp
+        Source/plugin/main/panels/*.cpp)
+    file(GLOB CHIPBOY_VOICE_SOURCES CONFIGURE_DEPENDS
+        Source/plugin/voice/*.cpp)
+
+    # Fonts and other assets: every file in Source/plugin/ui/assets becomes
+    # BinaryData (namespace chipboy::assets), e.g. IBMPlexSansRegular_ttf.
+    file(GLOB CHIPBOY_ASSET_FILES CONFIGURE_DEPENDS Source/plugin/ui/assets/*)
+    if(CHIPBOY_ASSET_FILES)
+        juce_add_binary_data(ChipBoyAssets NAMESPACE chipboy::assets SOURCES ${CHIPBOY_ASSET_FILES})
+        set_target_properties(ChipBoyAssets PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
+        set(CHIPBOY_ASSET_TARGET ChipBoyAssets)
+        set(CHIPBOY_HAVE_ASSETS 1)
+    else()
+        set(CHIPBOY_ASSET_TARGET "")
+        set(CHIPBOY_HAVE_ASSETS 0)
+    endif()
+
+    function(chipboy_configure_plugin target)
+        target_include_directories(${target} PRIVATE Source)
+        target_compile_definitions(${target} PUBLIC
+            CHIPBOY_HAVE_ASSETS=${CHIPBOY_HAVE_ASSETS}
+            JUCE_WEB_BROWSER=0
+            JUCE_USE_CURL=0
+            JUCE_VST3_CAN_REPLACE_VST2=0
+            JUCE_REPORT_APP_USAGE=0
+            JUCE_DISPLAY_SPLASH_SCREEN=0
+            JUCE_MODAL_LOOPS_PERMITTED=0)
+        target_link_libraries(${target}
+            PRIVATE chipboy_core ${CHIPBOY_ASSET_TARGET} juce::juce_audio_utils juce::juce_audio_processors juce::juce_gui_extra
+            PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+    endfunction()
+
+    # --- ChipBoy: the machine -------------------------------------------
     juce_add_plugin(ChipBoy
         PRODUCT_NAME "ChipBoy"
         COMPANY_NAME "ChipBoy"
@@ -128,18 +170,44 @@ if(CHIPBOY_BUILD_PLUGIN)
         COPY_PLUGIN_AFTER_BUILD ${CHIPBOY_COPY_PLUGINS}
         VST3_CATEGORIES Instrument Synth
         AU_MAIN_TYPE kAudioUnitType_MusicDevice)
-    target_sources(ChipBoy PRIVATE
-        Source/plugin/shared/Parameters.cpp
-        Source/plugin/shared/BankJson.cpp
-        Source/plugin/main/ChipBoyProcessor.cpp)
-    target_include_directories(ChipBoy PRIVATE Source)
-    target_compile_definitions(ChipBoy PUBLIC
-        JUCE_WEB_BROWSER=0
-        JUCE_USE_CURL=0
-        JUCE_VST3_CAN_REPLACE_VST2=0
-        JUCE_REPORT_APP_USAGE=0
-        JUCE_MODAL_LOOPS_PERMITTED=0)
-    target_link_libraries(ChipBoy
-        PRIVATE chipboy_core juce::juce_audio_utils juce::juce_audio_processors juce::juce_gui_extra
-        PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+    target_sources(ChipBoy PRIVATE ${CHIPBOY_PLUGIN_SHARED_SOURCES} ${CHIPBOY_MAIN_SOURCES})
+    chipboy_configure_plugin(ChipBoy)
+
+    # --- ChipBoy Voice: one channel of one machine, on its own track ------
+    set(CHIPBOY_VOICE_FORMATS VST3)
+    if(APPLE)
+        list(APPEND CHIPBOY_VOICE_FORMATS AU)
+    endif()
+    juce_add_plugin(ChipBoyVoice
+        PRODUCT_NAME "ChipBoy Voice"
+        COMPANY_NAME "ChipBoy"
+        BUNDLE_ID com.chipboy.chipboyvoice
+        PLUGIN_MANUFACTURER_CODE Chpb
+        PLUGIN_CODE Chbv
+        FORMATS ${CHIPBOY_VOICE_FORMATS}
+        IS_SYNTH TRUE
+        NEEDS_MIDI_INPUT TRUE
+        NEEDS_MIDI_OUTPUT FALSE
+        IS_MIDI_EFFECT FALSE
+        EDITOR_WANTS_KEYBOARD_FOCUS TRUE
+        COPY_PLUGIN_AFTER_BUILD ${CHIPBOY_COPY_PLUGINS}
+        VST3_CATEGORIES Instrument Synth
+        AU_MAIN_TYPE kAudioUnitType_MusicDevice)
+    target_sources(ChipBoyVoice PRIVATE ${CHIPBOY_PLUGIN_SHARED_SOURCES} ${CHIPBOY_VOICE_SOURCES})
+    chipboy_configure_plugin(ChipBoyVoice)
+
+    # --- chipboy_paramdump: prints the host-visible parameter list in index
+    # order, for the demo project generator and the documentation ------------
+    juce_add_console_app(chipboy_paramdump PRODUCT_NAME "chipboy_paramdump")
+    target_sources(chipboy_paramdump PRIVATE
+        ${CHIPBOY_PLUGIN_SHARED_SOURCES} ${CHIPBOY_MAIN_SOURCES}
+        tools/paramdump/main.cpp)
+    target_compile_definitions(chipboy_paramdump PRIVATE
+        JUCE_STANDALONE_APPLICATION=1
+        JucePlugin_Name="ChipBoy" JucePlugin_Manufacturer="ChipBoy" JucePlugin_ManufacturerCode=0x43687062 JucePlugin_PluginCode=0x43686279
+        JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0 JucePlugin_IsMidiEffect=0
+        JucePlugin_EditorRequiresKeyboardFocus=1 JucePlugin_Version=0.1.0 JucePlugin_VersionCode=0x100 JucePlugin_VersionString="0.1.0"
+        JucePlugin_Build_VST3=0 JucePlugin_Build_AU=0 JucePlugin_Build_Standalone=0
+        JucePlugin_MaxNumInputChannels=0 JucePlugin_MaxNumOutputChannels=2 JucePlugin_PreferredChannelConfigurations= )
+    chipboy_configure_plugin(chipboy_paramdump)
 endif()

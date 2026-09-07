@@ -98,6 +98,12 @@ public:
     void reset();
 
     void setGlobal(const GlobalParams& g) { global_ = g; }
+    /// An instrument used instead of the bank slot on one channel (a Voice's
+    /// local instrument, spec section 12.5). Null restores the bank.
+    void setLocalInstrument(int ch, const bank::Instrument* inst) { local_[size_t(ch & 3)] = inst; }
+    /// While recording, incoming MIDI plays on tracker channels too (the
+    /// lane is muted by the player meanwhile).
+    void setRecording(bool on) { recording_ = on; }
     void setParams(int ch, const ChannelParams& p) { params_[size_t(ch & 3)] = p; }
     const ChannelParams& params(int ch) const { return params_[size_t(ch & 3)]; }
 
@@ -195,6 +201,8 @@ private:
 
     const bank::Bank* bank_ = nullptr;
     const tracker::Song* song_ = nullptr;
+    std::array<const bank::Instrument*, 4> local_{};
+    bool recording_ = false;
     Console model_ = Console::DMG;
     double sampleRate_ = 48000.0;
     GlobalParams global_;

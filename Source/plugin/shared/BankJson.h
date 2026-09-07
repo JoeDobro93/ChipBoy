@@ -16,6 +16,12 @@ bool      bankFromVar(const juce::var& v, bank::Bank& out);
 juce::var songToVar(const tracker::Song& s);
 bool      songFromVar(const juce::var& v, tracker::Song& out);
 
+/// One instrument on its own (the Voice plugin's local instrument, spec 12.5).
+juce::var    instrumentToVar(const bank::Instrument& i);
+bool         instrumentFromVar(const juce::var& v, bank::Instrument& out);
+juce::String instrumentToJson(const bank::Instrument& i);
+bool         instrumentFromJson(const juce::String& text, bank::Instrument& out);
+
 juce::String bankToJson(const bank::Bank& b);
 bool         bankFromJson(const juce::String& text, bank::Bank& out);
 juce::String songToJson(const tracker::Song& s);

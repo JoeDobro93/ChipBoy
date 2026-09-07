@@ -31,7 +31,7 @@ template <typename T> T getOr(const DynamicObject* o, const char* key, T def)
     return T(int(o->getProperty(key)));
 }
 
-var instrumentToVar(const Instrument& i, int slot)
+var instrumentToVarSlot(const Instrument& i, int slot)
 {
     auto* o = new DynamicObject();
     o->setProperty("slot", slot);
@@ -49,7 +49,7 @@ var instrumentToVar(const Instrument& i, int slot)
     o->setProperty("lfsr7", i.lfsr7); o->setProperty("noiseManual", i.noiseManual); o->setProperty("noiseShift", int(i.noiseShift)); o->setProperty("noiseDivisor", int(i.noiseDivisor)); o->setProperty("noiseSweep", int(i.noiseSweep));
     return var(o);
 }
-void instrumentFromVar(const var& v, Instrument& i)
+void instrumentFromVarImpl(const var& v, Instrument& i)
 {
     auto* o = v.getDynamicObject(); if (!o) return;
     i.used = true;
@@ -157,13 +157,27 @@ void kitFromVar(const var& v, Kit& k)
 
 } // namespace
 
+var instrumentToVar(const Instrument& i) { return instrumentToVarSlot(i, 0); }
+bool instrumentFromVar(const var& v, Instrument& out)
+{
+    if (!v.getDynamicObject()) return false;
+    instrumentFromVarImpl(v, out);
+    return true;
+}
+String instrumentToJson(const Instrument& i) { return JSON::toString(instrumentToVar(i), true); }
+bool instrumentFromJson(const String& text, Instrument& out)
+{
+    const var v = JSON::parse(text);
+    return instrumentFromVar(v, out);
+}
+
 var bankToVar(const Bank& b)
 {
     auto* o = new DynamicObject();
     o->setProperty("format", "chipboy-bank");
     o->setProperty("version", 1);
     Array<var> ins, tabs, waves, kits;
-    for (int i = 0; i < kInstrumentSlots; ++i) if (b.instruments[size_t(i)].used) ins.add(instrumentToVar(b.instruments[size_t(i)], i + 1));
+    for (int i = 0; i < kInstrumentSlots; ++i) if (b.instruments[size_t(i)].used) ins.add(instrumentToVarSlot(b.instruments[size_t(i)], i + 1));
     for (int i = 0; i < kTableSlots; ++i) if (b.tables[size_t(i)].used) tabs.add(tableToVar(b.tables[size_t(i)], i + 1));
     for (int i = 0; i < kWaveSlots; ++i) if (b.waves[size_t(i)].used) waves.add(waveToVar(b.waves[size_t(i)], i + 1));
     for (int i = 0; i < kKitSlots; ++i) if (b.kits[size_t(i)].used) kits.add(kitToVar(b.kits[size_t(i)], i + 1));
@@ -177,7 +191,7 @@ bool bankFromVar(const var& v, Bank& out)
     if (o->getProperty("format").toString() != "chipboy-bank") return false;
     out = Bank::empty();
     auto each = [](const var& arr, int maxSlot, auto fn) { if (auto* a = arr.getArray()) for (const auto& e : *a) { const int slot = e.getDynamicObject() ? int(e.getDynamicObject()->getProperty("slot")) : 0; if (slot >= 1 && slot <= maxSlot) fn(e, slot); } };
-    each(o->getProperty("instruments"), kInstrumentSlots, [&](const var& e, int slot) { instrumentFromVar(e, out.instruments[size_t(slot - 1)]); });
+    each(o->getProperty("instruments"), kInstrumentSlots, [&](const var& e, int slot) { instrumentFromVarImpl(e, out.instruments[size_t(slot - 1)]); });
     each(o->getProperty("tables"), kTableSlots, [&](const var& e, int slot) { tableFromVar(e, out.tables[size_t(slot - 1)]); });
     each(o->getProperty("waves"), kWaveSlots, [&](const var& e, int slot) { waveFromVar(e, out.waves[size_t(slot - 1)]); });
     each(o->getProperty("kits"), kKitSlots, [&](const var& e, int slot) { kitFromVar(e, out.kits[size_t(slot - 1)]); });

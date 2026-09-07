@@ -29,6 +29,8 @@ public:
     void setSong(const Song* s) { song_ = s; }
     void setTicksPerBeat(int tpb) { ticksPerBeat_ = tpb > 0 ? tpb : 24; }
     void setBeatsPerBar(double b) { beatsPerBar_ = b > 0.0 ? b : 4.0; }
+    /// Channels whose lane is silenced (bit per channel), e.g. while recording.
+    void setMuteMask(uint32_t m) { muteMask_ = m; }
 
     /// Emit this block's tracker events. Only while the transport plays.
     void process(const driver::Transport& t, uint32_t numSamples, std::vector<driver::NoteEvent>& out);
@@ -50,6 +52,7 @@ private:
     int ticksPerBeat_ = 24;
     double beatsPerBar_ = 4.0;
     bool playing_ = false;
+    uint32_t muteMask_ = 0;
     double lastPpq_ = -1.0;
     Position pos_[4];
     uint8_t lastNote_[4] = { 0, 0, 0, 0 };

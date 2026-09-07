@@ -41,6 +41,7 @@ void Player::process(const driver::Transport& t, uint32_t numSamples, std::vecto
 
     for (int ch = 0; ch < 4; ++ch) {
         if (song_->noteSource[size_t(ch)] != NoteSource::Tracker) continue;
+        if (muteMask_ & (1u << ch)) { lastNote_[ch] = 0; continue; }
         // bars touching this block
         const int barFirst = int(std::floor((ppqStart - ppqPerFrame) / beatsPerBar_));
         const int barLast = int(std::floor((ppqEnd + ppqPerFrame) / beatsPerBar_));
