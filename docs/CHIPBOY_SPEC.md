@@ -270,7 +270,9 @@ passes blargg's `dmg_sound` tests 01–11 and SameSuite's APU tests** under the 
   `runTo(cycle)`, `reset()`.
 - Output is **not samples**. It is a stream of
   `{ uint64_t cycle; uint8_t channel; uint8_t level; bool dacOn; }` — one entry per
-  change in any channel's DAC input. The analog stage and renderer consume this.
+  change in any channel's DAC input — plus a second, sparse stream of mixer changes,
+  `{ cycle, NR50, NR51, powered }`, since routing and master volume sit after the DACs
+  and belong to the analog stage. The analog stage and renderer consume both.
 - Advance by **next-event scheduling**, not per-cycle ticking. Between register writes,
   every timer's next expiry is known analytically.
 - Every quirk in `HARDWARE_REFERENCE.md` §10.1 is implemented in v1. §10.2's are
@@ -288,7 +290,7 @@ Signal order, matching the hardware:
 
 ```
 per channel:  digital 0-15 ──► 4-bit DAC ──► NR51 gate (L / R / both / off)
-                              (DAC off → analog zero)
+                              (DAC off → holds its last level)
                                      │
         ── sum of four, per side ────┤
                                      ▼
@@ -307,17 +309,11 @@ per channel:  digital 0-15 ──► 4-bit DAC ──► NR51 gate (L / R / both
 
 ### 6.1 Non-negotiables
 
-- **Digital 0 maps to a rail; a disabled DAC maps to analog zero.** Every click in Game
-  Boy music comes from this (`HARDWARE_REFERENCE.md` §9). An implementation where
-  "volume 0" means silence is wrong.
-
-  > **Measured 2026-09-07, and this needs revisiting.** The "digital 0 is a rail" half is
-  > confirmed on both consoles (zero crossing 7.4–7.6, `HARDWARE_REFERENCE.md` §12.2).
-  > The "disabled DAC is analog zero" half is not: every DAC-**on** produces a clean
-  > step and every DAC-**off** produces **no step at all**, on both consoles. That is
-  > consistent with a high-impedance disabled state — the coupling capacitor holds its
-  > charge and the output simply stays where it was. If so, the *DAC-off click* does not
-  > exist and only the *DAC-on* click does. Resolve before M2 builds the click model.
+- **Digital 0 maps to a rail; a disabled DAC holds its last level.** Every click in
+  Game Boy music comes from this (`HARDWARE_REFERENCE.md` §9, measured §12.7). An
+  implementation where "volume 0" means silence is wrong, and so is one where DAC-off
+  returns to zero: on the hardware the DAC-*on* step is the click, and DAC-off is
+  silent.
 - **The high-pass is applied once, after the sum** — there is one capacitor, not four.
   This is what makes one channel's DC step move another's baseline, and it is why C9
   exists.
@@ -335,7 +331,9 @@ physics rather than a bolted-on filter (§7).
 
 Asymmetric soft clip at the measured amplifier limits. Reachable in normal use: four
 channels at volume 15 with master volume 7 clips on real hardware, and that is part of
-the "loud DMG" sound.
+the "loud DMG" sound. **Not yet measured** (`HARDWARE_REFERENCE.md` §12.6): until the
+coherent-peak capture is done, the clip is a symmetric placeholder that only engages
+above three and a half aligned channels.
 
 ### 6.4 Noise floor — the one switch
 
@@ -978,7 +976,9 @@ should be running before the first sound comes out of the plugin, because every 
 ### 16.2 Golden files
 
 Fixed register scripts and fixed MIDI + automation scripts rendered to buffers and
-hashed. Catches unintended timing changes.
+compared against stored references. The APU's event stream is hashed exactly (integer
+data); rendered audio is compared with a tolerance, because the kernel design goes
+through the platform's libm. Catches unintended timing changes.
 
 ### 16.3 Fast path vs reference path
 

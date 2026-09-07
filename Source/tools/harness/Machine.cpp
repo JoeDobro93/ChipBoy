@@ -60,3 +60,10 @@ RunResult Machine::run(uint64_t maxCycles, bool stopOnBreakpoint)
 }
 
 } // namespace chipboy::harness
+
+namespace chipboy::harness {
+void Machine::stepUntil(uint64_t cycle)
+{
+    while (bus_->cycles() < cycle) cpu_->step();
+}
+} // namespace chipboy::harness

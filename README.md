@@ -26,11 +26,15 @@ Four voices per instance, always. If you want more, load another instance.
 
 ## Status
 
-**M1 done — the chip exists; nothing is audible yet.** `Source/core/Apu` is a
-cycle-exact DMG APU with next-event scheduling and an event-stream output, and passes
-blargg's `dmg_sound` 01–12 and every SameSuite APU test a DMG can observe, run through
-an M-cycle-accurate SM83 harness in `Source/tools/harness`. M2 (analog stage and
-renderer) is next. The documents remain the source of truth:
+**M2 done — the chip and its analog stage exist, and can be heard.** `Source/core/Apu`
+is a cycle-exact DMG APU with next-event scheduling and an event-stream output, and
+passes blargg's `dmg_sound` 01–12 and every SameSuite APU test a DMG can observe, run
+through an M-cycle-accurate SM83 harness in `Source/tools/harness`.
+`Source/core/Analog` and `Source/core/Render` are the measured analog model — DACs that
+hold when disabled, one coupling capacitor per side, the LCD-line noise floor — and a
+band-limited renderer that nulls against a brute-force reference at −122 dB and is
+bit-identical across host block sizes. M3 (the plugin shell) is next. The documents
+remain the source of truth:
 
 - [`docs/CHIPBOY_SPEC.md`](docs/CHIPBOY_SPEC.md) — the build specification, and the source of truth.
 - [`docs/HARDWARE_REFERENCE.md`](docs/HARDWARE_REFERENCE.md) — DMG APU registers, timing, and the measured analog behaviour the emulation has to reproduce.
@@ -58,6 +62,19 @@ ctest --test-dir build -C Release --output-on-failure
 
 `build/chipboy_runrom <rom.gb> [seconds]` runs one test ROM and prints what it reports.
 The plugin targets arrive in M3 (`-DCHIPBOY_BUILD_PLUGIN=ON` is a no-op until then).
+
+## Hearing it
+
+```
+build/chipboy_demo tune.wav                 # a built-in tune, DMG, noise floor on
+build/chipboy_demo tune.wav --cgb           # the same tune through the CGB model
+build/chipboy_demo tune.wav --no-noise      # Headphone Noise off: the only switch
+build/chipboy_runrom game.gb 20 --wav out.wav   # any ROM's audio, run headless
+```
+
+Output is 16-bit stereo at 48 kHz (`--rate` changes it). The tune ends every note the
+way a DMG driver has to — by disabling the DAC — so what you hear at each re-trigger is
+the hardware's own click, not an effect.
 
 ## Planned targets
 

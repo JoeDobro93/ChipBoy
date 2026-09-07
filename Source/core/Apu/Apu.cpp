@@ -79,6 +79,8 @@ void Apu::reset()
     write(0xFF11, 0x80);
     write(0xFF12, 0xF3);
     events_.clear();                      // exactly one initial event per channel
+    mixEvents_.clear();
+    emitMix();
     for (int c = 0; c < 4; ++c) {
         lastLevel_[c] = level(c);
         lastDac_[c]   = dacOn(c);
@@ -494,6 +496,7 @@ void Apu::powerOff()
     }
     nr50_ = nr51_ = 0;
     powered_ = false;
+    emitMix();
     skipNextTick_ = false;
     for (int c = 0; c < 4; ++c) emit(c);
 }
@@ -512,6 +515,7 @@ void Apu::powerOn()
         s.timer   = squarePeriod(s.freq);
     }
     for (int c = 0; c < 4; ++c) emit(c);
+    emitMix();
 }
 
 void Apu::write(uint16_t addr, uint8_t v)
@@ -552,8 +556,8 @@ void Apu::write(uint16_t addr, uint8_t v)
     else if (idx <= 0x09) writeSquare(1, idx - 5, v);
     else if (idx <= 0x0E) writeWave(idx - 10, v);
     else if (idx <= 0x13) writeNoise(idx - 15, v);
-    else if (idx == 0x14) nr50_ = v;
-    else if (idx == 0x15) nr51_ = v;
+    else if (idx == 0x14) { nr50_ = v; emitMix(); }
+    else if (idx == 0x15) { nr51_ = v; emitMix(); }
 
     for (int c = 0; c < 4; ++c) emit(c);
 }
@@ -640,6 +644,11 @@ bool Apu::channelActive(int ch) const
         case 2: return wave_.enabled;
         default: return noise_.enabled;
     }
+}
+
+void Apu::emitMix()
+{
+    mixEvents_.push_back({cycle_, nr50_, nr51_, powered_});
 }
 
 void Apu::emit(int ch)

@@ -181,6 +181,17 @@ TEST_CASE("runTo chunking does not change the event stream", "[apu]")
     scenario(b, 7);
     scenario(c, 1u << 20);
     REQUIRE(a.events().size() > 100);
+    // Golden: a 64-bit FNV-1a of the event stream, integer data, so it is
+    // identical on every platform. A change here is a timing change in the
+    // core; if deliberate, update the constant and say so in CHANGES.md.
+    {
+        uint64_t h = 1469598103934665603ull;
+        auto mix = [&](uint64_t v) { for (int i = 0; i < 8; ++i) { h ^= (v >> (8 * i)) & 0xFF; h *= 1099511628211ull; } };
+        for (const auto& e : a.events()) { mix(e.cycle); mix(uint64_t(e.channel) | (uint64_t(e.level) << 8) | (uint64_t(e.dacOn) << 16)); }
+        for (const auto& e : a.mixEvents()) { mix(e.cycle); mix(uint64_t(e.nr50) | (uint64_t(e.nr51) << 8) | (uint64_t(e.powered) << 16)); }
+        INFO("event stream hash 0x" << std::hex << h << " over " << std::dec << a.events().size() << " + " << a.mixEvents().size() << " events");
+        CHECK(h == 0xd25bba1dc809b549ull);
+    }
     REQUIRE(a.events().size() == b.events().size());
     REQUIRE(a.events().size() == c.events().size());
     for (size_t i = 0; i < a.events().size(); ++i) {

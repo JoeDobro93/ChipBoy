@@ -22,7 +22,10 @@ include(FetchContent)
 # path C) precisely because it is built this way.
 # ---------------------------------------------------------------------------
 add_library(chipboy_core STATIC
-    Source/core/Apu/Apu.cpp)
+    Source/core/Apu/Apu.cpp
+    Source/core/Render/Kernel.cpp
+    Source/core/Render/Renderer.cpp
+    Source/core/Render/Reference.cpp)
 target_include_directories(chipboy_core PUBLIC Source)
 target_compile_features(chipboy_core PUBLIC cxx_std_20)
 if(MSVC)
@@ -46,7 +49,9 @@ if(CHIPBOY_BUILD_TESTS)
     add_library(chipboy_harness STATIC
         Source/tools/harness/Sm83.cpp
         Source/tools/harness/Bus.cpp
-        Source/tools/harness/Machine.cpp)
+        Source/tools/harness/Machine.cpp
+        Source/tools/harness/Script.cpp
+        Source/tools/harness/Wav.cpp)
     target_link_libraries(chipboy_harness PUBLIC chipboy_core)
 
     set(CHIPBOY_TEST_ROM_DIR "" CACHE PATH "Directory containing blargg's dmg_sound ROMs")
@@ -58,11 +63,13 @@ if(CHIPBOY_BUILD_TESTS)
     add_executable(chipboy_tests
         Tests/ApuTests.cpp
         Tests/BlarggTests.cpp
-        Tests/SameSuiteTests.cpp)
+        Tests/SameSuiteTests.cpp
+        Tests/RenderTests.cpp)
     target_link_libraries(chipboy_tests PRIVATE chipboy_core chipboy_harness Catch2::Catch2WithMain)
     target_compile_definitions(chipboy_tests PRIVATE
         CHIPBOY_TEST_ROM_DIR="${CHIPBOY_TEST_ROM_DIR}"
-        CHIPBOY_SAMESUITE_ROM_DIR="${CHIPBOY_SAMESUITE_ROM_DIR}")
+        CHIPBOY_SAMESUITE_ROM_DIR="${CHIPBOY_SAMESUITE_ROM_DIR}"
+        CHIPBOY_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/Tests/golden")
     if(TARGET chipboy_samesuite_roms)
         add_dependencies(chipboy_tests chipboy_samesuite_roms)
     endif()
@@ -71,6 +78,12 @@ if(CHIPBOY_BUILD_TESTS)
     # what you reach for when a blargg test fails and you want to know which line.
     add_executable(chipboy_runrom Source/tools/harness/RunRomMain.cpp)
     target_link_libraries(chipboy_runrom PRIVATE chipboy_harness)
+
+    # Renders a built-in tune through the chip and the analog model: the
+    # first thing that can be heard, and the quickest check that it sounds
+    # like a Game Boy.
+    add_executable(chipboy_demo Source/tools/demo/DemoMain.cpp)
+    target_link_libraries(chipboy_demo PRIVATE chipboy_harness)
 
     include(CTest)
     include(Catch)

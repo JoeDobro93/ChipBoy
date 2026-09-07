@@ -291,13 +291,21 @@ this document:
    the conventional emulator formulation is `out = value / 7.5 − 1.0`, so 0 → −1.0 and
    15 → +1.0. Absolute polarity is irrelevant (all four DACs share it); the relationship
    is not.
-2. **A disabled DAC outputs analog zero.** So enabling or disabling a channel steps the
-   output between zero and whatever level the channel is sitting at.
+2. **A disabled DAC holds its last output.** Measured (§12.7), and not what the
+   conventional model says. Disabling a DAC does not move the output at all; the
+   summing node simply keeps the level that channel was sitting at. Enabling it again
+   steps from that held level to the new digital value — nothing if they are equal, a
+   full two-rail swing if the channel comes back at the opposite end. At power-on the
+   held level is analog zero, so the very first DAC-on of a channel is the familiar
+   half-swing step.
 
-Together with the AC coupling in §10, this produces every click, pop and thump in Game
-Boy music, including the classic DMG kick — a wave channel loaded with a constant value,
-its DAC toggled. A channel decaying to volume 0 and then having its DAC cleared makes
-*two* steps, not one.
+So the *DAC-on* click exists and the *DAC-off* click does not. Together with the AC
+coupling in §10, the DAC-on step produces the clicks, pops and thumps of Game Boy music,
+including the wave-channel re-trigger tick: NR30 bit 7 is set a few cycles before NR34
+triggers, and in those cycles the disabled channel's digital output is 0, so the DAC
+leaps to the positive rail, then to the stale sample buffer, then to the new wave. A
+channel decaying to volume 0 makes one step (to the rail); clearing its DAC afterwards
+makes none.
 
 The four DACs sum into one amplifier through one coupling capacitor. Each channel's DC
 step therefore moves every other channel's baseline. This is why ChipBoy has no
@@ -424,4 +432,24 @@ polarity is accounted for.
 |---|---|
 | Amplifier bandwidth / edge shape | The analyser's edge window is dominated by the coupling decay, and the interface's own edge (9 µs rise, ~39 kHz) bounds the method regardless. **Estimated: ≥ 39 kHz.** Audibly irrelevant; cosmetically relevant to the scope display. |
 | Clip point and symmetry | The summing ladder's sources sit at different frequencies, so their peaks never align. No clipping was observed at four channels full, NR50 = 7. Needs a coherent-peak test. |
-| DAC-**off** transition | Every DAC-**on** produces a clean step; every DAC-**off** produces **none**. That is not what "a disabled DAC outputs analog zero" predicts — it looks like a high-impedance disabled state, with the coupling capacitor holding its charge. **Spec §6.1 asserts analog zero and needs revisiting** before the click model is built. |
+
+### 12.7 DAC-off — the disabled DAC holds its level
+
+From the DMG wave DC-step takes (six repetitions each of NR30 = $80 + trigger for
+120 ms, then NR30 = $00 for 120 ms), read at 50 µs resolution:
+
+| Take | Wave value | DAC-on step, rep 1 | DAC-on step, reps 2 and 3 | DAC-off, every rep |
+|---|---|---|---|---|
+| 10 | 0 | +0.057 (to the positive rail) | **none** (< 0.002) | none |
+| 25 | 15 | +0.058 then −0.063 (rail to rail) | a single 50 µs blip of +0.016, then **nothing** | none |
+
+Rep 1 starts from analog zero because the APU was power-cycled between takes. From rep
+2 on, the DAC comes back at the level it was holding: for value 0 that is the level it
+left, so nothing happens; for value 15 the enable lands the disabled channel's digital
+0 on the positive rail for the 12 cycles until the trigger — a two-rail excursion that
+averages to +0.016 over 50 µs — and then returns to the held negative rail. No
+repetition shows any movement at DAC-off, fast or slow, to within 0.002 of a 0.057
+step, over the full 120 ms. The model in §9 follows from this directly. What happens
+over seconds or minutes (leakage) was not measured; the plugin holds indefinitely.
+Whether APU power-off resets the held levels to analog zero at once or slowly was not
+measured either; the plugin resets at once, and never powers the APU off in normal use.

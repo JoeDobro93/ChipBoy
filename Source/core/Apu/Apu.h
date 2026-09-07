@@ -22,7 +22,17 @@ struct ApuEvent {
     uint64_t cycle;
     uint8_t  channel;   ///< 0 PU1, 1 PU2, 2 WAV, 3 NOI
     uint8_t  level;     ///< digital DAC input, 0..15
-    bool     dacOn;     ///< false: the DAC is disabled and outputs analog zero
+    bool     dacOn;     ///< false: the DAC is disabled (reference section 9)
+};
+
+/// One change of the mixer registers -- NR51 routing and NR50 master volume --
+/// which sit after the DACs and are therefore the analog stage's business,
+/// not the channels'. Emitted alongside ApuEvent, in cycle order.
+struct MixEvent {
+    uint64_t cycle;
+    uint8_t  nr50;      ///< bits 6-4 left volume, bits 2-0 right volume
+    uint8_t  nr51;      ///< bits 7-4 left gates CH4..CH1, bits 3-0 right gates
+    bool     powered;   ///< NR52 bit 7; off releases every DAC to analog zero
 };
 
 class Apu {
@@ -52,7 +62,13 @@ public:
                              ///< falling edge on bit 12 clocks the sequencer
 
     // --- output ------------------------------------------------------------
-    std::vector<ApuEvent>& events() { return events_; }
+    std::vector<ApuEvent>& events()    { return events_; }
+    std::vector<MixEvent>& mixEvents() { return mixEvents_; }
+    /// Drop everything emitted so far. The renderer calls this after it has
+    /// consumed a block's worth of events.
+    void clearEvents() { events_.clear(); mixEvents_.clear(); }
+    uint8_t nr50() const { return nr50_; }
+    uint8_t nr51() const { return nr51_; }
 
     // --- introspection, for tests -----------------------------------------
     bool    channelActive(int ch) const;
@@ -139,8 +155,10 @@ private:
     uint64_t cycle_ = 0;
 
     std::vector<ApuEvent> events_;
+    std::vector<MixEvent> mixEvents_;
     uint8_t  lastLevel_[4]{};
     bool     lastDac_[4]{};
+    void emitMix();
 };
 
 } // namespace chipboy

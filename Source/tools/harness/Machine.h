@@ -30,6 +30,9 @@ public:
     /// with `stopOnBreakpoint` -- the CPU executes `ld b,b`, the software
     /// breakpoint SameSuite ends every test with.
     RunResult run(uint64_t maxCycles = 4194304ull * 60, bool stopOnBreakpoint = false);
+    /// Step the CPU until the APU has reached `cycle` (it overshoots by at
+    /// most one instruction). For rendering a ROM's audio block by block.
+    void stepUntil(uint64_t cycle);
 
     Apu&  apu()  { return apu_; }
     Bus&  bus()  { return *bus_; }

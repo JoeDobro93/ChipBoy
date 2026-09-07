@@ -14,7 +14,7 @@ intended product rather than a progress report.
 |---|---|
 | M0 — repository, spec, decisions | spec written; §18 decisions open |
 | M1 — APU core + test-ROM harness | **done** 2026-09-07 — blargg `dmg_sound` 01–12 and the four DMG-observable SameSuite APU tests pass; CI on Linux, macOS, Windows |
-| M2 — analog stage + renderer | not started |
+| M2 — analog stage + renderer | **done** 2026-09-07 — first sound; fast path nulls against the reference at −122 dB; bit-identical across block sizes |
 | M3 — main plugin shell | not started |
 | M4 — bank + driver | not started |
 | M5 — Voice plugin + link | not started |
@@ -25,6 +25,54 @@ intended product rather than a progress report.
 ---
 
 ## Spec revisions
+
+### 2026-09-07 — M2: analog stage and renderer (§5.2, §6, §7, §16.2–16.4)
+
+**Built:** `Source/core/Analog/AnalogModel.h` — the constants per console, each marked
+measured or estimated. `Source/core/Render` — the band-limited step kernel (Kaiser
+windowed sinc at twice the host rate with the amplifier's low-pass folded in), the fast
+renderer, and the brute-force reference. `chipboy_demo` renders a built-in tune to WAV;
+`chipboy_runrom --wav` renders any ROM's audio. Tests: block-size determinism (32, 64,
+128, 2048, a varying size, and a block larger than the renderer's own buffer — all
+bit-identical), the fast/reference null (−122 dB against a −90 dB requirement), the
+DAC-hold behaviour, a golden render, and a golden hash of the APU's event stream.
+
+**Spec changed — DAC-off (§6, §6.1; reference §9, §12.7).** The open question from the
+capture is settled by the DC-step recordings themselves: a disabled DAC holds its last
+level. Six repetitions of on/off at wave value 0 show one step, on the first enable
+only; at value 15 every re-enable shows a 12-cycle two-rail blip and no step; no
+repetition shows any movement at DAC-off. So the DAC-off click does not exist, the
+DAC-on click steps from the held level, and the renderer models exactly that. This is
+a real departure from the conventional emulator model, which returns to zero on
+DAC-off and therefore clicks twice where the hardware clicks once.
+
+**Spec changed — event stream (§5.2).** A second, sparse stream carries NR50/NR51 and
+the power state, because routing and master volume are the analog stage's business.
+
+**Read into the spec, not changed:**
+
+- §7's area-summation fallback for dense event rates is not built. The step path renders
+  the noise channel at its fastest clock (524 kHz) as part of a full four-channel tune
+  at 30× realtime on one core, so there is no case for it yet. It stays in the spec as
+  the remedy if one appears.
+- §16.2 asks for hashed golden audio; the render golden compares with a tolerance
+  (2e-5) because the kernel design goes through libm. The APU event-stream golden is an
+  exact 64-bit hash.
+- §6.3's soft clip is a symmetric placeholder that engages only above 3.5 aligned
+  channels: the clip point is unmeasured (reference §12.6). §6.2's amplifier low-pass is
+  an 80 kHz estimate above the measured ≥ 39 kHz bound, chosen so that a wrong guess
+  cannot dull the audible band.
+- §6.4's noise model splits the measured total RMS between a white floor and the three
+  measured lines (9198 Hz, its second harmonic, 59.7 Hz) at their measured prominences
+  — the CGB's line dominates its floor, so treating the floor as white would have
+  overshot the total. Rendered and re-measured with the analyser's method: DMG +32.7,
+  +26.6, +27.1 dB and CGB +49.6, +30.3, +41.0 dB, each within the difference in FFT
+  resolution of the capture's +26/+20/+20 and +43/+24/+34.
+
+**For M3:** the renderer's contract is `cycleForFrame()` — run the APU to that cycle,
+apply register writes at their cycles on the way, then `render()`. Latency is 42 frames
+at 48 kHz (a 4-frame kernel head and a 38-frame linear-phase decimator), reported to
+the host. Output is in rail units, ±4 at most; the output trim (C3) applies after.
 
 ### 2026-09-07 — M1: APU core and test-ROM harness (§5, §16.1, §16.7)
 
