@@ -5,12 +5,14 @@
 #pragma once
 
 #include "plugin/shared/LinkTransport.h"
+#include "plugin/ui/CommandSlot.h"
 #include "plugin/ui/Theme.h"
 #include "plugin/ui/Widgets.h"
 #include "plugin/voice/VoiceProcessor.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include <array>
 #include <memory>
 #include <vector>
 
@@ -26,9 +28,6 @@ public:
     void resized() override;
 
 private:
-    struct Field;        ///< a labelled control in the params grid
-    struct ParamsGrid;   ///< the grid itself, flow-laid inside the viewport
-
     void timerCallback() override;
     void refreshInstances();
     void refreshChannels();
@@ -38,6 +37,7 @@ private:
     void refreshNote();
     void applyChannelKind();
     void buildParams();
+    void layoutParams(juce::Rectangle<int> area);
     void layoutHeader();
     void hint(const juce::String& message);
 
@@ -76,11 +76,15 @@ private:
     ui::Segmented sourceSeg_;
     juce::TextButton pushButton_, pullButton_, openButton_;
 
-    // the params grid
-    juce::Viewport paramsViewport_;
-    std::unique_ptr<ParamsGrid> params_;
+    // the channel's parameters: the same set the host shows as lanes, in
+    // the order of docs/COMMANDS_AND_TEMPO.md section 3
+    ui::Stepper level_, transpose_, table_;
+    ui::Segmented pan_;
+    juce::ComboBox velocity_;
     std::unique_ptr<juce::ComboBoxParameterAttachment> velocityAttachment_;
-    std::array<std::unique_ptr<juce::ComboBoxParameterAttachment>, 2> cmdAttachments_;
+    ui::CommandSlot cmd1_, cmd2_;
+    ui::Toggle liveFollow_, keyswitch_;
+    std::array<juce::Rectangle<int>, 5> labelAreas_{};
     int channelShown_ = -1;
 
     // painted directly

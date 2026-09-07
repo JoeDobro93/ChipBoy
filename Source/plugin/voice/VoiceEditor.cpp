@@ -22,10 +22,6 @@ constexpr int kRegsHeight = 14;
 constexpr int kLabelHeight = 12;       // .label: 10 px, upper case, tracked
 constexpr int kControlHeight = 24;     // .sel
 constexpr int kButtonHeight = 22;      // .btn.small
-constexpr int kGridGapX = 6;           // .voice .params gap: 10px 6px
-constexpr int kGridGapY = 10;
-constexpr float kOffAlpha = 0.45f;     // .toggle-row.off
-
 const Colour kBody = colours::bg;
 
 String dot() { return String(CharPointer_UTF8(" \xc2\xb7 ")); }     // " · "
@@ -56,64 +52,13 @@ Pill::Tone toneFor(LinkClient::Status s)
 
 } // namespace
 
-// --- the params grid ----------------------------------------------------------
-
-/// A control with the mockup's .label above it.
-struct VoiceEditor::Field : public Component {
-    Field(const String& label, std::unique_ptr<Component> control, int controlHeight, std::function<int()> controlWidth)
-        : label_(label), control_(std::move(control)), controlHeight_(controlHeight), controlWidth_(std::move(controlWidth))
-    {
-        addAndMakeVisible(*control_);
-    }
-    int preferredWidth() const
-    {
-        return std::max(controlWidth_(), GlyphArrangement::getStringWidthInt(labelFont(), label_.toUpperCase()) + 2);
-    }
-    int preferredHeight() const { return kLabelHeight + 4 + controlHeight_; }
-    void paint(Graphics& g) override { drawLabel(g, label_, getLocalBounds().withHeight(kLabelHeight)); }
-    void resized() override { control_->setBounds(0, kLabelHeight + 4, getWidth(), controlHeight_); }
-
-    String label_;
-    std::unique_ptr<Component> control_;
-    int controlHeight_;
-    std::function<int()> controlWidth_;
-};
-
-/// Items flow left to right and wrap, as the mockup's grid does; a row is as
-/// tall as its tallest item. The groups remember which controls only apply
-/// to some channel types, so the editor can grey them.
-struct VoiceEditor::ParamsGrid : public Component {
-    struct Item { std::unique_ptr<Component> comp; std::function<int()> width; int height; };
-    std::vector<Item> items;
-    std::vector<Component*> waveOnly, pulseOnly, pu1Only, noiseOnly, envelope;
-
-    Component* add(std::unique_ptr<Component> c, std::function<int()> width, int height)
-    {
-        Component* raw = c.get();
-        addAndMakeVisible(*raw);
-        items.push_back({ std::move(c), std::move(width), height });
-        return raw;
-    }
-    /// Places the children for `width` and returns the height they need.
-    int layoutFor(int width)
-    {
-        int x = 0, y = 0, rowHeight = 0;
-        for (auto& it : items) {
-            const int w = it.width();
-            if (x > 0 && x + w > width) { x = 0; y += rowHeight + kGridGapY; rowHeight = 0; }
-            it.comp->setBounds(x, y, w, it.height);
-            x += w + kGridGapX;
-            rowHeight = std::max(rowHeight, it.height);
-        }
-        return y + rowHeight;
-    }
-    void resized() override { layoutFor(getWidth()); }
-};
-
 // --- the editor ---------------------------------------------------------------
 
 VoiceEditor::VoiceEditor(VoiceProcessor& p)
-    : AudioProcessorEditor(p), processor_(p), tooltips_(this, 700)
+    : AudioProcessorEditor(p), processor_(p), tooltips_(this, 700),
+      pan_({ juce::String(juce::CharPointer_UTF8("\xe2\x80\x93")), "L", "R", "LR", "inst" }),
+      cmd1_("CMD1", ChannelKind::Any), cmd2_("CMD2", ChannelKind::Any),
+      liveFollow_("Live follow"), keyswitch_("Keyswitches")
 {
     setLookAndFeel(&lnf_);
 
@@ -185,12 +130,8 @@ VoiceEditor::VoiceEditor(VoiceProcessor& p)
     openButton_.setColour(TextButton::textColourOffId, Colours::white);
     openButton_.setColour(TextButton::textColourOnId, Colours::white);
 
-    // the params grid: more than fits at 560 x 420, so it scrolls
+    // the channel's parameters, laid out to fit 560 x 420 without scrolling
     buildParams();
-    addAndMakeVisible(paramsViewport_);
-    paramsViewport_.setViewedComponent(params_.get(), false);
-    paramsViewport_.setScrollBarsShown(true, false);
-    paramsViewport_.setScrollBarThickness(8);
 
     setResizable(false, false);
     setSize(kVoiceWidth, kVoiceHeight);
@@ -240,69 +181,39 @@ void VoiceEditor::hint(const String& message)
 
 void VoiceEditor::buildParams()
 {
-    params_ = std::make_unique<ParamsGrid>();
-    auto& grid = *params_;
+    for (auto* c : std::initializer_list<Component*>{ &level_, &transpose_, &table_, &pan_, &velocity_, &cmd1_, &cmd2_, &liveFollow_, &keyswitch_ })
+        addAndMakeVisible(c);
 
-    auto knob = [&](const char* id, const String& label, const String& tip = {}) -> Component* {
-        auto k = std::make_unique<Knob>(label);
-        k->attach(param(id));
-        if (tip.isNotEmpty()) k->setTooltip(tip);
-        return grid.add(std::move(k), [] { return Knob::kWidth; }, Knob::kHeight);
-    };
-    auto field = [&](const String& label, std::unique_ptr<Component> control, int height, std::function<int()> width) -> Component* {
-        auto f = std::make_unique<Field>(label, std::move(control), height, std::move(width));
-        Field* raw = f.get();
-        return grid.add(std::move(f), [raw] { return raw->preferredWidth(); }, raw->preferredHeight());
-    };
-    auto seg = [&](const char* id, const String& label, const StringArray& options) -> Component* {
-        auto s = std::make_unique<Segmented>(options);
-        s->setMini(true);
-        s->attach(param(id));
-        Segmented* raw = s.get();
-        return field(label, std::move(s), raw->preferredHeight(), [raw] { return raw->preferredWidth(); });
-    };
-    auto toggle = [&](const char* id, const String& label, const String& tip = {}) -> Component* {
-        auto t = std::make_unique<Toggle>("on");
-        t->attach(param(id));
-        if (tip.isNotEmpty()) t->setTooltip(tip);
-        return field(label, std::move(t), Toggle::kHeight, [] { return 84; });
-    };
+    level_.setTooltip("Envelope start volume, 0-15; inst = the instrument's own");
+    level_.attach(param(ids::level));
+    transpose_.setTooltip("Semitones added to every note, before the period is worked out");
+    transpose_.attach(param(ids::transpose));
+    transpose_.setTextFunction([](int v) { return (v > 0 ? "+" : "") + String(v); });
+    table_.setTooltip("Table override; inst = the instrument's own table");
+    table_.attach(param(ids::table));
 
-    // The channel is a tracker row now: instrument, table, level, pan,
-    // transpose and two command slots. Stage 2 draws the slots properly; this
-    // is the same parameter set through the widgets that already exist.
-    knob(ids::level, "Level", "Automation lane: Level (0-15, or the instrument's)");
-    knob(ids::transpose, "Transpose", "Semitones, applied to the period");
-    knob(ids::table, "Table", "0 = the instrument's own");
-    StringArray pan;
-    pan.add(String(CharPointer_UTF8("\xe2\x80\x93")));   // the mockup shows "off" as a dash
-    pan.addArray({ "L", "R", "LR", "inst" });
-    seg(ids::pan, "Pan", pan);
-    {
-        const char* types[2] = { ids::cmd1Type, ids::cmd2Type };
-        const char* xs[2] = { ids::cmd1X, ids::cmd2X };
-        const char* ys[2] = { ids::cmd1Y, ids::cmd2Y };
-        for (int i = 0; i < 2; ++i) {
-            auto c = std::make_unique<ComboBox>();
-            c->addItemList(commandChoices(), 1);
-            cmdAttachments_[size_t(i)] = std::make_unique<ComboBoxParameterAttachment>(param(types[i]), *c);
-            field("CMD" + String(i + 1), std::move(c), kControlHeight, [] { return 90; });
-            knob(xs[i], "x" + String(i + 1), "The command's first argument, 0-255");
-            knob(ys[i], "y" + String(i + 1), "The command's second argument, 0-255");
-        }
-    }
-    {
-        auto c = std::make_unique<ComboBox>();
-        StringArray modes;
-        modes.add(arrow() + "start volume");
-        modes.add(arrow() + "instrument bank");
-        modes.add("ignored");
-        c->addItemList(modes, 1);
-        velocityAttachment_ = std::make_unique<ComboBoxParameterAttachment>(param(ids::velocityMode), *c);
-        field("Velocity", std::move(c), kControlHeight, [] { return 150; });
-    }
-    toggle(ids::liveFollow, "Live follow", "Parameters apply to the sounding note instead of waiting for the next one");
-    toggle(ids::keyswitch, "Keyswitches", "Notes below the playing range pick an instrument instead of sounding");
+    // the parameter's order is off, L, R, both, inst; the display's is the hardware's
+    pan_.setMini(true);
+    pan_.setTooltip("NR51: off, left, both, right, or the instrument's own. There is no pan law.");
+    pan_.attach(param(ids::pan));
+
+    velocity_.setTooltip("What a note's velocity does on this channel");
+    StringArray modes;
+    modes.add(arrow() + "start volume");
+    modes.add(arrow() + "instrument bank");
+    modes.add("ignored");
+    velocity_.addItemList(modes, 1);
+    velocityAttachment_ = std::make_unique<ComboBoxParameterAttachment>(param(ids::velocityMode), velocity_);
+
+    // The channel is a tracker row: the two command slots carry the letters,
+    // their arguments and what they mean (docs/COMMANDS_AND_TEMPO.md section 3).
+    cmd1_.attach(param(ids::cmd1Type), param(ids::cmd1X), param(ids::cmd1Y));
+    cmd2_.attach(param(ids::cmd2Type), param(ids::cmd2X), param(ids::cmd2Y));
+
+    liveFollow_.setTooltip("Instrument, table, level, pan and transpose apply now instead of at the next note");
+    liveFollow_.attach(param(ids::liveFollow));
+    keyswitch_.setTooltip("Notes below the playing range pick an instrument instead of sounding");
+    keyswitch_.attach(param(ids::keyswitch));
 }
 
 // --- refresh, 10 Hz ----------------------------------------------------------
@@ -415,16 +326,10 @@ void VoiceEditor::applyChannelKind()
     channelShown_ = ch;
     scope_.setChannel(ch);
     regs_.setChannel(ch);
-
-    // Everything stays visible; what the channel cannot do is greyed.
-    auto enable = [](const std::vector<Component*>& group, bool on) {
-        for (auto* c : group) { c->setEnabled(on); c->setAlpha(on ? 1.0f : kOffAlpha); }
-    };
-    enable(params_->waveOnly, ch == 2);
-    enable(params_->pulseOnly, ch < 2);
-    enable(params_->pu1Only, ch == 0);
-    enable(params_->noiseOnly, ch == 3);
-    enable(params_->envelope, ch != 2);
+    // The letters this channel cannot use are greyed in the two slots.
+    const auto kind = ch == 0 ? ChannelKind::Pulse1 : ch == 1 ? ChannelKind::Pulse2 : ch == 2 ? ChannelKind::Wave : ChannelKind::Noise;
+    cmd1_.setChannelKind(kind);
+    cmd2_.setChannelKind(kind);
 }
 
 void VoiceEditor::refreshScope()
@@ -541,9 +446,47 @@ void VoiceEditor::resized()
     place(pullButton_);
     place(openButton_);
 
-    paramsViewport_.setBounds(body);
-    const int contentWidth = std::max(1, body.getWidth() - paramsViewport_.getScrollBarThickness());
-    params_->setSize(contentWidth, std::max(1, params_->layoutFor(contentWidth)));
+    layoutParams(body);
+}
+
+/// The channel's lanes in three rows: the five that are one value each, the
+/// two command slots side by side, then velocity and the two switches.
+void VoiceEditor::layoutParams(Rectangle<int> area)
+{
+    const int stepper = 84, labelled = kLabelHeight + 4 + kControlHeight;
+    auto row = area.removeFromTop(labelled);
+    auto place = [](Rectangle<int>& r, Component& c, int w, int h) {
+        auto cell = r.removeFromLeft(w);
+        c.setBounds(cell.removeFromBottom(h));
+    };
+    labelAreas_[0] = row.withHeight(kLabelHeight).withWidth(stepper);
+    place(row, level_, stepper, kControlHeight);
+    row.removeFromLeft(kGap);
+    labelAreas_[1] = row.withHeight(kLabelHeight).withWidth(stepper);
+    place(row, transpose_, stepper, kControlHeight);
+    row.removeFromLeft(kGap);
+    labelAreas_[2] = row.withHeight(kLabelHeight).withWidth(stepper);
+    place(row, table_, stepper, kControlHeight);
+    row.removeFromLeft(kGap);
+    const int panWidth = std::min(pan_.preferredWidth(), row.getWidth());
+    labelAreas_[3] = row.withHeight(kLabelHeight).withWidth(panWidth);
+    place(row, pan_, panWidth, pan_.preferredHeight());
+
+    area.removeFromTop(14);
+    auto slots = area.removeFromTop(ui::CommandSlot::kHeight);
+    const int half = (slots.getWidth() - kGap) / 2;
+    cmd1_.setBounds(slots.removeFromLeft(half));
+    slots.removeFromLeft(kGap);
+    cmd2_.setBounds(slots.removeFromLeft(half));
+
+    area.removeFromTop(14);
+    auto last = area.removeFromTop(labelled);
+    labelAreas_[4] = last.withHeight(kLabelHeight).withWidth(158);
+    place(last, velocity_, 158, kControlHeight);
+    last.removeFromLeft(kGap * 2);
+    place(last, liveFollow_, 116, Toggle::kHeight);
+    last.removeFromLeft(kGap);
+    place(last, keyswitch_, std::min(130, last.getWidth()), Toggle::kHeight);
 }
 
 void VoiceEditor::paint(Graphics& g)
@@ -581,6 +524,10 @@ void VoiceEditor::paint(Graphics& g)
     }
 
     drawLabel(g, "Instrument", instrumentLabelArea_);
+    {
+        static const char* names[] = { "Level", "Transpose", "Table", "Pan", "Velocity" };
+        for (size_t i = 0; i < labelAreas_.size(); ++i) drawLabel(g, names[i], labelAreas_[i]);
+    }
 
     // footer
     g.setColour(colours::panel2);
