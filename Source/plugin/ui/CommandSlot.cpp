@@ -28,7 +28,7 @@ struct CommandSlot::Impl {
     juce::ComboBox type;
     Stepper arg[2];
     std::unique_ptr<juce::ParameterAttachment> typeAtt, argAtt[2];
-    int choice = 0;
+    int choice = 0, value[2] = { 0, 0 };
     juce::String caption;
 
     Impl(CommandSlot& o, const juce::String& l, plugin::ChannelKind k) : owner(o), label(l), kind(k) {}
@@ -66,6 +66,7 @@ struct CommandSlot::Impl {
             arg[i].setVisible(used);
             if (!used) continue;
             arg[i].setRange(info->lo[i], info->hi[i], info->def[i]);
+            value[i] = arg[i].value();       // setRange may have clamped it into the letter's range
             arg[i].setTextFunction([c, i](int v) { return argText(c, i, v); });
             arg[i].setTooltip(juce::String(i == 0 ? "x" : "y") + juce::String(juce::CharPointer_UTF8(" \xe2\x80\x94 ")) + info->args
                               + "  (" + juce::String(info->lo[i]) + juce::String(juce::CharPointer_UTF8("\xe2\x80\x93")) + juce::String(info->hi[i]) + ")");
@@ -78,12 +79,10 @@ struct CommandSlot::Impl {
 
     void refreshCaption()
     {
-        // Straight from the steppers, so the caption always says what the
-        // controls beside it say.
         bank::Command c;
         c.cmd = cmd();
-        c.a = int16_t(arg[0].value());
-        c.b = int16_t(arg[1].value());
+        c.a = int16_t(value[0]);
+        c.b = int16_t(value[1]);
         const juce::String text = plugin::commandArgText(c);
         if (text == caption) return;
         caption = text;
@@ -109,9 +108,12 @@ void CommandSlot::attach(juce::RangedAudioParameter& type, juce::RangedAudioPara
     juce::RangedAudioParameter* args[2] = { &x, &y };
     for (int i = 0; i < 2; ++i) {
         im.arg[i].attach(*args[i]);
-        // The stepper's own attachment is registered first, so by the time
-        // this one runs the readout beside the caption is already up to date.
-        im.argAtt[i] = std::make_unique<juce::ParameterAttachment>(*args[i], [this](float) { impl_->refreshCaption(); });
+        // The parameter, not the stepper: a parameter's listeners run in an
+        // order we do not control, so the caption reads what the host holds.
+        im.argAtt[i] = std::make_unique<juce::ParameterAttachment>(*args[i], [this, i](float v) {
+            impl_->value[i] = juce::roundToInt(v);
+            impl_->refreshCaption();
+        });
         im.argAtt[i]->sendInitialUpdate();
     }
     im.typeAtt = std::make_unique<juce::ParameterAttachment>(type, [this](float v) {
