@@ -15,16 +15,78 @@ intended product rather than a progress report.
 | M0 — repository, spec, decisions | spec written; §18 decisions open |
 | M1 — APU core + test-ROM harness | **done** 2026-09-07 — blargg `dmg_sound` 01–12 and the four DMG-observable SameSuite APU tests pass; CI on Linux, macOS, Windows |
 | M2 — analog stage + renderer | **done** 2026-09-07 — first sound; fast path nulls against the reference at −122 dB; bit-identical across block sizes |
-| M3 — main plugin shell | not started |
-| M4 — bank + driver | not started |
-| M5 — Voice plugin + link | not started |
-| M6 — waves, frames, kits | not started |
-| M7 — interface | not started |
-| M8 — hardware validation | not started |
+| M3 — main plugin shell | **done** 2026-09-07 — parameters per §12.3/§12.4, per-channel MIDI routing, JSON state, Linux VST3 and Standalone build |
+| M4 — bank + driver | **done** 2026-09-07 — the bank with a factory set, the driver on its own tick, 11 driver tests |
+| M5 — Voice plugin + link | **done** 2026-09-07 — region files, claims, one-block timing, push/pull; `chipboy_linktest` passes 16 checks |
+| M6 — tracker, waves, frames, kits | **done** 2026-09-07 — tracker player on the host transport, record arm, kit import (resample + 4-bit dither), bank/song files |
+| M7 — interface | **done** 2026-09-07 — the window from the mockup: header, mixer with period-locked scopes, seven tabs, status bar, visualizer window, Voice window |
+| M8 — CGB / RAW / hardware options | **done** 2026-09-07 — CGB chip variant, RAW bypass, headphone noise, LCD line, bass mod, quiet-edge volume writes, de-click, soften master pops; 61 core tests |
 
 ---
 
 ## Spec revisions
+
+### 2026-09-07 — M3–M8: the plugin as built (§8, §9, §11, §12, §13, §14)
+
+**Changed:**
+
+- **The link is a memory-mapped file per instance**, `<temp>/chipboy-link/<uuid>.cbl`,
+  not a named shared-memory object, and there is no directory region: a Voice lists the
+  folder (§11.3). Voice events carry the host's sample position; the main applies an
+  event from host block *N* in its block *N+1* and holds events that arrive early
+  (Reaper's anticipative rendering can be many blocks ahead). When the host reports no
+  sample position, or the transport is stopped so time is frozen, events apply at once
+  with one block of jitter. A duplicated instance (copied state) gets a fresh UUID so two
+  mains never publish one region; a duplicated Voice likewise. Push-to-slot and
+  pull-from-slot are explicit requests answered on the main's message thread (§12.5).
+- **Volume writes at edges** (§12.3) is a marker in the driver's write list: the plugin
+  moves the marked burst to the next cycle where the pulse output is low
+  (`Apu::cyclesUntilPulseLow`), re-sorting the moved writes.
+- **Mute and solo** on the mixer strips are NR51 gates on the driver's next tick
+  (UI_DESIGN §2); they pop like the hardware.
+- **Level changes are NRx2 + retrigger**, not a bare NRx2 write, which would enter
+  zombie mode (reference §4); the duty phase survives the retrigger.
+- **RAW** keeps a 1 Hz DC blocker so a stuck DAC does not leave an offset; nothing a
+  note can hear.
+- **The Voice's parameters use one union set** (`ChannelKind::Any`); when a Voice drives
+  the wave channel its 0–15 level maps onto the four hardware steps.
+- **Recording** writes the instrument, table override and V / P / O / A commands derived
+  from the parameters in force; while the arm is on, incoming MIDI plays on tracker
+  channels and their lane is muted.
+- **The scopes' analog trace is an approximation**: a one-pole high-pass at the model's
+  corner over the channel's own digital staircase, not a per-channel render through the
+  shared stage (C9 forbids splitting it).
+
+**Why:** each is the simplest mechanism that keeps the spec's promise; the file-backed
+region in particular works across every host process of the same user without
+platform-specific names.
+
+**Considered:** named POSIX/Win32 shared memory (sandboxed hosts need per-platform
+names either way; deferred), a per-channel analog render for the scopes (audio cost,
+and C9), NR51 gating from the plugin rather than the driver (would bypass the tick).
+
+### 2026-09-07 — the link's known limit (§11.2)
+
+A host whose sandbox gives it a private temp folder cannot see other processes'
+regions. Everything inside one host process works; a VST3 Voice in one host driving an
+AU main in another only works when both see the same temp folder. Platform
+shared-memory names are the fix, deferred.
+
+## Deferred to after v1
+
+| Item | When |
+|---|---|
+| Playback ROM export (`.gb`) from the tracker (§15.3) | after v1; the song model is self-contained for it |
+| LSDj `.sav` import / export (§15) | after v1; the data model maps one to one |
+| MGB / AGB models | when a unit is measured |
+| CLAP format | when the licence decision (D1) is taken |
+| Pro Sound tap | after v1; needs a measured pro-sound unit |
+| SameSuite CGB timing gates | when the CGB core is validated beyond wave RAM |
+| pluginval in CI | next CI pass |
+| MIDI CC learn beyond CC1 / CC7 / CC120 / CC123 | v1.1 |
+| Platform shared-memory names for sandboxed hosts | v1.1 |
+| A local-instrument editor inside the Voice window | v1.1 (v1: pull a slot, edit it in the ChipBoy window, push it back) |
+| Windows and macOS DAW testing of the plugin builds | first user session |
 
 ### 2026-09-07 — UI workshop: decisions taken (C8, §6.5, §9.6, §12.3, §13, §15.3, §17, §18)
 
@@ -360,7 +422,7 @@ at +26 dB on the DMG and drops 24 dB with the display off.
 
 ## Departures from the spec
 
-*None yet — no code has been written.*
+Recorded above under the milestone entries (2026-09-07, M3–M8).
 
 ### Format
 

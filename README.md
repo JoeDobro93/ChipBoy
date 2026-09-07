@@ -26,57 +26,142 @@ Four voices per instance, always. If you want more, load another instance.
 
 ## Status
 
-**M2 done — the chip and its analog stage exist, and can be heard.** `Source/core/Apu`
-is a cycle-exact DMG APU with next-event scheduling and an event-stream output, and
-passes blargg's `dmg_sound` 01–12 and every SameSuite APU test a DMG can observe, run
-through an M-cycle-accurate SM83 harness in `Source/tools/harness`.
-`Source/core/Analog` and `Source/core/Render` are the measured analog model — DACs that
-hold when disabled, one coupling capacitor per side, the LCD-line noise floor — and a
-band-limited renderer that nulls against a brute-force reference at −122 dB and is
-bit-identical across host block sizes. M3 (the plugin shell) is next. The documents
-remain the source of truth:
+**v1 is built.** Everything the workshop decided ships: the cycle-exact APU with the
+DMG and CGB chip variants, the measured analog stage with a RAW bypass, the LSDj-shaped
+bank (instruments, tables, waves and frames, kits), a driver with its own tick, a
+tracker that follows the host transport and records, two plugins linked through shared
+memory, the Hardware panel's options, and the window from the mockup with its
+visualizer. It has been compiled and tested on Linux (61 core tests, the link
+integration test, VST3 and Standalone builds); the Windows and macOS builds run in CI
+but have not yet been played in a DAW. Expect first-run bugs; the documents remain the
+source of truth:
 
 - [`docs/CHIPBOY_SPEC.md`](docs/CHIPBOY_SPEC.md) — the build specification, and the source of truth.
+- [`docs/UI_DESIGN.md`](docs/UI_DESIGN.md) — the interface, its reasons, and the decisions taken.
 - [`docs/HARDWARE_REFERENCE.md`](docs/HARDWARE_REFERENCE.md) — DMG APU registers, timing, and the measured analog behaviour the emulation has to reproduce.
 - [`docs/LICENSING.md`](docs/LICENSING.md) — third-party obligations and the licence decision still to be made.
 - [`docs/CAPTURE_GUIDE.md`](docs/CAPTURE_GUIDE.md) — step-by-step procedure for measuring a real DMG and CGB.
-- [`CHANGES.md`](CHANGES.md) — every departure from the spec, with reasons.
-
-The hardware capture tooling in [`tools/capture/`](tools/capture/) is built and tested:
-a probe ROM, an SM83 interpreter that verifies it, a loopback calibration generator, and
-an analyser that turns a recording into measured constants.
+- [`CHANGES.md`](CHANGES.md) — every departure from the spec, with reasons, and what is deferred.
+- [`Demo/`](Demo/) — a Reaper project and a MIDI file that play a short tune through all four channels.
 
 Open decisions are collected in spec §18 and marked `[DECIDE]` throughout.
 
-## Building
+## Building the plugins
 
-CMake 3.24+, a C++20 compiler (MSVC 2022, Xcode 15, GCC 13, Clang 16) and git. Test
-ROMs are fetched at configure time into the git-ignored `TestRoms/`; SameSuite is
-assembled from source if RGBDS is on the `PATH`, and skipped with a message otherwise.
+Requirements: CMake 3.24+, a C++20 compiler (Visual Studio 2022 on Windows, Xcode 15+ on
+macOS, GCC 13 / Clang 16 on Linux) and git. The first configure fetches JUCE 8.0.15
+from GitHub, so it needs the network once.
 
-```
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release --parallel
-ctest --test-dir build -C Release --output-on-failure
-```
-
-`build/chipboy_runrom <rom.gb> [seconds]` runs one test ROM and prints what it reports.
-The plugin targets arrive in M3 (`-DCHIPBOY_BUILD_PLUGIN=ON` is a no-op until then).
-
-## Hearing it
+**Windows** (a Developer Command Prompt or PowerShell):
 
 ```
-build/chipboy_demo tune.wav                 # a built-in tune, DMG, noise floor on
-build/chipboy_demo tune.wav --cgb           # the same tune through the CGB analog constants
-build/chipboy_demo tune.wav --no-noise      # Headphone Noise off: the only switch
-build/chipboy_runrom game.gb 20 --wav out.wav   # any ROM's audio, run headless
+git clone https://github.com/JoeDobro93/ChipBoy.git
+cd ChipBoy
+cmake -S . -B build -DCHIPBOY_BUILD_PLUGIN=ON -DCHIPBOY_BUILD_TESTS=OFF
+cmake --build build --config Release --target ChipBoy_VST3 ChipBoyVoice_VST3 ChipBoy_Standalone
+```
+
+The outputs:
+
+| Target | Path |
+|---|---|
+| ChipBoy VST3 | `build\ChipBoy_artefacts\Release\VST3\ChipBoy.vst3` |
+| ChipBoy Voice VST3 | `build\ChipBoyVoice_artefacts\Release\VST3\ChipBoy Voice.vst3` |
+| Standalone | `build\ChipBoy_artefacts\Release\Standalone\ChipBoy.exe` |
+
+Copy the two `.vst3` folders into `C:\Program Files\Common Files\VST3\` and rescan in
+the DAW (FL Studio: Options → Manage plugins → Find plugins; Reaper: Preferences →
+Plug-ins → VST → Re-scan). Configuring with `-DCHIPBOY_COPY_PLUGINS=ON` copies them
+after every build instead, which on Windows needs a prompt with write access to that
+folder. Visual Studio is a multi-configuration generator: always pass `--config Release`
+to the build command, or you get a slow Debug build in `build\...\Debug\`.
+
+**macOS**:
+
+```
+cmake -S . -B build -DCHIPBOY_BUILD_PLUGIN=ON -DCHIPBOY_BUILD_TESTS=OFF
+cmake --build build --config Release --target ChipBoy_VST3 ChipBoy_AU ChipBoyVoice_VST3 ChipBoyVoice_AU ChipBoy_Standalone
+```
+
+Outputs land in the same `*_artefacts/Release/` folders; VST3s go to
+`~/Library/Audio/Plug-Ins/VST3`, components to `~/Library/Audio/Plug-Ins/Components`
+(`-DCHIPBOY_COPY_PLUGINS=ON` does this). The build signs ad hoc; Logic may need
+`killall -9 AudioComponentRegistrar` and a restart to see a new component.
+
+**Linux**: install `libasound2-dev libfreetype6-dev libfontconfig1-dev libx11-dev
+libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libgl1-mesa-dev
+libcurl4-openssl-dev`, then the same commands; the VST3 goes to `~/.vst3`.
+
+Two console tools come with the plugin build: `chipboy_paramdump` prints the
+host-visible parameter list in index order (the demo generator checks itself against
+it), and `chipboy_linktest` runs both plugins in one process through a link region and
+checks the whole path (`ctest --test-dir build -C Release -R linktest`).
+
+## Playing it
+
+1. Put **ChipBoy** on a track and play. PU1 answers every MIDI channel (omni); PU2, WAV
+   and NOI answer MIDI channels 2, 3 and 4. Change any channel's source in its strip.
+2. Velocity sets the envelope's start volume, the mod wheel sets vibrato depth, pitch
+   bend moves the period. Automate the channel parameters (instrument, table, level,
+   pan, duty, envelope, sweep, wave, frame, transpose, detune, vibrato, arpeggio, LFSR
+   width); each note takes the values in force when it starts, or follows them live with
+   *Live follow*.
+3. For one track per voice: put a **ChipBoy Voice** on another track, turn **Link mode**
+   on in ChipBoy's Link tab (the host re-compensates for one block of latency), and
+   pick the instance and channel in the Voice. The Voice's track stays silent; the audio
+   comes out of the ChipBoy track. Its parameters are the same set, as automation lanes
+   where you expect them.
+4. **Keyswitches** (per channel, off by default): notes 24–35 on a pulse channel and
+   12–23 on the wave and noise channels select instrument slots 1–12 without sounding.
+5. The **Phrases** tab is a tracker on the host's transport. Set a channel to *Trk* to
+   play its lane; arm *Rec* to write what you play, with the parameters in force, into
+   the cells.
+6. The **Hardware** tab holds the model switch (DMG / CGB / RAW), the hardware states
+   (headphone noise, LCD line, CGB bass mod, volume writes at edges) and the two
+   departures (de-click, soften master pops), which light the MODIFIED badge.
+7. `Demo/ChipBoy Demo.rpp` opens in Reaper with the tune and its automation; the same
+   tune is in `Demo/chipboy_demo.mid` for any other host (see `Demo/README.md`).
+
+## Building the core and its tests
+
+The emulation core has no dependency on JUCE and builds on its own. Test ROMs are
+fetched at configure time into the git-ignored `TestRoms/`; SameSuite is assembled from
+source if RGBDS is on the `PATH`, and skipped with a message otherwise.
+
+```
+cmake -S . -B build-core -DCMAKE_BUILD_TYPE=Release
+cmake --build build-core --config Release --parallel
+ctest --test-dir build-core -C Release --output-on-failure
+```
+
+`build-core/chipboy_runrom <rom.gb> [seconds]` runs one test ROM and prints what it
+reports.
+
+## Hearing it without a DAW
+
+```
+build-core/chipboy_demo tune.wav                 # a built-in tune, DMG, noise floor on
+build-core/chipboy_demo tune.wav --cgb           # the same tune through the CGB analog constants
+build-core/chipboy_demo tune.wav --no-noise      # Headphone Noise off
+build-core/chipboy_runrom game.gb 20 --wav out.wav   # any ROM's audio, run headless
 ```
 
 Output is 16-bit stereo at 48 kHz (`--rate` changes it). The tune ends every note the
 way a DMG driver has to — by disabling the DAC — so what you hear at each re-trigger is
-the hardware's own click, not an effect. `--cgb` swaps in the CGB's measured coupling
-and noise floor only; the CGB's own APU differences (live wave RAM, no corruption bug)
-arrive with model selection in M8.
+the hardware's own click, not an effect.
+
+## Troubleshooting
+
+- **The JUCE fetch fails** (a proxy, no network): clone JUCE 8.0.15 yourself and pass
+  `-DFETCHCONTENT_SOURCE_DIR_JUCE=<path>` to the configure step.
+- **The DAW does not find the plugin**: check the folder above, rescan, and on Windows
+  make sure you built `Release` (the Debug build goes elsewhere).
+- **A Voice shows "waiting" forever**: Link mode must be on in the ChipBoy instance, and
+  both plugins must run as the same user. The link lives in the temp folder under
+  `chipboy-link/`; after a host crash a stale `.cbl` file there can be deleted.
+- **A Voice shows "channel busy"**: another Voice holds that channel; the first keeps it.
+- **It pops when I change volume**: it is supposed to; turn on *Volume writes at edges*
+  or, for a departure from the hardware, *De-click*.
 
 ## Planned targets
 

@@ -25,7 +25,7 @@ namespace chipboy::ui {
 /// A discrete rotary control with its label underneath and the value text
 /// on the dial (the mockup's .knob: 50 px dial). Drag or mouse-wheel steps
 /// by whole values; double-click resets to the default.
-class Knob : public juce::Component {
+class Knob : public juce::Component, public juce::SettableTooltipClient {
 public:
     explicit Knob(const juce::String& label = {});
     ~Knob() override;
@@ -39,12 +39,15 @@ public:
     std::function<void(int)> onChange;
     static constexpr int kDial = 50, kHeight = 70, kWidth = 64;
     void resized() override; void paint(juce::Graphics&) override;
+    void mouseDown(const juce::MouseEvent&) override; void mouseDrag(const juce::MouseEvent&) override; void mouseUp(const juce::MouseEvent&) override;
+    void mouseDoubleClick(const juce::MouseEvent&) override; void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    bool keyPressed(const juce::KeyPress&) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
 
 /// A row of exclusive buttons (the mockup's .seg; setMini for .seg.mini).
-class Segmented : public juce::Component {
+class Segmented : public juce::Component, public juce::SettableTooltipClient {
 public:
     explicit Segmented(const juce::StringArray& options = {});
     ~Segmented() override;
@@ -58,13 +61,17 @@ public:
     void setOptionColour(int index, juce::Colour c);   ///< selected colour per option (e.g. the model switch)
     std::function<void(int)> onChange;
     int preferredWidth() const;
+    int preferredHeight() const;          ///< 26, or 22 when mini
+    juce::String getTooltip() override;   ///< the hovered option's tip, else the widget's
     void resized() override; void paint(juce::Graphics&) override;
+    void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
+    bool keyPressed(const juce::KeyPress&) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
 
 /// [-] value [+] (the mockup's .stepper). Whole values, hardware ranges.
-class Stepper : public juce::Component {
+class Stepper : public juce::Component, public juce::SettableTooltipClient {
 public:
     Stepper();
     ~Stepper() override;
@@ -76,13 +83,17 @@ public:
     void setWraps(bool wraps);
     std::function<void(int)> onChange;
     static constexpr int kHeight = 24;
+    int preferredWidth() const;           ///< 80: two 22 px buttons and a 34 px readout
     void resized() override; void paint(juce::Graphics&) override;
+    void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
+    void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    bool keyPressed(const juce::KeyPress&) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
 
 /// A switch with text (the mockup's .switch / .toggle-row).
-class Toggle : public juce::Component {
+class Toggle : public juce::Component, public juce::SettableTooltipClient {
 public:
     explicit Toggle(const juce::String& text = {});
     ~Toggle() override;
@@ -93,14 +104,17 @@ public:
     void setDescription(const juce::String& text);   ///< second, muted line (the Hardware tab's facts)
     std::function<void(bool)> onChange;
     static constexpr int kHeight = 24;
+    int preferredHeight(int width) const; ///< kHeight, or the .toggle-row height when a description is set
     void resized() override; void paint(juce::Graphics&) override;
+    void mouseEnter(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseUp(const juce::MouseEvent&) override;
+    bool keyPressed(const juce::KeyPress&) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
 
 /// The one continuous control: a vertical fader with a dB readout (the
 /// output trim, C3). Attach to the "trim" parameter.
-class Fader : public juce::Component {
+class Fader : public juce::Component, public juce::SettableTooltipClient {
 public:
     Fader();
     ~Fader() override;
@@ -153,7 +167,10 @@ public:
     void setKindColours(std::function<juce::Colour(int kind)> fn);
     std::function<void(int slot)> onSelect;
     std::function<void(int slot, const juce::String& name)> onRename;
+    void beginRename();                   ///< open the in-place editor on the selected row
+    static constexpr int kRowHeight = 26;
     void resized() override; void paint(juce::Graphics&) override;
+    bool keyPressed(const juce::KeyPress&) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
@@ -166,7 +183,9 @@ public:
     void setText(const juce::String& text, juce::NotificationType = juce::dontSendNotification);
     juce::String text() const;
     std::function<void(const juce::String&)> onChange;
+    static constexpr int kHeight = 26;
     void resized() override; void paint(juce::Graphics&) override;
+    void focusOfChildComponentChanged(FocusChangeType) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
@@ -182,8 +201,12 @@ public:
     const bank::Table& table() const;
     void setPlayingStep(int step);     ///< -1 none
     std::function<void(const bank::Table&)> onChange;
-    static constexpr int kRowHeight = 22;
+    static constexpr int kRowHeight = 22, kHeaderHeight = 22;
+    static constexpr int preferredHeight() { return kHeaderHeight + bank::kTableSteps * kRowHeight; }
     void resized() override; void paint(juce::Graphics&) override;
+    void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
+    void mouseDoubleClick(const juce::MouseEvent&) override; void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    bool keyPressed(const juce::KeyPress&) override; void focusGained(FocusChangeType) override; void focusLost(FocusChangeType) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
@@ -202,8 +225,12 @@ public:
     std::function<void(int ch, int step, const tracker::Cell&)> onCellChange;
     std::function<void(int ch, tracker::NoteSource)> onSourceChange;
     std::function<void(int ch, int groove)> onGrooveChange;    ///< per-phrase groove slot, 0 straight
-    static constexpr int kRowHeight = 22;
+    static constexpr int kRowHeight = 22, kHeaderHeight = 48;
+    static constexpr int preferredHeight() { return kHeaderHeight + tracker::kSteps * kRowHeight; }
     void resized() override; void paint(juce::Graphics&) override;
+    void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
+    void mouseDoubleClick(const juce::MouseEvent&) override; void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    bool keyPressed(const juce::KeyPress&) override; void focusGained(FocusChangeType) override; void focusLost(FocusChangeType) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
@@ -217,7 +244,12 @@ public:
     void setSong(std::shared_ptr<const tracker::Song> song, int selectedBar, int playingBar);
     std::function<void(int bar)> onSelectBar;
     std::function<void(int ch, int bar, int phraseSlot)> onChainChange;   ///< 0 clears
+    static constexpr int kRowHeight = 22, kHeaderHeight = 18;
+    static constexpr int preferredHeight() { return kHeaderHeight + 4 * kRowHeight + 3 * 2; }
     void resized() override; void paint(juce::Graphics&) override;
+    void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override; void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    bool keyPressed(const juce::KeyPress&) override; void focusGained(FocusChangeType) override; void focusLost(FocusChangeType) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
@@ -258,7 +290,11 @@ public:
     void setLineWidth(float px);
     void setChrome(bool on);            ///< the trace / zoom controls along the bottom edge
     void setFrozen(bool frozen);        ///< stop redrawing (hidden tab)
+    void setGround(juce::Colour ground, juce::Colour grid, juce::Colour border);   ///< any ground (the visualizer's black); setLcdGround picks the two presets
+    void setIdleDim(bool on);           ///< dim the picture while the channel is silent (default on; the visualizer turns it off)
+    Trace trace() const; int periods() const;
     void resized() override; void paint(juce::Graphics&) override;
+    void mouseEnter(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
@@ -273,6 +309,7 @@ public:
     void setLcdGround(bool lcd);
     void setLineWidth(float px);
     void setFrozen(bool frozen);
+    void setGround(juce::Colour ground, juce::Colour grid, juce::Colour border);
     void resized() override; void paint(juce::Graphics&) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;

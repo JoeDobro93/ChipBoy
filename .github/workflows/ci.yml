@@ -66,3 +66,40 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+
+  plugins:
+    name: plugins ${{ matrix.os }}
+    needs: core-links-nothing
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libfreetype6-dev libfontconfig1-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libgl1-mesa-dev libcurl4-openssl-dev
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCHIPBOY_BUILD_PLUGIN=ON -DCHIPBOY_BUILD_TESTS=OFF
+      - name: Build (VST3, Standalone, tools)
+        run: cmake --build build --config Release --parallel --target ChipBoy_VST3 ChipBoyVoice_VST3 ChipBoy_Standalone chipboy_paramdump chipboy_linktest
+      - name: Build (AU)
+        if: runner.os == 'macOS'
+        run: cmake --build build --config Release --parallel --target ChipBoy_AU ChipBoyVoice_AU
+      - name: Link integration test
+        run: ctest --test-dir build -C Release -R linktest --output-on-failure
+      - name: Parameter table matches the demo generator
+        shell: bash
+        run: |
+          dump=$(find build -type f -name 'chipboy_paramdump*' -perm -u+x | grep -v '\.o$' | head -1)
+          python3 tools/demo/make_demo.py --out build/demo-check --paramdump "$dump"
+      - name: Upload artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: chipboy-${{ matrix.os }}
+          path: |
+            build/ChipBoy_artefacts/Release
+            build/ChipBoyVoice_artefacts/Release

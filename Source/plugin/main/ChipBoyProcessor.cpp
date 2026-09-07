@@ -1,5 +1,7 @@
 #include "plugin/main/ChipBoyProcessor.h"
 
+#include "plugin/main/ChipBoyEditor.h"
+
 #include "plugin/shared/BankJson.h"
 
 namespace chipboy::plugin {
@@ -502,7 +504,7 @@ void ChipBoyProcessor::applyWrites()
 
 AudioProcessorEditor* ChipBoyProcessor::createEditor()
 {
-    return new GenericAudioProcessorEditor(*this);
+    return new ChipBoyEditor(*this);
 }
 
 void ChipBoyProcessor::getStateInformation(MemoryBlock& dest)

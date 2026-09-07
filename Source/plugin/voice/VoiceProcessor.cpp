@@ -1,6 +1,7 @@
 #include "plugin/voice/VoiceProcessor.h"
 
 #include "plugin/shared/BankJson.h"
+#include "plugin/voice/VoiceEditor.h"
 
 #include <mutex>
 #include <set>
@@ -224,7 +225,7 @@ void VoiceProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi)
 
 AudioProcessorEditor* VoiceProcessor::createEditor()
 {
-    return new GenericAudioProcessorEditor(*this);
+    return new VoiceEditor(*this);
 }
 
 void VoiceProcessor::getStateInformation(MemoryBlock& dest)

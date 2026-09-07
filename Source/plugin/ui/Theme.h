@@ -37,6 +37,14 @@ inline const juce::Colour ok        { 0xff6cc46f };
 inline const juce::Colour warn      { 0xffe5a53b };
 inline const juce::Colour bad       { 0xffe35d6a };
 inline const juce::Colour cgb       { 0xffc8a2ff };
+// derived tones the mockup uses as rgba()
+inline const juce::Colour accentSoft  { 0x2ec9445f };   ///< --accent-soft: accent at 18 %
+inline const juce::Colour playRow     { 0x29c9445f };   ///< tr.play: accent at 16 %
+inline const juce::Colour scopeBorder { 0xff0a0e0b };   ///< .scope border
+inline const juce::Colour videoBorder { 0xff141414 };   ///< .video-grid canvas border
+inline const juce::Colour videoGrid   { 0xff161616 };   ///< the visualizer's grid on a black ground
+inline const juce::Colour ledOff      { 0xff2a2d32 };
+inline const juce::Colour black       { 0xff000000 };
 
 inline juce::Colour channel(int ch) { return ch == 0 ? pu1 : ch == 1 ? pu2 : ch == 2 ? wav : noi; }
 inline const char* channelName(int ch) { return ch == 0 ? "PU1" : ch == 1 ? "PU2" : ch == 2 ? "WAV" : "NOI"; }
@@ -48,6 +56,8 @@ struct Fonts {
     static juce::Font sans(float px, bool semibold = false);
     static juce::Font mono(float px);
     static juce::Font pixel(float px);   ///< Silkscreen, for the wordmark and LCD readouts
+    static juce::Font caption(float px = 10.0f, bool semibold = false);   ///< the mockup's .label: sans with .12em tracking (draw upper-case)
+    static bool embedded();              ///< true when the OFL faces were found in BinaryData
 };
 
 /// Decimal or hex display (spec section 12.2). A display preference, global
@@ -86,6 +96,23 @@ public:
     int getTabButtonBestWidth(juce::TabBarButton&, int tabDepth) override;
     void drawTabAreaBehindFrontButton(juce::TabbedButtonBar&, juce::Graphics&, int w, int h) override;
     void drawDocumentWindowTitleBar(juce::DocumentWindow&, juce::Graphics&, int w, int h, int titleSpaceX, int titleSpaceW, const juce::Image* icon, bool drawTitleTextOnLeft) override;
+
+    // extra hooks so JUCE's own widgets sit in the same style
+    juce::Typeface::Ptr getTypefaceForFont(const juce::Font&) override;
+    int getTextButtonWidthToFitText(juce::TextButton&, int buttonHeight) override;
+    void positionComboBoxText(juce::ComboBox&, juce::Label&) override;
+    void getIdealPopupMenuItemSize(const juce::String& text, bool isSeparator, int standardMenuItemHeight, int& idealWidth, int& idealHeight) override;
+    int getPopupMenuBorderSize() override;
+    void drawPopupMenuSectionHeader(juce::Graphics&, const juce::Rectangle<int>& area, const juce::String& sectionName) override;
+    int getDefaultScrollbarWidth() override;
+    int getMinimumScrollbarThumbSize(juce::ScrollBar&) override;
+    int getScrollbarButtonSize(juce::ScrollBar&) override;
+    int getSliderThumbRadius(juce::Slider&) override;
+    int getTabButtonOverlap(int tabDepth) override;
+    void drawTabbedButtonBarBackground(juce::TabbedButtonBar&, juce::Graphics&) override;
+    juce::Font getAlertWindowTitleFont() override;
+    juce::Font getAlertWindowMessageFont() override;
+    juce::Font getAlertWindowFont() override;
 };
 
 /// Window sizes at 100 % (UI_DESIGN sections 2 and 8).
@@ -99,6 +126,10 @@ namespace draw {
 void panel(juce::Graphics&, juce::Rectangle<int> area, juce::Colour fill = colours::panel, juce::Colour border = colours::line, float radius = 4.0f);
 void label(juce::Graphics&, const juce::String& text, juce::Rectangle<int> area, juce::Justification j = juce::Justification::centredLeft, juce::Colour c = colours::textMute, float px = 11.0f);
 void heading(juce::Graphics&, const juce::String& text, juce::Rectangle<int> area);   ///< the mockup's h3: 11 px, upper-case tracking, muted
+void caption(juce::Graphics&, const juce::String& text, juce::Rectangle<int> area, juce::Justification j = juce::Justification::centredLeft, juce::Colour c = colours::textDim, float px = 10.0f);   ///< the mockup's .label: upper-case, tracked, dim
+void switchTrack(juce::Graphics&, juce::Rectangle<float> area, bool on, bool hover, bool enabled);   ///< the mockup's .switch input: a 30 x 16 track with a thumb
+void dial(juce::Graphics&, juce::Rectangle<float> area, float proportion, juce::Colour arc, juce::Colour pointer, bool enabled);   ///< the mockup's .knob .dial with its 270-degree arc
+float textWidth(const juce::Font&, const juce::String& text);
 } // namespace draw
 
 } // namespace chipboy::ui

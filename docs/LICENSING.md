@@ -21,7 +21,13 @@ a lawyer.
 | **CLAP** | MIT | Nothing. `clap-juce-extensions` is also permissive. **This is the only plugin format with no strings attached** — see §3. |
 | **Catch2** | BSL-1.0 | Permissive, and test-only — never linked into a shipped binary. |
 | **RGBDS** | MIT | Assembler used at build time for the probe ROM and SameSuite. A tool, never linked; optional (its tests are skipped without it). |
-| **nlohmann/json** (if used) | MIT | Retain the notice. |
+| **IBM Plex Sans / IBM Plex Mono** | OFL 1.1 | Embedded in the plugin as BinaryData (`Source/plugin/ui/assets/`) with the licence text alongside. Attribution in the about text; no restriction on the software. |
+| **Silkscreen** (Jason Kottke) | OFL 1.1 | Same: embedded with its licence text. |
+| **juce::JSON** | part of JUCE | No separate obligation; nlohmann/json is not used. |
+
+The build sets `JUCE_DISPLAY_SPLASH_SCREEN=0`. Distributing a binary built that way is
+only allowed under a paid JUCE licence or under the AGPLv3 path; a free-tier commercial
+build must keep the splash screen. Do not ship a binary before D1 is taken.
 
 ### Reference material — read, do not copy
 
