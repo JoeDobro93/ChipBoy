@@ -26,7 +26,11 @@ Four voices per instance, always. If you want more, load another instance.
 
 ## Status
 
-**Planning.** No code yet. The specification is the deliverable:
+**M1 done — the chip exists; nothing is audible yet.** `Source/core/Apu` is a
+cycle-exact DMG APU with next-event scheduling and an event-stream output, and passes
+blargg's `dmg_sound` 01–12 and every SameSuite APU test a DMG can observe, run through
+an M-cycle-accurate SM83 harness in `Source/tools/harness`. M2 (analog stage and
+renderer) is next. The documents remain the source of truth:
 
 - [`docs/CHIPBOY_SPEC.md`](docs/CHIPBOY_SPEC.md) — the build specification, and the source of truth.
 - [`docs/HARDWARE_REFERENCE.md`](docs/HARDWARE_REFERENCE.md) — DMG APU registers, timing, and the measured analog behaviour the emulation has to reproduce.
@@ -39,6 +43,21 @@ a probe ROM, an SM83 interpreter that verifies it, a loopback calibration genera
 an analyser that turns a recording into measured constants.
 
 Open decisions are collected in spec §18 and marked `[DECIDE]` throughout.
+
+## Building
+
+CMake 3.24+, a C++20 compiler (MSVC 2022, Xcode 15, GCC 13, Clang 16) and git. Test
+ROMs are fetched at configure time into the git-ignored `TestRoms/`; SameSuite is
+assembled from source if RGBDS is on the `PATH`, and skipped with a message otherwise.
+
+```
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release --parallel
+ctest --test-dir build -C Release --output-on-failure
+```
+
+`build/chipboy_runrom <rom.gb> [seconds]` runs one test ROM and prints what it reports.
+The plugin targets arrive in M3 (`-DCHIPBOY_BUILD_PLUGIN=ON` is a no-op until then).
 
 ## Planned targets
 

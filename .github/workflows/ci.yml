@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # Spec rule L1: Source/core links nothing and includes nothing but the
+  # standard library and its own headers. Enforced here so it cannot erode.
+  core-links-nothing:
+    name: L1 core links nothing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Source/core includes only <std> and "core/..."
+        shell: bash
+        run: |
+          bad=0
+          while IFS= read -r line; do
+            inc=$(printf '%s' "$line" | sed -E 's/.*#include[[:space:]]*//')
+            case "$inc" in
+              \<*\>)  ;;                       # standard library
+              \"core/*) ;;                     # our own headers
+              *) echo "L1 violation: $line"; bad=1 ;;
+            esac
+          done < <(grep -rEn '^[[:space:]]*#include' Source/core)
+          if grep -rEin 'juce' Source/core; then echo "L1 violation: JUCE referenced in Source/core"; bad=1; fi
+          exit $bad
+
+  build-and-test:
+    name: ${{ matrix.os }}
+    needs: core-links-nothing
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # RGBDS assembles the SameSuite ROMs (cmake/TestRoms.cmake). Without it
+      # those tests are skipped, so its absence would silently shrink the gate.
+      - name: Install RGBDS (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -sSL -o rgbds.tar.xz https://github.com/gbdev/rgbds/releases/download/v0.9.2/rgbds-0.9.2-linux-x86_64.tar.xz
+          mkdir -p "$HOME/rgbds" && tar -xJf rgbds.tar.xz -C "$HOME/rgbds"
+          echo "$HOME/rgbds" >> "$GITHUB_PATH"
+      - name: Install RGBDS (macOS)
+        if: runner.os == 'macOS'
+        run: brew install rgbds
+      - name: Install RGBDS (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://github.com/gbdev/rgbds/releases/download/v0.9.2/rgbds-0.9.2-win64.zip -OutFile rgbds.zip
+          Expand-Archive rgbds.zip -DestinationPath "$env:USERPROFILE\rgbds"
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:USERPROFILE\rgbds"
+      - name: RGBDS version
+        run: rgbasm --version
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure

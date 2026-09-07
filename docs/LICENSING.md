@@ -20,6 +20,7 @@ a lawyer.
 | **AudioUnit** (macOS) | Apple SDK, part of Xcode | No fee, no separate agreement. Distribution follows Apple's normal developer terms. |
 | **CLAP** | MIT | Nothing. `clap-juce-extensions` is also permissive. **This is the only plugin format with no strings attached** — see §3. |
 | **Catch2** | BSL-1.0 | Permissive, and test-only — never linked into a shipped binary. |
+| **RGBDS** | MIT | Assembler used at build time for the probe ROM and SameSuite. A tool, never linked; optional (its tests are skipped without it). |
 | **nlohmann/json** (if used) | MIT | Retain the notice. |
 
 ### Reference material — read, do not copy
@@ -30,8 +31,8 @@ a lawyer.
 | **SameBoy** | MIT | The best-documented accurate core, and the safest to study. If any code is genuinely copied, retain the MIT notice and record it in this file. |
 | **Gambatte** | GPLv2 | **Read only.** Copying any of it closes the commercial path. |
 | **mGBA** | MPL-2.0 | **Read only.** File-level copyleft; a copied file stays MPL forever. |
-| **blargg's `dmg_sound` test ROMs** | freely distributed | Used for validation. Fetched at test time, never committed (spec §16.1). |
-| **SameSuite** | part of SameBoy (MIT) | Same: fetched, not vendored. |
+| **blargg's `dmg_sound` test ROMs** | freely distributed | Used for validation. Fetched at configure time from the `retrio/gb-test-roms` mirror into git-ignored `TestRoms/`, never committed (spec §16.1). |
+| **SameSuite** | X11/MIT (LIJI32) | Same: fetched as source into `TestRoms/`, assembled with RGBDS, not vendored. |
 
 ### LSDj
 

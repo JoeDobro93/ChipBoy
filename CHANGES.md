@@ -13,7 +13,7 @@ intended product rather than a progress report.
 | Milestone | Status |
 |---|---|
 | M0 — repository, spec, decisions | spec written; §18 decisions open |
-| M1 — APU core + test-ROM harness | not started |
+| M1 — APU core + test-ROM harness | **done** 2026-09-07 — blargg `dmg_sound` 01–12 and the four DMG-observable SameSuite APU tests pass; CI on Linux, macOS, Windows |
 | M2 — analog stage + renderer | not started |
 | M3 — main plugin shell | not started |
 | M4 — bank + driver | not started |
@@ -25,6 +25,56 @@ intended product rather than a progress report.
 ---
 
 ## Spec revisions
+
+### 2026-09-07 — M1: APU core and test-ROM harness (§5, §16.1, §16.7)
+
+**Built:** `Source/core/Apu` — the chip as §5 describes it: `uint64_t` cycle time,
+`write`/`read`/`runTo`/`reset`, next-event scheduling, and a stream of
+`{cycle, channel, level, dacOn}` events as the only output. Every §10.1 and §10.2 quirk.
+`Source/tools/harness` — an M-cycle-accurate SM83, MBC1 memory map, timer, LCD line
+counter and serial port, enough to run real test ROMs and nothing more. `Tests/` — unit
+tests for the behaviours the plugin leans on (masks, timing, chunk-independence of
+`runTo`), one Catch2 case per blargg ROM, one per SameSuite ROM. `chipboy_runrom` for
+reading a failing ROM's own output.
+
+**Result:** blargg `dmg_sound` 01–12 pass. SameSuite `div_write_trigger`,
+`div_write_trigger_10`, `channel_3_wave_ram_dac_on_rw` and
+`channel_3_wave_ram_locked_write` pass.
+
+**Read into the spec, not changed:**
+
+- §5.1 and §16.1 say "SameSuite's APU tests". Of its 78 APU tests, only those four are
+  observable on a DMG; the other 74 read PCM12/PCM34, registers that exist only on a
+  CGB (SameSuite's own README says as much: "Pre-CGB devices … other tests fail because
+  they rely on the CGB-only PCM registers"). So the DMG core's gate is those four plus
+  blargg, and the full list becomes the acceptance gate for the CGB model (§6.5) when
+  it is built. Their expected values come from a CGB-E, and several are revision-specific.
+- §16.1 says blargg 01–11. There are twelve; 12 (`wave write while on`) is DMG-only and
+  passes, so it is in the gate.
+- SameSuite ships as source, not ROMs. It is assembled at build time with RGBDS when
+  that is on the `PATH`, otherwise its tests are skipped with a message. RGBDS is
+  therefore an optional build-time tool (`LICENSING.md` §1).
+
+**Established while building it**, all now in `HARDWARE_REFERENCE.md`:
+
+- The DMG wave-RAM access window is one 2 MHz cycle — the fetch cycle or the CPU cycle
+  after it — with the sample buffer refilled 6 CPU cycles later than the period after a
+  trigger, and trigger corruption when the next fetch is due within 2 cycles. Found by
+  replaying blargg's tests 09 and 12 in Python against their DMG checksums: the first
+  guess (a 2-cycle window) reproduced the ROM's printed CRC exactly but not the DMG's,
+  and the checksum admits no window wider than one APU cycle. §3, §5.
+- Powering the APU on while DIV bit 12 is set skips the first frame-sequencer tick
+  (SameSuite `div_write_trigger_10`). §3, §10.2.
+- The harness CPU initially made `EI` take effect before the following instruction,
+  which is wrong (`EI; DI` must not open a window). Fixed before it could matter.
+- `ld b,b` is honoured as a software breakpoint, SameSuite's "test finished" signal.
+
+**Considered:** rendering SameSuite's screen and comparing to a reference image, the
+way SameBoy's tester does. Unnecessary: every test bakes its expected table into the
+ROM, compares in software, and reports over the serial port, so the harness needs no
+PPU. Also considered vendoring the four SameSuite ROMs to avoid the RGBDS dependency;
+rejected because §16.1's rule is that test ROMs are fetched, and building from source
+keeps them current.
 
 ### 2026-09-05 — DMG *and* CGB ship in v1 (§6.5, §16.6, §17; `HARDWARE_REFERENCE.md` §11)
 

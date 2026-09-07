@@ -89,6 +89,16 @@ Consequence: writing to DIV can clock the sequencer early. ChipBoy has no CPU an
 DIV register in normal operation, so this only matters inside the test-ROM harness
 (spec §16.1), which does have one.
 
+On a DMG the bit is bit 12 of the 16-bit counter behind DIV (DIV itself is the top
+eight bits, so DIV bit 4), which falls every 8192 cycles. Power-on (NR52 bit 7) resets
+the sequencer so that its next step is 0.
+
+**Power-on while bit 12 is already set.** The sequencer then skips its first tick
+entirely — no length, sweep or envelope clock — and until that skipped tick has passed
+it counts as being about to run a step that does not clock length, so enabling a length
+counter in that window clocks it once (§10.1, extra length clocking). Verified by
+SameSuite `div_write_trigger_10`; the model is SameBoy's.
+
 ---
 
 ## 4. Channels 1 and 2 — pulse
@@ -169,12 +179,19 @@ channel is fetching a byte. Drivers therefore clear NR30 bit 7, write, and re-tr
 which costs a DAC-off/DAC-on step and a position reset. **This is why changing the
 waveform mid-note clicks on a DMG, and the click is not optional.**
 
+"Exact cycle" is one 2 MHz APU cycle: an access on the CPU cycle of the fetch or the
+one after it lands on the byte being fetched (at the position *after* the advance);
+anything else sees `FF` or is dropped. Established by replaying blargg's tests 09 and
+12 against their DMG checksums, which admit no wider window.
+
 On **CGB** the access lands on the byte currently being fetched, so live updates work
 but tear if they race the read pointer.
 
 **Trigger** resets the position counter to 0, and the sample buffer holds its previous
-value until the next timer expiry, so the first sample after a trigger is delayed.
-Triggering while the channel is reading corrupts wave RAM on DMG (§10.2).
+value until the next timer expiry, so the first sample after a trigger is delayed. That
+first expiry comes **6 CPU cycles later** than the period alone (blargg 09, 10 and 12
+fix this jointly with the access window above). Triggering while the channel is about
+to read — the next fetch due within 2 CPU cycles — corrupts wave RAM on DMG (§10.2).
 
 ---
 
@@ -315,6 +332,7 @@ volume is applied in the analog domain and does not re-quantise.
 | Zombie envelope | Writing NRx2 while a channel runs has model-specific behaviour that real drivers exploit for fine volume control. Must be implemented for test-ROM parity; the ChipBoy driver only uses it if §8.3 selects the software-envelope mode. |
 | Wave RAM corruption on trigger | DMG-only. Triggering CH3 while it is reading corrupts wave RAM. Implemented for parity; unreachable through normal ChipBoy driver behaviour. |
 | DIV-triggered frame sequencer stepping | Only observable with a CPU present, i.e. in the test-ROM harness. |
+| Power-on sequencer skip | Switching the APU on while DIV bit 12 is set skips the first sequencer tick (§3). Harness-only in practice; implemented for SameSuite parity. |
 
 ---
 
