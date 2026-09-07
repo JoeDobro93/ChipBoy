@@ -20,7 +20,7 @@ Command cmdFromVar(const var& v)
     Command c;
     if (auto* o = v.getDynamicObject()) {
         const String l = o->getProperty("c").toString();
-        c.cmd = l.isNotEmpty() ? cmdFromLetter(l[0]) : Cmd::None;
+        c.cmd = l.isNotEmpty() ? cmdFromLetter(char(l[0])) : Cmd::None;
         c.a = int16_t(int(o->getProperty("a"))); c.b = int16_t(int(o->getProperty("b"))); c.c = int16_t(int(o->getProperty("x")));
     }
     return c;
