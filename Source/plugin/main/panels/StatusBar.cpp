@@ -26,11 +26,8 @@ void StatusBar::tick()
     machine.bold(modelName(modelIndex(processor_))).plain(dot + khz + " kHz" + dot + "latency " + String(latency) + " samples (" + String(ms, 1) + " ms)");
 
     RichText tk;
-    const int src = paramValue(processor_, ids::tickSource);
-    tk.plain("tick ");
-    if (src == 1) tk.bold("V-blank 59.7 Hz");
-    else if (src == 2) tk.bold("custom " + String(paramFloat(processor_, ids::tickHz), 1) + " Hz");
-    else tk.bold("host " + String(paramValue(processor_, ids::ticksPerBeat)) + "/beat");
+    tk.plain("tempo ");
+    tk.bold(String(processor_.songTempoSource() ? "song " : "host ") + String(int(std::lround(processor_.tempoInForce()))));
 
     RichText lk;
     lk.plain("link ");

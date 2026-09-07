@@ -44,7 +44,8 @@ struct ScopeBuffers {
     AudioRing master;
     std::atomic<uint64_t> latestCycle{ 0 };       ///< APU cycle at the end of the last block
     std::atomic<uint64_t> latestFrame{ 0 };       ///< absolute frame at the end of the last block
-    std::array<std::atomic<uint64_t>, 4> state{}; ///< link::packState per channel
+    std::array<std::atomic<uint64_t>, 4> state{};  ///< link::packState per channel
+    std::array<std::atomic<uint64_t>, 4> state2{}; ///< link::packState2: the running state
     std::atomic<uint32_t> mix{ 0 };               ///< NR50 | NR51 << 8 | powered << 16
 };
 

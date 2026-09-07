@@ -70,26 +70,15 @@ ChannelStrip::ChannelStrip(ChipBoyProcessor& p, int ch)
         level_->setTooltip(nr + " bits 7-4: envelope start volume, 16 levels; inst = the instrument's");
         level_->attach(param(processor_, channelParamId(ch_, ids::level)));
         level_->setAccent(colours::channel(ch_));
-        envRate_ = std::make_unique<Knob>("Env");
-        envRate_->setTooltip(nr + " bits 2-0: envelope rate, 0 = off, 1-7 = n x 15.6 ms per step; inst = the instrument's");
-        envRate_->attach(param(processor_, channelParamId(ch_, ids::envRate)));
-        envRate_->setAccent(colours::channel(ch_));
         addAndMakeVisible(*level_);
-        addAndMakeVisible(*envRate_);
     } else {
         waveLevelLabel_.reset(TextLine::label("Level"));
-        frameLabel_.reset(TextLine::label("Frame"));
         waveLevel_ = std::make_unique<Segmented>(StringArray{ "mute", "25", "50", "100", "inst" });
         waveLevel_->setMini(true);
         waveLevel_->setTooltip("NR32: two bits, no envelope on this channel; inst = the instrument's");
         waveLevel_->attach(param(processor_, channelParamId(ch_, ids::level)));
-        frame_ = std::make_unique<Stepper>();
-        frame_->setTooltip("Which of the wave's frames is loaded; auto follows the instrument. On a DMG a change costs a click.");
-        frame_->attach(param(processor_, channelParamId(ch_, ids::frame)));
         addAndMakeVisible(*waveLevelLabel_);
-        addAndMakeVisible(*frameLabel_);
         addAndMakeVisible(*waveLevel_);
-        addAndMakeVisible(*frame_);
     }
 
     // mute / solo: NR51 gates
@@ -228,15 +217,10 @@ void ChannelStrip::resized()
     mute_.setBounds(x + w - bw, y + 1, bw, bh);
     solo_.setBounds(x + w - bw, y + 25, bw, bh);
     keyswitch_.setBounds(x + w - bw, y + 49, bw, bh);
-    if (level_ && envRate_) {
-        level_->setBounds(x, y, Knob::kWidth, Knob::kHeight);
-        envRate_->setBounds(x + Knob::kWidth + 6, y, Knob::kWidth, Knob::kHeight);
-    }
-    if (waveLevel_ && frame_) {
+    if (level_) level_->setBounds(x, y, Knob::kWidth, Knob::kHeight);
+    if (waveLevel_) {
         waveLevelLabel_->setBounds(x, y, 80, 12);
         waveLevel_->setBounds(x, y + 12, std::min(waveLevel_->preferredWidth(), w - bw - 8), waveLevel_->preferredHeight());
-        frameLabel_->setBounds(x, y + 40, 44, kRow);
-        frame_->setBounds(x + 46, y + 40, frame_->preferredWidth(), kRow);
     }
     y += kQuick + kGap;
     table_.setBounds(x, y, table_.preferredWidth(), kRow);

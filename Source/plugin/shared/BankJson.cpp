@@ -201,7 +201,9 @@ bool bankFromVar(const var& v, Bank& out)
 var songToVar(const tracker::Song& s)
 {
     auto* o = new DynamicObject();
-    o->setProperty("format", "chipboy-song"); o->setProperty("version", 1); o->setProperty("stepsPerBar", int(s.stepsPerBar));
+    o->setProperty("format", "chipboy-song"); o->setProperty("version", 2); o->setProperty("stepsPerBar", int(s.stepsPerBar));
+    // The song's own timeline (docs/COMMANDS_AND_TEMPO.md section 4).
+    o->setProperty("tempoBpm", s.tempoBpm); o->setProperty("songStartSeconds", s.songStartSeconds); o->setProperty("beatsPerBar", s.beatsPerBar);
     Array<var> phrases;
     for (int i = 0; i < tracker::kPhraseSlots; ++i) {
         const auto& p = s.phrases[size_t(i)]; if (!p.used) continue;
@@ -232,6 +234,9 @@ bool songFromVar(const var& v, tracker::Song& out)
     if (o->getProperty("format").toString() != "chipboy-song") return false;
     out = tracker::Song{};
     out.stepsPerBar = uint8_t(std::clamp(getOr(o, "stepsPerBar", 16), 4, 32));
+    out.tempoBpm = std::clamp(o->hasProperty("tempoBpm") ? double(o->getProperty("tempoBpm")) : 120.0, 40.0, 255.0);
+    out.songStartSeconds = std::max(0.0, o->hasProperty("songStartSeconds") ? double(o->getProperty("songStartSeconds")) : 0.0);
+    out.beatsPerBar = std::clamp(o->hasProperty("beatsPerBar") ? double(o->getProperty("beatsPerBar")) : 4.0, 0.25, 32.0);
     if (auto* ph = o->getProperty("phrases").getArray())
         for (const auto& pv : *ph) {
             auto* po = pv.getDynamicObject(); if (!po) continue;

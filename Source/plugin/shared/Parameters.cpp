@@ -25,6 +25,62 @@ String instText(int v, int top) { return v == top ? "inst" : String(v); }
 
 } // namespace
 
+namespace {
+/// The lane's letters, in the enum's order minus H (tables only).
+constexpr bank::Cmd kLaneCmds[] = {
+    bank::Cmd::A, bank::Cmd::C, bank::Cmd::D, bank::Cmd::E, bank::Cmd::F, bank::Cmd::G,
+    bank::Cmd::K, bank::Cmd::L, bank::Cmd::M, bank::Cmd::O, bank::Cmd::P, bank::Cmd::R,
+    bank::Cmd::S, bank::Cmd::T, bank::Cmd::V, bank::Cmd::W, bank::Cmd::Z,
+};
+}
+
+StringArray commandChoices()
+{
+    StringArray c { "none" };
+    for (auto cmd : kLaneCmds) c.add(bank::cmdLetter(cmd));
+    return c;
+}
+
+bank::Cmd cmdFromChoice(int index)
+{
+    const int i = index - 1;
+    return i >= 0 && i < int(std::size(kLaneCmds)) ? kLaneCmds[size_t(i)] : bank::Cmd::None;
+}
+
+int choiceFromCmd(bank::Cmd c)
+{
+    for (int i = 0; i < int(std::size(kLaneCmds)); ++i) if (kLaneCmds[size_t(i)] == c) return i + 1;
+    return 0;
+}
+
+String commandArgText(const bank::Command& c)
+{
+    const int x = c.a, y = c.b;
+    const String dot = String(CharPointer_UTF8(" \xc2\xb7 "));
+    switch (c.cmd) {
+        case bank::Cmd::None: return {};
+        case bank::Cmd::A:    return x == 0 ? String("stop") : "table " + String(x);
+        case bank::Cmd::C:    return "+" + String(x) + dot + "+" + String(y);
+        case bank::Cmd::D:    return String(x) + " ticks";
+        case bank::Cmd::E:    return "vol " + String(x) + dot + ((y & 8) ? "up " : "down ") + String(y & 7);
+        case bank::Cmd::F:    return "frame " + String(x);
+        case bank::Cmd::G:    return x == 0 ? String("straight") : "groove " + String(x);
+        case bank::Cmd::H:    return x == 0 ? String("stop") : "step " + String(x);
+        case bank::Cmd::K:    return "after " + String(x);
+        case bank::Cmd::L:    return "rate " + String(x);
+        case bank::Cmd::M:    return "L " + String(x) + dot + "R " + String(y);
+        case bank::Cmd::O:    { static const char* n[] = { "off", "L", "R", "both" }; return n[x & 3]; }
+        case bank::Cmd::P:    { const int v = x - 128; return (v > 0 ? "+" : "") + String(v); }
+        case bank::Cmd::R:    return "every " + String(y) + (x ? dot + "vol " + String(x < 128 ? "+" : "") + String(x < 128 ? x : x - 256) : String());
+        case bank::Cmd::S:    return "rate " + String(x & 7) + dot + "shift " + String(y & 7) + ((x & 128) ? String(" down") : String());
+        case bank::Cmd::T:    return String(x) + " BPM";
+        case bank::Cmd::V:    return "speed " + String(x) + dot + "depth " + String(y);
+        case bank::Cmd::W:    return "duty/wave " + String(x);
+        case bank::Cmd::Z:    return "max " + String(x);
+    }
+    return {};
+}
+
 String channelPrefix(int channel) { return "ch" + String(channel + 1) + "_"; }
 String channelParamId(int channel, const char* id) { return channelPrefix(channel) + id; }
 
@@ -53,20 +109,20 @@ void addGlobalParameters(AudioProcessorValueTreeState::ParameterLayout& L)
     L.add(std::make_unique<AudioParameterFloat>(ParameterID(ids::declickMs, 1), "De-click ms",
           NormalisableRange<float>(0.5f, 5.0f, 0.5f), 2.0f, AudioParameterFloatAttributes().withLabel("ms")));
     L.add(boolParam(ids::soften, "Soften Master Pops", false));
-    L.add(choiceParam(ids::tickSource, "Tick Source", { "Host", "V-blank", "Custom" }, 0));
-    L.add(intParam(ids::ticksPerBeat, "Ticks Per Beat", 1, 48, 24));
-    L.add(std::make_unique<AudioParameterFloat>(ParameterID(ids::tickHz, 1), "Tick Rate",
-          NormalisableRange<float>(1.0f, 240.0f, 0.5f), 60.0f, AudioParameterFloatAttributes().withLabel("Hz")));
+    // Tempo (docs/COMMANDS_AND_TEMPO.md section 4). Ticks are always 24 per
+    // beat; what a tick is worth is the only choice left.
+    L.add(choiceParam(ids::tempoSource, "Tempo Source", { "Host", "Song" }, 0));
+    L.add(intParam(ids::songTempo, "Song Tempo", 40, 255, 120, [](int v, int) { return String(v) + " BPM"; }));
+    L.add(boolParam(ids::notesOnTick, "Quantise Notes To Ticks", false));
     L.add(boolParam(ids::linkMode, "Link Mode", false));
     L.add(boolParam(ids::hexDisplay, "Hex Display", false));
 }
 
 void addChannelParameters(AudioProcessorValueTreeState::ParameterLayout& L, const String& px, ChannelKind kind, bool withSource)
 {
-    const bool pulse = kind == ChannelKind::Pulse1 || kind == ChannelKind::Pulse2 || kind == ChannelKind::Any;
-    const bool wave = kind == ChannelKind::Wave || kind == ChannelKind::Any;
-    const bool noise = kind == ChannelKind::Noise || kind == ChannelKind::Any;
-    const bool pu1 = kind == ChannelKind::Pulse1 || kind == ChannelKind::Any;
+    // The channel is a tracker row (docs/COMMANDS_AND_TEMPO.md section 3):
+    // an instrument, a table, the few performance fields, and two commands.
+    const bool wave = kind == ChannelKind::Wave;
     const String name = kind == ChannelKind::Pulse1 ? "PU1 " : kind == ChannelKind::Pulse2 ? "PU2 " : kind == ChannelKind::Wave ? "WAV " : kind == ChannelKind::Noise ? "NOI " : "";
 
     if (withSource) {
@@ -79,32 +135,21 @@ void addChannelParameters(AudioProcessorValueTreeState::ParameterLayout& L, cons
     const int defInst = kind == ChannelKind::Pulse1 ? 1 : kind == ChannelKind::Pulse2 ? 3 : kind == ChannelKind::Wave ? 7 : kind == ChannelKind::Noise ? 11 : 1;
     L.add(intParam(px + ids::instrument, name + "Instrument", 0, 128, defInst, [](int v, int) { return v == 0 ? String("none") : String(v); }));
     L.add(intParam(px + ids::table, name + "Table", 0, 64, 0, [](int v, int) { return v == 0 ? String("inst") : String(v); }));
-    if (wave && kind != ChannelKind::Any)
+    if (wave)
         L.add(intParam(px + ids::level, name + "Level", 0, 4, 4, [](int v, int) { static const char* n[] = { "mute", "25%", "50%", "100%", "inst" }; return String(n[std::clamp(v, 0, 4)]); }));
     else
         L.add(intParam(px + ids::level, name + "Level", 0, 16, 16, [](int v, int) { return instText(v, 16); }));
     L.add(choiceParam(px + ids::pan, name + "Pan", { "off", "L", "R", "both", "inst" }, 4));
-    if (wave) {
-        L.add(intParam(px + ids::wave, name + "Wave", 0, 64, 0, [](int v, int) { return v == 0 ? String("inst") : String(v); }));
-        L.add(intParam(px + ids::frame, name + "Frame", 0, 16, 0, [](int v, int) { return v == 0 ? String("auto") : String(v); }));
-    }
     L.add(intParam(px + ids::transpose, name + "Transpose", -60, 60, 0, [](int v, int) { return (v > 0 ? "+" : "") + String(v) + " st"; }));
-    L.add(intParam(px + ids::detune, name + "Detune", -128, 127, 0));
-    L.add(intParam(px + ids::vibSpeed, name + "Vibrato Speed", 0, 15, 0, [](int v, int) { return v == 0 ? String("inst") : String(v); }));
-    L.add(intParam(px + ids::vibDepth, name + "Vibrato Depth", 0, 16, 16, [](int v, int) { return instText(v, 16); }));
-    L.add(intParam(px + ids::arp, name + "Arpeggio", 0, 64, 0, [](int v, int) { return v == 0 ? String("none") : String(v); }));
-    if (pulse || noise) {
-        L.add(intParam(px + ids::envVol, name + "Envelope Volume", 0, 16, 16, [](int v, int) { return instText(v, 16); }));
-        L.add(choiceParam(px + ids::envDir, name + "Envelope Direction", { "down", "up", "inst" }, 2));
-        L.add(intParam(px + ids::envRate, name + "Envelope Rate", 0, 8, 8, [](int v, int) { return instText(v, 8); }));
+    const char* typeIds[2] = { ids::cmd1Type, ids::cmd2Type };
+    const char* xIds[2] = { ids::cmd1X, ids::cmd2X };
+    const char* yIds[2] = { ids::cmd1Y, ids::cmd2Y };
+    for (int i = 0; i < 2; ++i) {
+        const String n = name + "CMD" + String(i + 1);
+        L.add(choiceParam(px + typeIds[i], n, commandChoices(), 0));
+        L.add(intParam(px + xIds[i], n + " x", 0, 255, 0));
+        L.add(intParam(px + yIds[i], n + " y", 0, 255, 0));
     }
-    if (pulse) L.add(choiceParam(px + ids::duty, name + "Duty", { "12.5%", "25%", "50%", "75%", "inst" }, 4));
-    if (pu1) {
-        L.add(intParam(px + ids::sweepRate, name + "Sweep Rate", 0, 8, 8, [](int v, int) { return instText(v, 8); }));
-        L.add(choiceParam(px + ids::sweepDir, name + "Sweep Direction", { "up", "down", "inst" }, 2));
-        L.add(intParam(px + ids::sweepShift, name + "Sweep Shift", 0, 8, 8, [](int v, int) { return instText(v, 8); }));
-    }
-    if (noise) L.add(choiceParam(px + ids::lfsr, name + "LFSR", { "15-bit", "7-bit", "inst" }, 2));
     L.add(boolParam(px + ids::liveFollow, name + "Live Follow", false));
     L.add(choiceParam(px + ids::velocityMode, name + "Velocity", { "start volume", "instrument bank", "ignored" }, 0));
     L.add(boolParam(px + ids::keyswitch, name + "Keyswitches", false));
@@ -114,10 +159,9 @@ void ChannelParamCache::bind(AudioProcessorValueTreeState& s, const String& px)
 {
     auto g = [&](const char* id) { return s.getRawParameterValue(px + id); };
     source = g(ids::source); instrument = g(ids::instrument); table = g(ids::table); level = g(ids::level); pan = g(ids::pan);
-    wave = g(ids::wave); frame = g(ids::frame); transpose = g(ids::transpose); detune = g(ids::detune);
-    vibSpeed = g(ids::vibSpeed); vibDepth = g(ids::vibDepth); arp = g(ids::arp);
-    envVol = g(ids::envVol); envDir = g(ids::envDir); envRate = g(ids::envRate); duty = g(ids::duty);
-    sweepRate = g(ids::sweepRate); sweepDir = g(ids::sweepDir); sweepShift = g(ids::sweepShift); lfsr = g(ids::lfsr);
+    transpose = g(ids::transpose);
+    cmdType[0] = g(ids::cmd1Type); cmdX[0] = g(ids::cmd1X); cmdY[0] = g(ids::cmd1Y);
+    cmdType[1] = g(ids::cmd2Type); cmdX[1] = g(ids::cmd2X); cmdY[1] = g(ids::cmd2Y);
     liveFollow = g(ids::liveFollow); velocityMode = g(ids::velocityMode); keyswitch = g(ids::keyswitch);
 }
 
@@ -130,21 +174,12 @@ driver::ChannelParams ChannelParamCache::read(ChannelKind kind) const
     if (kind == ChannelKind::Wave) p.level = lv >= 4 ? 255 : uint8_t(lv);
     else p.level = lv >= 16 ? 255 : uint8_t(lv);
     const int pn = paramInt(pan, 4); p.pan = pn >= 4 ? 255 : uint8_t(pn);
-    p.wave = uint8_t(std::clamp(paramInt(wave), 0, 64));
-    p.frame = uint8_t(std::clamp(paramInt(frame), 0, 16));
     p.transpose = int8_t(std::clamp(paramInt(transpose), -60, 60));
-    p.detune = int16_t(std::clamp(paramInt(detune), -128, 127));
-    const int vs = paramInt(vibSpeed); p.vibSpeed = vs == 0 ? 255 : uint8_t(vs);
-    const int vd = paramInt(vibDepth, 16); p.vibDepth = vd >= 16 ? 255 : uint8_t(vd);
-    p.arp = uint8_t(std::clamp(paramInt(arp), 0, 64));
-    const int ev = paramInt(envVol, 16); p.envVol = ev >= 16 ? 255 : uint8_t(ev);
-    const int ed = paramInt(envDir, 2); p.envDir = ed >= 2 ? 255 : uint8_t(ed);
-    const int er = paramInt(envRate, 8); p.envRate = er >= 8 ? 255 : uint8_t(er);
-    const int du = paramInt(duty, 4); p.duty = du >= 4 ? 255 : uint8_t(du);
-    const int sr = paramInt(sweepRate, 8); p.sweepRate = sr >= 8 ? 255 : uint8_t(sr);
-    const int sd = paramInt(sweepDir, 2); p.sweepDir = sd >= 2 ? 255 : uint8_t(sd);
-    const int ss = paramInt(sweepShift, 8); p.sweepShift = ss >= 8 ? 255 : uint8_t(ss);
-    const int lf = paramInt(lfsr, 2); p.lfsr = lf >= 2 ? 255 : uint8_t(lf);
+    for (int i = 0; i < 2; ++i) {
+        p.cmd[i].cmd = cmdFromChoice(paramInt(cmdType[i]));
+        p.cmd[i].a = int16_t(std::clamp(paramInt(cmdX[i]), 0, 255));
+        p.cmd[i].b = int16_t(std::clamp(paramInt(cmdY[i]), 0, 255));
+    }
     p.liveFollow = paramInt(liveFollow) != 0;
     p.velocityMode = uint8_t(std::clamp(paramInt(velocityMode), 0, 2));
     p.keyswitch = paramInt(keyswitch) != 0;

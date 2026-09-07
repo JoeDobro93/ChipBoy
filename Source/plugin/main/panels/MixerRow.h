@@ -45,10 +45,9 @@ private:
     ui::RegisterLine regs_;
     ui::Stepper instrument_;
     TextLine instrumentName_;
-    std::unique_ptr<ui::Knob> level_, envRate_;
-    std::unique_ptr<TextLine> waveLevelLabel_, frameLabel_;
+    std::unique_ptr<ui::Knob> level_;
+    std::unique_ptr<TextLine> waveLevelLabel_;
     std::unique_ptr<ui::Segmented> waveLevel_;
-    std::unique_ptr<ui::Stepper> frame_;
     juce::TextButton mute_, solo_, keyswitch_;
     ui::Stepper table_;
     ui::Segmented pan_;

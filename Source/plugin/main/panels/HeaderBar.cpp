@@ -15,8 +15,6 @@ namespace {
 const char* kStockTip = "STOCK: every audible setting is something a real unit does. MODIFIED: a departure in the Hardware tab is on.";
 const char* kVisualizerTip = "Open the visualizer window: the five scopes, no chrome, made for screen capture";
 const char* kHexTip = "Show values in hex, the LSDj habit. Display only.";
-constexpr float kTickHzPresets[] = { 50.0f, 59.5f, 60.0f, 75.0f, 100.0f, 120.0f, 150.0f, 200.0f, 240.0f };
-constexpr int kTicksPerBeatPresets[] = { 4, 6, 8, 12, 16, 24, 32, 48 };
 }
 
 HeaderBar::HeaderBar(ChipBoyProcessor& p)
@@ -171,23 +169,7 @@ void HeaderBar::showSettingsMenu()
     scale.addItem(103, "150 %", true, std::abs(scale_ - 1.5f) < 0.01f);
     m.addSubMenu("Window scale", scale);
 
-    const int tickSource = paramValue(processor_, ids::tickSource);
-    PopupMenu tick;
-    tick.addItem(201, "Host (ticks per beat)", true, tickSource == 0);
-    tick.addItem(202, "V-blank (59.73 Hz, free-running)", true, tickSource == 1);
-    tick.addItem(203, "Custom rate", true, tickSource == 2);
-    m.addSubMenu("Tick source", tick);
-
-    const int tpb = paramValue(processor_, ids::ticksPerBeat);
-    PopupMenu perBeat;
-    for (int v : kTicksPerBeatPresets) perBeat.addItem(300 + v, String(v) + " per beat", true, tpb == v);
-    m.addSubMenu("Ticks per beat", perBeat);
-
-    const float hz = paramFloat(processor_, ids::tickHz);
-    PopupMenu custom;
-    for (int i = 0; i < int(std::size(kTickHzPresets)); ++i)
-        custom.addItem(400 + i, String(kTickHzPresets[size_t(i)], 1) + " Hz", true, std::abs(hz - kTickHzPresets[size_t(i)]) < 0.26f);
-    m.addSubMenu("Custom tick rate", custom);
+    // Tempo lives on the Phrases tab now (docs/COMMANDS_AND_TEMPO.md section 6).
 
     if (processor_.wrapperType == AudioProcessor::wrapperType_Standalone) {
         m.addSeparator();
@@ -199,9 +181,6 @@ void HeaderBar::showSettingsMenu()
         if (safe == nullptr || r == 0) return;
         HeaderBar& h = *safe;
         if (r >= 101 && r <= 103) { if (h.onScale) h.onScale(r == 101 ? 1.0f : r == 102 ? 1.25f : 1.5f); }
-        else if (r >= 201 && r <= 203) setParam(param(h.processor_, ids::tickSource), float(r - 201));
-        else if (r > 300 && r < 400) setParam(param(h.processor_, ids::ticksPerBeat), float(r - 300));
-        else if (r >= 400 && r < 400 + int(std::size(kTickHzPresets))) setParam(param(h.processor_, ids::tickHz), kTickHzPresets[size_t(r - 400)]);
     });
 }
 

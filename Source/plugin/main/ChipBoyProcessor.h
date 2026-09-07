@@ -9,6 +9,7 @@
 
 #include "core/Apu/Apu.h"
 #include "core/Bank/Bank.h"
+#include "core/Driver/Clock.h"
 #include "core/Driver/Driver.h"
 #include "core/Link/LinkLayout.h"
 #include "core/Render/Renderer.h"
@@ -66,7 +67,9 @@ public:
     std::shared_ptr<const bank::Bank> bank() const { return bankShared_; }
     std::shared_ptr<const tracker::Song> song() const { return songShared_; }
     void publishBank(std::shared_ptr<const bank::Bank> b);
-    void publishSong(std::shared_ptr<const tracker::Song> s);
+    /// Publishes a song after building its tempo map (section 4), so the
+    /// audio thread never scans the chains.
+    void publishSong(std::shared_ptr<tracker::Song> s);
     /// Copy-on-write edits: the editor mutates a copy, the audio thread swaps to it.
     void mutateBank(const std::function<void(bank::Bank&)>& fn);
     void mutateSong(const std::function<void(tracker::Song&)>& fn);
@@ -103,6 +106,12 @@ public:
     double transportPpq() const { return ppq_.load(); }
     double transportBpm() const { return bpm_.load(); }
     double beatsPerBar() const { return beatsPerBar_.load(); }
+    /// Which tempo the ticks come from, and the tempo in force (section 4).
+    bool songTempoSource() const { return songTempo_.load(); }
+    double tempoInForce() const { return tempo_.load(); }
+    /// The tracker's position, in ticks, and how many ticks a bar holds.
+    int64_t trackerTick() const { return trackerTick_.load(); }
+    int barTicks() const { return barTicks_.load(); }
 
     /// 4-bit levels per channel as last rendered (-1 = DAC off), for meters.
     std::array<std::atomic<int>, 4> channelLevels;
@@ -117,7 +126,8 @@ private:
     void applyHardwareOptions();
     void consumeLink(int n, uint64_t hostFrame, bool hostTimeKnown);
     void placeLinkEvent(const link::LinkEvent& e, int n, uint64_t hostFrame, bool hostTimeKnown);
-    void recordNote(const driver::NoteEvent& e, const driver::Transport& t, int n);
+    void recordNote(const driver::NoteEvent& e, double tickAtEvent);
+    void recordSlots(int ch, double tick);
     void applyRecordMessages();
     void publishInstrumentNames();
     void handleVoiceRequests();
@@ -127,6 +137,7 @@ private:
     Apu apu_;
     render::Renderer renderer_;
     driver::Driver driver_;
+    driver::Clock clock_;
     tracker::Player player_;
     std::vector<driver::NoteEvent> events_, delayed_;
     std::vector<driver::RegWrite> writes_;
@@ -156,7 +167,11 @@ private:
     link::Spsc<tracker::RecordMessage, 1024> recordFifo_;
     std::atomic<bool> recordArm_{ false };
     std::atomic<bool> playing_{ false };
-    std::atomic<double> ppq_{ 0.0 }, bpm_{ 120.0 }, beatsPerBar_{ 4.0 };
+    std::atomic<bool> songTempo_{ false };
+    std::atomic<double> ppq_{ 0.0 }, bpm_{ 120.0 }, beatsPerBar_{ 4.0 }, tempo_{ 120.0 };
+    std::atomic<int64_t> trackerTick_{ 0 };
+    std::atomic<int> barTicks_{ driver::kTicksPerBeat * 4 };
+    bool recWasArmed_ = false;
 
     // scopes
     ScopeBuffers scopes_;
@@ -174,8 +189,8 @@ private:
     std::atomic<float>* pModel_ = nullptr; std::atomic<float>* pMasterL_ = nullptr; std::atomic<float>* pMasterR_ = nullptr;
     std::atomic<float>* pTrim_ = nullptr; std::atomic<float>* pNoise_ = nullptr; std::atomic<float>* pLcd_ = nullptr;
     std::atomic<float>* pBassMod_ = nullptr; std::atomic<float>* pEdges_ = nullptr; std::atomic<float>* pDeclick_ = nullptr;
-    std::atomic<float>* pDeclickMs_ = nullptr; std::atomic<float>* pSoften_ = nullptr; std::atomic<float>* pTickSource_ = nullptr;
-    std::atomic<float>* pTicksPerBeat_ = nullptr; std::atomic<float>* pTickHz_ = nullptr; std::atomic<float>* pLink_ = nullptr;
+    std::atomic<float>* pDeclickMs_ = nullptr; std::atomic<float>* pSoften_ = nullptr; std::atomic<float>* pTempoSource_ = nullptr;
+    std::atomic<float>* pSongTempo_ = nullptr; std::atomic<float>* pNotesOnTick_ = nullptr; std::atomic<float>* pLink_ = nullptr;
 
     juce::String instanceName_ { "ChipBoy 1" };
     juce::String uuid_;

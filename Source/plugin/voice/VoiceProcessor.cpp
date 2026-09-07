@@ -129,7 +129,10 @@ void VoiceProcessor::requestFocus()
 driver::VoiceView VoiceProcessor::view() const
 {
     driver::VoiceView v;
-    if (auto* s = link_.slot()) unpackState(s->state.load(std::memory_order_acquire), v);
+    if (auto* s = link_.slot()) {
+        unpackState(s->state.load(std::memory_order_acquire), v);
+        unpackState2(s->state2.load(std::memory_order_acquire), v);
+    }
     return v;
 }
 

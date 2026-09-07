@@ -268,29 +268,29 @@ void VoiceEditor::buildParams()
         return field(label, std::move(t), Toggle::kHeight, [] { return 84; });
     };
 
-    // the mockup's knobs first, then what the other channel types add
+    // The channel is a tracker row now: instrument, table, level, pan,
+    // transpose and two command slots. Stage 2 draws the slots properly; this
+    // is the same parameter set through the widgets that already exist.
     knob(ids::level, "Level", "Automation lane: Level (0-15, or the instrument's)");
-    grid.envelope.push_back(knob(ids::envVol, "Env vol", "Envelope start volume, or the instrument's"));
-    grid.envelope.push_back(knob(ids::envRate, "Env rate", "Automation lane: Envelope rate"));
     knob(ids::transpose, "Transpose", "Semitones, applied to the period");
-    knob(ids::detune, "Detune", "Raw period units");
-    knob(ids::vibSpeed, "Vib speed", "Ticks per vibrato step, or the instrument's");
-    knob(ids::vibDepth, "Vib depth", "Period units");
     knob(ids::table, "Table", "0 = the instrument's own");
-    knob(ids::arp, "Arp", "A table slot used as an arpeggio");
-    grid.waveOnly.push_back(knob(ids::wave, "Wave", "Wave slot (WAV), 0 = the instrument's"));
-    grid.waveOnly.push_back(knob(ids::frame, "Frame", "Hold one frame (WAV), 0 = automatic"));
-    grid.pu1Only.push_back(knob(ids::sweepRate, "Sweep rate", "PU1 only"));
-    grid.pu1Only.push_back(knob(ids::sweepShift, "Sweep shift", "PU1 only"));
-
-    grid.pulseOnly.push_back(seg(ids::duty, "Duty", { "12", "25", "50", "75", "inst" }));
     StringArray pan;
     pan.add(String(CharPointer_UTF8("\xe2\x80\x93")));   // the mockup shows "off" as a dash
     pan.addArray({ "L", "R", "LR", "inst" });
     seg(ids::pan, "Pan", pan);
-    grid.envelope.push_back(seg(ids::envDir, "Env dir", { "down", "up", "inst" }));
-    grid.pu1Only.push_back(seg(ids::sweepDir, "Sweep dir", { "up", "down", "inst" }));
-    grid.noiseOnly.push_back(seg(ids::lfsr, "LFSR", { "15-bit", "7-bit", "inst" }));
+    {
+        const char* types[2] = { ids::cmd1Type, ids::cmd2Type };
+        const char* xs[2] = { ids::cmd1X, ids::cmd2X };
+        const char* ys[2] = { ids::cmd1Y, ids::cmd2Y };
+        for (int i = 0; i < 2; ++i) {
+            auto c = std::make_unique<ComboBox>();
+            c->addItemList(commandChoices(), 1);
+            cmdAttachments_[size_t(i)] = std::make_unique<ComboBoxParameterAttachment>(param(types[i]), *c);
+            field("CMD" + String(i + 1), std::move(c), kControlHeight, [] { return 90; });
+            knob(xs[i], "x" + String(i + 1), "The command's first argument, 0-255");
+            knob(ys[i], "y" + String(i + 1), "The command's second argument, 0-255");
+        }
+    }
     {
         auto c = std::make_unique<ComboBox>();
         StringArray modes;

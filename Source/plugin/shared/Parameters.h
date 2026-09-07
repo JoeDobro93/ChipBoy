@@ -5,6 +5,7 @@
 // "use the instrument's value", so automation overrides only when drawn.
 #pragma once
 
+#include "core/Bank/Bank.h"
 #include "core/Driver/Driver.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -27,9 +28,9 @@ constexpr const char* volEdges = "vol_edges";
 constexpr const char* declick = "declick";
 constexpr const char* declickMs = "declick_ms";
 constexpr const char* soften = "soften";
-constexpr const char* tickSource = "tick_source";
-constexpr const char* ticksPerBeat = "ticks_per_beat";
-constexpr const char* tickHz = "tick_hz";
+constexpr const char* tempoSource = "tempo_source";
+constexpr const char* songTempo = "song_tempo";
+constexpr const char* notesOnTick = "notes_on_tick";
 constexpr const char* linkMode = "link";
 constexpr const char* hexDisplay = "hex";
 // per channel, prefixed "chN_" (N = 1..4) in the main plugin, "v_" in the Voice plugin
@@ -38,27 +39,28 @@ constexpr const char* instrument = "instrument";
 constexpr const char* table = "table";
 constexpr const char* level = "level";
 constexpr const char* pan = "pan";
-constexpr const char* wave = "wave";
-constexpr const char* frame = "frame";
 constexpr const char* transpose = "transpose";
-constexpr const char* detune = "detune";
-constexpr const char* vibSpeed = "vib_speed";
-constexpr const char* vibDepth = "vib_depth";
-constexpr const char* arp = "arp";
-constexpr const char* envVol = "env_vol";
-constexpr const char* envDir = "env_dir";
-constexpr const char* envRate = "env_rate";
-constexpr const char* duty = "duty";
-constexpr const char* sweepRate = "sweep_rate";
-constexpr const char* sweepDir = "sweep_dir";
-constexpr const char* sweepShift = "sweep_shift";
-constexpr const char* lfsr = "lfsr";
+constexpr const char* cmd1Type = "cmd1_type";
+constexpr const char* cmd1X = "cmd1_x";
+constexpr const char* cmd1Y = "cmd1_y";
+constexpr const char* cmd2Type = "cmd2_type";
+constexpr const char* cmd2X = "cmd2_x";
+constexpr const char* cmd2Y = "cmd2_y";
 constexpr const char* liveFollow = "live_follow";
 constexpr const char* velocityMode = "velocity";
 constexpr const char* keyswitch = "keyswitch";
 } // namespace ids
 
 enum class ChannelKind { Pulse1, Pulse2, Wave, Noise, Any };
+
+/// The command lane's choices: none, then the letters a channel can carry.
+/// H is missing on purpose -- hop only means anything inside a table.
+juce::StringArray commandChoices();
+bank::Cmd cmdFromChoice(int index);
+int       choiceFromCmd(bank::Cmd c);
+/// "vol 12 . down 3": what the two arguments mean for this letter, for the
+/// window and the tooltips.
+juce::String commandArgText(const bank::Command& c);
 
 juce::String channelPrefix(int channel);   ///< "ch1_" .. "ch4_"
 juce::String channelParamId(int channel, const char* id);
@@ -77,21 +79,10 @@ struct ChannelParamCache {
     std::atomic<float>* table = nullptr;
     std::atomic<float>* level = nullptr;
     std::atomic<float>* pan = nullptr;
-    std::atomic<float>* wave = nullptr;
-    std::atomic<float>* frame = nullptr;
     std::atomic<float>* transpose = nullptr;
-    std::atomic<float>* detune = nullptr;
-    std::atomic<float>* vibSpeed = nullptr;
-    std::atomic<float>* vibDepth = nullptr;
-    std::atomic<float>* arp = nullptr;
-    std::atomic<float>* envVol = nullptr;
-    std::atomic<float>* envDir = nullptr;
-    std::atomic<float>* envRate = nullptr;
-    std::atomic<float>* duty = nullptr;
-    std::atomic<float>* sweepRate = nullptr;
-    std::atomic<float>* sweepDir = nullptr;
-    std::atomic<float>* sweepShift = nullptr;
-    std::atomic<float>* lfsr = nullptr;
+    std::atomic<float>* cmdType[2] = { nullptr, nullptr };
+    std::atomic<float>* cmdX[2] = { nullptr, nullptr };
+    std::atomic<float>* cmdY[2] = { nullptr, nullptr };
     std::atomic<float>* liveFollow = nullptr;
     std::atomic<float>* velocityMode = nullptr;
     std::atomic<float>* keyswitch = nullptr;

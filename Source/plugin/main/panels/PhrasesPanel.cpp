@@ -196,16 +196,18 @@ void PhrasesPanel::hexChanged()
 
 void PhrasesPanel::tick()
 {
+    // The position is counted in ticks, so it reads the same whichever tempo
+    // source is in force (docs/COMMANDS_AND_TEMPO.md section 4).
     const auto s = processor.song();
     const bool playing = processor.transportPlaying();
-    const double ppq = std::max(0.0, processor.transportPpq());
-    const double bpb = std::max(1.0, processor.beatsPerBar());
+    const int64_t tick = std::max<int64_t>(0, processor.trackerTick());
+    const int barTicks = std::max(1, processor.barTicks());
     const int spb = s ? std::max(1, int(s->stepsPerBar)) : 16;
-    const int bar = int(std::floor(ppq / bpb));
-    const double inBar = ppq - bar * bpb;
-    const int step = int(std::floor(inBar / bpb * spb));
-    const int beat = int(std::floor(inBar));
-    const int stepInBeat = int(std::floor((inBar - beat) * spb / bpb));
+    const int bar = int(tick / barTicks);
+    const int inBar = int(tick % barTicks);
+    const int step = inBar * spb / barTicks;
+    const int beat = inBar / driver::kTicksPerBeat;
+    const int stepInBeat = (inBar - beat * driver::kTicksPerBeat) * spb / barTicks;
     pos_.setText(String(bar + 1) + "." + String(beat + 1) + "." + String(stepInBeat + 1));
     playLed_.setOn(playing);
     playText_.setText(playing ? "playing" : "stopped");

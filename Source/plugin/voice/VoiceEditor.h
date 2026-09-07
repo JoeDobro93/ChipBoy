@@ -80,6 +80,7 @@ private:
     juce::Viewport paramsViewport_;
     std::unique_ptr<ParamsGrid> params_;
     std::unique_ptr<juce::ComboBoxParameterAttachment> velocityAttachment_;
+    std::array<std::unique_ptr<juce::ComboBoxParameterAttachment>, 2> cmdAttachments_;
     int channelShown_ = -1;
 
     // painted directly

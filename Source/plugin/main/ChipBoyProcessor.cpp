@@ -34,14 +34,14 @@ ChipBoyProcessor::ChipBoyProcessor()
     pModel_ = g(ids::model); pMasterL_ = g(ids::masterL); pMasterR_ = g(ids::masterR); pTrim_ = g(ids::trim);
     pNoise_ = g(ids::noise); pLcd_ = g(ids::lcd); pBassMod_ = g(ids::bassMod); pEdges_ = g(ids::volEdges);
     pDeclick_ = g(ids::declick); pDeclickMs_ = g(ids::declickMs); pSoften_ = g(ids::soften);
-    pTickSource_ = g(ids::tickSource); pTicksPerBeat_ = g(ids::ticksPerBeat); pTickHz_ = g(ids::tickHz); pLink_ = g(ids::linkMode);
+    pTempoSource_ = g(ids::tempoSource); pSongTempo_ = g(ids::songTempo); pNotesOnTick_ = g(ids::notesOnTick); pLink_ = g(ids::linkMode);
 
     events_.reserve(2048); delayed_.reserve(2048); writes_.reserve(8192);
     pendingLink_.reserve(kMaxPendingLink); pendingScratch_.reserve(kMaxPendingLink);
     cycleAt_ = [this](uint64_t f) { return renderer_.cycleForFrame(f); };
 
     publishBank(std::make_shared<const bank::Bank>(bank::Bank::factory()));
-    publishSong(std::make_shared<const tracker::Song>());
+    publishSong(std::make_shared<tracker::Song>());
     startTimer(kTimerMs);
 }
 
@@ -62,9 +62,10 @@ void ChipBoyProcessor::publishBank(std::shared_ptr<const bank::Bank> b)
     bankPtr_.store(bankShared_.get(), std::memory_order_release);
 }
 
-void ChipBoyProcessor::publishSong(std::shared_ptr<const tracker::Song> s)
+void ChipBoyProcessor::publishSong(std::shared_ptr<tracker::Song> s)
 {
     if (!s) return;
+    tracker::buildTempoMap(*s);          // the T cells, at their ticks, for the clock
     if (songShared_) retired_.push_back(songShared_);
     while (retired_.size() > 32) retired_.pop_front();
     songShared_ = std::move(s);
@@ -96,6 +97,7 @@ void ChipBoyProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     const Console console = model == 1 ? Console::CGB : Console::DMG;
     renderer_.prepare(sampleRate, AnalogModel::forConsole(console), std::max(blockSize_, 4096));
     driver_.prepare(sampleRate, bankPtr_.load(), songPtr_.load(), console);
+    clock_.prepare(sampleRate);
     player_.prepare(sampleRate);
     apu_.reset();
     frames_ = 0; prevBlock_ = 0;
@@ -216,22 +218,22 @@ void ChipBoyProcessor::consumeLink(int n, uint64_t hostFrame, bool hostTimeKnown
 
 /* ------------------------------------------------------------ record */
 
-void ChipBoyProcessor::recordNote(const driver::NoteEvent& e, const driver::Transport& t, int n)
+/// Recording (docs/COMMANDS_AND_TEMPO.md section 5): the Player decides what a
+/// cell holds; this puts it on the queue for the message thread.
+void ChipBoyProcessor::recordNote(const driver::NoteEvent& e, double tickAtEvent)
 {
-    int bar = 0, step = 0; double at = 0.0;
-    if (!player_.quantise(t, e.offset, uint32_t(n), bar, step, at)) return;
+    const int ch = e.channel & 3;
+    const auto& p = driver_.params(ch);
     tracker::RecordMessage m;
-    m.channel = uint8_t(e.channel & 3); m.bar = uint16_t(std::clamp(bar, 0, 65535)); m.step = uint8_t(std::clamp(step, 0, tracker::kSteps - 1));
-    if (e.kind == driver::NoteEvent::NoteOff) { m.cell.note = tracker::kNoteOff; recordFifo_.push(m); return; }
-    const auto& p = driver_.params(e.channel & 3);
-    m.cell.note = e.a; m.cell.inst = p.instrument; m.cell.table = p.table;
-    int slot = 0;
-    auto put = [&](bank::Command c) { if (slot == 0) m.cell.cmd1 = c; else if (slot == 1) m.cell.cmd2 = c; ++slot; };
-    if (p.vibDepth != 255 || p.vibSpeed != 255) put({ bank::Cmd::V, int16_t(p.vibSpeed == 255 ? 4 : p.vibSpeed), int16_t(p.vibDepth == 255 ? 0 : p.vibDepth), 0 });
-    if (p.detune != 0) put({ bank::Cmd::P, p.detune, 0, 0 });
-    if (p.pan != 255) put({ bank::Cmd::O, int16_t(p.pan & 3), 0, 0 });
-    if (p.envVol != 255) put({ bank::Cmd::A, int16_t(p.envVol), int16_t(p.envRate == 255 ? 0 : p.envRate), int16_t(p.envDir == 255 ? 0 : p.envDir) });
-    recordFifo_.push(m);
+    if (player_.recordNote(ch, tickAtEvent, e.a, e.kind == driver::NoteEvent::NoteOff, p.instrument, p.table,
+                           driver_.slot(ch, 0), driver_.slot(ch, 1), m))
+        recordFifo_.push(m);
+}
+
+void ChipBoyProcessor::recordSlots(int ch, double tick)
+{
+    tracker::RecordMessage m;
+    if (player_.recordSlots(ch, tick, driver_.slot(ch, 0), driver_.slot(ch, 1), m)) recordFifo_.push(m);
 }
 
 void ChipBoyProcessor::applyRecordMessages()
@@ -250,7 +252,8 @@ void ChipBoyProcessor::applyRecordMessages()
             chain[m.bar] = slot;
         }
         auto& cell = copy->phrases[size_t(slot - 1)].steps[size_t(m.step & 15)];
-        if (m.cell.note == tracker::kNoteOff) { if (cell.note == 0) cell.note = tracker::kNoteOff; }
+        if (m.slotsOnly) { cell.cmd1 = m.cell.cmd1; cell.cmd2 = m.cell.cmd2; }
+        else if (m.cell.note == tracker::kNoteOff) { if (cell.note == 0) cell.note = tracker::kNoteOff; }
         else cell = m.cell;
     }
     if (copy) publishSong(std::move(copy));
@@ -343,8 +346,10 @@ void ChipBoyProcessor::tapScopes(int n, const float* L, const float* R)
     scopes_.latestFrame.store(frames_ + uint64_t(n), std::memory_order_release);
     for (int ch = 0; ch < 4; ++ch) {
         const uint64_t st = packState(driver_.view(ch));
+        const uint64_t st2 = packState2(driver_.view(ch));
         scopes_.state[size_t(ch)].store(st, std::memory_order_release);
-        if (owned & (1u << ch)) r->slots[ch].state.store(st, std::memory_order_release);
+        scopes_.state2[size_t(ch)].store(st2, std::memory_order_release);
+        if (owned & (1u << ch)) { r->slots[ch].state.store(st, std::memory_order_release); r->slots[ch].state2.store(st2, std::memory_order_release); }
     }
     scopes_.mix.store(uint32_t(driver_.nr50()) | (uint32_t(driver_.nr51()) << 8) | (1u << 16), std::memory_order_release);
 }
@@ -366,11 +371,9 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     driver::GlobalParams g;
     g.masterL = uint8_t(std::clamp(paramInt(pMasterL_, 7), 0, 7));
     g.masterR = uint8_t(std::clamp(paramInt(pMasterR_, 7), 0, 7));
-    g.tick = driver::TickSource(std::clamp(paramInt(pTickSource_), 0, 2));
-    g.ticksPerBeat = uint8_t(std::clamp(paramInt(pTicksPerBeat_, 24), 1, 48));
-    g.customHz = pTickHz_ ? double(pTickHz_->load()) : 60.0;
     g.volumeAtEdges = paramInt(pEdges_) != 0;
     driver_.setGlobal(g);
+    driver_.setNotesOnTick(paramInt(pNotesOnTick_) != 0);
     {
         const uint32_t solo = soloMask_.load(), mute = muteMask_.load();
         driver_.setGateMask((solo ? solo : 15u) & ~mute & 15u);
@@ -379,23 +382,50 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     // --- transport ------------------------------------------------------
     driver::Transport t;
     uint64_t hostFrame = kNoHostFrame;
-    double beatsPerBar = 4.0;
     if (auto* ph = getPlayHead()) {
         if (const auto pos = ph->getPosition()) {
             t.playing = pos->getIsPlaying();
             const auto bpm = pos->getBpm(); const auto ppq = pos->getPpqPosition();
             t.valid = bpm.hasValue() && ppq.hasValue();
             t.bpm = bpm.orFallback(120.0); t.ppq = ppq.orFallback(0.0);
-            if (const auto ts = pos->getTimeSignature()) if (ts->numerator > 0 && ts->denominator > 0) beatsPerBar = ts->numerator * 4.0 / ts->denominator;
+            if (const auto secs = pos->getTimeInSeconds()) { t.seconds = *secs; t.timeValid = true; }
+            if (const auto ts = pos->getTimeSignature()) if (ts->numerator > 0 && ts->denominator > 0) t.beatsPerBar = ts->numerator * 4.0 / ts->denominator;
             if (const auto tis = pos->getTimeInSamples()) if (*tis >= 0) hostFrame = uint64_t(*tis);
         }
     }
     const bool link = linkActive_;
-    const double ppqPerFrame = t.bpm / 60.0 / sampleRate_;
-    if (link && t.valid) t.ppq -= (prevBlock_ > 0 ? prevBlock_ : n) * ppqPerFrame;   // one block behind (11.4)
-    player_.setBeatsPerBar(beatsPerBar);
-    player_.setTicksPerBeat(g.ticksPerBeat);
-    playing_.store(t.playing); ppq_.store(t.ppq); bpm_.store(t.bpm); beatsPerBar_.store(beatsPerBar);
+    const int behind = prevBlock_ > 0 ? prevBlock_ : n;
+    if (link && t.valid) {
+        // One block behind (11.4), in both of the transport's units.
+        t.ppq -= behind * (t.bpm / 60.0 / sampleRate_);
+        t.seconds -= behind / sampleRate_;
+    }
+
+    // --- the clock: where the ticks are, and where the tracker is --------
+    driver::ClockConfig cc;
+    cc.source = paramInt(pTempoSource_) != 0 ? driver::TempoSource::Song : driver::TempoSource::Host;
+    cc.songTempo = double(std::clamp(paramInt(pSongTempo_, 120), 40, 255));
+    cc.songStartSeconds = song ? song->songStartSeconds : 0.0;
+    cc.beatsPerBar = song ? song->beatsPerBar : 4.0;
+    // A T slot in force is the song's tempo from now on; the lowest channel
+    // holding one wins, as two lanes cannot both be the timeline.
+    for (int ch = 0; ch < 4; ++ch) {
+        bool found = false;
+        for (int i = 0; i < 2; ++i) {
+            const auto& c = driver_.slot(ch, i);
+            if (c.cmd == bank::Cmd::T) { cc.songTempo = double(std::clamp<int>(c.a, 40, 255)); found = true; break; }
+        }
+        if (found) break;
+    }
+    clock_.setConfig(cc);
+    if (song && !song->tempoMap.empty()) clock_.setTempoMap(song->tempoMap.data(), song->tempoMap.size());
+    else clock_.setTempoMap(nullptr, 0);
+    clock_.process(t, uint32_t(n), frames_);
+    player_.setBarTicks(clock_.barTicks());
+    playing_.store(t.playing); ppq_.store(t.ppq); bpm_.store(t.bpm);
+    beatsPerBar_.store(clock_.beatsPerBar());
+    songTempo_.store(cc.source == driver::TempoSource::Song); tempo_.store(clock_.bpm());
+    trackerTick_.store(clock_.tickAtBlockStart()); barTicks_.store(clock_.barTicks());
 
     // --- events ---------------------------------------------------------
     events_.clear();
@@ -431,6 +461,11 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
             driver_.setParams(ch, channelParams[size_t(ch)].read(kindOf(ch)));
         }
         driver_.setLocalInstrument(ch, (owned & (1u << ch)) && localOn_[size_t(ch)] ? &localInst_[size_t(ch)] : nullptr);
+        // A G slot is the channel's groove; the Player owns the timing.
+        uint8_t groove = tracker::kGrooveNone;
+        for (int i = 0; i < 2; ++i) if (driver_.params(ch).cmd[i].cmd == bank::Cmd::G) groove = uint8_t(std::clamp<int>(driver_.params(ch).cmd[i].a, 0, 16));
+        player_.setGrooveOverride(ch, groove);
+        driver_.setViewGroove(ch, player_.groove(ch));
     }
 
     // --- the tracker ----------------------------------------------------
@@ -439,11 +474,19 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     const bool rec = recordArm_.load() && t.playing && t.valid;
     player_.setMuteMask(rec ? trackerMask : 0);
     driver_.setRecording(rec);
-    player_.process(t, uint32_t(n), events_);
-    if (rec)
+    player_.process(clock_.ticks(), clock_.tickCount(), t.playing && t.valid, events_);
+    if (rec) {
+        // Ticks are the recorder's ruler too: a note lands on the step nearest
+        // the tick it arrived on, and a slot change on the step it happened in.
+        const double tickPerFrame = clock_.bpm() * driver::kTicksPerBeat / 60.0 / sampleRate_;
+        const double tick0 = double(clock_.tickAtBlockStart());
+        if (!recWasArmed_) player_.resetRecord();
+        for (int ch = 0; ch < 4; ++ch) if (trackerMask & (1u << ch)) recordSlots(ch, tick0);
         for (const auto& e : events_)
             if (e.source == driver::NoteEvent::Midi && (trackerMask & (1u << (e.channel & 3))) && (e.kind == driver::NoteEvent::NoteOn || e.kind == driver::NoteEvent::NoteOff))
-                recordNote(e, t, n);
+                recordNote(e, tick0 + e.offset * tickPerFrame);
+    }
+    recWasArmed_ = rec;
 
     std::stable_sort(events_.begin(), events_.end(), [](const driver::NoteEvent& a, const driver::NoteEvent& b) { return a.offset < b.offset; });
     for (const auto& e : events_) {
@@ -453,7 +496,7 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
 
     // --- drive the chip -------------------------------------------------
     writes_.clear();
-    driver_.process(events_.data(), events_.size(), uint32_t(n), frames_, t, cycleAt_, writes_);
+    driver_.process(events_.data(), events_.size(), uint32_t(n), frames_, clock_.ticks(), clock_.tickCount(), cycleAt_, writes_);
     applyWrites();
     apu_.runTo(std::max(renderer_.cycleForFrame(frames_ + uint64_t(n)), apu_.cycle()));
     for (int ch = 0; ch < 4; ++ch) channelLevels[size_t(ch)].store(apu_.dacOn(ch) ? apu_.level(ch) : -1);
@@ -534,7 +577,7 @@ void ChipBoyProcessor::setStateInformation(const void* data, int size)
     const ValueTree params = root.getChildWithName(apvts.state.getType());
     if (params.isValid()) apvts.replaceState(params);
     if (root.hasProperty("bank")) { auto b = std::make_shared<bank::Bank>(); if (bankFromJson(root["bank"].toString(), *b)) publishBank(b); }
-    if (root.hasProperty("song")) { auto s = std::make_shared<tracker::Song>(); if (songFromJson(root["song"].toString(), *s)) publishSong(s); }
+    if (root.hasProperty("song")) { auto s = std::make_shared<tracker::Song>(); if (songFromJson(root["song"].toString(), *s)) publishSong(std::move(s)); }
 }
 
 } // namespace chipboy::plugin

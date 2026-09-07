@@ -83,7 +83,7 @@ int main()
         if (b % 2 == 0) { main.processBlock(mb, mm); voice.processBlock(vb, vm); }
         else            { voice.processBlock(vb, vm); main.processBlock(mb, mm); }
         if (b > 4 && b < 38 && main.channelLevels[1].load() >= 0) pu2Sounded = true;
-        if (peak(vb) != 0.0f) voiceSilent = false;
+        if (peak(vb) > 0.0f) voiceSilent = false;
         if (b > 6 && b < 38) mainPeak = std::max(mainPeak, peak(mb));
         pump(2);
     }

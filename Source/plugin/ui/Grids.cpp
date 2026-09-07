@@ -24,28 +24,31 @@ namespace {
 // ---------------------------------------------------------------------------
 struct CmdInfo { char letter; const char* name; const char* args; int nargs; int lo[3]; int hi[3]; int def[3]; };
 
-constexpr CmdInfo kCmds[15] = {
-    { 'A', "Envelope",      "vol, rate, dir",           3, { 0, 0, 0 },     { 15, 7, 1 },   { 12, 3, 0 } },
-    { 'C', "Chord",         "a, b semitones",           2, { -60, -60, 0 }, { 60, 60, 0 },  { 3, 7, 0 } },
+constexpr CmdInfo kCmds[18] = {
+    { 'A', "Table",         "slot 1-64, 0 stops",       1, { 0, 0, 0 },     { 64, 0, 0 },   { 1, 0, 0 } },
+    { 'C', "Chord",         "x, y semitones",           2, { 0, 0, 0 },     { 60, 60, 0 },  { 3, 7, 0 } },
     { 'D', "Delay",         "ticks",                    1, { 0, 0, 0 },     { 255, 0, 0 },  { 3, 0, 0 } },
+    { 'E', "Envelope",      "vol, 0-7 down / 8-15 up",  2, { 0, 0, 0 },     { 15, 15, 0 },  { 12, 3, 0 } },
     { 'F', "Frame",         "1-16",                     1, { 1, 0, 0 },     { 16, 0, 0 },   { 2, 0, 0 } },
+    { 'G', "Groove",        "slot 1-16, 0 straight",    1, { 0, 0, 0 },     { 16, 0, 0 },   { 1, 0, 0 } },
     { 'H', "Hop",           "step 1-16, 0 stops",       1, { 0, 0, 0 },     { 16, 0, 0 },   { 1, 0, 0 } },
     { 'K', "Kill",          "after ticks",              1, { 0, 0, 0 },     { 255, 0, 0 },  { 4, 0, 0 } },
     { 'L', "Slide",         "rate 0-15",                1, { 0, 0, 0 },     { 15, 0, 0 },   { 8, 0, 0 } },
     { 'M', "Master vol",    "L, R 0-7",                 2, { 0, 0, 0 },     { 7, 7, 0 },    { 5, 5, 0 } },
     { 'O', "Pan",           "off / L / R / LR",         1, { 0, 0, 0 },     { 3, 0, 0 },    { 1, 0, 0 } },
-    { 'P', "Pitch offset",  "-128..127 period",         1, { -128, 0, 0 },  { 127, 0, 0 },  { -12, 0, 0 } },
-    { 'R', "Retrigger",     "every N ticks",            1, { 0, 0, 0 },     { 255, 0, 0 },  { 3, 0, 0 } },
-    { 'S', "Sweep / shift", "signed",                   1, { -128, 0, 0 },  { 127, 0, 0 },  { -2, 0, 0 } },
+    { 'P', "Pitch offset",  "0-255, centre 128",        1, { 0, 0, 0 },     { 255, 0, 0 },  { 116, 0, 0 } },
+    { 'R', "Retrigger",     "vol step, every y ticks",  2, { 0, 0, 0 },     { 255, 255, 0 },{ 0, 3, 0 } },
+    { 'S', "Sweep",         "rate, shift (x>=128 down)",2, { 0, 0, 0 },     { 255, 7, 0 },  { 2, 2, 0 } },
+    { 'T', "Tempo",         "BPM 40-255",               1, { 40, 0, 0 },    { 255, 0, 0 },  { 120, 0, 0 } },
     { 'V', "Vibrato",       "speed 1-15, depth 0-15",   2, { 1, 0, 0 },     { 15, 15, 0 },  { 4, 6, 0 } },
-    { 'W', "Wave",          "1-64",                     1, { 1, 0, 0 },     { 64, 0, 0 },   { 2, 0, 0 } },
-    { 'Z', "Random arg",    "max, for the last command",1, { 0, 0, 0 },     { 255, 0, 0 },  { 15, 0, 0 } },
+    { 'W', "Wave",          "duty 0-3, or wave 1-64",   1, { 0, 0, 0 },     { 64, 0, 0 },   { 1, 0, 0 } },
+    { 'Z', "Random arg",    "max, for the other slot",  1, { 0, 0, 0 },     { 255, 0, 0 },  { 15, 0, 0 } },
 };
 
 const CmdInfo* cmdInfo(bank::Cmd c)
 {
-    const int i = int(c) - 1;   // Cmd::A == 1 .. Cmd::Z == 15, the table's order
-    return i >= 0 && i < 15 ? &kCmds[i] : nullptr;
+    const int i = int(c) - 1;   // Cmd::A == 1 .. Cmd::Z == 18, the table's order
+    return i >= 0 && i < bank::kCmdCount ? &kCmds[i] : nullptr;
 }
 
 int cmdArg(const bank::Command& c, int i) { return i == 0 ? c.a : i == 1 ? c.b : c.c; }
@@ -74,7 +77,7 @@ juce::String cmdText(const bank::Command& c)
         const int v = cmdArg(c, i);
         if (i > 0) s += ",";
         if (c.cmd == bank::Cmd::O) s += v == 0 ? juce::String::charToString(0x2013) : v == 1 ? juce::String("L") : v == 2 ? juce::String("R") : juce::String("LR");
-        else if (c.cmd == bank::Cmd::A && i == 2) s += juce::String::charToString(v != 0 ? juce::juce_wchar(0x2191) : juce::juce_wchar(0x2193));
+        else if (c.cmd == bank::Cmd::P && i == 0) s += juce::String(v - 128);   // P is signed around 128
         else s += juce::String(v);
     }
     return s;
@@ -232,7 +235,7 @@ bool wheelCmd(bank::Command& c, int delta, int arg)
 void showCommandPalette(juce::Component& target, juce::Rectangle<int> cellArea, std::function<void(bool clear, bank::Cmd)> done)
 {
     juce::PopupMenu m;
-    for (int i = 0; i < 15; ++i) {
+    for (int i = 0; i < bank::kCmdCount; ++i) {
         juce::PopupMenu::Item item(juce::String::charToString(juce::juce_wchar(kCmds[i].letter)) + "   " + kCmds[i].name);
         item.itemID = i + 1;
         item.shortcutKeyDescription = kCmds[i].args;
