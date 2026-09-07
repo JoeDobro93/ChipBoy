@@ -32,6 +32,29 @@ T* findChild(juce::Component* c)
     return nullptr;
 }
 
+void set(juce::AudioProcessorValueTreeState& state, const juce::String& id, float value)
+{
+    if (auto* p = state.getParameter(id)) p->setValueNotifyingHost(p->convertTo0to1(value));
+    else std::printf("no parameter %s\n", id.toRawUTF8());
+}
+
+/// One command in force per channel, so the strips show a slot doing
+/// something rather than four empty rows (docs/COMMANDS_AND_TEMPO.md 3).
+void setCommands(ChipBoyProcessor& proc)
+{
+    auto slot = [&proc](int ch, int which, chipboy::bank::Cmd cmd) {
+        const auto def = defaultCommand(cmd);
+        set(proc.apvts, channelParamId(ch, which == 0 ? ids::cmd1Type : ids::cmd2Type), float(choiceFromCmd(cmd)));
+        set(proc.apvts, channelParamId(ch, which == 0 ? ids::cmd1X : ids::cmd2X), float(def.a));
+        set(proc.apvts, channelParamId(ch, which == 0 ? ids::cmd1Y : ids::cmd2Y), float(def.b));
+    };
+    slot(0, 0, chipboy::bank::Cmd::V);   // vibrato on the lead
+    slot(1, 0, chipboy::bank::Cmd::E);   // an envelope over the bass
+    slot(2, 0, chipboy::bank::Cmd::W);   // another wave under the pad
+    slot(3, 0, chipboy::bank::Cmd::R);   // a retrigger on the drum
+    slot(3, 1, chipboy::bank::Cmd::O);
+}
+
 struct FakePlayHead : juce::AudioPlayHead {
     int64_t frame = 0;
     juce::Optional<PositionInfo> getPosition() const override
@@ -74,6 +97,7 @@ int main(int argc, char** argv)
     FakePlayHead ph;
     proc.setPlayHead(&ph);
     proc.prepareToPlay(48000.0, 512);
+    setCommands(proc);
     play(proc, ph, 200);
 
     std::unique_ptr<juce::AudioProcessorEditor> ed(proc.createEditor());
@@ -102,6 +126,9 @@ int main(int argc, char** argv)
     VoiceProcessor voice;
     voice.prepareToPlay(48000.0, 512);
     voice.setTarget(proc.instanceUuid(), 1);
+    set(voice.apvts, juce::String("v_") + ids::cmd1Type, float(choiceFromCmd(chipboy::bank::Cmd::V)));
+    set(voice.apvts, juce::String("v_") + ids::cmd1X, 4.0f);
+    set(voice.apvts, juce::String("v_") + ids::cmd1Y, 6.0f);
     pump(600);
     std::unique_ptr<juce::AudioProcessorEditor> ved(voice.createEditor());
     ved->setOpaque(true);
