@@ -224,7 +224,7 @@ void TablesPanel::resized()
     auto top = area.removeFromTop(kTopRow);
     name_.setBounds(top.removeFromLeft(220).withHeight(NameField::kHeight));
     top.removeFromLeft(10);
-    stepRate_.setBounds(top.removeFromRight(150));
+    stepRate_.setBounds(top.removeFromRight(250));
     stepRateLabel_.setBounds(top.removeFromRight(70));
     used_.setBounds(top);
     area.removeFromTop(6);
