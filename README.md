@@ -15,6 +15,8 @@ Sound design follows LSDj's vocabulary — instruments, tables, waves and frames
 with values shown in base 10 instead of hex, and the same hardware constraints behind
 them.
 
+![The ChipBoy window](docs/screenshots/main-instrument.png)
+
 ## Two plugins
 
 | | |
@@ -98,6 +100,8 @@ it), and `chipboy_linktest` runs both plugins in one process through a link regi
 checks the whole path (`ctest --test-dir build -C Release -R linktest`).
 
 ## Playing it
+
+![The Phrases tab](docs/screenshots/main-phrases.png)
 
 1. Put **ChipBoy** on a track and play. PU1 answers every MIDI channel (omni); PU2, WAV
    and NOI answer MIDI channels 2, 3 and 4. Change any channel's source in its strip.

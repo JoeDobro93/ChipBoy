@@ -20,6 +20,11 @@
 
 namespace chipboy::ui {
 
+namespace { bool gOffscreenRefresh = false; }
+void ScopeView::setOffscreenRefresh(bool on) { gOffscreenRefresh = on; }
+bool ScopeView::offscreenRefresh() { return gOffscreenRefresh; }
+
+
 namespace {
 
 constexpr int kFps = 30;
@@ -138,7 +143,7 @@ struct ScopeView::Impl : juce::Timer {
 
     void timerCallback() override
     {
-        if (frozen || !owner.isShowing()) return;
+        if (frozen || (!owner.isShowing() && !ScopeView::offscreenRefresh())) return;
         showChrome(chrome && owner.isMouseOver(true));
         if (src.ring == nullptr) return;
         const uint32_t count = src.ring->snapshot(buf.data(), uint32_t(buf.size()));
@@ -352,7 +357,7 @@ struct MasterScope::Impl : juce::Timer {
 
     void timerCallback() override
     {
-        if (frozen || !owner.isShowing() || ring == nullptr) return;
+        if (frozen || (!owner.isShowing() && !ScopeView::offscreenRefresh()) || ring == nullptr) return;
         n = ring->snapshot(left.data(), right.data(), wantedFrames());
         clipped = false;
         for (uint32_t i = 0; i < n; ++i) if (std::abs(left[i]) > 4.0f || std::abs(right[i]) > 4.0f) { clipped = true; break; }
@@ -449,22 +454,33 @@ void RegisterLine::paint(juce::Graphics& g)
 {
     driver::VoiceView v;
     link::unpackState(state_, v);
-    const auto font = Fonts::mono(10.5f).withExtraKerningFactor(0.02f);
-    g.setFont(font);
     const int first = ch_ == 0 || ch_ == 2 ? 0 : 1;   // PU2 and NOI have no NRx0
     const juce::String dot = " " + juce::String::charToString(0x00b7) + " ";
-    float x = 0.0f;
-    const auto b = getLocalBounds();
-    auto put = [&](const juce::String& text, juce::Colour c) {
-        const float w = draw::textWidth(font, text);
-        g.setColour(c);
-        g.drawText(text, juce::Rectangle<float>(x, 0.0f, w + 2.0f, float(b.getHeight())), juce::Justification::centredLeft, false);
-        x += w;
-    };
+    std::vector<std::pair<juce::String, juce::Colour>> tokens;
     for (int i = first; i < 5; ++i) {
-        if (i > first) put(dot, colours::textDim);
-        put("NR" + juce::String(ch_ + 1) + juce::String(i), colours::textMute);
-        put(" " + ValueFormat::byte(v.regs[i]), colours::textDim);
+        if (i > first) tokens.emplace_back(dot, colours::textDim);
+        tokens.emplace_back("NR" + juce::String(ch_ + 1) + juce::String(i), colours::textMute);
+        tokens.emplace_back(" " + ValueFormat::byte(v.regs[i]), v.active ? colours::text : colours::textMute);
+    }
+    // Fit the whole line: five registers do not fit a strip at 10.5 px, so
+    // the font shrinks rather than the line being cut.
+    auto font = Fonts::mono(10.5f).withExtraKerningFactor(0.02f);
+    float total = 0.0f;
+    for (const auto& t : tokens) total += draw::textWidth(font, t.first);
+    const auto b = getLocalBounds();
+    const float avail = float(b.getWidth()) - 2.0f;
+    if (total > avail && total > 0.0f) {
+        font = Fonts::mono(std::max(7.5f, 10.5f * avail / total)).withExtraKerningFactor(0.0f);
+        total = 0.0f;
+        for (const auto& t : tokens) total += draw::textWidth(font, t.first);
+    }
+    g.setFont(font);
+    float x = 0.0f;
+    for (const auto& t : tokens) {
+        const float w = draw::textWidth(font, t.first);
+        g.setColour(t.second);
+        g.drawText(t.first, juce::Rectangle<float>(x, 0.0f, w + 2.0f, float(b.getHeight())), juce::Justification::centredLeft, false);
+        x += w;
     }
 }
 

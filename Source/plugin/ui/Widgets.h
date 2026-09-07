@@ -290,6 +290,9 @@ public:
     void setLineWidth(float px);
     void setChrome(bool on);            ///< the trace / zoom controls along the bottom edge
     void setFrozen(bool frozen);        ///< stop redrawing (hidden tab)
+    /// Tools that snapshot editors without a window: keep the timers running.
+    static void setOffscreenRefresh(bool on);
+    static bool offscreenRefresh();
     void setGround(juce::Colour ground, juce::Colour grid, juce::Colour border);   ///< any ground (the visualizer's black); setLcdGround picks the two presets
     void setIdleDim(bool on);           ///< dim the picture while the channel is silent (default on; the visualizer turns it off)
     Trace trace() const; int periods() const;

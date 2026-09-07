@@ -5,6 +5,7 @@
 //   chipboy_uishot <output folder>
 #include "plugin/main/ChipBoyProcessor.h"
 #include "plugin/voice/VoiceProcessor.h"
+#include "plugin/ui/Widgets.h"
 
 #include <cstdio>
 
@@ -68,6 +69,7 @@ int main(int argc, char** argv)
     const juce::File outDir = juce::File::getCurrentWorkingDirectory().getChildFile(argc > 1 ? argv[1] : "shots");
     outDir.createDirectory();
 
+    chipboy::ui::ScopeView::setOffscreenRefresh(true);
     ChipBoyProcessor proc;
     FakePlayHead ph;
     proc.setPlayHead(&ph);
@@ -76,7 +78,9 @@ int main(int argc, char** argv)
 
     std::unique_ptr<juce::AudioProcessorEditor> ed(proc.createEditor());
     ed->setOpaque(true);
-    ed->setVisible(true);   // no desktop window: snapshots paint straight into an image
+    const bool desktop = argc > 2 && juce::String(argv[2]) == "--desktop";   // a real window: the scopes' timers run
+    if (desktop) ed->addToDesktop(0);
+    ed->setVisible(true);
     pump(600);
     play(proc, ph, 40); pump(300);
     save(*ed, outDir.getChildFile("main_instrument.png"));
@@ -101,6 +105,7 @@ int main(int argc, char** argv)
     pump(600);
     std::unique_ptr<juce::AudioProcessorEditor> ved(voice.createEditor());
     ved->setOpaque(true);
+    if (desktop) ved->addToDesktop(0);
     ved->setVisible(true);
     pump(600);
     play(proc, ph, 20); pump(300);

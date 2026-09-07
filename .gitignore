@@ -51,3 +51,6 @@ tools/capture/probe.o
 # Python virtual environments
 .venv/
 venv/
+
+# Interface screenshots are kept
+!docs/screenshots/*.png

@@ -170,11 +170,11 @@ VoiceEditor::VoiceEditor(VoiceProcessor& p)
         b.setTooltip(tip);
         b.onClick = std::move(fn);
     };
-    button(pushButton_, "Push to slot", "Copy the local instrument into the bank slot", [this] {
+    button(pushButton_, "Push", "Copy the local instrument into the bank slot", [this] {
         if (const int slot = instrumentSlot()) processor_.pushToSlot(slot); else hint("choose an instrument slot first");
         refreshStatus();
     });
-    button(pullButton_, "Pull from slot", "Copy the bank slot into the local instrument", [this] {
+    button(pullButton_, "Pull", "Copy the bank slot into the local instrument", [this] {
         if (const int slot = instrumentSlot()) processor_.pullFromSlot(slot); else hint("choose an instrument slot first");
         refreshStatus();
     });
