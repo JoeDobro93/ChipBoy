@@ -421,6 +421,11 @@ Game Boy waveforms.
 
 ### 8.1 The tick
 
+*Superseded by [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §4:* the tick is
+always 24 to the beat, and the only choice is where the beat comes from — **Tempo
+source: Host or Song**. The V-blank and custom rates and the ticks-per-beat setting are
+gone; the table below is what was originally specified.
+
 | Source | Rate | Notes |
 |---|---|---|
 | **Host-synced** | ticks per beat, 1–48, default 24 | Default. Tables, arpeggios and vibrato lock to the grid. |
@@ -594,24 +599,31 @@ all of them, which is the point.
 ### 9.6 Commands
 
 Lettering is LSDj-familiar; **behaviour is defined here**, and arguments are base 10.
+The letters and their two arguments `x` and `y` (0–255 each) are set out in
+[`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §2, which supersedes this table:
+`A` is the table select, `E` is the envelope, `G` the groove, `T` the tempo, and `W` is
+duty on the pulses and the wave slot on WAV.
 
-| Cmd | Argument | Effect |
-|---|---|---|
-| `A` | volume 0–15, rate 0–7, direction | Rewrite the envelope register (NRx2) |
-| `C` | two offsets, 0–15 semitones each | Chord: cycle root → +a → +b, one per tick |
-| `D` | 0–15 ticks | Delay the note |
-| `F` | frame 1–16 | Select wave frame (WAV only) |
-| `H` | step 1–16, or 0 to stop | Hop within the table |
-| `K` | 0–15 ticks | Kill the note after N ticks (clears the DAC — this pops) |
-| `L` | rate 0–15 | Slide the period toward the target note |
-| `O` | off / L / R / both | Set NR51 for this channel |
-| `P` | −128…+127 | Add a signed offset in raw period units |
-| `R` | 1–15 ticks | Retrigger every N ticks |
-| `S` | signed | PU1: set sweep. NOI: step the clock shift per tick. Inert elsewhere. |
-| `V` | speed 1–15, depth 0–15 | Set vibrato |
-| `W` | wave 1–64 | Select wave slot (WAV only) |
-| `M` | L 0–7, R 0–7 | Master volume (NR50). Hardware-legal; steps the DC offset exactly as the hardware does |
-| `Z` | 0–255 | Randomise the argument of the previous command on this step, LSDj-style |
+| Cmd | x | y | Effect |
+|---|---|---|---|
+| `A` | table slot 1–64, 0 stops | – | Run a table on this channel |
+| `C` | semitones | semitones | Chord: cycle root → +x → +y, one per tick |
+| `D` | ticks | – | Delay the note |
+| `E` | volume 0–15 | 0–7 decay speed, 8–15 attack speed | Rewrite the envelope register (NRx2); wave level 0–3 in x on WAV |
+| `F` | frame 1–16 | – | Select wave frame (WAV only) |
+| `G` | groove slot 1–16, 0 straight | – | The channel's tracker timing (the Player) |
+| `H` | step 1–16, or 0 to stop | – | Hop within the table (tables only) |
+| `K` | ticks after note-on | – | Kill the note (clears the DAC — this pops) |
+| `L` | rate 0–15 | – | Slide the period toward the target note |
+| `M` | L 0–7 | R 0–7 | Master volume (NR50). Hardware-legal; steps the DC offset as the hardware does |
+| `O` | 0 off, 1 L, 2 R, 3 both | – | Set NR51 for this channel |
+| `P` | 0–255 → signed x − 128 | – | Add a signed offset in raw period units |
+| `R` | volume step per retrigger | every y ticks | Retrigger |
+| `S` | rate 0–7 (x ≥ 128 down) | shift 0–7 | PU1's sweep; inert elsewhere |
+| `T` | BPM 40–255 | – | The song's tempo (Song source only; the Clock) |
+| `V` | speed 1–15 | depth 0–15 | Set vibrato |
+| `W` | duty 0–3, or wave slot 1–64 | – | The channel's waveform |
+| `Z` | max | – | Randomise the other slot's x (a table step: the command before it) |
 
 ### 9.7 Waves and frames
 
@@ -839,6 +851,10 @@ is a display format, not an accuracy switch, so it does not conflict with **C8**
 
 ### 12.3 Main plugin parameters
 
+*Superseded in part by [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §3 and §4:*
+the tick controls are replaced by **Tempo source**, **Song tempo** and **Quantise notes
+to ticks**, and the per-channel set is the one in §12.4 below as amended there.
+
 | Parameter | Range |
 |---|---|
 | Master volume L / R | 0–7 each (NR50; 0 is 1/8, not mute) |
@@ -857,6 +873,12 @@ is a display format, not an accuracy switch, so it does not conflict with **C8**
 | Per channel × 4 | the same set as §12.4, used when no Voice plugin has claimed the channel |
 
 ### 12.4 Voice plugin parameters
+
+*Superseded by [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §3:* the channel is
+instrument, table, level, pan, transpose, two command slots, live follow, velocity and
+keyswitches. The override lanes below — wave, frame, detune, vibrato, arpeggio,
+envelope, duty, sweep, LFSR — are gone; they live in the instrument or arrive as a
+command (W, F, P, V, A/C, E, S).
 
 All automatable, all discrete, all latched at note-on unless Live follow is set (§10.1).
 

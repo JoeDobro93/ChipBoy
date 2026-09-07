@@ -26,6 +26,59 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-07 — commands, channel lanes and tempo (§8.1, §8.2, §9.6, §12.3, §12.4)
+
+The design is [`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md), agreed on the
+same day; this entry records what the first stage (the core and the plugin layer)
+changed. The window's strips and panels follow in stage 2, the demo in stage 3.
+
+**Changed:**
+
+- **Commands are `A C D E F G H K L M O P R S T V W Z`** with two arguments `x` and `y`,
+  0–255 each. `A` is the table select (it was the envelope), `E` is the envelope, `G`
+  the groove, `T` the tempo, and `W` is duty on the pulses and the wave slot on WAV.
+  `S` is PU1's sweep only — the noise channel's clock-shift step is the instrument's
+  `noiseSweep` field, and the factory bank's kick uses it.
+- **A channel is a visible tracker row.** `driver::ChannelParams` is now
+  `{instrument, table, level, pan, transpose, cmd[2], liveFollow, velocityMode,
+  keyswitch}`. The silent override lanes — duty, envelope volume/direction/rate, sweep,
+  wave, frame, vibrato, arpeggio, detune, LFSR — are gone as parameters; they live in
+  the instrument or arrive through a command. A slot fires at the next tick when its
+  value changes, again at every note-on after the instrument and its table, and reverts
+  when it goes to none. Tracker cells write the same two slots, so the lanes and the
+  tracker are one code path, and the recorder writes what is in force.
+- **`driver::Clock`** owns tick generation and the tracker's position for both tempo
+  sources. Ticks are always 24 per beat: `tick_source`, `ticks_per_beat` and `tick_hz`
+  are gone, and so are the V-blank and custom tick rates. Host mode puts a tick at every
+  multiple of 1/24 beat of the host's ppq; Song mode integrates the song's tempo map
+  (a base tempo plus the `T` cells) from a song start held in seconds, so a locate lands
+  on the step playing through would have reached. With the transport stopped both
+  free-run at the current tempo, as the driver did before.
+- **The Player counts in ticks**, not ppq: a bar is `beatsPerBar × 24` ticks, a straight
+  step is its share, grooves scale alternate steps. `Song` gained `tempoBpm`,
+  `songStartSeconds`, `beatsPerBar` and a tempo map built from its `T` cells when it is
+  published. A `G` slot or a `G` cell sets a channel's groove.
+- **New parameters:** per channel `cmd1_type/x/y` and `cmd2_type/x/y`; globally
+  `tempo_source`, `song_tempo` and `notes_on_tick` (MIDI notes wait for the next tick;
+  bends and controllers never do, tracker cells always sit on ticks).
+- **The driver publishes the running state** — duty, envelope, vibrato, pitch offset,
+  pan, table slot and step, groove — next to the registers. The link region carries it
+  in a second 64-bit word, so `link::kVersion` is 2.
+
+**Why:** two control systems overlapped. An instrument held the sound and a second set
+of per-channel host lanes silently overrode its fields, with nothing in the window
+saying which was winning; and the tick rate was a global choice that the tracker, the
+tables and the host transport each read differently. One row per channel and one clock
+for both tempo sources removes both ambiguities, and it is the model the audience
+already reads.
+
+**Considered:** keeping the override lanes alongside the commands (the ambiguity stays,
+and the strip has to explain it); making Song tempo a host-tempo-map import (a host
+cannot always be automated from a plugin, and the song would stop being self-contained).
+
+**Not migrated:** old projects, banks and parameter sets. Agreed with the owner: the
+parameter set changed shape, and a half-translated project is worse than a fresh one.
+
 ### 2026-09-07 — notes are sample-accurate, the tick drives the rest (§8.2)
 
 **Changed:**
