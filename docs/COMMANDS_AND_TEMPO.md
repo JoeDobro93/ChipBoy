@@ -372,3 +372,115 @@ De-click are not automated in either pass.
   between them, row for row with the sixteen steps.
 - The VEL column in the phrase grid; the Voice plugin needs nothing new (instrument
   content is bank content).
+
+---
+
+# Addendum, 2026-09-08 (second): bars, one-shot cells, arms, files, transport
+
+Agreed after playing the round above. Binding. Changes §3 (cells are not slots),
+§9.1 (bars), §9.4 (recording bare notes) and §10.
+
+## 11. Bars and steps
+
+- **Steps per bar** is a number, 1–64, typed in the Tracker tab (was 8 or 16). A phrase
+  holds up to 64 cells (`kMaxSteps`); the grid shows the bar's step count.
+- **Step ticks** = bar ticks / steps per bar, where bar ticks = beats per bar × 24 (the
+  host's signature in Host mode, the song's in Song mode). When that is not a whole
+  number, step *i* starts at ⌊*i* × bar ticks / steps⌋ (never more than a tick of
+  jitter). Grooves keep meaning "ticks at sixteen steps in 4/4": step *i* lasts
+  `groove.at(i)` × step ticks / 6, as before.
+- **A bar override** (`barSteps[bar]`, 0 = the song's default) gives one bar another
+  step count, for every channel — one chain row is one bar. Its length is its steps ×
+  step ticks, so a bar of 8 steps in a 16-step song moves the whole song on half a bar
+  early, and no H is needed to leave it. Bars lie end to end from the song start; the
+  tracker owns its ruler. Without overrides its bars coincide with the host's bars
+  exactly as today; with them, the host's bars are only a ruler, as in Song mode.
+  Position ↔ (bar, step) goes through a prefix sum over the bar lengths, rebuilt when
+  the song is published, so a locate lands on the right step. T cells and the recorder's
+  quantise use the same table.
+- Everything else in §9.1 stands: a missing phrase sends a note-off at its bar's first
+  tick, blank cells sustain, all-notes-off on stop, jump, lane change and disarm.
+
+## 12. A cell's commands fire once
+
+A cell's two commands are applied **once, at their step**, and never occupy a slot:
+
+- The persistent letters (A E F G M O P S T V W) change the running state, which then
+  holds until the next plain note reloads the instrument or a later command changes it —
+  LSDj's rule. So a V written on a bare note in bar 5 stays through bar 5's bare notes and
+  ends at the next note that carries an instrument; looping back to bar 1's first note
+  (instrument in the column) plays it clean.
+- The per-note letters (C D K L R Z) shape the note in that cell only.
+- The automation slots keep §3's behaviour: in force, firing at every plain note-on and
+  when they change. The earlier rule "a cell applies as if the slot had changed" is
+  withdrawn — it made a cell re-fire at every later note, so a vibrato written once stuck
+  to every note after it.
+- Recording (§9.4 amended): a plain note's cell carries both in-force slots; a **bare**
+  note's cell carries the in-force per-note letters (C D K L R Z) only, since the
+  persistent ones are already in the running state and re-writing E on a sounding pulse
+  would restart its envelope. A slot change between notes is written at its step as now.
+
+## 13. The command octave
+
+MIDI notes 0–11 on any channel never sound: a note-on there fires the channel's slots
+(CMD1 then CMD2) on whatever the channel is playing, without a trigger, so a held note
+can be shaped after its attack — vibrato in, a slide, a kill. Velocity is ignored. It
+needs no keyswitch setting. When recording, it is written as a slot-only cell at its
+step (the two commands, no note), which replays the same way.
+
+## 14. Record arms and the playback source
+
+- Each channel has a **record arm** in the song (saved with the plugin state; not a host
+  parameter). With the Tracker tab's master **Rec** on and the transport playing, an armed
+  channel's incoming MIDI is written to its cells **whatever its playback source**; an
+  unarmed channel never records.
+- The lane's switch is now the **playback source**: **MIDI** (the channel plays incoming
+  MIDI; was "Roll") or **Trkr** (the channel plays its cells; was "Trk"). An armed Trkr
+  channel also lets incoming MIDI sound while recording, so an overdub is audible; an
+  unarmed Trkr channel ignores MIDI, as now.
+
+## 15. Song files and instrument presets
+
+- A **song file** (`.cbsong`, JSON, song format 4) holds the song alone: chains, phrases
+  (only used cells), grooves, steps per bar and the bar overrides, tempo, song start,
+  beats per bar, playback sources and arms. It also records the bank's name and the name
+  of every instrument slot the song uses, so a load can say where the bank differs
+  ("slot 7 was Triangle bass; this bank has Organ"). Loading replaces the song; with the
+  bank it was written with it sounds the same — the record test's guarantee. Save/Load
+  live in the Tracker tab; the default folder sits beside the banks folder.
+- An **instrument preset** (`.cbi`, JSON) is one instrument with every table, wave (the
+  frame run's wave slots included) and kit it references, transitively (a table whose A
+  starts another table brings that table). Loading into a slot: each dependency goes to
+  the first free slot of its kind unless an identical one (same content) is already in
+  the bank, and every reference — the instrument's and the tables' — is renumbered to
+  match. The load reports what went where in the status bar. The walk and the placement
+  are core code (`bank::collectPreset`, `bank::placePreset`), no JUCE; the file format
+  and the chooser are plugin code. Save/Load presets live in the Instrument tab beside
+  New and Dup; the bank file keeps saving everything as now.
+
+## 16. The tracker's own transport
+
+When the host offers no transport — the Standalone, or a host without a play head — the
+Tracker tab's **Play / Stop / Loop** run the song from the song start on the plugin's
+own clock at the Song tempo (the header's Tempo source reads Song and is fixed while the
+plugin owns the transport). In a host the host's transport rules and the buttons mirror
+it, disabled. The demo song file (`Demo/ChipBoy Demo.cbsong`, written by
+`chipboy_recordtest --write-song` from its recorded pass so it *is* the recorded demo,
+and checked by CTest against a fresh recording) plays in the Standalone this way with
+the factory bank.
+
+## 17. Interface
+
+- The tab is called **Tracker**. The explanatory paragraph goes.
+- **Chain**, rotated: channels as columns (PU1 PU2 WAV NOI), bars as rows numbered
+  1, 2, 3… (no word), lowest at the top, scrolling with the song; a narrow fifth column
+  holds the bar's step override (blank = default), typed like a cell. It takes the column
+  to the right of the grid where the groove editor sat.
+- **Per channel**, in the lane head: the arm (a red dot) and a **PLAYS** caption with
+  the MIDI / Trkr switch.
+- **Steps / bar** is a typed Stepper (1–64). **Save song… / Load song…** and the transport
+  buttons sit in the head row; the window's height does not change.
+- A **Grooves tab** (after Tables) takes the groove editor: the sixteen slots on the left,
+  the sixteen-cell editor with total, swing and nudge on the right — grooves serve tables
+  as well as phrases. The grid's per-phrase groove chip stays.
+- **Instrument tab**: Save preset… / Load preset….
