@@ -233,10 +233,12 @@ bool bankFromVar(const var& v, Bank& out)
 var songToVar(const tracker::Song& s)
 {
     auto* o = new DynamicObject();
-    // Format 4 (docs/COMMANDS_AND_TEMPO.md section 11): steps per bar is a
-    // number, bars may override it, a phrase holds sixty-four cells and only
-    // the cells that hold something are written, each with its step index.
-    o->setProperty("format", "chipboy-song"); o->setProperty("version", 4);
+    // Format 5 (docs/COMMANDS_AND_TEMPO.md sections 11, 18 and 20): steps per
+    // bar is a number, bars may override it, a phrase holds sixty-four cells
+    // and only the cells that hold something are written, each with its step
+    // index; a channel's note source may be Hybrid. In a song *file* the
+    // format also embeds the bank (SongFiles.cpp).
+    o->setProperty("format", "chipboy-song"); o->setProperty("version", 5);
     o->setProperty("steps", int(s.steps())); o->setProperty("stepsPerBar", int(s.steps()));
     // The song's own timeline (docs/COMMANDS_AND_TEMPO.md section 4).
     o->setProperty("tempoBpm", s.tempoBpm); o->setProperty("songStartSeconds", s.songStartSeconds); o->setProperty("beatsPerBar", s.beatsPerBar);
@@ -316,7 +318,9 @@ bool songFromVar(const var& v, tracker::Song& out)
         out.barSteps.clear();
         for (const auto& v2 : *bs) out.barSteps.push_back(uint8_t(std::clamp(int(v2), 0, tracker::kMaxSteps)));
     }
-    if (auto* src = o->getProperty("noteSource").getArray()) for (int ch = 0; ch < std::min(4, src->size()); ++ch) out.noteSource[size_t(ch)] = tracker::NoteSource(std::clamp(int((*src)[ch]), 0, 1));
+    // 0 MIDI, 1 Trkr, 2 Hybrid (section 20); a file older than format 5 has
+    // only the first two.
+    if (auto* src = o->getProperty("noteSource").getArray()) for (int ch = 0; ch < std::min(4, src->size()); ++ch) out.noteSource[size_t(ch)] = tracker::NoteSource(std::clamp(int((*src)[ch]), 0, 2));
     // The arms are on for a song written before they existed (section 14).
     if (auto* arm = o->getProperty("recordArm").getArray()) for (int ch = 0; ch < std::min(4, arm->size()); ++ch) out.recordArm[size_t(ch)] = bool((*arm)[ch]);
     // Sixteen tick counts; the old two-entry form reads as the first two.

@@ -27,7 +27,7 @@ void StatusBar::tick()
 
     RichText tk;
     tk.plain("tempo ");
-    tk.bold(String(processor_.songTempoSource() ? "song " : "host ") + String(int(std::lround(processor_.tempoInForce()))));
+    tk.bold(String(processor_.songTempoSource() ? "song " : "host ") + String(int(std::lround(processor_.effectiveTempo()))));
 
     // Whose transport is running: the host's, or the plugin's own when no
     // host offers one (docs/COMMANDS_AND_TEMPO.md section 16).

@@ -124,7 +124,7 @@ int TablesPanel::usedBy(const bank::Bank& b, int slot)
 String TablesPanel::stepRateText() const
 {
     // Ticks are always 24 per beat (docs/COMMANDS_AND_TEMPO.md section 4).
-    return "1 per tick (24 per beat, " + String(int(std::lround(processor.tempoInForce()))) + " BPM)";
+    return "1 per tick (24 per beat, " + String(int(std::lround(processor.effectiveTempo()))) + " BPM)";
 }
 
 void TablesPanel::rebuildList()

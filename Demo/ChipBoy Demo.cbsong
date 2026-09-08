@@ -1,6 +1,6 @@
 {
   "format": "chipboy-song-file",
-  "version": 1,
+  "version": 5,
   "bank": "Factory",
   "instruments": {
     "1": "Square lead",
@@ -15,9 +15,1684 @@
     "15": "Crash",
     "17": "Pulse kick"
   },
+  "bankData": {
+    "format": "chipboy-bank",
+    "version": 1,
+    "instruments": [
+      {
+        "slot": 1,
+        "name": "Square lead",
+        "type": 0,
+        "pan": 3,
+        "length": 0,
+        "table": 0,
+        "transpose": true,
+        "noteOff": 0,
+        "overlap": 0,
+        "pitchSpeed": 0,
+        "cmdRate": 0,
+        "tableMode": 0,
+        "vibShape": 0,
+        "vibDir": 0,
+        "vibSpeed": 10,
+        "vibDepth": 2,
+        "vibDelay": 10,
+        "duty": 2,
+        "dutySeq": [],
+        "envVol": 13,
+        "envDir": 0,
+        "envRate": 0,
+        "sweepRate": 0,
+        "sweepDown": false,
+        "sweepShift": 0,
+        "wave": 1,
+        "frameAdvance": 0,
+        "frameLoop": 0,
+        "waveLevel": 3,
+        "kit": 1,
+        "kitLoop": 0,
+        "lfsr7": false,
+        "noiseManual": false,
+        "noiseShift": 5,
+        "noiseDivisor": 1,
+        "noiseSweep": 0
+      },
+      {
+        "slot": 2,
+        "name": "Pluck",
+        "type": 0,
+        "pan": 3,
+        "length": 0,
+        "table": 0,
+        "transpose": true,
+        "noteOff": 0,
+        "overlap": 0,
+        "pitchSpeed": 1,
+        "cmdRate": 0,
+        "tableMode": 0,
+        "vibShape": 0,
+        "vibDir": 0,
+        "vibSpeed": 8,
+        "vibDepth": 0,
+        "vibDelay": 0,
+        "duty": 1,
+        "dutySeq": [],
+        "envVol": 15,
+        "envDir": 0,
+        "envRate": 2,
+        "sweepRate": 0,
+        "sweepDown": false,
+        "sweepShift": 0,
+        "wave": 1,
+        "frameAdvance": 0,
+        "frameLoop": 0,
+        "waveLevel": 3,
+        "kit": 1,
+        "kitLoop": 0,
+        "lfsr7": false,
+        "noiseManual": false,
+        "noiseShift": 5,
+        "noiseDivisor": 1,
+        "noiseSweep": 0
+      },
+      {
+        "slot": 3,
+        "name": "Bass 25",
+        "type": 0,
+        "pan": 3,
+        "length": 0,
+        "table": 0,
+        "transpose": true,
+        "noteOff": 0,
+        "overlap": 0,
+        "pitchSpeed": 0,
+        "cmdRate": 0,
+        "tableMode": 0,
+        "vibShape": 0,
+        "vibDir": 0,
+        "vibSpeed": 8,
+        "vibDepth": 0,
+        "vibDelay": 0,
+        "duty": 1,
+        "dutySeq": [],
+        "envVol": 14,
+        "envDir": 0,
+        "envRate": 0,
+        "sweepRate": 0,
+        "sweepDown": false,
+        "sweepShift": 0,
+        "wave": 1,
+        "frameAdvance": 0,
+        "frameLoop": 0,
+        "waveLevel": 3,
+        "kit": 1,
+        "kitLoop": 0,
+        "lfsr7": false,
+        "noiseManual": false,
+        "noiseShift": 5,
+        "noiseDivisor": 1,
+        "noiseSweep": 0
+      },
+      {
+        "slot": 4,
+        "name": "Sweep down",
+        "type": 0,
+        "pan": 3,
+        "length": 0,
+        "table": 0,
+        "transpose": true,
+        "noteOff": 0,
+        "overlap": 0,
+        "pitchSpeed": 0,
+        "cmdRate": 0,
+        "tableMode": 0,
+        "vibShape": 0,
+        "vibDir": 0,
+        "vibSpeed": 8,
+        "vibDepth": 0,
+        "vibDelay": 0,
+        "duty": 2,
+        "dutySeq": [],
+        "envVol": 15,
+        "envDir": 0,
+        "envRate": 3,
+        "sweepRate": 3,
+        "sweepDown": true,
+        "sweepShift": 2,
+        "wave": 1,
+        "frameAdvance": 0,
+        "frameLoop": 0,
+        "waveLevel": 3,
+        "kit": 1,
+        "kitLoop": 0,
+        "lfsr7": false,
+        "noiseManual": false,
+        "noiseShift": 5,
+        "noiseDivisor": 1,
+        "noiseSweep": 0
+      },
+      {
+        "slot": 5,
+        "name": "Chord arp",
+        "type": 0,
+        "pan": 3,
+        "length": 0,
+        "table": 1,
+        "transpose": true,
+        "noteOff": 0,
+        "overlap": 0,
+        "pitchSpeed": 0,
+        "cmdRate": 0,
+        "tableMode": 0,
+        "vibShape": 0,
+        "vibDir": 0,
+        "vibSpeed": 8,
+        "vibDepth": 0,
+        "vibDelay": 0,
+        "duty": 0,
+        "dutySeq": [],
+        "envVol": 12,
+        "envDir": 0,
+        "envRate": 1,
+        "sweepRate": 0,
+        "sweepDown": false,
+        "sweepShift": 0,
+        "wave": 1,
+        "frameAdvance": 0,
+        "frameLoop": 0,
+        "waveLevel": 3,
+        "kit": 1,
+        "kitLoop": 0,
+        "lfsr7": false,
+        "noiseManual": false,
+        "noiseShift": 5,
+        "noiseDivisor": 1,
+        "noiseSweep": 0
+      },
+      {
+        "slot": 6,
+        "name": "Duty cycler",
+        "type": 0,
+        "pan": 3,
+        "length": 0,
+        "table": 0,
+        "transpose": true,
+        "noteOff": 0,
+        "overlap": 0,
+        "pitchSpeed": 0,
+        "cmdRate": 0,
+        "tableMode": 0,
+        "vibShape": 0,
+        "vibDir": 0,
+        "vibSpeed": 8,
+        "vibDepth": 0,
+        "vibDelay": 0,
+        "duty": 2,
+        "dutySeq": [
+          2,
+          2,
+          1,
+          1,
+          0,
+          0,
+          1,
+          1
+        ],
+        "envVol": 13,
+        "envDir": 0,
+        "envRate": 0,
+        "sweepRate": 0,
+        "sweepDown": false,
+        "sweepShift": 0,
+        "wave": 1,
+        "frameAdvance": 0,
+        "frameLoop": 0,
+        "waveLevel": 3,
+        "kit": 1,
+        "kitLoop": 0,
+        "lfsr7": false,
+        "noiseManual": false,
+        "noiseShift": 5,
+        "noiseDivisor": 1,
+        "noiseSweep": 0
+      },
+      {
+        "slot": 7,
+        "name": "Triangle bass",
+        "type": 1,
+        "pan": 3,
+        "length": 0,
+        "table": 0,
+        "transpose": true,
+        "noteOff": 0,
+        "overlap": 0,
+        "pitchSpeed": 0,
+        "cmdRate": 0,
+        "tableMode": 0,
+        "vibShape": 0,
+        "vibDir": 0,
+        "vibSpeed": 8,
+        "vibDepth": 0,
+        "vibDelay": 0,
+        "duty": 2,
+        "dutySeq": [],
+        "envVol": 15,
+        "envDir": 0,
+        "envRate": 0,
+        "sweepRate": 0,
+        "sweepDown": false,
+        "sweepShift": 0,
+        "wave": 1,
+        "frameAdvance": 0,
+        "frameLoop": 0,
+        "waveLevel": 3,
+        "kit": 1,
+        "kitLoop": 0,
+        "lfsr7": false,
+        "noiseManual": false,
+        "noiseShift": 5,
+        "noiseDivisor": 1,
+        "noiseSweep": 0
+      },
+      {
+        "slot": 8,
+        "name": "Saw",
+        "type": 1,
+        "pan": 3,
+        "length": 0,
+        "table": 0,
+        "transpose": true,
+        "noteOff": 0,
+        "overlap": 0,
+        "pitchSpeed": 0,
+        "cmdRate": 0,
+        "tableMode": 0,
+        "vibShape": 0,
+        "vibDir": 0,
+        "vibSpeed": 8,
+        "vibDepth": 0,
+        "vibDelay": 0,
+        "duty": 2,
+        "dutySeq": [],
+        "envVol": 15,
+        "envDir": 0,
+        "envRate": 0,
+        "sweepRate": 0,
+        "sweepDown": false,
+        "sweepShift": 0,
+        "wave": 2,
+        "frameAdvance": 0,
+        "frameLoop": 0,
+        "waveLevel": 3,
+        "kit": 1,
+        "kitLoop": 0,
+        "lfsr7": false,
+        "noiseManual": false,
+        "noiseShift": 5,
+        "noiseDivisor": 1,
+        "noiseSweep": 0
+      },
+      {
+        "slot": 9,
+        "name": "Organ frames",
+        "type": 1,
+        "pan": 3,
+        "length": 0,
+        "table": 0,
+        "transpose": true,
+        "noteOff": 0,
+        "overlap": 0,
+        "pitchSpeed": 0,
+        "cmdRate": 0,
+        "tableMode": 0,
+        "vibShape": 0,
+        "vibDir": 0,
+        "vibSpeed": 8,
+        "vibDepth": 0,
+        "vibDelay": 0,
+        "duty": 2,
+        "dutySeq": [],
+        "envVol": 15,
+        "envDir": 0,
+        "envRate": 0,
+        "sweepRate": 0,
+        "sweepDown": false,
+        "sweepShift": 0,
+        "wave": 5,
+        "frameAdvance": 3,
+        "frameLoop": 2,
+        "waveLevel": 3,
+        "kit": 1,
+        "kitLoop": 0,
+        "lfsr7": false,
+        "noiseManual": false,
+        "noiseShift": 5,
+        "noiseDivisor": 1,
+        "noiseSweep": 0
+      },
+      {
+        "slot": 10,
+        "name": "Tri to saw",
+        "type": 1,
+        "pan": 3,
+        "length": 0,
+        "table": 0,
+        "transpose": true,
+        "noteOff": 0,
+        "overlap": 0,
+        "pitchSpeed": 0,
+        "cmdRate": 0,
+        "tableMode": 0,
+        "vibShape": 0,
+        "vibDir": 0,
+        "vibSpeed": 8,
+        "vibDepth": 0,
+        "vibDelay": 0,
+        "duty": 2,
+        "dutySeq": [],
+        "envVol": 15,
+        "envDir": 0,
+        "envRate": 0,
+        "sweepRate": 0,
+        "sweepDown": false,
+        "sweepShift": 0,
+        "wave": 6,
+        "frameAdvance": 4,
+        "frameLoop": 1,
+        "waveLevel": 3,
+        "kit": 1,
+        "kitLoop": 0,
+        "lfsr7": false,
+        "noiseManual": false,
+        "noiseShift": 5,
+        "noiseDivisor": 1,
+        "noiseSweep": 0
+      },
+      {
+        "slot": 11,
+        "name": "Kick",
+        "type": 3,
+        "pan": 3,
+        "length": 0,
+        "table": 4,
+        "transpose": true,
+        "noteOff": 0,
+        "overlap": 1,
+        "pitchSpeed": 0,
+        "cmdRate": 0,
+        "tableMode": 0,
+        "vibShape": 0,
+        "vibDir": 0,
+        "vibSpeed": 8,
+        "vibDepth": 0,
+        "vibDelay": 0,
+        "duty": 2,
+        "dutySeq": [],
+        "envVol": 15,
+        "envDir": 0,
+        "envRate": 1,
+        "sweepRate": 0,
+        "sweepDown": false,
+        "sweepShift": 0,
+        "wave": 1,
+        "frameAdvance": 0,
+        "frameLoop": 0,
+        "waveLevel": 3,
+        "kit": 1,
+        "kitLoop": 0,
+        "lfsr7": false,
+        "noiseManual": true,
+        "noiseShift": 6,
+        "noiseDivisor": 3,
+        "noiseSweep": -1
+      },
+      {
+        "slot": 12,
+        "name": "Snare",
+        "type": 3,
+        "pan": 3,
+        "length": 0,
+        "table": 0,
+        "transpose": true,
+        "noteOff": 0,
+        "overlap": 1,
+        "pitchSpeed": 0,
+        "cmdRate": 0,
+        "tableMode": 0,
+        "vibShape": 0,
+        "vibDir": 0,
+        "vibSpeed": 8,
+        "vibDepth": 0,
+        "vibDelay": 0,
+        "duty": 2,
+        "dutySeq": [],
+        "envVol": 13,
+        "envDir": 0,
+        "envRate": 2,
+        "sweepRate": 0,
+        "sweepDown": false,
+        "sweepShift": 0,
+        "wave": 1,
+        "frameAdvance": 0,
+        "frameLoop": 0,
+        "waveLevel": 3,
+        "kit": 1,
+        "kitLoop": 0,
+        "lfsr7": false,
+        "noiseManual": true,
+        "noiseShift": 4,
+        "noiseDivisor": 4,
+        "noiseSweep": 0
+      },
+      {
+        "slot": 13,
+        "name": "Hat closed",
+        "type": 3,
+        "pan": 3,
+        "length": 0,
+        "table": 0,
+        "transpose": true,
+        "noteOff": 0,
+        "overlap": 1,
+        "pitchSpeed": 0,
+        "cmdRate": 0,
+        "tableMode": 0,
+        "vibShape": 0,
+        "vibDir": 0,
+        "vibSpeed": 8,
+        "vibDepth": 0,
+        "vibDelay": 0,
+        "duty": 2,
+        "dutySeq": [],
+        "envVol": 9,
+        "envDir": 0,
+        "envRate": 1,
+        "sweepRate": 0,
+        "sweepDown": false,
+        "sweepShift": 0,
+        "wave": 1,
+        "frameAdvance": 0,
+        "frameLoop": 0,
+        "waveLevel": 3,
+        "kit": 1,
+        "kitLoop": 0,
+        "lfsr7": true,
+        "noiseManual": true,
+        "noiseShift": 1,
+        "noiseDivisor": 4,
+        "noiseSweep": 0
+      },
+      {
+        "slot": 14,
+        "name": "Hat open",
+        "type": 3,
+        "pan": 3,
+        "length": 0,
+        "table": 0,
+        "transpose": true,
+        "noteOff": 0,
+        "overlap": 1,
+        "pitchSpeed": 0,
+        "cmdRate": 0,
+        "tableMode": 0,
+        "vibShape": 0,
+        "vibDir": 0,
+        "vibSpeed": 8,
+        "vibDepth": 0,
+        "vibDelay": 0,
+        "duty": 2,
+        "dutySeq": [],
+        "envVol": 9,
+        "envDir": 0,
+        "envRate": 4,
+        "sweepRate": 0,
+        "sweepDown": false,
+        "sweepShift": 0,
+        "wave": 1,
+        "frameAdvance": 0,
+        "frameLoop": 0,
+        "waveLevel": 3,
+        "kit": 1,
+        "kitLoop": 0,
+        "lfsr7": true,
+        "noiseManual": true,
+        "noiseShift": 1,
+        "noiseDivisor": 4,
+        "noiseSweep": 0
+      },
+      {
+        "slot": 15,
+        "name": "Crash",
+        "type": 3,
+        "pan": 3,
+        "length": 0,
+        "table": 0,
+        "transpose": true,
+        "noteOff": 0,
+        "overlap": 1,
+        "pitchSpeed": 0,
+        "cmdRate": 0,
+        "tableMode": 0,
+        "vibShape": 0,
+        "vibDir": 0,
+        "vibSpeed": 8,
+        "vibDepth": 0,
+        "vibDelay": 0,
+        "duty": 2,
+        "dutySeq": [],
+        "envVol": 12,
+        "envDir": 0,
+        "envRate": 6,
+        "sweepRate": 0,
+        "sweepDown": false,
+        "sweepShift": 0,
+        "wave": 1,
+        "frameAdvance": 0,
+        "frameLoop": 0,
+        "waveLevel": 3,
+        "kit": 1,
+        "kitLoop": 0,
+        "lfsr7": false,
+        "noiseManual": true,
+        "noiseShift": 2,
+        "noiseDivisor": 1,
+        "noiseSweep": 0
+      },
+      {
+        "slot": 16,
+        "name": "Kit 1",
+        "type": 2,
+        "pan": 3,
+        "length": 0,
+        "table": 0,
+        "transpose": true,
+        "noteOff": 2,
+        "overlap": 1,
+        "pitchSpeed": 0,
+        "cmdRate": 0,
+        "tableMode": 0,
+        "vibShape": 0,
+        "vibDir": 0,
+        "vibSpeed": 8,
+        "vibDepth": 0,
+        "vibDelay": 0,
+        "duty": 2,
+        "dutySeq": [],
+        "envVol": 15,
+        "envDir": 0,
+        "envRate": 0,
+        "sweepRate": 0,
+        "sweepDown": false,
+        "sweepShift": 0,
+        "wave": 1,
+        "frameAdvance": 0,
+        "frameLoop": 0,
+        "waveLevel": 3,
+        "kit": 1,
+        "kitLoop": 0,
+        "lfsr7": false,
+        "noiseManual": false,
+        "noiseShift": 5,
+        "noiseDivisor": 1,
+        "noiseSweep": 0
+      },
+      {
+        "slot": 17,
+        "name": "Pulse kick",
+        "type": 0,
+        "pan": 3,
+        "length": 0,
+        "table": 7,
+        "transpose": true,
+        "noteOff": 0,
+        "overlap": 1,
+        "pitchSpeed": 3,
+        "cmdRate": 0,
+        "tableMode": 0,
+        "vibShape": 0,
+        "vibDir": 0,
+        "vibSpeed": 8,
+        "vibDepth": 0,
+        "vibDelay": 0,
+        "duty": 2,
+        "dutySeq": [],
+        "envVol": 15,
+        "envDir": 0,
+        "envRate": 2,
+        "sweepRate": 0,
+        "sweepDown": false,
+        "sweepShift": 0,
+        "wave": 1,
+        "frameAdvance": 0,
+        "frameLoop": 0,
+        "waveLevel": 3,
+        "kit": 1,
+        "kitLoop": 0,
+        "lfsr7": false,
+        "noiseManual": false,
+        "noiseShift": 5,
+        "noiseDivisor": 1,
+        "noiseSweep": 0
+      }
+    ],
+    "tables": [
+      {
+        "slot": 1,
+        "name": "Arp minor",
+        "end": 0,
+        "hop": 1,
+        "steps": [
+          {
+            "vol": -1,
+            "trn": 0
+          },
+          {
+            "vol": -1,
+            "trn": 3
+          },
+          {
+            "vol": -1,
+            "trn": 7
+          },
+          {
+            "vol": -1,
+            "trn": 12
+          },
+          {
+            "vol": -1,
+            "trn": 0
+          },
+          {
+            "vol": -1,
+            "trn": 3
+          },
+          {
+            "vol": -1,
+            "trn": 7
+          },
+          {
+            "vol": -1,
+            "trn": 12
+          },
+          {
+            "vol": -1,
+            "trn": 0
+          },
+          {
+            "vol": -1,
+            "trn": 3
+          },
+          {
+            "vol": -1,
+            "trn": 7
+          },
+          {
+            "vol": -1,
+            "trn": 12
+          },
+          {
+            "vol": -1,
+            "trn": 0
+          },
+          {
+            "vol": -1,
+            "trn": 3
+          },
+          {
+            "vol": -1,
+            "trn": 7
+          },
+          {
+            "vol": -1,
+            "trn": 12
+          }
+        ]
+      },
+      {
+        "slot": 2,
+        "name": "Arp major",
+        "end": 0,
+        "hop": 1,
+        "steps": [
+          {
+            "vol": -1,
+            "trn": 0
+          },
+          {
+            "vol": -1,
+            "trn": 4
+          },
+          {
+            "vol": -1,
+            "trn": 7
+          },
+          {
+            "vol": -1,
+            "trn": 12
+          },
+          {
+            "vol": -1,
+            "trn": 0
+          },
+          {
+            "vol": -1,
+            "trn": 4
+          },
+          {
+            "vol": -1,
+            "trn": 7
+          },
+          {
+            "vol": -1,
+            "trn": 12
+          },
+          {
+            "vol": -1,
+            "trn": 0
+          },
+          {
+            "vol": -1,
+            "trn": 4
+          },
+          {
+            "vol": -1,
+            "trn": 7
+          },
+          {
+            "vol": -1,
+            "trn": 12
+          },
+          {
+            "vol": -1,
+            "trn": 0
+          },
+          {
+            "vol": -1,
+            "trn": 4
+          },
+          {
+            "vol": -1,
+            "trn": 7
+          },
+          {
+            "vol": -1,
+            "trn": 12
+          }
+        ]
+      },
+      {
+        "slot": 3,
+        "name": "Vol fade",
+        "end": 2,
+        "hop": 1,
+        "steps": [
+          {
+            "vol": 15
+          },
+          {
+            "vol": 14
+          },
+          {
+            "vol": 13
+          },
+          {
+            "vol": 12
+          },
+          {
+            "vol": 11
+          },
+          {
+            "vol": 10
+          },
+          {
+            "vol": 9
+          },
+          {
+            "vol": 8
+          },
+          {
+            "vol": 7
+          },
+          {
+            "vol": 6
+          },
+          {
+            "vol": 5
+          },
+          {
+            "vol": 4
+          },
+          {
+            "vol": 3
+          },
+          {
+            "vol": 2
+          },
+          {
+            "vol": 1
+          },
+          {
+            "vol": 0
+          }
+        ]
+      },
+      {
+        "slot": 4,
+        "name": "Kick shape",
+        "end": 2,
+        "hop": 1,
+        "steps": [
+          {
+            "vol": 15
+          },
+          {
+            "vol": 12
+          },
+          {
+            "vol": 8
+          },
+          {
+            "vol": 4
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          }
+        ]
+      },
+      {
+        "slot": 5,
+        "name": "Slide up",
+        "end": 2,
+        "hop": 1,
+        "steps": [
+          {
+            "vol": -1,
+            "trn": -12
+          },
+          {
+            "vol": -1,
+            "trn": 0,
+            "c1": {
+              "c": "L",
+              "a": 60,
+              "b": 0,
+              "x": 0
+            }
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          }
+        ]
+      },
+      {
+        "slot": 6,
+        "name": "Octave hop",
+        "end": 0,
+        "hop": 1,
+        "steps": [
+          {
+            "vol": -1,
+            "trn": 12
+          },
+          {
+            "vol": -1,
+            "trn": 0
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          }
+        ]
+      },
+      {
+        "slot": 7,
+        "name": "Drum drop",
+        "end": 2,
+        "hop": 1,
+        "steps": [
+          {
+            "vol": 15,
+            "c1": {
+              "c": "P",
+              "a": 112,
+              "b": 0,
+              "x": 0
+            }
+          },
+          {
+            "vol": 12
+          },
+          {
+            "vol": 8,
+            "c1": {
+              "c": "P",
+              "a": 128,
+              "b": 0,
+              "x": 0
+            }
+          },
+          {
+            "vol": 4
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          },
+          {
+            "vol": -1
+          }
+        ]
+      }
+    ],
+    "waves": [
+      {
+        "slot": 1,
+        "name": "Triangle",
+        "frames": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            15,
+            14,
+            13,
+            12,
+            11,
+            10,
+            9,
+            8,
+            7,
+            6,
+            5,
+            4,
+            3,
+            2,
+            1,
+            0
+          ]
+        ]
+      },
+      {
+        "slot": 2,
+        "name": "Saw",
+        "frames": [
+          [
+            0,
+            0,
+            1,
+            1,
+            2,
+            2,
+            3,
+            3,
+            4,
+            4,
+            5,
+            5,
+            6,
+            6,
+            7,
+            7,
+            8,
+            8,
+            9,
+            9,
+            10,
+            10,
+            11,
+            11,
+            12,
+            12,
+            13,
+            13,
+            14,
+            14,
+            15,
+            15
+          ]
+        ]
+      },
+      {
+        "slot": 3,
+        "name": "Sine",
+        "frames": [
+          [
+            8,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            15,
+            15,
+            15,
+            14,
+            13,
+            12,
+            11,
+            10,
+            8,
+            7,
+            5,
+            4,
+            3,
+            2,
+            1,
+            0,
+            0,
+            0,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            7
+          ]
+        ]
+      },
+      {
+        "slot": 4,
+        "name": "Pulse 25",
+        "frames": [
+          [
+            15,
+            15,
+            15,
+            15,
+            15,
+            15,
+            15,
+            15,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        ]
+      },
+      {
+        "slot": 5,
+        "name": "Organ",
+        "frames": [
+          [
+            8,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            15,
+            15,
+            15,
+            14,
+            13,
+            12,
+            11,
+            10,
+            8,
+            7,
+            5,
+            4,
+            3,
+            2,
+            1,
+            0,
+            0,
+            0,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            7
+          ],
+          [
+            5,
+            7,
+            8,
+            8,
+            9,
+            10,
+            11,
+            11,
+            11,
+            11,
+            11,
+            10,
+            10,
+            9,
+            9,
+            8,
+            7,
+            6,
+            6,
+            5,
+            5,
+            4,
+            4,
+            4,
+            4,
+            4,
+            5,
+            6,
+            7,
+            7,
+            8,
+            10
+          ],
+          [
+            3,
+            3,
+            4,
+            5,
+            6,
+            6,
+            7,
+            7,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            7,
+            8,
+            7,
+            7,
+            7,
+            7,
+            7,
+            7,
+            7,
+            8,
+            8,
+            9,
+            9,
+            10,
+            11,
+            12,
+            12
+          ],
+          [
+            0,
+            0,
+            1,
+            1,
+            2,
+            2,
+            3,
+            3,
+            4,
+            4,
+            5,
+            5,
+            6,
+            6,
+            7,
+            7,
+            8,
+            8,
+            9,
+            9,
+            10,
+            10,
+            11,
+            11,
+            12,
+            12,
+            13,
+            13,
+            14,
+            14,
+            15,
+            15
+          ]
+        ]
+      },
+      {
+        "slot": 6,
+        "name": "Tri to saw",
+        "frames": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            15,
+            14,
+            13,
+            12,
+            11,
+            10,
+            9,
+            8,
+            7,
+            6,
+            5,
+            4,
+            3,
+            2,
+            1,
+            0
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            13,
+            14,
+            13,
+            12,
+            11,
+            11,
+            10,
+            9,
+            9,
+            8,
+            7,
+            7,
+            6,
+            5,
+            4,
+            4,
+            3
+          ],
+          [
+            0,
+            1,
+            2,
+            2,
+            3,
+            4,
+            5,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            10,
+            11,
+            12,
+            12,
+            12,
+            11,
+            11,
+            11,
+            10,
+            10,
+            9,
+            9,
+            8,
+            8,
+            8,
+            7,
+            7,
+            7,
+            6
+          ],
+          [
+            0,
+            0,
+            1,
+            2,
+            3,
+            3,
+            4,
+            5,
+            6,
+            6,
+            7,
+            7,
+            8,
+            9,
+            10,
+            10,
+            11,
+            10,
+            11,
+            10,
+            10,
+            10,
+            10,
+            10,
+            10,
+            10,
+            10,
+            9,
+            10,
+            9,
+            9,
+            9
+          ],
+          [
+            0,
+            0,
+            1,
+            1,
+            2,
+            3,
+            4,
+            4,
+            5,
+            5,
+            6,
+            6,
+            7,
+            7,
+            8,
+            9,
+            9,
+            9,
+            10,
+            10,
+            10,
+            10,
+            11,
+            10,
+            11,
+            11,
+            11,
+            11,
+            12,
+            12,
+            12,
+            12
+          ],
+          [
+            0,
+            0,
+            1,
+            1,
+            2,
+            2,
+            3,
+            3,
+            4,
+            4,
+            5,
+            5,
+            6,
+            6,
+            7,
+            7,
+            8,
+            8,
+            9,
+            9,
+            10,
+            10,
+            11,
+            11,
+            12,
+            12,
+            13,
+            13,
+            14,
+            14,
+            15,
+            15
+          ]
+        ]
+      }
+    ],
+    "kits": [
+      {
+        "slot": 1,
+        "name": "909-ish",
+        "period": 1865,
+        "loop": 0,
+        "samples": [
+          {
+            "name": "KICK",
+            "note": 36,
+            "loopPoint": 0,
+            "length": 3437,
+            "data": "3u///////////////t3LqZh3ZmVVVVUREiM0VWd4mqvM3d7u7//u7t3Mu6qYh2ZUQzIiERERERESIjNEVmd4maq7zN3e7u7u7u7d3Mu6qZiHdmVUQzIiIRERERESIiM0RFVmd4iZqrvMzd3d7u7u7t3d3My7qqmYh3ZmVURDMyIiIhEREiIiIzM0RFVWZ3eImZqru8zM3d3d3d3d3d3czMu7uqqZiId3ZmVVREMzMyIiIiIiIiIiMzM0REVVZmd3eIiZmqq7u7zMzN3d3d3d3d3czMzLu7qqqZmIiHd2ZmVVVEREMzMzMyIiIiIiMzMzM0RERVVVZmZ3d4iImZmqqru7u8zMzMzMzMzMzMzMzMy7u7uqqqmZmYiId3d2ZmZVVVREREQzMzMzMzMzMzMzMzM0REREVVVVZmZnd3eIiImZmZqqqqu7u7u7zMzMzMzMzMzMzMu7u7u7uqqqqpmZmYiIiHd3dmZmZlVVVVREREREREQzMzMzMzMzRERERERERVVVVVZmZmZ3d3d4iIiJmZmZmqqqqqq7u7u7u7u7u7u7u7u7u7u7u7u7qqqqqqqZmZmZiIiIiHd3d3ZmZmZmVVVVVVVURERERERERERERERERERERERVVVVVVVVmZmZmZnd3d3eIiIiIiZmZmZmaqqqqqqqqq7u7u7u7u7u7u7u7u7u7uqqqqqqqqqqZmZmZmZiIiIiIh3d3d3d2ZmZmZmZlVVVVVVVVVVVVREREREREREREVVVVVVVVVVVVVWZmZmZmZmd3d3d3d4iIiIiIiJmZmZmZmZmqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqpmZmZmZmZmIiIiIiIiHd3d3d3d3ZmZmZmZmZmZlVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVmZmZmZmZmZmZ3d3d3d3d3iIiIiIiIiImZmZmZmZmZmZmaqqqqqqqqqqqqqqqqqqqqqqqqqqqqmZmZmZmZmZmZmZiIiIiIiIiIiHd3d3d3d3d3dmZmZmZmZmZmZmZmZlVVVVVVVVVVVVVVVVVVVVZmZmZmZmZmZmZmZmZnd3d3d3d3d3d3iIiIiIiIiIiIiZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZiIiIiIiIiIiIiId3d3d3d3d3d3d3dmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmd3d3d3d3d3d3d3d4iIiIiIiIiIiIiIiImZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZiIiIiIiIiIiIiIiIiId3d3d3d3d3d3d3d3d3dmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZ3d3d3d3d3d3d3d3d3d3eIiIiIiIiIiIiIiIiIiIiImZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmYiIiIiIiIiIiIiIiIiIiIiId3d3d3d3d3d3d3d3d3d3d3d3dmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmd3d3d3d3d3d3d3d3d3d3d3d3d3iIiIiIiIiIiIiIiIiIiIiIiIiIiIiJmZmZmZmZmZmZmZmZmZmZmZmYiIiIiIiIiIiIiIiIiIiIiIiIiIiIiId3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3ZmZmZmZ3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3eIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIh3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d4iIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiId3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3eIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiHd3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3iIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiA"
+          },
+          {
+            "name": "SNAR",
+            "note": 38,
+            "loopPoint": 0,
+            "length": 2521,
+            "data": "wntLWO/Wamq69vbJVLtDRXY7pHgDiRByV4UQsIU7TE1pXEl8WbnfrOepnN2Wo8tFNZqlpWlhlAgIdRVTaYtzaty17dnPn37fauibtlmUU3tpaVoWJWaBhISpI6OTaJfaqMa5t8nLd1ZXal3EummnmTcnJ4ZIanl2c0aqNnx4i9vXbdadyqepvIW7tWVnmHmIlVhjhSdDVmRKamebZ2qla72Wice2mGmrupSFd1hnOUVpNIWHmHhplFZUWZa1u2tpuKfIq3p7nKVriUdnaEVFl3OYWYSJR5eahmmml3m5i6m2eGm5Z5iJm2hYpYR4h2l5RnmYV1h2VpdYiIp6W2qGmpZ2uqa3eqdXllhYSXWEh5aJmHaoVYlql3mGp5ipdqubq3dpl4ppepZ5Z1lolFeYh2WIh5doeZZ4WGl3a5hniIl4qGeamKaJdpl1mGeJeYeWaYh2dmd5iXlqaGmXp3dnaYh4pmh2eIVVZ3hXeGiYhlaJdmaWaXZ4iGhohqqZmHammJd5hmZpllaFh3eWiYmVl2aXmXl4aZaZpqiHmYl5mZd4d5eHeJh2dXd2lmiHhodmiZlmaYl3l4d4h5eYdneJhmeIh2h3iYiIaIdmZpZmZ4eHl5mHmYl5iGd3iJmHh3dnl4hph4Znh2d2aHd2aGiXaZaIiYiZd3hph3iIiHl4lph4iJd5Z4eJh3eHeGdoh4d3eXd4mHd4d3d3mImYd2eHiHiYd4Z4d3eIeIhod4d3d3iHd4d3eWeXd3h4iIiYeId4iIh2d3d3d4doiHZ4eHh3eHeHiYmIl4iJiYd4d3doh4iIdnZ4d4d3iHd4eIeYeIiYiImJiIeHeHeHiHh3d4d4d4d4h3d3d3h4eHd3d3h3eIiHd3iHh4iHh4h3iHiIh3h4eIiIh3h3h4d4h3iHeIiIiHd4h4eHiIeHiHd3eId4d3eId3eIiId4h3iId4iHiHh3h4eHd3d3iHeHiHeHd3iHeHiHeHeHd4d4iIh3d4d4h4iHh4iIh3eHh3d4d4iHd3eHd3h3eIiHeHeHeIeIiHiIiHd4d4iIh4iHeIeIh4d3h4h3d4h4d4h3h3eIeHd4eIh4d4iHiHh4eIiHiHeHd3d4eHeHh4iHd3eId4d4eHiHeIiHiIeId3eHh3d4eHeHd3d4eHd4d3iHd3iHiIeIiIh3h4d4h4eIeHh3iIh4iIiHeIeHd4iIiHd3h3iId3h3h4h3iHiHiHiHh3h4eIeHiHeHeId3iId4h4eHiId3h3iHh3eHd3eHh4d3h3h3eIh3eIeId3eHiIeHh4eHh4iHiIeIeHeId3eHd3iHd3d3eIeHeHeHd3h3h4h4iId4d4iHh3h4iHiIeHd3d4d4iIh4h3d3iIiHiHd3iHd3h4d4eId4eHeId4iHiIh4h4eIh4d4h4h3eId3h4d4iIh3iHeIeHh3iIeHeIh4d4h3eHh3eHeHh4d3iIeHeIeHiIh4d4h3h3d3eHd4d4h3d3eHh4h3iIh3iIeIiIiId3d3iHh3d4h4h4eIh4d4d4iIeIeId4d3eIiId3eIiIiId3d4h4h4eIeHeIiHh3iHeIeHd4d4iHh3h3d4d4iHiIh3iIh3iId3d4d4eHh3iIeHd3eHd4h4eIeIh3h4iIh4d3d4d3h4iIeHh3eIh4h3iId4iHd4eHeHeIiIeIiIeHd4iHh3eHeIgA=="
+          },
+          {
+            "name": "CHAT",
+            "note": 42,
+            "loopPoint": 0,
+            "length": 802,
+            "data": "8P0PDPgwjC+H8PDyNvgGqbdPYNgN+QXwypMm8PJPDw8MHw5ODbTLG6DGe6g0wPYJWtmC4psy8k8PZTt1q2szq7Zh9oO6Hg9pDMGZc3xzlrw7SzwMSoiR1LTHGOLSqYbFdqO2lMWnSGh5ek5y11qFmDtLS4dqamlnhYi3OotJeoeEfHOadnanmFa4dIeJl3l4hXpmpmpniHd7aViYWHl1inhmmJWll3mId4Wml3l4aliJSJaXl3h5hYh3iYalp1pZhoeWmGlpeXWJaGl4eGh4l4aXaXaYaYeId3iGl4iHeHeGiHiHeIeIeGh5hoaYh3h4aIh3eHh3eId4d4h4aWh3iHeHl4eXeId4h3h4eXeHh4eIh3eHd4h4d3h3h4eHd4h4eHh4d4h4eHeIeHh4h4iHh3eHh4d4eIeIeHh3eHd4h4h4h3iId4eId4h3h3iIeHeHiHd3h3iIeHh4eHiHh4d4eHd4h4h3iId3iHh4eHiHd3iId3eHeHeIh3h4d4d4d3eHh4d4d3h4h3iHh4eHiHh3h3c="
+          },
+          {
+            "name": "OHAT",
+            "note": 46,
+            "loopPoint": 0,
+            "length": 3437,
+            "data": "8P0PDPgwjR+H8PDxJvgFusc/YOgO+gTw6pIG8PFPDw8NDw8/D8PsDLDmfbgD4PYKS/qA8J0Q8C8PYw50vU0AzuVg9YDcDw9aD/C7cH9wpP8OHg8PDZiw8PD2CPDw6pTyddDzwPLWCElrbw9g9x2hyQ8PD6VPPitGgKn3Do8LbqWgX3Dfc3LlyQL5cJeMtWxooH8x8T8ku2R/DgrKCl9gj2sB2ODw1k3JdYDw101ZDwqfC+L0xUpNgKlVj4Hw9w8OscLw2Q4PPlC/Kg5pfAlb85D2H0D6DrO6Q32w44yzXkegqU20GtWaewsfsOD5hW8tDJ10HD5UaeM9d5otDw8y+kKm9ZDwfZI9sV8PDzPw9NHJhGX0B/gfY2xU8MXURfhLWghfZasPLlKcGy8NoJzFhUbnlbJtS4CqLi1WbzY6p5kr0jnpZMDqNfgi9TqrS1TRjkdWtXiNSTsfDD6D8YZqb1ZrsJxUqoJ3m3sdeUumc1vKJmfxb0S5h0w8c/dZdFbw5qN9RGpvgVrB5YfA2Vpw8nbzpzwrL3DYkPOFuFsedpKKaMKWm5ZGk8hm8Jx2odZH2mkIb1k34paIhfHFVafJUonHdz9Im1eXO6JZh+FoiqWmtLlF11gtaCmIl7hT05dZ06kfZrF6pVqjnWaTjCykXnHWiVinKYk+c3uXeUw5kfVplrKMKLa4ZWmjejltZaZ4bEeKpWeJZphn12mGN2m1uFqVSZOrVYmoLXc8aIWVl3xmd7OmbhnEd4w7hYmVWoSZd6dFmGpYlrVNZ2Wpampma2iGqmlYkqppW3KKWYZ8dqh4VaWcN6domFWLSpPXLIameVpLWZLCmVmll2pnaNR7ZqV7kpiHeYdcWWaWhqlWinmDd4tlpKiEtbZH1mmmg5tZS6d4hXsoxaOadZiTqoaIhzp5hqOWqHW1mVdomIZ5d1qHdaXHh4R7Z3mXSKd1qWo3tJWnanhXt1iHp0enZ4p2ektlelimaLVql3dXd8R6h4mEppeHlYeltJaYV6iGeHelmFxIiIeEfEmkinS3l0qYZ1iaWIeYZqh2e3WYg7WHlZhnlqhod5dnh2mmWliJaIhLR6mEqUppW3d3pnaWh3aJaWeWpZh1iIa2Z5WKWVp2eJd2p4SYaHiWhnl4elilh4aKSmh6aHl3d3mVp3Wnh5dYlaWJlaWnS1pmp4dqd3h1mXaWd6h3l1eHpXmHd4lWpqdYmFqGl2p2l3laWYeWmUe2iYSHmIZ4loalmIZ4lYl1pniGh5aXhqWIh2pYiYdnemeXaHmGmHeGl6WmloiFh4aYaViXd3iWeIlmh4h4eneHeliWiHlmpahpeHeJaIl1lolohml3eGmHiIeIeIhZh3iHiXiFmGeIiHd4loeJWnZ5aXiYWIiGiWhpd4eYhoaId5ZoeXd4lpaJeIhol3eYaVpnmHaXeIhpZ5loeXh4iWiWlodopoaWiXaHiHhpZ6dolYeHiWiIaJdpaHiWhqdomHh3iXanh4d4Z4h4iGlnhqd4d5aXdpZ5Z5d4eXaHd5aXiYeHd3iIh4h3eHh5dphpeHeGeHh2l4iGiXaGh4aIiGhnl3eJaIh3h3h3mHh3l4eHiJZ5aHh3l4eHd4iGh5d5aIeYd3h4h4d4eId5eHlph3eGh3iIdpd4iIaIeGiIaXeHiHh4eIeHeGiIh2lniHeIh3iIeHh3lpd4Z4eXd3h3h4h4aId5d3iIaIaWmHhoeHeWeXh2lohoeIh4eHeWiId4eHeHh4h4hpeHhpeGiHiHh4eHeWl4eId3h4d4eIaHeHd5aIeHl4d3eHeIhnl3iGh4eId3h4d5aXiHh4h3h3eHl4h4iHh4eYdoiHh3mHh4eId4h3hoeHd3iHh4hnh4eIeHiHh4iIeIh4d3eXh4eHh3h4h4h3eXeIiGmId4h3h4d4h4eHh3h4d4eHiIeHl4hoh4iHh4h3iHiHd3h3eHiHeIh3iHeHh3eHiHd4eIh5d3h4eHeHeHiHeHh4d4iHeIhoh4d3iHh4iIeIeId4eHh4iHiHh3iHeIeHhoh3h3h3eHeHeIeHeId4eHh3h4h3h4d4d4iIh4d4h3h4h3iHeId4iHeHd4h3iHh4d4d4eIh3iHiIh3iHeIeIeIeHh4h4eHh4eIeHh3iHiId4h4d4d4eHeIeIh3h3eId3h3h4d4d3iHeIh3h3h3eHh4eHh3h4iHh4eHd4d4eIeIeHd4d4eHh4d4h4h3iHd4iHh4h4eIeHh3d4h4h3h3d3iHh4eId4iHeHeHh3iHeIeIeHeHiHd4h4d4d3h4h3h4h4d4h3eA"
+          },
+          {
+            "name": "CLAP",
+            "note": 39,
+            "loopPoint": 0,
+            "length": 2062,
+            "data": "pmhXVYu3RTRWpqaHQmhSI0VJuaplm4WGeapklXdZanuIaFZXRGaLmrd3eLy4lZt2RYva26y3qFhYmFVkWIqVRqu2q8q9m4q8iLmJp2eGU1mKm5t4ZniWh5irdYWFVneqmJeHhoiadkMjNUinmpq5q3hnVoh5m7y6l2aadmqIebvJabd5upeImoWKuHZniYqquYmXh1dlVmVYeYeah2iGV5qWZpeGZlaJqqeGd2d3WGZpZneZqpqKp2ZUNnaWinlnh4eYmol5irdpiWd3eGZDiJWaeraLZ5iruHi3h2eqi6q3ZkaZVGZ5nJlXp4VomIqsiIvLiGiGVHdGZ3mJaWiFaYZUibioeblnl1dXSIaFiKmry6iqdXl5qHiGh4eZdYqrvJdXh4p5iqiJiGl4p2eaqoaImah4iZdnVldmWIhmZ3hnmWaKqbial5uXmXeJmqmoeZmHd2ZoiYhpZ1eGl3ZVR3dnl2d2Z4ZURWdneHiaqGaJh2V2V3Vmd2dmdomaqXaGiJh4h2ZXmGaGiIiXiZqomHaImYmIaJeImJiHiYl5mah4d5iHeJmHdnd2h2iIl4h2eJqHaIh3h3d3doeIdmZ4l2Z4iHiIiZmZiJhmZndmZnd3iImImZmIiHZmd4mHh3dmh4h4iIdmd2Z2Z3eHZ2eIeJeIiYiZh3d4h3eIiImIl4iIiJh4d4iJmIiIeHdnh4h3eHd4iId3d3d2eIiZh3Z3iIiYh4d4h3eIeIh4d4d3dmd3d4d3aHeHd3d4iIiIiIiIiImHd3d3d4h4iId3d3h3d3d3eIiIiIiIiJh3d3dniIiIh3d4d3d3iId4eIeIeIiIiIiIiIiHd3eHiHiHd4d4h4d3h3d3d3h4eHd3d3d3d4iId3iHh3eHd4h3iIiIh3h4d4iIiIh3h4d4h3eHeIiIiHd3iIeHiIeHiId3d4h4iHd4h3eIiId4h3iIh4iHiIh3h3d3d3d3eHd3iHd3d3eIeHiHd3d3d3d3iIiHd3d3d3iHh3eIiIeHh3d4d3eIiIeHeHh3d4iHeHeHeIeIiHeIiHd4h4iIiIiIeIiIiId3h3h3d3d3d3d3d3eIeHd4eIh4d3iHiHh4eIiIiIeHd3d3d3d3iIiHd3eId3d3eHiId4iIiIiId3d3d3d3eIeHd3d4eHd3d3d3d3eHiIeIiIh3d3d3h4eIeIiHiIh4iIiIiIiId3iIiId3h3eId3h3d4h3iHiIiHiHh3h4d4eHiHeIiId3eIiIiIeHd4d3h3iHd3d3d3d3d4d3h3d3d4iHeIiIiHd3eIeHd4eHh3iIiIiIiHeIh3eId3iHd3d3d4iHeHd3d3iHh4iIiIh4d3iHiHiIiHiIiHd3d4d4iIh3h3d3eIiIiHd3d3c="
+          },
+          {
+            "name": "TOM",
+            "note": 45,
+            "loopPoint": 0,
+            "length": 3208,
+            "data": "iZqrzN3e7v/////+7t3cy7qpiHdlVEMyIhERAAAAARESIzNEVWd4iZqrvM3d7u7v//7u7t3cy7qpmId2ZVRDMiIRERERERESIiM0RVZneImaq7zM3d7u7u7u7u7d3My7qpmId2ZVREMzIiERERERESIiMzRFVWZ3iJmqu7zM3d3u7u7u7d3dzMu6qpmId2ZVVEMzMiIiEREREiIiMzREVWZneImaqru8zN3d3e7u7d3d3My7uqqZiHd2ZVVEQzMiIiIiIiIiIjMzREVVZnd4iZqqu7zMzd3d3d3d3d3MzLu6qpmYh3dmVVREQzMyIiIiIiIiMzM0RFVWZnd4iZmqq7u8zM3d3d3d3dzMzLu7qqmZiId2ZlVUREMzMzIiIiIiIzMzRERVVmZ3eIiZmqq7u8zMzM3d3d3MzMzLu7qqmZiId3ZmZVVERDMzMzMzMzMzMzNERFVVZmd3iImZmqq7u7zMzMzMzMzMzMu7u6qqmZiIh3dmZVVUREQzMzMzMzMzMzNEREVVVmZ3d4iJmZqqq7u7zMzMzMzMzMy7u7uqqpmZiId3dmZVVVREREMzMzMzMzM0RERFVVVmZnd4iImZmqqqu7u7zMzMzMzMu7u7uqqqmZmIiHd3ZmZVVVRERERDMzMzM0RERERVVVZmZ3d4iImZmaqqq7u7u7u8zMu7u7u7uqqqmZmYiId3dmZmVVVURERERERERERERERVVVVmZmd3eIiImZmqqqq7u7u7u7u7u7u7u6qqqpmZmIiId3d2ZmZVVVVERERERERERERERVVVVmZmd3d4iIiZmZqqqqq7u7u7u7u7u7u6qqqqqZmZiIiHd3dmZmVVVVVURERERERERERFVVVVZmZmd3d4iIiZmZmqqqqqq7u7u7u7u7uqqqqqmZmZiIiId3d2ZmZlVVVVVVRERERERERVVVVVVmZmZ3d3eIiIiZmZmqqqqqqqu7u7u7qqqqqqqpmZmYiIiHd3d2ZmZmVVVVVVVVVVVVVVVVVVVVZmZmZ3d3eIiIiJmZmZqqqqqqqqqqqqqqqqqqqpmZmZiIiIh3d3dmZmZmVVVVVVVVVVVVVVVVVVVmZmZmd3d3iIiIiZmZmZqqqqqqqqqqqqqqqqqqmZmZmYiIiId3d3dmZmZmZVVVVVVVVVVVVVVVVVZmZmZnd3d3eIiIiJmZmZmaqqqqqqqqqqqqqqqpmZmZmZiIiIh3d3d3ZmZmZmZVVVVVVVVVVVVVVWZmZmZmZ3d3d3iIiIiJmZmZmZqqqqqqqqqqqqqqmZmZmZmYiIiIh3d3d3ZmZmZmZmVVVVVVVVVVVVZmZmZmZmd3d3d3iIiIiJmZmZmZmZqqqqqqqqqqqZmZmZmZmIiIiIh3d3d3d2ZmZmZmZmZVVVVVVVVmZmZmZmZmd3d3d3eIiIiIiZmZmZmZmZmZqqqqqZmZmZmZmZmYiIiIiId3d3d3dmZmZmZmZmZmZmZmZmZmZmZmZmZ3d3d3d3iIiIiIiZmZmZmZmZmZmZmZmZmZmZmZmZmIiIiIiId3d3d3d2ZmZmZmZmZmZmZmZmZmZmZmZmd3d3d3d3iIiIiIiJmZmZmZmZmZmZmZmZmZmZmZmZiIiIiIiId3d3d3d3ZmZmZmZmZmZmZmZmZmZmZmZmd3d3d3d3eIiIiIiIiZmZmZmZmZmZmZmZmZmZmZmZiIiIiIiIh3d3d3d3d2ZmZmZmZmZmZmZmZmZmZmZmZ3d3d3d3d4iIiIiIiIiZmZmZmZmZmZmZmZmZmZmZmIiIiIiIiId3d3d3d3d3ZmZmZmZmZmZmZmZmZmZmZnd3d3d3d3eIiIiIiIiIiJmZmZmZmZmZmZmZmZmZmYiIiIiIiIiId3d3d3d3d3dmZmZmZmZmZmZmZmZmZmd3d3d3d3d3eIiIiIiIiIiImZmZmZmZmZmZmZmZmZmIiIiIiIiIiId3d3d3d3d3d3ZmZmZmZmZmZmZmZmZ3d3d3d3d3d3d4iIiIiIiIiIiImZmZmZmZmZmZmZmYiIiIiIiIiIiId3d3d3d3d3d3d3ZmZmZmZmZmZmZmd3d3d3d3d3d3d4iIiIiIiIiIiIiImZmZmZmZmZmZmIiIiIiIiIiIiIh3d3d3d3d3d3d3d3dmZmZmZmZmZ3d3d3d3d3d3d3d3eIg="
+          }
+        ]
+      }
+    ]
+  },
   "song": {
     "format": "chipboy-song",
-    "version": 4,
+    "version": 5,
     "steps": 16,
     "stepsPerBar": 16,
     "tempoBpm": 120.0,

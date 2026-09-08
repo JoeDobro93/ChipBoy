@@ -43,10 +43,14 @@ ChipBoyProcessor::ChipBoyProcessor()
     pendingLink_.reserve(kMaxPendingLink); pendingScratch_.reserve(kMaxPendingLink);
     cycleAt_ = [this](uint64_t f) { return renderer_.cycleForFrame(f); };
 
-    // `new T(prvalue)` builds the bank in its heap block; make_shared would
-    // bind the prvalue to a reference first and leave 41 KB on the stack.
+    // One empty tab to start with (section 18); everything below publishes
+    // into it. `new T(prvalue)` builds the bank in its heap block; make_shared
+    // would bind the prvalue to a reference first and leave 41 KB on the stack.
+    tabs_.push_back(SongTab{});
+    tabs_.back().id = nextTabId_++;
     publishBank(std::shared_ptr<const bank::Bank>(new bank::Bank(bank::Bank::factory())));
     publishSong(std::make_shared<tracker::Song>());
+    active().dirty = false;
     startTimer(kTimerMs);
 }
 
@@ -65,6 +69,8 @@ void ChipBoyProcessor::publishBank(std::shared_ptr<const bank::Bank> b)
     while (retired_.size() > 32) retired_.pop_front();
     bankShared_ = std::move(b);
     bankPtr_.store(bankShared_.get(), std::memory_order_release);
+    active().bank = bankShared_;
+    active().dirty = true;
 }
 
 void ChipBoyProcessor::publishSong(std::shared_ptr<tracker::Song> s, bool fromFile)
@@ -85,6 +91,8 @@ void ChipBoyProcessor::publishSong(std::shared_ptr<tracker::Song> s, bool fromFi
     while (retired_.size() > 32) retired_.pop_front();
     songShared_ = std::move(s);
     songPtr_.store(songShared_.get(), std::memory_order_release);
+    active().song = songShared_;
+    active().dirty = true;
 }
 
 void ChipBoyProcessor::mutateBank(const std::function<void(bank::Bank&)>& fn)
@@ -104,6 +112,107 @@ void ChipBoyProcessor::mutateSong(const std::function<void(tracker::Song&)>& fn)
     if (songShared_) *copy = *songShared_;
     fn(*copy);
     publishSong(std::move(copy));
+}
+
+/* ---------------------------------------------------------------- tabs */
+
+juce::String ChipBoyProcessor::bankName() const { return active().bankName; }
+juce::String ChipBoyProcessor::tabName(int i) const { return i >= 0 && i < tabCount() ? tabs_[size_t(i)].name : String(); }
+File ChipBoyProcessor::tabFile(int i) const { return i >= 0 && i < tabCount() ? tabs_[size_t(i)].file : File(); }
+bool ChipBoyProcessor::tabDirty(int i) const { return i >= 0 && i < tabCount() && tabs_[size_t(i)].dirty; }
+
+int ChipBoyProcessor::tabIndexOfId(int id) const
+{
+    for (int i = 0; i < tabCount(); ++i) if (tabs_[size_t(i)].id == id) return i;
+    return -1;
+}
+
+void ChipBoyProcessor::setSongTempoParam(double bpm)
+{
+    if (auto* prm = apvts.getParameter(ids::songTempo))
+        prm->setValueNotifyingHost(prm->getNormalisableRange().convertTo0to1(float(std::clamp(bpm, 40.0, 255.0))));
+}
+
+/// The audio thread's two pointers, straight from a tab. Nothing is rebuilt:
+/// the tempo map and the bar table were built when the song was published, on
+/// the tempo the tab carries, which the parameter has just been given.
+void ChipBoyProcessor::activate(const SongTab& tab)
+{
+    if (tab.bank) {
+        if (bankShared_) retired_.push_back(bankShared_);
+        bankShared_ = tab.bank;
+        bankPtr_.store(bankShared_.get(), std::memory_order_release);
+    }
+    if (tab.song) {
+        if (songShared_) retired_.push_back(songShared_);
+        songShared_ = tab.song;
+        songPtr_.store(songShared_.get(), std::memory_order_release);
+    }
+    while (retired_.size() > 32) retired_.pop_front();
+    namesPublishedFor_ = nullptr;              // the link publishes this bank's names
+}
+
+void ChipBoyProcessor::setActiveTab(int i)
+{
+    if (i < 0 || i >= tabCount() || i == activeTab_) return;
+    activeTab_ = i;
+    const SongTab& tab = tabs_[size_t(i)];
+    // The tab's master tempo becomes the parameter's value, and the map the
+    // song already holds was built on it (section 19).
+    tempoBase_ = tab.song ? tab.song->tempoBpm : 120.0;
+    setSongTempoParam(tempoBase_);
+    activate(tab);
+    // A different piece: nothing of the old one is left ringing (section 18).
+    flushRequest_.store(15);
+}
+
+int ChipBoyProcessor::newTab()
+{
+    auto song = std::make_shared<tracker::Song>();
+    std::shared_ptr<const bank::Bank> factory(new bank::Bank(bank::Bank::factory()));
+    return addTab(std::move(song), std::move(factory), "Song " + String(nextTabId_), "Factory");
+}
+
+int ChipBoyProcessor::addTab(std::shared_ptr<const tracker::Song> song, std::shared_ptr<const bank::Bank> bank,
+                             const String& name, const String& bankName)
+{
+    SongTab tab;
+    tab.id = nextTabId_++;
+    tab.name = name.isNotEmpty() ? name : String("Song");
+    tab.bankName = bankName;
+    tab.song = song ? std::move(song) : std::shared_ptr<const tracker::Song>(new tracker::Song());
+    tab.bank = bank ? std::move(bank) : std::shared_ptr<const bank::Bank>(new bank::Bank(bank::Bank::factory()));
+    tabs_.push_back(std::move(tab));
+    const int index = tabCount() - 1;
+    // The song may never have been published, so its tempo map and bar table
+    // are built now, on its own tempo, before anything plays it.
+    {
+        auto built = std::make_shared<tracker::Song>();
+        *built = *tabs_[size_t(index)].song;
+        tracker::buildTempoMap(*built, std::clamp(built->tempoBpm, 40.0, 255.0));
+        tabs_[size_t(index)].song = std::move(built);
+    }
+    activeTab_ = index;
+    tempoBase_ = tabs_[size_t(index)].song->tempoBpm;
+    setSongTempoParam(tempoBase_);
+    activate(tabs_[size_t(index)]);
+    tabs_[size_t(index)].dirty = false;
+    flushRequest_.store(15);
+    return index;
+}
+
+bool ChipBoyProcessor::closeTab(int i)
+{
+    if (i < 0 || i >= tabCount() || tabCount() <= 1) return false;
+    tabs_.erase(tabs_.begin() + i);
+    const int want = std::clamp(activeTab_ > i ? activeTab_ - 1 : activeTab_, 0, tabCount() - 1);
+    // Whatever is left has to be published: the closed tab may have been live.
+    activeTab_ = want;
+    tempoBase_ = active().song ? active().song->tempoBpm : 120.0;
+    setSongTempoParam(tempoBase_);
+    activate(active());
+    flushRequest_.store(15);
+    return true;
 }
 
 /* ---------------------------------------------------------------- undo */
@@ -127,24 +236,25 @@ int bankUnits(const bank::Bank* b)
 /// do; a redo after an undo does.
 struct BankAction : juce::UndoableAction {
     ChipBoyProcessor& processor;
+    int tabId;                      ///< the tab it belongs to, which it re-activates
     std::shared_ptr<const bank::Bank> before, after;
     juce::String nameBefore, nameAfter;
     bool inPlace = true;
 
-    BankAction(ChipBoyProcessor& p, std::shared_ptr<const bank::Bank> b, juce::String nb,
+    BankAction(ChipBoyProcessor& p, int tab, std::shared_ptr<const bank::Bank> b, juce::String nb,
                std::shared_ptr<const bank::Bank> a, juce::String na)
-        : processor(p), before(std::move(b)), after(std::move(a)), nameBefore(std::move(nb)), nameAfter(std::move(na)) {}
+        : processor(p), tabId(tab), before(std::move(b)), after(std::move(a)), nameBefore(std::move(nb)), nameAfter(std::move(na)) {}
 
     bool perform() override
     {
         if (inPlace) { inPlace = false; return true; }
-        processor.restoreBank(after, nameAfter);
+        processor.restoreBank(tabId, after, nameAfter);
         return true;
     }
     bool undo() override
     {
         inPlace = false;
-        processor.restoreBank(before, nameBefore);
+        processor.restoreBank(tabId, before, nameBefore);
         return true;
     }
     int getSizeInUnits() override { return bankUnits(after.get()); }
@@ -153,22 +263,23 @@ struct BankAction : juce::UndoableAction {
 /// The same for the song. A Song is the big one, about 300 KB.
 struct SongAction : juce::UndoableAction {
     ChipBoyProcessor& processor;
+    int tabId;                      ///< the tab it belongs to, which it re-activates
     std::shared_ptr<const tracker::Song> before, after;
     bool inPlace = true;
 
-    SongAction(ChipBoyProcessor& p, std::shared_ptr<const tracker::Song> b, std::shared_ptr<const tracker::Song> a)
-        : processor(p), before(std::move(b)), after(std::move(a)) {}
+    SongAction(ChipBoyProcessor& p, int tab, std::shared_ptr<const tracker::Song> b, std::shared_ptr<const tracker::Song> a)
+        : processor(p), tabId(tab), before(std::move(b)), after(std::move(a)) {}
 
     bool perform() override
     {
         if (inPlace) { inPlace = false; return true; }
-        processor.restoreSong(after);
+        processor.restoreSong(tabId, after);
         return true;
     }
     bool undo() override
     {
         inPlace = false;
-        processor.restoreSong(before);
+        processor.restoreSong(tabId, before);
         return true;
     }
     int getSizeInUnits() override { return int(sizeof(tracker::Song)); }
@@ -185,51 +296,81 @@ const char* channelShortName(int ch)
 void ChipBoyProcessor::editBank(const String& name, const std::function<void(bank::Bank&)>& fn)
 {
     auto before = bankShared_;
-    const String nameBefore = bankName_;
+    const String nameBefore = bankName();
+    const int tab = active().id;
     mutateBank(fn);
     if (bankShared_ == before) return;
-    history_.perform(std::make_unique<BankAction>(*this, before, nameBefore, bankShared_, bankName_), name);
+    history_.perform(std::make_unique<BankAction>(*this, tab, before, nameBefore, bankShared_, bankName()), name);
 }
 
 void ChipBoyProcessor::editSong(const String& name, const std::function<void(tracker::Song&)>& fn)
 {
     auto before = songShared_;
+    const int tab = active().id;
     mutateSong(fn);
     if (songShared_ == before) return;
-    history_.perform(std::make_unique<SongAction>(*this, before, songShared_), name);
+    history_.perform(std::make_unique<SongAction>(*this, tab, before, songShared_), name);
 }
 
 void ChipBoyProcessor::loadBankEdit(const String& name, const bank::Bank& b, const String& newName)
 {
     auto before = bankShared_;
-    const String nameBefore = bankName_;
+    const String nameBefore = bankName();
+    const int tab = active().id;
     publishBank(std::shared_ptr<const bank::Bank>(new bank::Bank(b)));
-    bankName_ = newName;
-    history_.perform(std::make_unique<BankAction>(*this, before, nameBefore, bankShared_, bankName_), name);
+    active().bankName = newName;
+    history_.perform(std::make_unique<BankAction>(*this, tab, before, nameBefore, bankShared_, newName), name);
 }
 
 void ChipBoyProcessor::setBankNameEdit(const String& n)
 {
-    if (n == bankName_) return;
+    if (n == bankName()) return;
     auto snapshot = bankShared_;
-    const String nameBefore = bankName_;
-    bankName_ = n;
-    history_.perform(std::make_unique<BankAction>(*this, snapshot, nameBefore, snapshot, n), "Bank name " + nameBefore + " " + String(CharPointer_UTF8("\xe2\x86\x92")) + " " + n);
+    const String nameBefore = bankName();
+    const int tab = active().id;
+    active().bankName = n;
+    active().dirty = true;
+    history_.perform(std::make_unique<BankAction>(*this, tab, snapshot, nameBefore, snapshot, n), "Bank name " + nameBefore + " " + String(CharPointer_UTF8("\xe2\x86\x92")) + " " + n);
 }
 
-void ChipBoyProcessor::restoreBank(std::shared_ptr<const bank::Bank> b, const String& newName)
+/// The song's master tempo and the Song tempo parameter move together, as one
+/// undo step (section 19). Everything else about a song edit is editSong's.
+void ChipBoyProcessor::setMasterTempo(double bpm)
+{
+    const double v = std::clamp(bpm, 40.0, 255.0);
+    const double was = songShared_ ? songShared_->tempoBpm : 120.0;
+    if (std::fabs(was - v) < 1e-9) return;
+    auto before = songShared_;
+    const int tab = active().id;
+    auto copy = std::make_shared<tracker::Song>();          // 300 KB: never on the stack
+    if (songShared_) *copy = *songShared_;
+    copy->tempoBpm = v;
+    publishSong(std::move(copy), /*fromFile*/ true);        // the song's tempo becomes the parameter's
+    history_.perform(std::make_unique<SongAction>(*this, tab, before, songShared_),
+                     "Tempo " + String(int(std::lround(was))) + " " + String(CharPointer_UTF8("\xe2\x86\x92")) + " " + String(int(std::lround(v))));
+}
+
+void ChipBoyProcessor::restoreBank(int tabId, std::shared_ptr<const bank::Bank> b, const String& newName)
 {
     if (!b) return;
+    const int i = tabIndexOfId(tabId);
+    if (i < 0) return;                        // its tab has been closed
+    setActiveTab(i);
     publishBank(std::move(b));
-    bankName_ = newName;
+    active().bankName = newName;
 }
 
-void ChipBoyProcessor::restoreSong(std::shared_ptr<const tracker::Song> s)
+void ChipBoyProcessor::restoreSong(int tabId, std::shared_ptr<const tracker::Song> s)
 {
     if (!s) return;
+    const int i = tabIndexOfId(tabId);
+    if (i < 0) return;
+    setActiveTab(i);
     auto copy = std::make_shared<tracker::Song>();          // on the heap, as mutateSong's is
     *copy = *s;
-    publishSong(std::move(copy));
+    // The snapshot carries the master tempo it was taken with, so undoing a
+    // tempo edit moves the parameter back with it (section 19).
+    publishSong(std::move(copy), /*fromFile*/ true);
 }
 
 void ChipBoyProcessor::setChannelArm(int ch, bool on)
@@ -374,8 +515,12 @@ void ChipBoyProcessor::consumeLink(int n, uint64_t hostFrame, bool hostTimeKnown
 bool ChipBoyProcessor::keyswitchNote(int ch, const bank::Bank* bank, uint8_t note) const
 {
     const auto& cp = channelParams[size_t(ch & 3)];
-    if (paramInt(cp.keyswitch) == 0) return false;
-    const bank::Instrument* i = bank ? bank->instrument(paramInt(cp.instrument)) : nullptr;
+    // On a Hybrid channel the octave is inert whatever the parameter says
+    // (section 20): the note did nothing, so it is not a cell either.
+    const auto* s = songPtr_.load(std::memory_order_acquire);
+    const bool hybrid = s && s->noteSource[size_t(ch & 3)] == tracker::NoteSource::Hybrid;
+    if (!hybrid && paramInt(cp.keyswitch) == 0) return false;
+    const bank::Instrument* i = bank && !hybrid ? bank->instrument(paramInt(cp.instrument)) : nullptr;
     const auto type = i ? i->type : (ch == 2 ? bank::InstrumentType::Wave : ch == 3 ? bank::InstrumentType::Noise : bank::InstrumentType::Pulse);
     const int base = type == bank::InstrumentType::Pulse ? 24 : 12;   // the octave below the playable floor
     return note >= base && note < base + 12;
@@ -403,12 +548,15 @@ void ChipBoyProcessor::recordNote(const driver::NoteEvent& e, double tickAtEvent
     const int ch = e.channel & 3;
     if (keyswitchNote(ch, bank, e.a)) return;      // it selects an instrument, it is not a cell
     const bool off = e.kind == driver::NoteEvent::NoteOff || (e.kind == driver::NoteEvent::NoteOn && e.b == 0);
-    const auto& p = driver_.params(ch);
+    // What the channel really read: a Hybrid channel's slots are inert, so
+    // its cells carry no commands from them (section 20).
+    const auto p = driver_.effective(ch);
     // The command octave (section 13): a note below C0 never sounds, it fires
     // the channel's slots. It records as a slot-only cell at its step, which
-    // replays the same way; its note-off means nothing.
+    // replays the same way; its note-off means nothing. It is inert on a
+    // Hybrid channel, so nothing is written there.
     if (e.a < 12) {
-        if (off) return;
+        if (off || driver_.hybrid(ch)) return;
         tracker::RecordMessage cmdCell;
         if (player_.recordSlots(ch, tickAtEvent, p.cmd[0], p.cmd[1], cmdCell, /*force*/ true)) recordFifo_.push(cmdCell);
         return;
@@ -426,7 +574,7 @@ void ChipBoyProcessor::recordNote(const driver::NoteEvent& e, double tickAtEvent
 
 void ChipBoyProcessor::recordSlots(int ch, double tick)
 {
-    const auto& p = driver_.params(ch);
+    const auto p = driver_.effective(ch);
     tracker::RecordMessage m;
     if (player_.recordSlots(ch, tick, p.cmd[0], p.cmd[1], m)) recordFifo_.push(m);
 }
@@ -466,22 +614,65 @@ void ChipBoyProcessor::applyRecordMessages()
 bool ChipBoyProcessor::loadSongFile(const File& file, SongReport& report)
 {
     auto s = std::make_shared<tracker::Song>();          // 300 KB: never on the stack
-    if (!plugin::loadSong(file, *s, report, bankShared_.get())) return false;
+    auto b = std::make_shared<bank::Bank>();             // and 41 KB
+    if (!plugin::loadSong(file, *s, report, bankShared_.get(), b.get())) return false;
     auto before = songShared_;
+    auto bankBefore = bankShared_;
+    const String nameBefore = bankName();
+    const int tab = active().id;
+    // Format 5 brings the sounds with it (section 18): the tab's bank is the
+    // file's, and the song and the bank are one undo step.
+    if (report.hasBank) {
+        publishBank(std::shared_ptr<const bank::Bank>(std::move(b)));
+        active().bankName = report.bankName.isNotEmpty() ? report.bankName : nameBefore;
+    }
     publishSong(std::move(s), /*fromFile*/ true);
-    history_.perform(std::make_unique<SongAction>(*this, before, songShared_), "Load song " + file.getFileNameWithoutExtension());
+    const String what = "Load song " + file.getFileNameWithoutExtension();
+    if (report.hasBank)
+        history_.perform(std::make_unique<BankAction>(*this, tab, bankBefore, nameBefore, bankShared_, bankName()), what);
+    history_.perform(std::make_unique<SongAction>(*this, tab, before, songShared_), what);
+    active().file = file;
+    active().name = file.getFileNameWithoutExtension();
+    active().dirty = false;
     return true;
 }
 
-bool ChipBoyProcessor::saveSongFile(const File& file) const
+bool ChipBoyProcessor::openSongFileInTab(const File& file, SongReport& report)
+{
+    auto s = std::make_shared<tracker::Song>();          // 300 KB: never on the stack
+    auto b = std::make_shared<bank::Bank>();
+    if (!plugin::loadSong(file, *s, report, bankShared_.get(), b.get())) return false;
+    // Format 5 carries its own sounds; an older file takes a copy of the
+    // bank the window is on, and the report says where it differs (18).
+    std::shared_ptr<const bank::Bank> bank;
+    String bankNameForTab = report.bankName;
+    if (report.hasBank) bank = std::shared_ptr<const bank::Bank>(std::move(b));
+    else {
+        auto copy = std::make_shared<bank::Bank>();
+        if (bankShared_) *copy = *bankShared_;
+        bank = std::shared_ptr<const bank::Bank>(std::move(copy));
+        bankNameForTab = bankName();
+    }
+    const int index = addTab(std::shared_ptr<const tracker::Song>(std::move(s)), std::move(bank),
+                             file.getFileNameWithoutExtension(),
+                             bankNameForTab.isNotEmpty() ? bankNameForTab : String("Factory"));
+    tabs_[size_t(index)].file = file;
+    return true;
+}
+
+bool ChipBoyProcessor::saveSongFile(const File& file)
 {
     if (!songShared_ || !bankShared_) return false;
     // The song carries the tempo it was played at -- the Song tempo
-    // parameter, as the plugin state does (section 4).
+    // parameter, as the plugin state does (sections 4 and 19).
     const auto out = std::make_unique<tracker::Song>();
     *out = *songShared_;
     out->tempoBpm = songTempoParam();
-    return plugin::saveSong(*out, *bankShared_, file, bankName_);
+    if (!plugin::saveSong(*out, *bankShared_, file, bankName())) return false;
+    active().file = file;
+    active().name = file.getFileNameWithoutExtension();
+    active().dirty = false;
+    return true;
 }
 
 /* --------------------------------------------------------- the timer */
@@ -553,11 +744,12 @@ void ChipBoyProcessor::timerCallback()
         handleVoiceRequests();
     }
     applyRecordMessages();
-    // The Song tempo parameter is the base a T cell modifies (section 4), and
-    // a T reverting is that base again, so a song whose map holds T cells is
-    // rebuilt when the parameter moves. A song without them never is: its
-    // base is the clock's, live.
-    if (songShared_ && !songShared_->tempoMap.empty() && std::fabs(songTempoParam() - tempoBase_) > 1e-9)
+    // The Song tempo parameter is the active song's master tempo (section 19):
+    // a host moving the lane writes it back into the song, in memory and with
+    // no undo step. It is also the base a T cell modifies and a T reverting
+    // goes back to, so the tempo map is rebuilt on it here (section 4).
+    if (songShared_ && (std::fabs(songTempoParam() - songShared_->tempoBpm) > 1e-9
+                        || (!songShared_->tempoMap.empty() && std::fabs(songTempoParam() - tempoBase_) > 1e-9)))
         mutateSong([](tracker::Song&) {});
 }
 
@@ -621,7 +813,6 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
             t.valid = bpm.hasValue() && ppq.hasValue();
             t.bpm = bpm.orFallback(120.0); t.ppq = ppq.orFallback(0.0);
             if (const auto secs = pos->getTimeInSeconds()) { t.seconds = *secs; t.timeValid = true; }
-            if (const auto ts = pos->getTimeSignature()) if (ts->numerator > 0 && ts->denominator > 0) t.beatsPerBar = ts->numerator * 4.0 / ts->denominator;
             if (const auto tis = pos->getTimeInSamples()) if (*tis >= 0) hostFrame = uint64_t(*tis);
         }
     }
@@ -649,6 +840,9 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     cc.source = paramInt(pTempoSource_) != 0 || clock_.ownsTransport() ? driver::TempoSource::Song : driver::TempoSource::Host;
     cc.songTempo = songTempoParam();
     cc.songStartSeconds = song ? song->songStartSeconds : 0.0;
+    // The song's, in both tempo modes: the host contributes the tempo and
+    // never the signature, so its bar markers cannot move the song's bars
+    // (docs/COMMANDS_AND_TEMPO.md sections 11 and 19).
     cc.beatsPerBar = song ? song->beatsPerBar : 4.0;
     // A T slot in force is the song's tempo from now on; the lowest channel
     // holding one wins, as two lanes cannot both be the timeline.
@@ -666,7 +860,7 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     // The loop, in the song's own bars, handed over as ticks: the clock knows
     // ticks, the song knows where its bars are (section 16).
     {
-        const int songBarTicks = cc.source == driver::TempoSource::Song && song ? song->barTicks() : clock_.barTicks();
+        const int songBarTicks = song ? song->barTicks() : clock_.barTicks();
         const int bars = song ? std::max(1, song->bars()) : 1;
         const int from = std::clamp(loopFrom_.load(), 0, bars - 1);
         const int to = loopTo_.load() < 0 ? bars : std::clamp(loopTo_.load(), from + 1, bars);
@@ -678,13 +872,14 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     const bool songSource = cc.source == driver::TempoSource::Song;
     // Whoever owns the transport, this is whether it is running.
     const bool playing = clock_.playing();
-    // In Song mode the tracker's bars are the song's -- the same ruler the
-    // tempo map was built with, so a T cell lands where the map says (9.3).
-    player_.setBarTicks(songSource && song ? song->barTicks() : clock_.barTicks());
+    // The tracker's bars are the song's in both modes -- the same ruler the
+    // tempo map was built with, so a T cell lands where the map says (9.3),
+    // and a host signature change moves nothing (section 19).
+    player_.setBarTicks(song ? song->barTicks() : clock_.barTicks());
     playing_.store(playing); ppq_.store(t.ppq); bpm_.store(t.bpm);
     beatsPerBar_.store(clock_.beatsPerBar());
     songTempo_.store(songSource); tempo_.store(clock_.bpm());
-    barTicks_.store(songSource && song ? song->barTicks() : clock_.barTicks());
+    barTicks_.store(song ? song->barTicks() : clock_.barTicks());
     // The position the window shows follows the transport (section 9.1). The
     // clock free-runs while it is stopped so that tables and vibrato stay
     // alive; that tick is not where the tracker is, so it is not published.
@@ -735,7 +930,11 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     // of this block's events, so a note arriving now still sounds.
     {
         size_t flushed = 0;
+        // A tab switch, from the message thread: a different piece of music,
+        // so nothing of the old one is left ringing (section 18).
+        const uint32_t asked = flushRequest_.exchange(0);
         for (int ch = 0; ch < 4; ++ch) {
+            if (asked & (1u << ch)) { flushChannel(ch, events_); ++flushed; }
             const int src = paramInt(channelParams[size_t(ch)].source);
             if (prevSource_[size_t(ch)] >= 0 && src != prevSource_[size_t(ch)]) { flushChannel(ch, events_); ++flushed; }
             prevSource_[size_t(ch)] = src;
@@ -806,7 +1005,18 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     }
     recWasArmed_ = rec;
 
-    std::stable_sort(events_.begin(), events_.end(), [](const driver::NoteEvent& a, const driver::NoteEvent& b) { return a.offset < b.offset; });
+    // At one sample the order is: a flush, then the song's cells, then the
+    // MIDI. A Hybrid channel's cell chooses the instrument and holds the
+    // commands a note-on in the same tick takes (section 20), so it has to be
+    // in front of that note; a flush is in front of everything.
+    {
+        auto rank = [](const driver::NoteEvent& e) {
+            return e.kind == driver::NoteEvent::AllNotesOff ? 0 : e.source == driver::NoteEvent::Tracker ? 1 : 2;
+        };
+        std::stable_sort(events_.begin(), events_.end(), [&rank](const driver::NoteEvent& a, const driver::NoteEvent& b) {
+            return a.offset != b.offset ? a.offset < b.offset : rank(a) < rank(b);
+        });
+    }
     for (const auto& e : events_) {
         if (e.kind == driver::NoteEvent::NoteOn && e.b) lastNotes[size_t(e.channel & 3)].store(e.a);
         else if (e.kind == driver::NoteEvent::NoteOff || (e.kind == driver::NoteEvent::NoteOn && !e.b)) { const int cur = lastNotes[size_t(e.channel & 3)].load(); if (cur == e.a) lastNotes[size_t(e.channel & 3)].store(-1); }
@@ -883,21 +1093,34 @@ AudioProcessorEditor* ChipBoyProcessor::createEditor()
 void ChipBoyProcessor::getStateInformation(MemoryBlock& dest)
 {
     ValueTree root("ChipBoyState");
-    root.setProperty("version", 1, nullptr);
+    // Version 2 holds every tab; version 1 held one song and one bank, and
+    // still reads as a single tab (section 18).
+    root.setProperty("version", 2, nullptr);
     root.setProperty("uuid", uuid_, nullptr);
     root.setProperty("name", instanceName_, nullptr);
-    root.setProperty("bankName", bankName_, nullptr);
+    root.setProperty("activeTab", activeTab_, nullptr);
     root.addChild(apvts.copyState(), -1, nullptr);
-    if (bankShared_) root.setProperty("bank", bankToJson(*bankShared_), nullptr);
-    if (songShared_) {
-        // The song carries the tempo it was played at: the Song tempo
-        // parameter, which may have moved since the song was published
-        // (docs/COMMANDS_AND_TEMPO.md section 4).
-        const auto saved = std::make_unique<tracker::Song>();   // 83 KB: not on the message thread's stack
-        *saved = *songShared_;
-        saved->tempoBpm = songTempoParam();
-        root.setProperty("song", songToJson(*saved), nullptr);
+    ValueTree tabs("tabs");
+    for (int i = 0; i < tabCount(); ++i) {
+        const SongTab& tab = tabs_[size_t(i)];
+        ValueTree t("tab");
+        t.setProperty("name", tab.name, nullptr);
+        t.setProperty("file", tab.file == File() ? String() : tab.file.getFullPathName(), nullptr);
+        t.setProperty("bankName", tab.bankName, nullptr);
+        if (tab.bank) t.setProperty("bank", bankToJson(*tab.bank), nullptr);
+        if (tab.song) {
+            // The active song carries the tempo it was played at: the Song
+            // tempo parameter, which may have moved since it was published
+            // (docs/COMMANDS_AND_TEMPO.md sections 4 and 19). The others
+            // carry their own master tempo.
+            const auto saved = std::make_unique<tracker::Song>();   // 83 KB: not on the message thread's stack
+            *saved = *tab.song;
+            if (i == activeTab_) saved->tempoBpm = songTempoParam();
+            t.setProperty("song", songToJson(*saved), nullptr);
+        }
+        tabs.addChild(t, -1, nullptr);
     }
+    root.addChild(tabs, -1, nullptr);
     MemoryOutputStream mo(dest, false);
     root.writeToStream(mo);
 }
@@ -914,11 +1137,51 @@ void ChipBoyProcessor::setStateInformation(const void* data, int size)
         if (u != uuid_) { uuid_ = u; if (linkHost_.published()) linkHost_.unpublish(); }   // the timer republishes under the saved UUID
     }
     if (root.hasProperty("name")) instanceName_ = root["name"].toString();
-    if (root.hasProperty("bankName")) bankName_ = root["bankName"].toString();
     const ValueTree params = root.getChildWithName(apvts.state.getType());
     if (params.isValid()) apvts.replaceState(params);
-    if (root.hasProperty("bank")) { auto b = std::make_shared<bank::Bank>(); if (bankFromJson(root["bank"].toString(), *b)) publishBank(b); }
-    if (root.hasProperty("song")) { auto s = std::make_shared<tracker::Song>(); if (songFromJson(root["song"].toString(), *s)) publishSong(std::move(s), true); }
+
+    // One tab per saved song (section 18). A state written before tabs holds
+    // one bank and one song at the root, which is exactly one tab. The saved
+    // tabs are added after the ones that are open and those are dropped at
+    // the end, so the list is never empty and never publishes a null.
+    const ValueTree tabs = root.getChildWithName("tabs");
+    const int had = tabCount();
+    const int n = tabs.isValid() ? tabs.getNumChildren() : 0;
+    for (int i = 0; i < n; ++i) {
+        const ValueTree t = tabs.getChild(i);
+        auto b = std::make_shared<bank::Bank>();
+        // `new T(prvalue)` builds it in its heap block: a factory Bank is
+        // 41 KB and must never be a stack temporary.
+        if (!t.hasProperty("bank") || !bankFromJson(t["bank"].toString(), *b))
+            b = std::shared_ptr<bank::Bank>(new bank::Bank(bank::Bank::factory()));
+        auto s = std::make_shared<tracker::Song>();
+        if (t.hasProperty("song")) songFromJson(t["song"].toString(), *s);
+        const int index = addTab(std::shared_ptr<const tracker::Song>(std::move(s)),
+                                 std::shared_ptr<const bank::Bank>(std::move(b)),
+                                 t["name"].toString(), t["bankName"].toString());
+        const String path = t["file"].toString();
+        if (path.isNotEmpty()) tabs_[size_t(index)].file = File(path);
+    }
+    if (tabCount() == had) {
+        // Before version 2, or a state with no tabs at all.
+        auto b = std::make_shared<bank::Bank>();
+        if (!root.hasProperty("bank") || !bankFromJson(root["bank"].toString(), *b))
+            b = std::shared_ptr<bank::Bank>(new bank::Bank(bank::Bank::factory()));
+        auto s = std::make_shared<tracker::Song>();
+        if (root.hasProperty("song")) songFromJson(root["song"].toString(), *s);
+        addTab(std::shared_ptr<const tracker::Song>(std::move(s)),
+               std::shared_ptr<const bank::Bank>(std::move(b)), "Song",
+               root.hasProperty("bankName") ? root["bankName"].toString() : String("Factory"));
+    }
+    tabs_.erase(tabs_.begin(), tabs_.begin() + had);          // the tabs this state replaces
+    activeTab_ = std::clamp(activeTab_ - had, 0, tabCount() - 1);
+    // addTab left the last one active; the saved one takes over.
+    setActiveTab(std::clamp(root.hasProperty("activeTab") ? int(root["activeTab"]) : 0, 0, tabCount() - 1));
+    // The parameter follows the active tab, whatever the tabs did to it.
+    tempoBase_ = active().song ? active().song->tempoBpm : 120.0;
+    setSongTempoParam(tempoBase_);
+    activate(active());
+    for (auto& tab : tabs_) tab.dirty = false;
 }
 
 } // namespace chipboy::plugin

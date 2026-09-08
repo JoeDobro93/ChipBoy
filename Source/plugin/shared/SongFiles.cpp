@@ -32,11 +32,12 @@ std::vector<int> instrumentsUsedBy(const tracker::Song& song)
 
 String songFileText(const tracker::Song& song, const bank::Bank& bank, const String& bankName)
 {
-    // The song JSON as the plugin state writes it, plus what it takes to say
-    // whether the bank it meets later is the bank it was written with.
+    // Format 5 (section 18): the song JSON as the plugin state writes it, the
+    // whole bank it plays through, and what it takes to say whether a bank it
+    // meets later is the bank it was written with.
     auto* o = new DynamicObject();
     o->setProperty("format", "chipboy-song-file");
-    o->setProperty("version", 1);
+    o->setProperty("version", 5);
     o->setProperty("bank", bankName);
     auto* names = new DynamicObject();
     for (int slot : instrumentsUsedBy(song)) {
@@ -44,6 +45,7 @@ String songFileText(const tracker::Song& song, const bank::Bank& bank, const Str
         names->setProperty(Identifier(String(slot)), i ? String(i->name) : String());
     }
     o->setProperty("instruments", var(names));
+    o->setProperty("bankData", bankToVar(bank));
     o->setProperty("song", songToVar(song));
     return JSON::toString(var(o), false);
 }
@@ -53,7 +55,7 @@ bool saveSong(const tracker::Song& song, const bank::Bank& bank, const File& fil
     return file.replaceWithText(songFileText(song, bank, bankName));
 }
 
-bool loadSongText(const String& text, tracker::Song& out, SongReport& report, const bank::Bank* current)
+bool loadSongText(const String& text, tracker::Song& out, SongReport& report, const bank::Bank* current, bank::Bank* bankOut)
 {
     report = SongReport{};
     const var parsed = JSON::parse(text);
@@ -65,6 +67,12 @@ bool loadSongText(const String& text, tracker::Song& out, SongReport& report, co
     if (!wrapped && o->getProperty("format").toString() != "chipboy-song") return false;
     if (!songFromVar(wrapped ? o->getProperty("song") : parsed, out)) return false;
 
+    // Format 5 carries the bank with it; the song then plays through that
+    // bank and there is nothing to report (section 18).
+    if (bankOut != nullptr && o->hasProperty("bankData") && bankFromVar(o->getProperty("bankData"), *bankOut)) {
+        report.hasBank = true;
+        current = bankOut;
+    }
     report.bankName = o->getProperty("bank").toString();
     const auto used = instrumentsUsedBy(out);
     report.instrumentsUsed = int(used.size());
@@ -82,10 +90,10 @@ bool loadSongText(const String& text, tracker::Song& out, SongReport& report, co
     return true;
 }
 
-bool loadSong(const File& file, tracker::Song& out, SongReport& report, const bank::Bank* current)
+bool loadSong(const File& file, tracker::Song& out, SongReport& report, const bank::Bank* current, bank::Bank* bankOut)
 {
     if (!file.existsAsFile()) { report = SongReport{}; return false; }
-    return loadSongText(file.loadFileAsString(), out, report, current);
+    return loadSongText(file.loadFileAsString(), out, report, current, bankOut);
 }
 
 } // namespace chipboy::plugin

@@ -213,6 +213,22 @@ std::vector<Tick> runOwn(Clock& c, double seconds, uint32_t block, double rate =
 
 } // namespace
 
+TEST_CASE("the bar is the song's beats per bar in both sources", "[clock]")
+{
+    // Section 19: the host contributes the tempo and nothing else, so a bar
+    // is the song's beats per bar x 24 whichever source the ticks come from.
+    for (auto source : { TempoSource::Host, TempoSource::Song }) {
+        Clock c; c.prepare(48000.0);
+        ClockConfig cfg; cfg.source = source; cfg.songTempo = 120.0; cfg.beatsPerBar = 3.0;
+        c.setConfig(cfg);
+        c.setTempoMap(nullptr, 0);
+        Transport t; t.valid = true; t.playing = true; t.bpm = 120.0; t.ppq = 0.0; t.seconds = 0.0; t.timeValid = true;
+        c.process(t, 512, 0);
+        CHECK(c.beatsPerBar() == 3.0);
+        CHECK(c.barTicks() == 72);
+    }
+}
+
 TEST_CASE("the plugin's own transport runs the song at the Song tempo", "[clock][transport]")
 {
     Clock c; c.prepare(48000.0);

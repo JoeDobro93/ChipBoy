@@ -44,6 +44,7 @@ void onCrash(int sig)
 
 struct FakePlayHead : juce::AudioPlayHead {
     int64_t frame = 0; bool playing = true;
+    int numerator = 4, denominator = 4;      ///< the DAW's own signature (section 19)
     juce::Optional<PositionInfo> getPosition() const override
     {
         PositionInfo p;
@@ -51,7 +52,7 @@ struct FakePlayHead : juce::AudioPlayHead {
         p.setBpm(120.0);
         p.setTimeInSamples(frame);
         p.setPpqPosition(double(frame) / 48000.0 * 2.0);
-        p.setTimeSignature(TimeSignature { 4, 4 });
+        p.setTimeSignature(TimeSignature { numerator, denominator });
         return p;
     }
 };
@@ -249,7 +250,7 @@ int main()
         juce::MidiBuffer empty;
         for (int b = 0; b < 94; ++b) { head.frame = int64_t(b) * 512; p.processBlock(ab, empty); }
         const int64_t at1s = p.trackerTick();
-        check(std::abs(double(p.tempoInForce()) - 150.0) < 0.5, "a published song runs at the Song tempo parameter");
+        check(std::abs(double(p.effectiveTempo()) - 150.0) < 0.5, "a published song runs at the Song tempo parameter");
         check(at1s > 56 && at1s < 62, "150 BPM is 60 ticks a second, not the song's stored 120");
         // A song saved from here carries that tempo, and one loaded brings its own back.
         juce::MemoryBlock state;
@@ -257,7 +258,8 @@ int main()
         const auto writtenOwned = song();
         auto& written = *writtenOwned;
         const auto tree = juce::ValueTree::readFromData(state.getData(), state.getSize());
-        check(tree.isValid() && songFromJson(tree["song"].toString(), written) && std::abs(written.tempoBpm - 150.0) < 1e-6,
+        const auto saved = tree.getChildWithName("tabs").getChild(0);
+        check(saved.isValid() && songFromJson(saved["song"].toString(), written) && std::abs(written.tempoBpm - 150.0) < 1e-6,
               "the saved song carries the Song tempo parameter's value");
         const auto qOwned = machine();
         auto& q = *qOwned;
@@ -379,6 +381,8 @@ int main()
         auto& b = *bOwned;
         b.mutateBank([](chipboy::bank::Bank& into) { into.instruments[2].name = "Something else"; });
         SongReport report;
+        // Format 5: the file brings the bank it was written with, so it plays
+        // through that one and this bank's renaming is beside the point (18).
         const bool loaded = b.loadSongFile(file, report);
         const auto s = b.song();
         check(loaded && s != nullptr, "and read back");
@@ -389,8 +393,11 @@ int main()
         check(s && !s->recordArm[1] && !s->recordArm[3] && s->recordArm[0], "the record arms round-trip");
         check(s && chipboy::tracker::barStartTick(*s, 2, 96) == 96 + 32, "the bar table is built when the song is published");
         check(report.bankName == "Factory", "the song file names the bank it was written with");
-        check(report.instrumentsUsed == 1 && report.differences.size() == 1
-              && report.differences[0].contains("Something else"), "and reports the slots this bank has renamed");
+        check(report.hasBank && report.instrumentsUsed == 1 && report.differences.isEmpty(),
+              "and carries it, so nothing differs");
+        const auto loadedBank = b.bank();
+        check(loadedBank && juce::String(loadedBank->instruments[2].name) != "Something else",
+              "loading a format-5 song replaces this tab's bank with the file's");
         file.deleteFile();
 
         // A song written before format 4: sixteen dense cells, steps 8 or 16.
@@ -551,6 +558,214 @@ int main()
         for (int b = 0; b < 4; ++b) p.processBlock(ab, empty);
         check(!p.transportPlaying(), "Stop stops it");
         check(!p.driverView().view(0).active, "and nothing is left ringing");
+    }
+
+    /* ---- song tabs (section 18) -------------------------------------- */
+    stage("song tabs");
+    {
+        const auto pOwned = machine();
+        auto& p = *pOwned;
+        check(p.tabCount() == 1 && p.activeTab() == 0, "a fresh plugin has one tab");
+        p.editSong("first", [](chipboy::tracker::Song& s) { s.phrases[0].used = true; s.phrases[0].steps[0].note = 61; s.stepsPerBar = 12; });
+        p.editBank("first bank", [](chipboy::bank::Bank& b) { b.instruments[0].name = "Tab one lead"; });
+        p.setBankNameEdit("One");
+        const int second = p.newTab();
+        check(second == 1 && p.tabCount() == 2 && p.activeTab() == 1, "the + tab opens a new song");
+        check(p.song() && p.song()->phrases[0].steps[0].note == 0 && p.song()->steps() == 16, "which is empty");
+        check(p.bank() && p.bankName() == "Factory" && juce::String(p.bank()->instruments[0].name) != "Tab one lead",
+              "and starts with the factory bank");
+        p.editSong("second", [](chipboy::tracker::Song& s) { s.phrases[0].used = true; s.phrases[0].steps[0].note = 72; });
+        p.setActiveTab(0);
+        check(p.song() && p.song()->phrases[0].steps[0].note == 61 && p.song()->steps() == 12, "switching back brings the first song");
+        check(p.bank() && juce::String(p.bank()->instruments[0].name) == "Tab one lead" && p.bankName() == "One",
+              "with its own bank and bank name");
+        p.setActiveTab(1);
+        check(p.song() && p.song()->phrases[0].steps[0].note == 72, "and forward again brings the second");
+
+        // An undo step belongs to its tab and re-activates it.
+        p.setActiveTab(1);
+        check(p.history().canUndo(), "the history holds the edits");
+        while (p.history().canUndo()) p.history().undo();
+        check(p.activeTab() == 0 && p.song() && p.song()->phrases[0].steps[0].note == 0,
+              "undoing the first tab's edit goes back to that tab");
+        while (p.history().canRedo()) p.history().redo();
+        check(p.tabCount() == 2 && p.song() && p.song()->phrases[0].steps[0].note == 72, "and redo lands on the last one again");
+
+        // Two tabs through the plugin state.
+        juce::MemoryBlock state;
+        p.getStateInformation(state);
+        const auto qOwned = machine();
+        auto& q = *qOwned;
+        q.setStateInformation(state.getData(), int(state.getSize()));
+        check(q.tabCount() == 2 && q.activeTab() == 1, "both tabs and the active one round-trip through the state");
+        check(q.song() && q.song()->phrases[0].steps[0].note == 72, "the active tab is the one that was saved");
+        q.setActiveTab(0);
+        check(q.song() && q.song()->phrases[0].steps[0].note == 61 && q.song()->steps() == 12, "and the other tab came with it");
+        check(q.bank() && juce::String(q.bank()->instruments[0].name) == "Tab one lead" && q.bankName() == "One",
+              "each tab keeps its own bank");
+        check(q.closeTab(0) && q.tabCount() == 1, "a tab closes");
+        check(q.song() && q.song()->phrases[0].steps[0].note == 72, "and what is left plays");
+        check(!q.closeTab(0), "the last tab does not");
+
+        // A state written before tabs is one tab.
+        juce::ValueTree old("ChipBoyState");
+        old.setProperty("version", 1, nullptr);
+        old.setProperty("bankName", "Old", nullptr);
+        old.setProperty("song", songToJson(*q.song()), nullptr);
+        old.setProperty("bank", bankToJson(*q.bank()), nullptr);
+        juce::MemoryBlock oldState;
+        { juce::MemoryOutputStream mo(oldState, false); old.writeToStream(mo); }
+        const auto rOwned = machine();
+        auto& r = *rOwned;
+        r.setStateInformation(oldState.getData(), int(oldState.getSize()));
+        check(r.tabCount() == 1 && r.bankName() == "Old" && r.song() && r.song()->phrases[0].steps[0].note == 72,
+              "a state written before tabs loads as one tab");
+    }
+
+    /* ---- song file format 5 carries the bank (section 18) ------------- */
+    stage("song files, format 5");
+    {
+        const auto aOwned = machine();
+        auto& a = *aOwned;
+        a.editBank("bank", [](chipboy::bank::Bank& b) { b.instruments[6].name = "Song's own wave"; b.instruments[6].used = true; });
+        a.setBankNameEdit("Travelling");
+        a.editSong("song", [](chipboy::tracker::Song& s) {
+            s.phrases[0].used = true; s.phrases[0].steps[0].note = 64; s.phrases[0].steps[0].inst = 7;
+            s.chain[0] = { 1 };
+            s.noteSource[0] = chipboy::tracker::NoteSource::Hybrid;    // and the third source
+            s.noteSource[2] = chipboy::tracker::NoteSource::Tracker;
+        });
+        const juce::File file = juce::File::getCurrentWorkingDirectory().getChildFile("chipboy_linktest_f5.cbsong");
+        check(a.saveSongFile(file) && file.existsAsFile(), "a format-5 song file is written");
+        check(!a.tabDirty(a.activeTab()) && a.tabFile(a.activeTab()) == file, "and the tab is saved and named after it");
+
+        const auto bOwned = machine();
+        auto& b = *bOwned;
+        SongReport report;
+        check(b.openSongFileInTab(file, report) && b.tabCount() == 2 && b.activeTab() == 1, "opening one opens a tab");
+        check(report.hasBank && report.differences.isEmpty(), "which brings its own bank, so nothing differs");
+        check(b.bank() && juce::String(b.bank()->instruments[6].name) == "Song's own wave", "the sounds travel with the song");
+        check(b.bankName() == "Travelling", "and so does the bank's name");
+        check(b.song() && b.song()->noteSource[0] == chipboy::tracker::NoteSource::Hybrid
+              && b.song()->noteSource[2] == chipboy::tracker::NoteSource::Tracker, "Hybrid round-trips through the song file");
+        check(b.tabFile(1) == file && !b.tabDirty(1), "the tab remembers the file it came from");
+        {
+            // ... and through the plugin state, with the file it came from.
+            juce::MemoryBlock state;
+            b.getStateInformation(state);
+            const auto dOwned = machine();
+            auto& d = *dOwned;
+            d.setStateInformation(state.getData(), int(state.getSize()));
+            check(d.tabCount() == 2 && d.activeTab() == 1 && d.song()
+                  && d.song()->noteSource[0] == chipboy::tracker::NoteSource::Hybrid,
+                  "Hybrid round-trips through the plugin state");
+            check(d.tabFile(1) == file && d.tabName(1) == file.getFileNameWithoutExtension(),
+                  "and so does the tab's file and name");
+        }
+        b.setActiveTab(0);
+        check(b.bank() && juce::String(b.bank()->instruments[6].name) != "Song's own wave", "the other tab keeps its own bank");
+
+        // A format-4 file -- the song alone -- takes a copy of the active bank.
+        const auto oldOwned = song();
+        auto& old = *oldOwned;
+        old.phrases[0].used = true; old.phrases[0].steps[0].note = 55; old.phrases[0].steps[0].inst = 7;
+        old.chain[0] = { 1 };
+        const juce::File f4 = juce::File::getCurrentWorkingDirectory().getChildFile("chipboy_linktest_f4.cbsong");
+        // The wrapper without the bank object: what every file written before
+        // format 5 looks like.
+        f4.replaceWithText("{\"format\":\"chipboy-song-file\",\"version\":1,\"bank\":\"Older\","
+                           "\"instruments\":{\"7\":\"Was called this\"},\"song\":" + songToJson(old) + "}");
+        const auto cOwned = machine();
+        auto& c = *cOwned;
+        c.editBank("bank", [](chipboy::bank::Bank& bk) { bk.instruments[6].name = "This bank's"; bk.instruments[6].used = true; });
+        SongReport old4;
+        check(c.openSongFileInTab(f4, old4) && c.tabCount() == 2, "a format-4 file opens a tab too");
+        check(!old4.hasBank && old4.differences.size() == 1 && old4.differences[0].contains("Was called this"),
+              "with a copy of the active bank, and it says where that differs");
+        check(c.bank() && juce::String(c.bank()->instruments[6].name) == "This bank's", "the copy is this bank");
+        check(c.song() && c.song()->phrases[0].steps[0].note == 55, "and the song is the file's");
+        file.deleteFile();
+        f4.deleteFile();
+    }
+
+    /* ---- the master tempo mirrors the parameter both ways (19) -------- */
+    stage("master tempo");
+    {
+        const auto pOwned = machine();
+        auto& p = *pOwned;
+        p.prepareToPlay(48000.0, 512);
+        p.setMasterTempo(160.0);
+        check(p.song() && std::abs(p.song()->tempoBpm - 160.0) < 1e-6, "the master tempo goes into the song");
+        check(std::abs(double(paramInt(p.apvts.getRawParameterValue(ids::songTempo))) - 160.0) < 0.5,
+              "and into the Song tempo parameter");
+        check(p.history().canUndo(), "it is one undo step");
+        p.history().undo();
+        check(p.song() && std::abs(p.song()->tempoBpm - 120.0) < 1e-6
+              && std::abs(double(paramInt(p.apvts.getRawParameterValue(ids::songTempo))) - 120.0) < 0.5,
+              "undoing puts both back");
+        p.history().redo();
+        // A host moving the lane writes back into the song, with no undo step.
+        auto* tempo = p.apvts.getParameter(ids::songTempo);
+        tempo->setValueNotifyingHost(tempo->getNormalisableRange().convertTo0to1(96.0f));
+        pump(300);                                     // the write-back is on the timer
+        check(p.song() && std::abs(p.song()->tempoBpm - 96.0) < 1e-6, "automation writes back into the song");
+        // A second tab has its own, and activating one hands it to the parameter.
+        p.newTab();
+        p.setMasterTempo(200.0);
+        p.setActiveTab(0);
+        check(p.song() && std::abs(p.song()->tempoBpm - 96.0) < 1e-6
+              && std::abs(double(paramInt(p.apvts.getRawParameterValue(ids::songTempo))) - 96.0) < 0.5,
+              "each tab has its own master tempo, and the parameter follows the active one");
+        p.setActiveTab(1);
+        check(std::abs(double(paramInt(p.apvts.getRawParameterValue(ids::songTempo))) - 200.0) < 0.5,
+              "and back");
+        // The header's readout: the host's BPM in Host mode, the song's in Song.
+        FakePlayHead head;
+        p.setPlayHead(&head);
+        juce::AudioBuffer<float> ab(2, 512);
+        juce::MidiBuffer empty;
+        for (int b = 0; b < 4; ++b) { head.frame = int64_t(b) * 512; p.processBlock(ab, empty); }
+        check(std::abs(p.effectiveTempo() - 120.0) < 0.5, "in Host mode the readout is the host's tempo");
+        p.apvts.getParameter(ids::tempoSource)->setValueNotifyingHost(1.0f);
+        for (int b = 4; b < 8; ++b) { head.frame = int64_t(b) * 512; p.processBlock(ab, empty); }
+        check(std::abs(p.effectiveTempo() - 200.0) < 0.5, "in Song mode it is the song's tempo in force");
+        p.setPlayHead(nullptr);
+    }
+
+    /* ---- the host's time signature stays out (sections 11, 19) -------- */
+    stage("host signature");
+    {
+        const auto pOwned = machine();
+        auto& p = *pOwned;
+        p.prepareToPlay(48000.0, 512);
+        FakePlayHead head;
+        p.setPlayHead(&head);
+        p.mutateSong([](chipboy::tracker::Song& s) {
+            s.phrases[0].used = true;
+            for (int i = 0; i < 16; ++i) s.phrases[0].steps[size_t(i)].note = uint8_t(60 + i);
+            s.chain[0] = { 1, 1, 1, 1, 1, 1, 1, 1 };
+            s.noteSource[0] = chipboy::tracker::NoteSource::Tracker;
+        });
+        const auto s = p.song();
+        check(s && chipboy::tracker::barStartTick(*s, 3, s->barTicks()) == 3 * 96, "the song's bar 3 starts at 3 x 96 ticks");
+        juce::AudioBuffer<float> ab(2, 512);
+        juce::MidiBuffer empty;
+        int64_t last = -1;
+        bool continuous = true, steady = true;
+        for (int b = 0; b < 200; ++b) {
+            // The DAW changes its own signature under a 4/4 song.
+            if (b == 60) { head.numerator = 3; head.denominator = 4; }
+            if (b == 120) { head.numerator = 5; head.denominator = 4; }
+            head.frame = int64_t(b) * 512;
+            p.processBlock(ab, empty);
+            const int64_t at = p.trackerTick();
+            if (last >= 0 && (at < last || at > last + 40)) continuous = false;
+            last = at;
+            if (p.barTicks() != 96) steady = false;
+        }
+        check(steady, "a host signature change does not move the song's bar");
+        check(continuous, "and the ticks run on across it");
+        check(p.player().position(0).bar == int(last / 96), "so the position is still the song's own bar");
     }
 
     /* ---- an instrument preset saves, loads and is placed (15) -------- */

@@ -4,8 +4,10 @@
 // always 24 per beat. Two sources:
 //
 //   Host  the host's tempo. A tick sits at every multiple of 1/24 beat of the
-//         host's beat position, so scrubbing is exact and the tracker's bars
-//         are the host's bars.
+//         host's beat position, so scrubbing is exact. The host contributes
+//         the tempo and nothing else: a bar is the song's beats per bar x 24
+//         in both sources, so a DAW changing its time signature moves its own
+//         bar markers and not the song's (section 19).
 //   Song  the song's own tempo: a base tempo plus T commands at known ticks.
 //         The position at a host time is the integral of that map from the
 //         song start, computed from the song alone -- a jump to bar 9 lands on
@@ -38,7 +40,8 @@ struct Transport {
     double ppq = 0.0;            ///< at the block start
     double seconds = 0.0;        ///< host time at the block start
     bool   timeValid = false;    ///< `seconds` is real
-    double beatsPerBar = 4.0;    ///< from the host's time signature
+    // The host's time signature is not here on purpose: it contributes the
+    // tempo only, and the bars are the song's in both modes (section 19).
 };
 
 /// The tempo from an absolute tick on: one per T cell, the base being the
@@ -54,7 +57,7 @@ struct ClockConfig {
     TempoSource source = TempoSource::Host;
     double songTempo = 120.0;        ///< Song source: the base tempo, the Song tempo parameter
     double songStartSeconds = 0.0;   ///< host time where song tick 0 sits
-    double beatsPerBar = 4.0;        ///< Song source; Host takes the host's signature
+    double beatsPerBar = 4.0;        ///< the song's, in both tempo modes (section 19)
 };
 
 class Clock {
@@ -94,7 +97,8 @@ public:
     const TickPoint* ticks() const { return ticks_.data(); }
     size_t   tickCount() const { return tickCount_; }
     int64_t  tickAtBlockStart() const { return blockStartTick_; }
-    /// Beats per bar in force (the host's signature, or the song's).
+    /// Beats per bar in force: the song's, whatever the host's signature is
+    /// (docs/COMMANDS_AND_TEMPO.md section 19).
     double   beatsPerBar() const { return barBeats_; }
     /// Ticks in a bar, the unit the Player counts in.
     int      barTicks() const;

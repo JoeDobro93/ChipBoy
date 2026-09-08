@@ -164,11 +164,13 @@ void Clock::process(const Transport& host, uint32_t numSamples, uint64_t frameAb
         // The plugin's own transport, in the shape a host's arrives in: the
         // Song tempo, its own seconds, always a valid position (section 16).
         t.valid = true; t.playing = ownPlaying_; t.timeValid = true;
-        t.bpm = cfg_.songTempo; t.beatsPerBar = cfg_.beatsPerBar;
+        t.bpm = cfg_.songTempo;
         t.seconds = ownSeconds_; t.ppq = 0.0;
     }
     const bool song = cfg_.source == TempoSource::Song || owns_;
-    barBeats_ = song ? std::max(0.25, cfg_.beatsPerBar) : (t.valid ? std::max(0.25, t.beatsPerBar) : 4.0);
+    // The bar is the song's in both sources: the host gives the tempo, never
+    // the signature (section 19).
+    barBeats_ = std::max(0.25, cfg_.beatsPerBar);
     const double hostBpm = t.valid && t.bpm > 1.0 ? t.bpm : bpm_;
     const bool playing = t.valid && t.playing && (!song || t.timeValid);
     isPlaying_ = playing;

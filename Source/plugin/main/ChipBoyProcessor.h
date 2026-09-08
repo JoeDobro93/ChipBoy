@@ -33,6 +33,20 @@
 
 namespace chipboy::plugin {
 
+/// One loaded song and the sounds it owns (docs/COMMANDS_AND_TEMPO.md
+/// section 18). Only the active tab is live: it is what plays and records,
+/// what every bank tab edits, and what the link publishes. `id` is stable
+/// across closes, so an undo step can name the tab it belongs to.
+struct SongTab {
+    std::shared_ptr<const tracker::Song> song;
+    std::shared_ptr<const bank::Bank>    bank;
+    juce::File   file;                  ///< where it was loaded from or saved to
+    juce::String name { "Song" };       ///< the tab's caption
+    juce::String bankName { "Factory" };
+    bool  dirty = false;                ///< changed since it was loaded or saved
+    int   id = 0;
+};
+
 class ChipBoyProcessor : public juce::AudioProcessor, private juce::Timer
 {
 public:
@@ -66,8 +80,35 @@ public:
     std::array<ChannelParamCache, 4> channelParams;
     static ChannelKind kindOf(int ch) { return ch == 0 ? ChannelKind::Pulse1 : ch == 1 ? ChannelKind::Pulse2 : ch == 2 ? ChannelKind::Wave : ChannelKind::Noise; }
 
+    /// The active tab's bank and song: what plays, what the window edits.
     std::shared_ptr<const bank::Bank> bank() const { return bankShared_; }
     std::shared_ptr<const tracker::Song> song() const { return songShared_; }
+
+    // --- song tabs (docs/COMMANDS_AND_TEMPO.md section 18) ---------------
+    //
+    // A tab is a song and the bank it plays through. Everything above and
+    // below -- publish, mutate, edit, restore, the presets, the link's bank
+    // view, the arms -- works on the active one. Message thread.
+    int  tabCount() const { return int(tabs_.size()); }
+    int  activeTab() const { return activeTab_; }
+    /// Make tab `i` the live one: all notes off, its song and bank published,
+    /// and the Song tempo parameter takes its master tempo (section 19).
+    void setActiveTab(int i);
+    /// An empty song with the factory bank, made active. Returns its index.
+    int  newTab();
+    /// Drop a tab (never the last one). Returns whether it went.
+    bool closeTab(int i);
+    juce::String tabName(int i) const;
+    juce::File   tabFile(int i) const;
+    bool  tabDirty(int i) const;
+    /// A tab from a song and a bank already in hand, with no file behind it.
+    /// The record test's --write-state builds its project this way, so the
+    /// state it writes carries no absolute path.
+    int  addTab(std::shared_ptr<const tracker::Song> song, std::shared_ptr<const bank::Bank> bank,
+                const juce::String& name, const juce::String& bankName = "Factory");
+    /// Open a song file in a new tab: format 5 brings its own bank, an older
+    /// file takes a copy of the active tab's and reports the differences.
+    bool openSongFileInTab(const juce::File& file, SongReport& report);
     void publishBank(std::shared_ptr<const bank::Bank> b);
     /// Publishes a song after building its tempo map (section 4), so the
     /// audio thread never scans the chains. The Song tempo parameter is the
@@ -82,7 +123,8 @@ public:
     void mutateSong(const std::function<void(tracker::Song&)>& fn);
     /// Replace the bank wholesale (file import, factory reset).
     void loadBank(const bank::Bank& b) { publishBank(std::make_shared<const bank::Bank>(b)); }
-    juce::String bankName() const { return bankName_; }
+    /// The active tab's bank name (the header's Bank group is per tab).
+    juce::String bankName() const;
 
     // --- undo (message thread only; UI_DESIGN section 2.1) --------------
     //
@@ -103,10 +145,15 @@ public:
     void loadBankEdit(const juce::String& name, const bank::Bank& b, const juce::String& bankName);
     /// The bank's name, typed in the header.
     void setBankNameEdit(const juce::String& n);
-    /// Puts a snapshot back. The history's own actions call these; nothing
-    /// else should.
-    void restoreBank(std::shared_ptr<const bank::Bank> b, const juce::String& bankName);
-    void restoreSong(std::shared_ptr<const tracker::Song> s);
+    /// The song's master tempo (section 19), typed in the Tracker tab: it
+    /// goes into the song and into the Song tempo parameter together, as one
+    /// undo step.
+    void setMasterTempo(double bpm);
+    /// Puts a snapshot back into the tab it came from, activating it first;
+    /// a tab that has since been closed takes nothing. The history's own
+    /// actions call these; nothing else should.
+    void restoreBank(int tabId, std::shared_ptr<const bank::Bank> b, const juce::String& bankName);
+    void restoreSong(int tabId, std::shared_ptr<const tracker::Song> s);
 
     const driver::Driver& driverView() const { return driver_; }   ///< read-only, may be a block stale
     /// Tap every register write the driver emits, for the record test
@@ -116,6 +163,9 @@ public:
     juce::String instanceName() const { return instanceName_; }
     void setInstanceName(const juce::String& n) { instanceName_ = n; }
     juce::String instanceUuid() const { return uuid_; }
+    /// Pin the instance's UUID. Only the tools do this, so a state they write
+    /// is the same bytes every run.
+    void setInstanceUuid(const juce::String& u) { uuid_ = u; }
     double currentSampleRate() const { return sampleRate_; }
     int latencyFrames() const { return renderer_.latencyFrames(); }
     bool linkActive() const { return linkActive_; }
@@ -159,17 +209,21 @@ public:
     bool ownsTransport() const { return ownsTransport_.load(); }
     bool transportPlaying() const { return playing_.load(); }
 
-    /// Load a song file and publish it, reporting where this bank differs
-    /// (section 15). Message thread.
+    /// Load a song file into the active tab, reporting where this bank
+    /// differs (section 15). A format-5 file brings its own bank with it.
+    /// Message thread.
     bool loadSongFile(const juce::File& file, SongReport& report);
-    /// Write the song playing now, with the bank it plays through.
-    bool saveSongFile(const juce::File& file) const;
+    /// Write the active tab's song, with the bank it plays through, as a
+    /// format-5 file; the tab remembers the file and stops being dirty.
+    bool saveSongFile(const juce::File& file);
     double transportPpq() const { return ppq_.load(); }
     double transportBpm() const { return bpm_.load(); }
     double beatsPerBar() const { return beatsPerBar_.load(); }
-    /// Which tempo the ticks come from, and the tempo in force (section 4).
+    /// Which tempo the ticks come from, and the tempo the header reads:
+    /// the host's BPM in Host mode, the song's tempo in force -- its master
+    /// tempo, or the T last passed -- in Song mode (section 19).
     bool songTempoSource() const { return songTempo_.load(); }
-    double tempoInForce() const { return tempo_.load(); }
+    double effectiveTempo() const { return tempo_.load(); }
     /// The tracker's position, in ticks, and how many ticks a bar holds.
     int64_t trackerTick() const { return trackerTick_.load(); }
     int barTicks() const { return barTicks_.load(); }
@@ -199,6 +253,16 @@ private:
     /// Trk/MIDI gate, so a lane changing hands leaves nothing ringing (9.1).
     void flushChannel(int ch, std::vector<driver::NoteEvent>& dst, uint32_t offset = 0);
     void publishInstrumentNames();
+    /// Swap the audio thread over to a tab's song and bank without rebuilding
+    /// anything: the maps were built when they were published.
+    void activate(const SongTab& tab);
+    void setSongTempoParam(double bpm);
+    /// The active tab. There is always at least one -- the constructor makes
+    /// it and closeTab() refuses the last -- so this never has nothing to
+    /// return; the bound is against an index bug, not an empty list.
+    SongTab& active() { return tabs_[size_t(activeTab_) < tabs_.size() ? size_t(activeTab_) : 0]; }
+    const SongTab& active() const { return tabs_[size_t(activeTab_) < tabs_.size() ? size_t(activeTab_) : 0]; }
+    int  tabIndexOfId(int id) const;
     void handleVoiceRequests();
     void tapScopes(int n, const float* L, const float* R);
 
@@ -265,7 +329,14 @@ private:
     std::atomic<const tracker::Song*> songPtr_{ nullptr };
     std::deque<std::shared_ptr<const void>> retired_;   ///< kept alive a while after a swap
     const bank::Bank* namesPublishedFor_ = nullptr;
-    juce::String bankName_ { "Factory" };
+    /// The loaded songs (section 18); tabs_[activeTab_] is what bankShared_
+    /// and songShared_ point at.
+    std::vector<SongTab> tabs_;
+    int activeTab_ = 0;
+    int nextTabId_ = 1;
+    /// Channels the message thread has asked the audio thread to silence: a
+    /// tab switch is a different piece of music (section 18).
+    std::atomic<uint32_t> flushRequest_{ 0 };
 
     /// Undo, message thread only. It outlives every window, so its actions
     /// can hold parameters and bank / song snapshots safely.
