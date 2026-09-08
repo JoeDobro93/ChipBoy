@@ -26,6 +26,102 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-08 — bars, one-shot cells, arms, song files, presets, transport (engine)
+
+The second addendum ([`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md) §11–§16),
+engine side. The interface — the Tracker tab, the Grooves tab, the preset and transport
+buttons — is the stage after this one; the window here only keeps building and behaving.
+
+**Changed:**
+
+- **Steps per bar is a number, 1–64, and a bar may have its own.** A phrase holds
+  `tracker::kMaxSteps` = 64 cells; `Song::stepsPerBar` is clamped 1–64 and
+  `Song::barSteps` gives one bar another count (0 = the song's). Step *i* starts at
+  `groove ticks so far × bar ticks / (6 × steps per bar)`, which is the addendum's
+  ⌊*i* × bar ticks / steps⌋ at the straight groove and, at sixteen steps in a 4/4 bar,
+  exactly the running sum of the groove's entries that every song had before — so the
+  demo is unchanged to the register. A bar's length is its steps × the song's step
+  ticks, and the bars lie end to end from tick 0 through a **prefix table**
+  (`Song::barStartSteps`), built in `buildBarTable()` when the song is published and
+  read by `barAtTick()`/`barStartTick()` with a binary search, so nothing walks the
+  overrides on the audio thread. The Player, the recorder's quantise, `stepAt` and the
+  T cells all go through it; the chain is still one row per bar.
+- **A cell's commands fire once.** `Driver::setSlotFromCell` is gone;
+  `applyCellCommands()` applies a cell's two columns at their step and never writes a
+  slot, so `v.slot[]` is the automation lanes' alone (§12). A persistent letter changes
+  the running state and holds until the next plain note reloads the instrument; a
+  per-note letter shapes that note; the revert form puts the letter back, once. They are
+  applied inside the note-on, right after the slots fire, so a cell costs no second
+  burst of register writes. A cell's `D` is read at the note-on and its commands wait
+  with the note it delays.
+- **The recorder follows.** A plain note's cell carries both slots in force, a bare
+  note's carries the in-force per-note letters (C D K L R Z) and any slot that moved,
+  and a slot change with no note is written as before — `Player::slotCells` took a
+  mode (`Changed`, `Plain`, `Bare`, `All`) instead of a flag.
+- **The command octave.** MIDI notes 0–11 never sound and never join the held stack:
+  a note-on there fires CMD1 then CMD2 on whatever the channel is playing, without a
+  trigger, and lands in the running state when nothing sounds. The recorder writes it
+  as a slot-only cell at its step (`recordSlots(..., force)`).
+- **Record arms.** `Song::recordArm[4]`, saved with the song and so with the plugin
+  state, **on for a new song** so a song written before them records exactly as it used
+  to. The processor records an armed channel's MIDI whatever its playback source; an
+  unarmed channel never records; an armed Tracker channel lets incoming MIDI through and
+  its lane goes quiet meanwhile, an unarmed one drops it. `Driver::setRecording(bool)`
+  became `setRecordMask(uint32_t)`, a bit per channel.
+- **Song format 4.** `steps` as a number, `barSteps`, `recordArm`, phrases of 64 cells
+  written sparsely (each cell carries its step index, and empty cells are left out).
+  Format 3 and older still load: sixteen dense cells, `stepsPerBar` 8 or 16, arms on.
+- **Song files.** `Source/plugin/shared/SongFiles.h/.cpp`: `saveSong` / `loadSong` for
+  `.cbsong`, the song JSON plus the bank's name and the name of every instrument slot
+  the song uses; the report names the slots this bank has renamed or left empty. The
+  processor has `saveSongFile()` and `loadSongFile()`, which publishes through the
+  existing path. `Documents/ChipBoy/Songs` sits beside the banks folder, and the old
+  unused `.chipboysong` dialogs in `BankFiles` are gone.
+- **Instrument presets.** `bank::collectPreset` / `bank::placePreset`
+  (`Source/core/Bank/Preset.h/.cpp`, no JUCE) walk an instrument's table, the tables its
+  A commands start, the wave it plays and the waves its tables' W commands select, and
+  its kit; placing reuses an identical table, wave or kit, otherwise takes the first free
+  slot, renumbers every reference in the copies, and fails without touching the bank when
+  a kind is full. `Source/plugin/shared/Presets.h/.cpp` is the `.cbi` file, written with
+  the bank file's own writers.
+- **The tracker's own transport.** With no play head, or one that reports no position,
+  the `Clock` makes the transport itself: playing, its own seconds, the Song tempo (the
+  source is forced to Song while it owns it), and a loop between two ticks. The processor
+  has `transportPlay()`, `transportStop()`, `setLoop()`, `setLoopBars()`,
+  `ownsTransport()` and `transportPlaying()`; the buttons ask on the message thread and
+  the audio thread does it, so the clock keeps one owner. The Standalone plays this way.
+- **`Demo/ChipBoy Demo.cbsong`** is the recorded demo, written by
+  `chipboy_recordtest --write-song` through `saveSong`. It carries no timestamp, so
+  `--check-song` compares a fresh recording against it byte for byte — the CTest
+  `demo_song_matches`. The record test gained a third pass: the file loaded into a fresh
+  processor, the factory bank, no MIDI and no play head, played on the plugin's own
+  transport, drives the chip exactly as the recording did (2442 / 755 / 3686 / 1022 / 5
+  register writes, the same as passes 1 and 2).
+- **A host that gives a beat position but no seconds** now gets a time base derived from
+  its ppq and tempo, so the Song timeline works there instead of silently free-running.
+
+**Why:** §11–§16 as agreed. The one-shot cell is the load-bearing change: a cell that
+wrote a slot re-fired at every note after it, so a vibrato written once stuck to the
+whole song and a loop back to bar 1 did not play clean.
+
+**Considered:** a prefix table of bar start *ticks*, as the addendum sketches. It holds
+**steps** instead: the same table then serves whatever bar ticks the host reports, so a
+time-signature change does not need the song republished, and the tick is one multiply
+away. Also considered handing the Clock the loop in bars — it holds ticks, because the
+song is what knows where its bars are.
+
+**Consequence, worth knowing:** sixteen steps now divide the bar *whatever its length*,
+where they used to be six ticks each and a short bar simply cut the grid off. In 3/4 a
+step is four and a half ticks and all sixteen play; at 4/4 nothing moves at all. That is
+what §11 asks for, and the tempo-map test was updated to it.
+
+**Skipped / uncertain:** a `W` inside a table counts as a wave reference only when the
+instrument that owns the table plays waves — on a pulse the same letter is the duty and
+names nothing. Content equality for preset reuse includes the **name**, so a renamed
+table takes a slot of its own rather than being silently adopted. The GrooveEditor and
+the phrase grid still show sixteen rows: the grid that shows a bar's own step count is
+the interface stage's.
+
 ### 2026-09-08 — revert cells and the Song tempo parameter
 
 The three things the record test left open ([`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md)
