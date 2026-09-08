@@ -16,15 +16,101 @@ intended product rather than a progress report.
 | M1 — APU core + test-ROM harness | **done** 2026-09-07 — blargg `dmg_sound` 01–12 and the four DMG-observable SameSuite APU tests pass; CI on Linux, macOS, Windows |
 | M2 — analog stage + renderer | **done** 2026-09-07 — first sound; fast path nulls against the reference at −122 dB; bit-identical across block sizes |
 | M3 — main plugin shell | **done** 2026-09-07 — parameters per §12.3/§12.4, per-channel MIDI routing, JSON state, Linux VST3 and Standalone build |
-| M4 — bank + driver | **done** 2026-09-07 — the bank with a factory set, the driver on its own tick, 11 driver tests. **2026-09-08**: the instrument carries the pitch (Pitch speed, vibrato shape/direction, Command rate, Table mode, Overlap); a note without an instrument only changes pitch (bare notes); four note-hang paths closed (all-notes-off, kill, event ordering, keyswitch-clear). Then: an instrument saves and loads on its own as a `.cbi` **preset** (`bank::collectPreset` / `bank::placePreset`), its tables, waves and kit carried along and renumbered into place |
+| M4 — bank + driver | **done** 2026-09-07 — the bank with a factory set, the driver on its own tick, 11 driver tests. **2026-09-08**: the instrument carries the pitch (Pitch speed, vibrato shape/direction, Command rate, Table mode, Overlap); a note without an instrument only changes pitch (bare notes); four note-hang paths closed (all-notes-off, kill, event ordering, keyswitch-clear). Then: an instrument saves and loads on its own as a `.cbi` **preset** (`bank::collectPreset` / `bank::placePreset`), its tables, waves and kit carried along and renumbered into place. **2026-09-08 (third)**: **song file format 5** embeds the whole bank — instruments, tables, waves and kits with their samples — so a song file is complete on its own; a format-4 file still loads the song alone, against a copy of the active bank, with the name-difference report as before |
 | M5 — Voice plugin + link | **done** 2026-09-07 — region files, claims, one-block timing, push/pull; `chipboy_linktest` passes 16 checks |
-| M6 — tracker, waves, frames, kits | **done** 2026-09-07 — tracker player on the host transport, record arm, kit import (resample + 4-bit dither), bank/song files. **2026-09-08**: grooves are sixteen tick counts, cells carry velocity, the Player flushes a channel with All notes off on stop/locate/source change, and the recorder follows §9.4; `chipboy_recordtest` (record/replay parity) and the tracker-shaped demo are done, next to the link test. Then: **steps per bar** is a number, 1–64, with a per-bar override (`Song::barSteps`) for any bar, tracked through a prefix table (`Song::barStartSteps`) so a locate lands on the right step; a cell's two commands fire **once**, at their step, instead of occupying a slot; per-channel **record arms** gate an armed channel's recording whatever its playback source; **song files** (`.cbsong`) and the plugin's **own transport** (`transportPlay`/`transportStop`/`setLoop`) round out the Standalone; `Demo/ChipBoy Demo.cbsong` is the recorded demo, checked byte for byte by `demo_song_matches` |
-| M7 — interface | **done** 2026-09-07 — the window from the mockup: header, mixer with period-locked scopes, seven tabs, status bar, visualizer window, Voice window. **2026-09-08**: the Phrases tab gained a groove editor and a VEL column, the Instrument tab gained the pitch fields, and the window was resized to fit a 1080p screen with tempo moved to the header; then the Phrases tab became the **Tracker** tab with the transport, the song files and the chain rotated beside the lane, a **Grooves** tab took the groove editor, and the Instrument tab gained preset files. Then a quality-of-life round: every number typeable, the wheel scrolling only, command cells split into letter and values with right-click slot lists, and undo / redo over every hand edit |
+| M6 — tracker, waves, frames, kits | **done** 2026-09-07 — tracker player on the host transport, record arm, kit import (resample + 4-bit dither), bank/song files. **2026-09-08**: grooves are sixteen tick counts, cells carry velocity, the Player flushes a channel with All notes off on stop/locate/source change, and the recorder follows §9.4; `chipboy_recordtest` (record/replay parity) and the tracker-shaped demo are done, next to the link test. Then: **steps per bar** is a number, 1–64, with a per-bar override (`Song::barSteps`) for any bar, tracked through a prefix table (`Song::barStartSteps`) so a locate lands on the right step; a cell's two commands fire **once**, at their step, instead of occupying a slot; per-channel **record arms** gate an armed channel's recording whatever its playback source; **song files** (`.cbsong`) and the plugin's **own transport** (`transportPlay`/`transportStop`/`setLoop`) round out the Standalone; `Demo/ChipBoy Demo.cbsong` is the recorded demo, checked byte for byte by `demo_song_matches`. **2026-09-08 (third)**: the Tracker tab becomes a **tab strip**, one tab per open song, each owning its own bank — only the active tab plays, records, and is shown in every other tab; undo steps carry the tab they belong to. **Hybrid** joins MIDI and Trkr as a third playback source: notes come from MIDI, everything else (instrument, table, commands) from the song's cells. The host's time signature no longer reaches the tracker — bar ticks are always the song's own beats per bar (§11 amended), in both tempo modes. `tools/demo/make_songs.py` adds six original songs under `Demo/songs` (a groove study, a meter study, a route theme, a platformer tune, a modern track, a wave-manipulation track), each checked by the CTest `demo_songs_load`; `Demo/ChipBoy Demo (hybrid).rpp` carries the plugin's saved state, checked by `demo_state_matches`, reproducing the recorded demo under Hybrid |
+| M7 — interface | **done** 2026-09-07 — the window from the mockup: header, mixer with period-locked scopes, seven tabs, status bar, visualizer window, Voice window. **2026-09-08**: the Phrases tab gained a groove editor and a VEL column, the Instrument tab gained the pitch fields, and the window was resized to fit a 1080p screen with tempo moved to the header; then the Phrases tab became the **Tracker** tab with the transport, the song files and the chain rotated beside the lane, a **Grooves** tab took the groove editor, and the Instrument tab gained preset files. Then a quality-of-life round: every number typeable, the wheel scrolling only, command cells split into letter and values with right-click slot lists, and undo / redo over every hand edit. **2026-09-08 (third)**: the song tab strip sits above the lane; the header's tempo becomes a **readout** — host or song, in force — with the song's own master tempo typed in the Tracker head, now two rows of grouped tools (TRANSPORT · RECORD · SONG · FILE); the master strip gains **LCD Whine** as a third, independent switch and one **VOL** stepper for both sides; PLAYS gains **Hybrid**; and the channel scopes lock to an edge chosen by the waveform's shape rather than the last edge before the window, holding still on a wave channel under vibrato |
 | M8 — CGB / RAW / hardware options | **done** 2026-09-07 — CGB chip variant, RAW bypass, headphone noise, LCD line, bass mod, quiet-edge volume writes, de-click, soften master pops; 61 core tests |
 
 ---
 
 ## Spec revisions
+
+### 2026-09-08 — six demo songs and the hybrid project (content)
+
+The third addendum's §20 and §24 ([`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md)),
+content side: the hybrid Reaper project, six original songs that each carry their own
+bank, and the check that keeps them honest. Nothing under `Source/` changed.
+
+**Changed:**
+
+- **`Demo/ChipBoy Demo (hybrid).rpp` (§20).** The same MIDI item as the main project and
+  only two envelopes — the model and De-click, bars 14–16, as the main project has them —
+  with everything else in the plugin's **saved state**, carried inside the VST chunk.
+  `vst_chunk_lines()` in `tools/demo/make_demo.py` takes the state bytes now: the header's
+  size field holds their length, the bytes follow as base64 lines of 128 characters (a
+  multiple of four, so a line is whole bytes wherever Reaper joins them), and the
+  terminator is the line it always was. With no state the size is zero and the two older
+  projects come out byte for byte as before. The state is `Demo/chipboy_demo_hybrid.state`
+  — `chipboy_recordtest --write-state`, checked by `demo_state_matches` — which holds one
+  song tab: the demo song *and its bank*, all four channels on Hybrid, PU1's Source on
+  MIDI 1 and NOI's Velocity on instrument bank. The automation JSON gains nothing from it:
+  the hybrid project's whole story is "notes from MIDI, everything else from the song", so
+  there is no lane left to describe. `Demo/README.md` says what the state carries and how
+  to build the same thing by hand in another host.
+- **`tools/demo/make_songs.py` and `Demo/songs/*.cbsong` (§24).** Six original
+  compositions — written for this repository, in the style of the machine rather than of
+  any record; no melody, bass line or drum pattern is taken from anywhere, and no LSDj
+  content is involved. Each is a **format 5** song file, so it brings its own bank:
+  `groove-study` (one four-bar tune under straight, 7 5 swing, 8 8 8 triplets and an 8 4
+  shuffle put there by a G on every channel, then G's revert form), `meter-study` (3/4 at
+  twelve steps, a fourteen-step 7/8 bar and two twenty-step 5/4 bars by override, one
+  tempo throughout), `route-theme` (a bright route theme: pulse melody, a C-arpeggio chord
+  track, a walking wave bass, noise drums), `puffball-bounce` (W duty changes by section,
+  V on the long notes, a wave bass killed three ticks after every note, a bridge, an S
+  sweep on PU1), `neon-grid` (the wave channel as a drum machine: a kick whose table falls
+  in semitones under Drum pitch speed while E steps the level, a snare that is an F frame
+  run through a ragged wave) and `wave-study` (half time: F frame walks under held bare
+  notes, W switching the wave slot, P wobbles in Tick pitch speed, a drop).
+- **The songs are Python data with a small compiler.** A bank is `pulse()`, `wave()`,
+  `noise()`, `table()` and `wav()` calls with names instead of slot numbers; music is
+  sections of bars, each a groove and one bar of text per channel, a step being
+  `C-4@lead:96%table+V9,4` or `.` or `off`. The compiler resolves every name against the
+  song's own bank, interns identical bars into phrases, and refuses at generation time
+  what the machine would refuse silently: a letter that means nothing on its channel
+  (§2), an argument out of range, an instrument of the wrong kind, a bank entry nothing
+  plays, a bar under two channels, and a groove that would put a written step past the
+  bar's end (§9.2).
+- **`chipboy_recordtest --play-song FILE [bars]`**, and a CTest `demo_songs_load` per file
+  in `Demo/songs`. The file opens in a tab, the plugin's own transport plays it at the
+  song's tempo with no play head (§16), and the run is measured — once for the mix and
+  once per soloed channel, with the headphone noise and the LCD line switched off so
+  silence is silence. It fails on a NaN or an infinity, on a run that is silent
+  throughout, and on a channel whose audio never changes at all, and prints the RMS of
+  every bar of every channel either way. All six pass at eight bars in about two seconds
+  each.
+
+**Why:** §24 asks for songs that are pages of the command table played rather than
+written down, and a song that nobody has heard is a guess. The RMS table is the listening:
+it is what caught two arrangement bugs that sounded like nothing at all (below).
+
+**Considered:** measuring per-channel level from the driver's write log or the scope
+rings instead of playing the song five times. The rings are 4096 entries and a noise
+channel overruns them inside a block, and a register log says what was written rather
+than what came out — the solo runs cost two seconds and measure the thing itself.
+
+**Three things the numbers found, and what the songs do about them.**
+
+- **A note below its channel's lowest period does not sound at all.**
+  `Driver::periodForNote` returns −1 under 64 Hz on a pulse channel (32 Hz on the wave
+  channel) and the voice never starts. Two bass lines were written an octave too low and
+  were simply absent — four bars of a column of zeroes in the RMS table. The compiler
+  now knows each channel's floor (C-2 on the pulse channels, C-1 on the wave channel) and
+  rejects a note under it.
+- **A bar with no phrase does not stop a channel that has stacked notes.** Every cell
+  note-on pushes onto the driver's held-note stack (§8, last-note priority) and only a
+  note-off pops one, so after a dozen bars of tracker notes the note-off a missing phrase
+  sends just falls back to the note under it. It is the documented behaviour and the
+  right one for MIDI; for a song it means an ending needs **K**, which clears the stack,
+  or the loop wrap and the transport stop, which flush everything. The songs that end use
+  E to fade the pulse channels and K to stop the wave channel; `wave-study`'s drop kills
+  its bass rather than trusting an empty bar.
+- **A groove only fills the bar if its ticks average six.** `4 4 4` at sixteen steps
+  covers two thirds of a 4/4 bar and leaves the last note sustaining, which is what §9.2
+  says and not what a triplet section wants. `8 8 8` is the one that fits: twelve steps of
+  eight ticks fill the bar exactly as eighth-note triplets and steps 12–15 never fire —
+  checked directly, a note written on step 12 under that groove is silent and one on step
+  11 sounds. `groove-study`'s triplet section is written to twelve steps for that reason.
 
 ### 2026-09-08 — song tabs, the head, the master section, scopes, Hybrid (interface)
 
@@ -130,91 +216,6 @@ need a display.
 
 **Departures from the brief:** the STOCK badge is not per tab, for the reason above.
 
-### 2026-09-08 — six demo songs and the hybrid project (content)
-
-The third addendum's §20 and §24 ([`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md)),
-content side: the hybrid Reaper project, six original songs that each carry their own
-bank, and the check that keeps them honest. Nothing under `Source/` changed.
-
-**Changed:**
-
-- **`Demo/ChipBoy Demo (hybrid).rpp` (§20).** The same MIDI item as the main project and
-  only two envelopes — the model and De-click, bars 14–16, as the main project has them —
-  with everything else in the plugin's **saved state**, carried inside the VST chunk.
-  `vst_chunk_lines()` in `tools/demo/make_demo.py` takes the state bytes now: the header's
-  size field holds their length, the bytes follow as base64 lines of 128 characters (a
-  multiple of four, so a line is whole bytes wherever Reaper joins them), and the
-  terminator is the line it always was. With no state the size is zero and the two older
-  projects come out byte for byte as before. The state is `Demo/chipboy_demo_hybrid.state`
-  — `chipboy_recordtest --write-state`, checked by `demo_state_matches` — which holds one
-  song tab: the demo song *and its bank*, all four channels on Hybrid, PU1's Source on
-  MIDI 1 and NOI's Velocity on instrument bank. The automation JSON gains nothing from it:
-  the hybrid project's whole story is "notes from MIDI, everything else from the song", so
-  there is no lane left to describe. `Demo/README.md` says what the state carries and how
-  to build the same thing by hand in another host.
-- **`tools/demo/make_songs.py` and `Demo/songs/*.cbsong` (§24).** Six original
-  compositions — written for this repository, in the style of the machine rather than of
-  any record; no melody, bass line or drum pattern is taken from anywhere, and no LSDj
-  content is involved. Each is a **format 5** song file, so it brings its own bank:
-  `groove-study` (one four-bar tune under straight, 7 5 swing, 8 8 8 triplets and an 8 4
-  shuffle put there by a G on every channel, then G's revert form), `meter-study` (3/4 at
-  twelve steps, a fourteen-step 7/8 bar and two twenty-step 5/4 bars by override, one
-  tempo throughout), `route-theme` (a bright route theme: pulse melody, a C-arpeggio chord
-  track, a walking wave bass, noise drums), `puffball-bounce` (W duty changes by section,
-  V on the long notes, a wave bass killed three ticks after every note, a bridge, an S
-  sweep on PU1), `neon-grid` (the wave channel as a drum machine: a kick whose table falls
-  in semitones under Drum pitch speed while E steps the level, a snare that is an F frame
-  run through a ragged wave) and `wave-study` (half time: F frame walks under held bare
-  notes, W switching the wave slot, P wobbles in Tick pitch speed, a drop).
-- **The songs are Python data with a small compiler.** A bank is `pulse()`, `wave()`,
-  `noise()`, `table()` and `wav()` calls with names instead of slot numbers; music is
-  sections of bars, each a groove and one bar of text per channel, a step being
-  `C-4@lead:96%table+V9,4` or `.` or `off`. The compiler resolves every name against the
-  song's own bank, interns identical bars into phrases, and refuses at generation time
-  what the machine would refuse silently: a letter that means nothing on its channel
-  (§2), an argument out of range, an instrument of the wrong kind, a bank entry nothing
-  plays, a bar under two channels, and a groove that would put a written step past the
-  bar's end (§9.2).
-- **`chipboy_recordtest --play-song FILE [bars]`**, and a CTest `demo_songs_load` per file
-  in `Demo/songs`. The file opens in a tab, the plugin's own transport plays it at the
-  song's tempo with no play head (§16), and the run is measured — once for the mix and
-  once per soloed channel, with the headphone noise and the LCD line switched off so
-  silence is silence. It fails on a NaN or an infinity, on a run that is silent
-  throughout, and on a channel whose audio never changes at all, and prints the RMS of
-  every bar of every channel either way. All six pass at eight bars in about two seconds
-  each.
-
-**Why:** §24 asks for songs that are pages of the command table played rather than
-written down, and a song that nobody has heard is a guess. The RMS table is the listening:
-it is what caught two arrangement bugs that sounded like nothing at all (below).
-
-**Considered:** measuring per-channel level from the driver's write log or the scope
-rings instead of playing the song five times. The rings are 4096 entries and a noise
-channel overruns them inside a block, and a register log says what was written rather
-than what came out — the solo runs cost two seconds and measure the thing itself.
-
-**Three things the numbers found, and what the songs do about them.**
-
-- **A note below its channel's lowest period does not sound at all.**
-  `Driver::periodForNote` returns −1 under 64 Hz on a pulse channel (32 Hz on the wave
-  channel) and the voice never starts. Two bass lines were written an octave too low and
-  were simply absent — four bars of a column of zeroes in the RMS table. The compiler
-  now knows each channel's floor (C-2 on the pulse channels, C-1 on the wave channel) and
-  rejects a note under it.
-- **A bar with no phrase does not stop a channel that has stacked notes.** Every cell
-  note-on pushes onto the driver's held-note stack (§8, last-note priority) and only a
-  note-off pops one, so after a dozen bars of tracker notes the note-off a missing phrase
-  sends just falls back to the note under it. It is the documented behaviour and the
-  right one for MIDI; for a song it means an ending needs **K**, which clears the stack,
-  or the loop wrap and the transport stop, which flush everything. The songs that end use
-  E to fade the pulse channels and K to stop the wave channel; `wave-study`'s drop kills
-  its bass rather than trusting an empty bar.
-- **A groove only fills the bar if its ticks average six.** `4 4 4` at sixteen steps
-  covers two thirds of a 4/4 bar and leaves the last note sustaining, which is what §9.2
-  says and not what a triplet section wants. `8 8 8` is the one that fits: twelve steps of
-  eight ticks fill the bar exactly as eighth-note triplets and steps 12–15 never fire —
-  checked directly, a note written on step 12 under that groove is silent and one on step
-  11 sounds. `groove-study`'s triplet section is written to twelve steps for that reason.
 ### 2026-09-08 — song tabs, hybrid playback, the noise split (engine)
 
 The third addendum ([`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md) §18–§21),
