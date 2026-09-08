@@ -214,8 +214,10 @@ private:
 };
 
 /// The Phrases lane: four channels side by side, 16 steps of note,
-/// instrument, table and two commands for one bar (UI_DESIGN section 7).
-/// Column headers carry the Roll / Trk source switch.
+/// velocity, instrument, table and two commands for one bar (UI_DESIGN
+/// section 7). Column headers carry the Roll / Trk source switch and the
+/// phrase's groove chip; the groove itself is edited in the GrooveEditor
+/// beside the lane.
 class PhraseGrid : public juce::Component, public juce::TooltipClient {
 public:
     PhraseGrid();

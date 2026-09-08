@@ -237,13 +237,13 @@ void showCommandPalette(juce::Component& target, juce::Rectangle<int> cellArea, 
 // ---------------------------------------------------------------------------
 // the grid core: columns, cursor, hover, navigation, painting
 // ---------------------------------------------------------------------------
-enum class Kind { Step, Vol, Transpose, Cmd, Note, Inst, Table, Ghost, Info };
+enum class Kind { Step, Vol, Transpose, Cmd, Note, Vel, Inst, Table, Ghost, Info };
 
 struct Column { Kind kind = Kind::Step; int ch = 0; int x = 0, w = 0; juce::String title; };
 
 bool editableKind(Kind k)
 {
-    return k == Kind::Vol || k == Kind::Transpose || k == Kind::Cmd || k == Kind::Note || k == Kind::Inst || k == Kind::Table;
+    return k == Kind::Vol || k == Kind::Transpose || k == Kind::Cmd || k == Kind::Note || k == Kind::Vel || k == Kind::Inst || k == Kind::Table;
 }
 
 struct GridCore {
@@ -537,6 +537,9 @@ void TableGrid::focusLost(FocusChangeType) { impl_->core.entry.reset(); repaint(
 // PhraseGrid
 // ===========================================================================
 struct PhraseGrid::Impl {
+    static constexpr int kChannelCols = 6;   ///< note, vel, ins, tbl and the two commands
+    static constexpr int kStepWidth = 34;
+
     PhraseGrid& owner;
     std::shared_ptr<const tracker::Song> song;
     int bar = 0;
@@ -570,22 +573,26 @@ struct PhraseGrid::Impl {
         }
     }
 
-    static const char* colTitle(int i) { static const char* t[5] = { "note", "ins", "tbl", "cmd", "cmd" }; return t[i]; }
+    static const char* colTitle(int i) { static const char* t[kChannelCols] = { "note", "vel", "ins", "tbl", "cmd", "cmd" }; return t[i]; }
 
     void buildColumns(int width)
     {
         auto& cols = core.cols;
         cols.clear();
-        cols.push_back({ Kind::Step, 0, 0, 34, "Step" });
-        const float weights[5] = { 1.15f, 0.9f, 0.9f, 1.5f, 1.5f };
+        cols.push_back({ Kind::Step, 0, 0, kStepWidth, "Step" });
+        // What each column has to show, in units of the widest: a note name
+        // and a three-digit velocity, instrument and table slots, and a
+        // command with two arguments. The groove editor takes the rest of
+        // the pane (UI_DESIGN section 7).
+        const float weights[kChannelCols] = { 1.12f, 0.88f, 0.88f, 0.82f, 1.50f, 1.50f };
         float total = 0.0f;
         for (float w : weights) total += w;
-        const float unit = juce::jmax(36.0f, float(width - 34) / (4.0f * total));
-        float x = 34.0f;
+        const float unit = juce::jmax(30.0f, float(width - kStepWidth) / (4.0f * total));
+        float x = float(kStepWidth);
         for (int ch = 0; ch < 4; ++ch) {
             const float groupX = x;
-            for (int i = 0; i < 5; ++i) {
-                const Kind kinds[5] = { trackerSource[size_t(ch)] ? Kind::Note : Kind::Ghost, Kind::Inst, Kind::Table, Kind::Cmd, Kind::Cmd };
+            for (int i = 0; i < kChannelCols; ++i) {
+                const Kind kinds[kChannelCols] = { trackerSource[size_t(ch)] ? Kind::Note : Kind::Ghost, Kind::Vel, Kind::Inst, Kind::Table, Kind::Cmd, Kind::Cmd };
                 const float w = unit * weights[i];
                 cols.push_back({ kinds[i], ch, juce::roundToInt(x), juce::roundToInt(x + w) - juce::roundToInt(x), colTitle(i) });
                 x += w;
@@ -650,6 +657,7 @@ struct PhraseGrid::Impl {
             if (cell.note != 0 && cell.note != tracker::kNoteOff) colour = colours::channel(c.ch);
             return ValueFormat::noteName(cell.note);
         }
+        if (c.kind == Kind::Vel) { blank = cell.vel == 0; return blank ? kBlank2 : ValueFormat::number(cell.vel); }
         if (c.kind == Kind::Inst) { blank = cell.inst == 0; return blank ? kBlank2 : ValueFormat::number(cell.inst); }
         if (c.kind == Kind::Table) { blank = cell.table == 0; return blank ? kBlank2 : ValueFormat::number(cell.table); }
         if (c.kind == Kind::Cmd) { const auto& cmd = cmdSlot(col) == 0 ? cell.cmd1 : cell.cmd2; blank = cmd.cmd == bank::Cmd::None; return blank ? kBlank2 : cmdText(cmd); }
@@ -669,6 +677,7 @@ struct PhraseGrid::Impl {
         const tracker::Cell before = cell;
         bool done = false;
         if (col.kind == Kind::Note) done = editNote(cell.note, k, octave);
+        else if (col.kind == Kind::Vel) done = editSlot(cell.vel, 127, k, core.entry);
         else if (col.kind == Kind::Inst) done = editSlot(cell.inst, bank::kInstrumentSlots, k, core.entry);
         else if (col.kind == Kind::Table) done = editSlot(cell.table, bank::kTableSlots, k, core.entry);
         else if (col.kind == Kind::Cmd) done = editCmd(cmdSlot(core.curCol) == 0 ? cell.cmd1 : cell.cmd2, k, core.entry);
@@ -682,6 +691,7 @@ struct PhraseGrid::Impl {
         auto& cell = cells[size_t(c.ch)][size_t(row)];
         bool done = false;
         if (c.kind == Kind::Note) done = wheelNote(cell.note, delta);
+        else if (c.kind == Kind::Vel) { const int v = juce::jlimit(0, 127, int(cell.vel) + delta); done = v != cell.vel; cell.vel = uint8_t(v); }
         else if (c.kind == Kind::Inst) { const int v = juce::jlimit(0, bank::kInstrumentSlots, int(cell.inst) + delta); done = v != cell.inst; cell.inst = uint8_t(v); }
         else if (c.kind == Kind::Table) { const int v = juce::jlimit(0, bank::kTableSlots, int(cell.table) + delta); done = v != cell.table; cell.table = uint8_t(v); }
         else if (c.kind == Kind::Cmd) done = wheelCmd(cmdSlot(col) == 0 ? cell.cmd1 : cell.cmd2, delta, core.entry.arg);
@@ -710,6 +720,8 @@ struct PhraseGrid::Impl {
         const auto& cell = cells[size_t(c.ch)][size_t(row)];
         if (c.kind == Kind::Ghost) return "The piano roll's note as this bar played. Set the channel to Trk to type notes here.";
         if (c.kind == Kind::Note) return "The note this step plays; minus enters a note off";
+        if (c.kind == Kind::Vel) return "How hard this step's note is played, 1-127; blank is the default "
+                                        + juce::String(int(tracker::kDefaultVelocity)) + ". A recorded note keeps the velocity it arrived with.";
         if (c.kind == Kind::Inst) return "Instrument slot to load at this step; blank keeps the one in force";
         if (c.kind == Kind::Table) return "Table override for this step; blank keeps the instrument's own";
         if (c.kind == Kind::Cmd) return cmdTooltip(cmdSlot(col) == 0 ? cell.cmd1 : cell.cmd2);
@@ -740,7 +752,7 @@ struct PhraseGrid::Impl {
         g.setColour(lineSoft);
         g.fillRect(0, core.headerH - 1, width, 1);
         for (int ch = 0; ch < 4; ++ch) {
-            const int first = 1 + ch * 5;
+            const int first = 1 + ch * kChannelCols;
             const int x = core.cols[size_t(first)].x;
             g.setColour(lineSoft);
             g.fillRect(x, 0, 1, core.headerH);
@@ -813,8 +825,8 @@ void PhraseGrid::paint(juce::Graphics& g)
     for (int ch = 0; ch < 4; ++ch) {
         const int p = im.playing[size_t(ch)];
         if (p < 0 || p >= core.rows) continue;
-        const int first = 1 + ch * 5;
-        const int x = core.cols[size_t(first)].x, w = core.cols[size_t(first + 4)].x + core.cols[size_t(first + 4)].w - x;
+        const int first = 1 + ch * Impl::kChannelCols, last = first + Impl::kChannelCols - 1;
+        const int x = core.cols[size_t(first)].x, w = core.cols[size_t(last)].x + core.cols[size_t(last)].w - x;
         g.setColour(colours::playRow);
         g.fillRect(x, core.rowY(p), w, core.rowH);
     }
