@@ -116,7 +116,7 @@ first APU register write the two passes disagree on
 
 ## Playing it
 
-![The Phrases tab](docs/screenshots/main-phrases.png)
+![The Tracker tab](docs/screenshots/main-tracker.png)
 
 1. Put **ChipBoy** on a track and play. PU1 answers every MIDI channel (omni); PU2, WAV
    and NOI answer MIDI channels 2, 3 and 4. Change any channel's source in its strip.

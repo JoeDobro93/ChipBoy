@@ -28,7 +28,7 @@ Each of the four hardware channels has a **source**:
 | **MIDI channel 1–16** on the ChipBoy track | Notes on that MIDI channel play this voice | One track drives the whole machine: FL's per-pattern MIDI channel, Reaper's item channel, Logic's multi-timbral tracks |
 | **Omni** | Every note reaching the ChipBoy track plays this voice | The first minute: drop it on a track and play |
 | **Voice plugin** | A ChipBoy Voice on another track has claimed the channel | The DAW-native layout: one track per voice, automation where you expect it |
-| **Off** | The channel only responds to the Phrases lane and tables | Sound design, or a channel used purely as a drum from the lane |
+| **Off** | The channel only responds to the tracker lane and tables | Sound design, or a channel used purely as a drum from the lane |
 
 Defaults: PU1 = omni, PU2 = MIDI 2, WAV = MIDI 3, NOI = MIDI 4. So a fresh instance plays
 the lead the moment you touch a key, and the other three wake up when you address them.
@@ -54,7 +54,7 @@ scaling, which multiplies both. The width never changes; the height stretches, s
 corner resizer only moves vertically and every pixel it adds goes to the editor pane
 (the bank lists and the Hardware tab get the room). 1020 is header 54 + mixer row 370
 + tab bar 34 + a 536 editor pane (512 and its padding) + status line 26, and it fits a
-1080p screen with the host's own chrome. 512 is what the Phrases lane's sixteen steps
+1080p screen with the host's own chrome. 512 is what the tracker lane's sixteen steps
 need under its head, and it is the ceiling the Instrument tab is laid out against: its
 four cards, two to a row, ask 474 at their tallest (§6, which does the arithmetic). The
 chosen height is remembered with the project, as the scale is. Reading order is top to
@@ -66,9 +66,11 @@ bottom: *what am I emulating → what is each voice doing → edit the thing I s
    button; settings.
 2. **The mixer row.** Four channel strips and a master strip. Every strip has its scope on
    top, mixer-bridge style, so the row reads at a glance while playing.
-3. **Editor tabs.** Instrument · Tables · Waves · Kits · Phrases · Link · Hardware. The
-   editor always knows its context: *Editing PU2's instrument "Bass 07"*.
-4. **Status line.** Model, sample rate, latency, tick source, link state.
+3. **Editor tabs.** Instrument · Tables · Grooves · Waves · Kits · Tracker · Link ·
+   Hardware. The editor always knows its context: *Editing PU2's instrument "Bass 07"*.
+4. **Status line.** Model, sample rate, latency, tick source, who owns the transport,
+   link state — and, on the right, what the last file or preset did, for twenty seconds,
+   in place of the tagline.
 
 ### A channel strip
 
@@ -261,6 +263,19 @@ the hardware's ranges, and none of the cartridge limits (C10).
   now, its delay is a stepper where it was a knob (40 px against 86), and pan went to the
   Sound card, which had a spare row where the two-column card next to it did not. A pulse
   instrument's second row is 188 where it was 230.
+
+  **An instrument is a file too.** Under *Assign*, *New* and *Dup* sit **Save preset…**
+  and **Load preset…**, which write and read a `.cbi` in `Documents/ChipBoy/Instruments`
+  ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §15). A preset is the instrument with
+  everything it references, transitively: its table, the tables that table's `A` commands
+  start, the wave a wave instrument plays and the wave slots its tables' `W` commands
+  select, and a kit instrument's kit. Loading puts it in the selected slot; each
+  dependency takes the first free slot of its kind unless the bank already holds an
+  identical one, and every reference is renumbered to match. The status bar says what
+  went where — *"Pluck → slot 3; table 5 → 9 (renumbered); wave 2 reused"* — and a load
+  that would overflow a kind fails without touching the bank. The two buttons take the
+  row under the other three because two 110 px buttons do not fit beside them in the
+  220 px list column.
 - **Tables** (spec §9.5): 16 steps of volume, transpose, two commands; loop, hop, or
   stop at the end; one step per tick; shared by every instrument that references them.
 - **Commands** (spec §9.6, LSDj lettering; [`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md)
@@ -279,22 +294,24 @@ the hardware's ranges, and none of the cartridge limits (C10).
 
 ---
 
-## 7. The Phrases lane — a tracker that follows the host
+## 7. The Tracker tab — a tracker that follows the host, or runs itself
 
 LSDj expresses most of its character through the tracker screen: a note, an instrument
 and commands on a step. ChipBoy has that screen. It is a tracker with the DAW as its
-transport, and it is the part of the product that can later leave the DAW entirely
-(§10, D10).
+transport — or with its own, when no DAW offers one — and it is the part of the product
+that can later leave the DAW entirely (§10, D10).
 
 Per channel: a **note** column, **vel**, **instrument**, **table** and two **command**
-columns; sixteen steps to a phrase (a bar of sixteenths by default, and *Steps / bar*
-offers 8 or 16), phrases chained along the timeline by bar, a groove (6/6, 7/5, 8/4
-ticks per step…) per phrase for swing. Cells fire at their step's tick and latch for the
-notes that follow — exactly the tracker behaviour. A cell's two commands are the
-channel's two command slots written from that step on, so the lane and the automation
-lane are one mechanism, not two. **Vel** is the note's velocity, 1–127, blank meaning
-the default 100; a recorded note keeps the velocity it arrived with, and every column
-takes the same gestures — the wheel, typed digits, + and −, Backspace to blank.
+columns. A bar holds as many steps as its step count says, one to sixty-four
+([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §11): *Steps / bar* is a typed number
+for the song, and a single bar may take one of its own in the chain's **STP** column.
+Phrases are chained along the timeline by bar, with a groove (6/6, 7/5, 8/4 ticks per
+step…) per phrase for swing. Cells fire at their step's tick; a cell's two commands are
+applied once, there, and the persistent letters then hold until the next plain note
+reloads the instrument (§12) — the lane and the automation lanes are one mechanism, not
+two. **Vel** is the note's velocity, 1–127, blank meaning the default 100; a recorded
+note keeps the velocity it arrived with, and every column takes the same gestures — the
+wheel, typed digits, + and −, Backspace to blank.
 
 A command cell can also hold a letter's **revert form**, which is what the recorder
 writes when an automation slot goes back to *none*: it puts that letter back where the
@@ -307,43 +324,75 @@ the way a lone dot could; it is ASCII, so it draws in the embedded fonts whateve
 platform. The cost is that `=` no longer doubles for `+` in a command column, where `+`
 still steps the argument.
 
-**The groove editor** stands to the right of the lane, its sixteen cells row for row
-with the lane's steps, because a groove is read down the steps and not across the bar. A
-groove is sixteen tick counts, each 1–48 with 0 unused, and step *i* lasts
-`ticks[i mod length]` — so two entries swing, three make triplets
-([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §9.2). Each row shows its count, a bar
-drawn against the longest entry so the swing is visible without arithmetic, and the tick
-that step starts on — in the warn colour when that start falls at or past the end of the
-bar, where the step does not fire at all. Rows past the groove's length are blank and
-repeat it. The head carries the slot being browsed (0 is straight and cannot be edited,
-1–16 are the song's), the **total** against the bar's ticks — green when they match,
-warn when the groove over- or under-fills the bar — the **swing** the first pair makes
-(61 % for 8/5, 50 % for 6/6), and a **◀ ▶ nudge** that moves one tick between the
-entries of every pair, keeping each pair's total: 6 6 → 7 5 → 8 4, and back. The editor
-shows whichever groove is in force for the selected channel — a `G` in a command slot or
-a cell, else the phrase's own chip in the lane header — and follows it until the stepper
-browses elsewhere. A cell takes the lane's gestures and a value drag as well: the wheel,
-a vertical drag, + and −, two typed digits, Backspace to end the groove there; ← and →
-are the nudge.
+**The chain stands beside the lane, rotated**: bars down, channels across. One row per
+bar, numbered 1, 2, 3… at the left with the lowest at the top, four cells for the
+channels' phrase slots and a fifth, **STP**, for that bar's own step count — blank means
+the song's *Steps / bar*, and it is typed and blanked exactly as a phrase cell is. Its
+rows keep the lane's 22 px rhythm, so bar 3's row sits beside step 3 of the lane; it
+scrolls with the song, follows the playing bar, and grows the song by a bar when
+something is typed in the empty row under the last one. Rotating it is what the step
+count made necessary: a bar is now a row with a length of its own, and reading lengths
+down a column is how a tracker reads.
+
+**Per channel, in the lane's head**: a **record arm** — a red dot, on for a new song,
+saved with it — then the channel's name, the caption **PLAYS** and the switch that says
+what the channel plays: **MIDI**, the notes arriving from the host, shown greyed in the
+note column as the bar plays; or **Trkr**, its own cells, with incoming MIDI ignored
+([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §14). A song can mix the two — lead
+from the piano roll, drums from the tracker. The phrase's **groove chip** closes the
+row; the groove itself is edited in the Grooves tab (§7.1).
+
+**The transport.** *Play*, *Stop* and *Loop* run the song when the plugin owns the
+transport — the Standalone, or a host that offers no play head — from the song start on
+the plugin's own clock at the Song tempo; *Loop* takes the whole song, bar 1 to its last
+bar. In a host the host's transport rules: the buttons mirror it and are disabled, and
+the header's *Tempo source* is fixed on **Song** while the plugin owns the transport,
+with the tooltip saying why ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §16). The
+status bar says which of the two is running: *transport own* or *transport host*.
+
+**Record.** With the transport running and **Rec** on, the MIDI arriving on an **armed**
+channel is written into its cells with the parameter values in force at each step —
+whatever that channel plays, so an overdub onto a Trkr channel is audible while it is
+recorded. An unarmed channel never records. That is how a piano-roll performance,
+automation included, becomes a self-contained tracker song — the form a playback ROM
+will need (§10). Recording captures what the driver actually did, so nothing is lost in
+translation.
+
+**Songs are files.** *Save song…* and *Load song…* write and read a `.cbsong` — chains,
+phrases, grooves, the steps and the bar overrides, tempo, song start, beats per bar,
+playback sources and arms — in `Documents/ChipBoy/Songs`, beside the banks folder. The
+file also records the bank's name and the name of every instrument slot the song uses,
+so a load can say where this bank differs: the line under the tool rows reads *"Loaded
+ChipBoy Demo — written with bank Factory, 11 instruments used. slot 7 was Triangle bass;
+this bank has Organ"*, and the same line goes to the status bar. With no file open that
+line is the song itself: its bars, its steps and how many phrases it uses.
 
 **Numbers.** At the minimum window height the tab has 1156 × 512 and asks for no
-scrolling: a 112 px head — two rows of tools, the help line, and the bar chain beside
-them — over 400 px of lane, which is a 48 px header and sixteen 22 px rows. Across, the
-groove editor takes 164 px off the right with a 12 px gap, leaving 980 for the lane: a
-34 px step column and four channel groups of 236, each a 39 px note, 31 vel, 31 ins,
-29 tbl and two 53 px commands. The playing row is highlighted per channel on the step
-that channel's own groove is really playing, not on a sixteenth of the bar, so a swung
-phrase marks the row that is sounding; the position readout beside the transport stays
-bar . beat . sixteenth, which is the clock and not the groove.
+scrolling: a 112 px head over 400 px of lane, which is a 48 px head and sixteen 22 px
+rows. The head is two 26 px tool rows 6 px apart — transport, the playing readout, *Rec*
+and *Steps / bar* on the first; *Start*, *Beats*, *Save song…*, *Load song…* and *Export
+.gb* on the second — over the 48 px line that says what the song is. Across, the chain
+takes 164 px off the right with a 12 px gap, leaving 980 for the lane: a 34 px step
+column and four channel groups of 236, each a 39 px note, 31 vel, 31 ins, 29 tbl and two
+53 px commands. The chain's own 164 is a 25 px gutter for the bar number and five 25 px
+cells 2 px apart, under a 48 px head that lines up with the lane's. **Past sixteen
+steps** the lane is taller than its pane and scrolls inside it — the tab's only
+scrollbar — following the cursor as it is typed down the bar and the row the selected
+channel is playing; a bar of 64 steps is 1456 px of lane. The playing row is highlighted
+per channel on the step that channel's own groove is really playing, not on a sixteenth
+of the bar, so a swung phrase marks the row that is sounding; the position readout beside
+the transport stays bar . beat . sixteenth, which is the clock and not the groove.
 
-![The Phrases tab with a song in it](screenshots/main-phrases-groove.png)
-*Four channels of cells with their velocities, and the groove in force for PU1 — slot 2,
-7 5, filling the bar exactly — in the editor on the right.*
+![The Tracker tab with the demo song in it](screenshots/main-tracker.png)
+*The demo song loaded from `Demo/ChipBoy Demo.cbsong`, playing on the plugin's own
+transport: four channels of cells with their velocities, the arms lit beside each name,
+and the chain on the right with the playing bar marked.*
 
 **The clock is 24 ticks to the beat** and a straight step is six of them, as LSDj. Which
 tempo is in force — *Tempo source*, *Song BPM* and *Quantize* — is the header's group,
 so it is one thing wherever you are working; this tab keeps what belongs to the song:
-its *Start* on the host's timeline and its *Beats* per bar, both greyed in Host mode.
+its *Start* on the host's timeline and its *Beats* per bar, both greyed in Host mode and
+live whenever the plugin owns the transport, where the source is Song by definition.
 The status bar says which tempo is in force — "tempo host 120" or "tempo song 150".
 In Song mode the position at any host time is the integral of the song's own tempo map — the base tempo plus its `T` cells at known ticks —
 so a jump to bar 9 lands on the step playing through would have reached, and a playback
@@ -352,20 +401,49 @@ automation slot) is the approximate form: the plugin integrates while playing an
 re-anchors on a locate with the value it sees there. See
 [`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §4.
 
-**Two sources of notes, one switch per channel.** *Piano roll* shows the notes the DAW is
-sending, greyed and not editable here, so a command sits next to the note it will hit.
-*Tracker* makes the channel play the lane's own notes and ignore incoming MIDI. A song
-can mix the two — lead from the piano roll, drums from the tracker.
-
-**Record.** With the transport running and the record arm on, incoming MIDI notes and
-the parameter values in force at each step are written into the cells of channels set to
-Tracker. That is how a piano-roll performance, automation included, becomes a
-self-contained tracker song — the form a playback ROM will need (§10). Recording captures
-what the driver actually did, so nothing is lost in translation.
-
 Three doors still lead to the driver, and they coexist: automation and CC lanes for
 sweeps; note-embedded data (velocity, keyswitches, pitch bend, note-off); and the lane
 for per-step commands. Whichever wrote the register last wins at the tick.
+
+### 7.1 The Grooves tab
+
+A groove is sixteen tick counts, each 1–48 with 0 unused, and step *i* of a phrase lasts
+`ticks[i mod length]` — so two entries swing, three make triplets
+([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §9.2). Grooves serve **tables** as well
+as phrases, so they have a tab of their own rather than a corner of the lane; the lane
+keeps the chip that says which groove a phrase runs on.
+
+The song's sixteen slots are listed on the left, as the bank lists are: the slot number,
+its ticks — *7 5*, *4 4 4*, *6 6* — and, on the right of the row, the swing its first
+pair makes or the word *straight*. A seventeenth row above them is groove **0**, which is
+straight and cannot be edited. Selecting a row shows it in the editor, and the stepper in
+the editor's head browses the same selection, so the two never disagree. The tab opens on
+the lowest slot that is not straight — slot 1 of a fresh song is 6 6 and shows nothing —
+and while a channel plays it follows the groove in force for the selected channel, as the
+editor did beside the lane, until the list or the stepper browses elsewhere.
+
+The editor is the sixteen cells in a column. Each row shows its count, a bar drawn
+against the longest entry so the swing is visible without arithmetic, and the tick that
+step starts on — in the warn colour when that start falls at or past the end of the bar,
+where the step does not fire at all. Rows past the groove's length are blank and repeat
+it. The head carries the slot being browsed, the **total** against the bar's ticks —
+green when they match, warn when the groove over- or under-fills the bar — the **swing**
+the first pair makes (61 % for 8/5, 50 % for 6/6), and a **◀ ▶ nudge** that moves one
+tick between the entries of every pair, keeping each pair's total: 6 6 → 7 5 → 8 4, and
+back. A cell takes the lane's gestures and a value drag as well: the wheel, a vertical
+drag, + and −, two typed digits, Backspace to end the groove there; ← and → are the
+nudge. While the transport runs, the row the selected channel is really playing is
+marked — but only while the editor is showing the groove that channel is running on.
+
+**Numbers.** The pane's 1156 × 512: the list 220 wide with a 14 px gap, the editor 520,
+and the 382 that are left explain what a groove is. The editor has the room the lane
+could not give it, so its rows grow with the pane — (512 − 48) ⁄ 16 = 29 px at the
+minimum height, against 22 in the old corner — and its bar track is 426 px against 70.
+
+![The Grooves tab](screenshots/main-grooves.png)
+*The song's grooves with their ticks and the swing each makes, and slot 2 — 7 5, 58 %,
+filling the bar exactly at 96 ticks — in the editor. The two entries repeat down the
+sixteen steps, so the rows past them are blank and their bars are drawn dimmer.*
 
 ---
 
@@ -398,7 +476,7 @@ who want a Game Boy on a keyboard without a DAW.
 
 | # | Question | Outcome |
 |---|---|---|
-| D-UI-1 | Phrases lane with commands only, or a full tracker? | **Full tracker** with a note column and a record arm (§7), so a song can later be exported as a `.gb` playback ROM (spec §15.3, post-v1) |
+| D-UI-1 | A lane of commands only, or a full tracker? | **Full tracker** with a note column and a record arm (§7), so a song can later be exported as a `.gb` playback ROM (spec §15.3, post-v1) |
 | D-UI-2 | What RAW is | **DMG chip, analog stage bypassed** — ideal squares, the 32-step wave staircase, no sag, no DC, no noise (§5) |
 | D-UI-3 | Ship the departures in v1? | **Yes**, and de-click gets a switch on the master strip as well as in the Hardware tab |
 | D-UI-4 | Default routing | **As mocked**: PU1 omni, PU2 / WAV / NOI on MIDI 2–4 |
