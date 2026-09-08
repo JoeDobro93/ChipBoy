@@ -52,11 +52,33 @@ enum class TableEnd : uint8_t { Loop = 0, Hop = 1, Stop = 2 };
 ///   W duty 0-3 (pulse) / wave slot (WAV)    Z random 0..x, 0..y added to the last command
 enum class Cmd : uint8_t { None = 0, A, C, D, E, F, G, H, K, L, M, O, P, R, S, T, V, W, Z };
 constexpr int kCmdCount = 18;                ///< letters, not counting None
+/// `c` = kRevert makes the command the *revert form* of its letter: "put this
+/// letter back where the instrument left it", which is exactly what a command
+/// slot going to none does (docs/COMMANDS_AND_TEMPO.md section 3). `a` and `b`
+/// are unused then. It is a value a cell or a table step can hold, so a
+/// recorded slot change back to none plays back as itself instead of as a
+/// concrete value that would then stay in force.
+constexpr int16_t kRevert = 1;
 struct Command {
     Cmd     cmd = Cmd::None;
-    int16_t a = 0, b = 0, c = 0;             ///< a, b are the spec's x and y; c is internal
+    int16_t a = 0, b = 0, c = 0;             ///< a, b are the spec's x and y; c = kRevert is the revert form
 };
 inline bool sameCmd(const Command& a, const Command& b) { return a.cmd == b.cmd && a.a == b.a && a.b == b.b && a.c == b.c; }
+inline bool isRevert(const Command& c) { return c.cmd != Cmd::None && c.c == kRevert; }
+/// The letters that leave something behind, so there is something to revert:
+/// the instrument's value (E F O S V W), zero (P), the parameters (M, T), the
+/// phrase's groove (G) or a stopped table (A). C D H K L R Z are per-note and
+/// leave nothing, so their revert form is nothing.
+inline bool cmdPersists(Cmd c)
+{
+    switch (c) {
+        case Cmd::A: case Cmd::E: case Cmd::F: case Cmd::G: case Cmd::M:
+        case Cmd::O: case Cmd::P: case Cmd::S: case Cmd::T: case Cmd::V: case Cmd::W: return true;
+        default: return false;
+    }
+}
+/// The revert form of a letter, or Cmd::None when the letter leaves nothing.
+inline Command revertOf(Cmd c) { return cmdPersists(c) ? Command{ c, 0, 0, kRevert } : Command{}; }
 const char* cmdLetter(Cmd c);
 Cmd cmdFromLetter(char c);
 

@@ -153,12 +153,6 @@ uint32_t Driver::instrumentKey(int ch, uint8_t vel) const
     return uint32_t(std::max(0, resolveSlot(ch, vel)));
 }
 
-NoteReport Driver::noteReport(int ch) const
-{
-    const Voice& v = v_[size_t(ch & 3)];
-    return { v.reportPlain, v.reportInst };
-}
-
 void Driver::setTableGroove(int ch, const uint8_t* ticks16)
 {
     auto& g = tableGroove_[size_t(ch & 3)];
@@ -268,8 +262,8 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
         if (cell->inst) { v.ksInstrument = cell->inst; v.ksFromCell = true; }   // a cell's instrument column names it exactly
         if (cell->table) v.tableOverride = cell->table;      // the channel's table override, from this step on
         // A cell's commands are the slots from this step on (section 3).
-        if (cell->cmd1.cmd != Cmd::None) v.slot[0] = cell->cmd1;
-        if (cell->cmd2.cmd != Cmd::None) v.slot[1] = cell->cmd2;
+        setSlotFromCell(ch, 0, cell->cmd1);
+        setSlotFromCell(ch, 1, cell->cmd2);
     }
     // A tracker cell is plain when its instrument column is filled and bare
     // when it is blank; a MIDI note is bare only when it lands over a held
@@ -278,6 +272,12 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
     bool plain = true;
     if (cell) plain = cell->inst != 0;
     else if (over && v.inst.overlap == Overlap::Legato && instrumentKey(ch, vel) == v.instKey) plain = false;
+    // What this note is recorded as (section 9.4): the instrument it loads,
+    // and whether it was plain. Decided here, so a note D holds back reports
+    // the same thing as one that starts at once. A bare note keeps the slot
+    // the note under it loaded, which is the one still sounding.
+    v.notePlain = plain;
+    if (plain) v.noteInst = uint8_t(std::clamp(resolveSlot(ch, vel), 0, kInstrumentSlots));
     // D postpones the start, whether it came from a cell or a slot.
     for (int i = 0; i < 2; ++i)
         if (v.slot[size_t(i)].cmd == Cmd::D) {
@@ -349,9 +349,6 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         // runs on, the vibrato keeps its phase, the P offset stays, and a
         // slide in force starts from the pitch the channel is at.
         v.note = note; v.vel = vel; v.active = true;
-        // The recorder writes a blank instrument column for this, and the slot
-        // that is sounding is the one the note before it loaded.
-        v.reportPlain = false;
         const bool was = inNoteOn_; inNoteOn_ = true;
         if (v.inst.tableMode == TableMode::Step && v.tableOn) stepTable(ch);   // a row per note, bare notes included
         for (int i = 0; i < 2; ++i) {
@@ -377,7 +374,6 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     latch(ch);
     v.note = note; v.vel = vel; v.active = true; v.killed = false; v.releasing = false;
     v.instKey = instrumentKey(ch, vel);
-    v.reportPlain = true; v.reportInst = uint8_t(std::clamp(resolveSlot(ch, vel), 0, kInstrumentSlots));
     v.ticks = 0; v.vibPhase = 0; v.pitchCount = 0;
     v.pOffset = 0; v.fineOffset = 0; v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0;
     v.chordN = 0; v.chordIdx = 0; v.chordCount = 0;
@@ -837,6 +833,10 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
     // Z is resolved by whoever fires it -- a slot at a note-on, a table step --
     // because what it re-runs is the other slot or column.
     if (c.cmd == Cmd::Z) return;
+    // The revert form of a letter takes the slot-going-to-none path, so a
+    // cell and a slot revert through exactly the same code (section 3). It is
+    // not what a later Z re-runs: un-setting a letter is not a value.
+    if (isRevert(c)) { revertCommand(ch, c.cmd); return; }
     if (c.cmd != Cmd::H) v.lastCmd = c;            // what a later Z re-runs
     const bool pulse = v.inst.type == InstrumentType::Pulse;
     const bool wave = v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit;
@@ -966,8 +966,11 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
     }
 }
 
-/// A slot going back to none puts the command's persistent effect back
-/// (section 3): the instrument's value, zero, the parameter's, or off.
+/// A letter going back to where the instrument left it (section 3): the
+/// instrument's value for E F O S V W, zero for P, the parameter's for M, a
+/// stopped table for A. A slot going to none comes here, and so does a cell
+/// holding the letter's revert form -- one path, one result. G and T are the
+/// timeline's: the Player and the Clock revert those.
 void Driver::revertCommand(int ch, Cmd cmd)
 {
     Voice& v = v_[size_t(ch)];
@@ -1001,8 +1004,19 @@ void Driver::revertCommand(int ch, Cmd cmd)
             if (wave) { const Wave* w = bank_ ? bank_->wave(i.wave) : nullptr; v.waveSlot = i.wave; v.frameIdx = 0; v.frameCount = 0; if (live && w && !w->frames.empty()) loadFrame(ch, w->frames[0], model_ == Console::DMG); }
             else if (pulse) { v.duty = i.duty; if (live) emit(regAddr(ch, 1), uint8_t((v.duty << 6) | lengthCode6(i.length))); }
             break;
-        default: break;                                            // C D H K L R Z G T leave nothing behind
+        default: break;                                            // C D H K L R Z leave nothing behind; G and T are the timeline's
     }
+}
+
+/// A cell's command column (section 3). The letter's revert form puts the
+/// letter back and leaves the slot empty -- what "the slot went to none"
+/// means -- so it never fires again at the notes that follow.
+void Driver::setSlotFromCell(int ch, int i, const Command& c)
+{
+    if (c.cmd == Cmd::None) return;
+    Voice& v = v_[size_t(ch)];
+    if (isRevert(c)) { v.slot[size_t(i)] = {}; revertCommand(ch, c.cmd); return; }
+    v.slot[size_t(i)] = c;
 }
 
 int16_t Driver::randomArg(int ch, int max)
@@ -1236,7 +1250,7 @@ void Driver::tickAll()
 
 /* ------------------------------------------------------------- events */
 
-void Driver::handleEvent(const NoteEvent& e)
+void Driver::handleEvent(NoteEvent& e)
 {
     const int ch = e.channel & 3;
     Voice& v = v_[size_t(ch)];
@@ -1252,6 +1266,9 @@ void Driver::handleEvent(const NoteEvent& e)
         case NoteEvent::NoteOn:
             if (e.b == 0) { noteOff(ch, e.a); break; }
             noteOn(ch, e.a, e.b, e.source == NoteEvent::Tracker ? &e : nullptr);
+            // Stamped on the event itself, so the recorder reads what *this*
+            // note did rather than the channel's latest (section 9.4).
+            e.plain = v.notePlain; e.loaded = v.noteInst;
             break;
         case NoteEvent::NoteOff:
             // A cell's OFF ends the note; its instrument, table and command
@@ -1282,16 +1299,18 @@ void Driver::applyCellColumns(int ch, const NoteEvent& e)
 {
     Voice& v = v_[size_t(ch)];
     if (e.table) { v.tableOverride = e.table; if (v.active) { v.tableSlot = e.table; v.tableStep = 0; v.tableRow = 0; v.tableWait = 0; v.tableOn = bank_ && bank_->table(e.table); } }
-    if (e.cmd1.cmd != Cmd::None) v.slot[0] = e.cmd1;
-    if (e.cmd2.cmd != Cmd::None) v.slot[1] = e.cmd2;
+    setSlotFromCell(ch, 0, e.cmd1);
+    setSlotFromCell(ch, 1, e.cmd2);
     if (e.inst && e.inst != v.ksInstrument) { v.ksInstrument = e.inst; v.ksFromCell = true; if (v.haveInst) { reloadInstrument(ch); return; } }
-    if (e.cmd1.cmd != Cmd::None) applyCommand(ch, e.cmd1, false);
-    if (e.cmd2.cmd != Cmd::None) applyCommand(ch, e.cmd2, false);
+    // A revert form has already been applied, and left its slot empty; the
+    // rest fire here, as the slot changing at this step would.
+    if (e.cmd1.cmd != Cmd::None && !isRevert(e.cmd1)) applyCommand(ch, e.cmd1, false);
+    if (e.cmd2.cmd != Cmd::None && !isRevert(e.cmd2)) applyCommand(ch, e.cmd2, false);
 }
 
 /* ------------------------------------------------------------ process */
 
-void Driver::process(const NoteEvent* events, size_t n, uint32_t numSamples, uint64_t frameAbs,
+void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t frameAbs,
                      const TickPoint* ticks, size_t nTicks,
                      const std::function<uint64_t(uint64_t)>& cycleAt,
                      std::vector<RegWrite>& out)
@@ -1335,7 +1354,7 @@ void Driver::process(const NoteEvent* events, size_t n, uint32_t numSamples, uin
             v_[size_t(best)].pitchClock = at + kPitchCycles;
         }
     };
-    auto runEvent = [&](const NoteEvent& e) {
+    auto runEvent = [&](NoteEvent& e) {
         const uint64_t at = cycleAt(frameAbs + offOf(e.offset));
         pitchBefore(at);
         moveTo(at);
@@ -1344,34 +1363,44 @@ void Driver::process(const NoteEvent* events, size_t n, uint32_t numSamples, uin
     auto waits = [this](const NoteEvent& e) {
         return notesOnTick_ && e.source == NoteEvent::Midi && (e.kind == NoteEvent::NoteOn || e.kind == NoteEvent::NoteOff);
     };
-    auto hold = [&](const NoteEvent& e) {
+    // A note that has waited for a tick reports back to the event it came
+    // from, so the recorder still sees what it did -- if that event is still
+    // this block's. One held over a block boundary has none to report to.
+    auto fire = [&](size_t i) {
+        handleEvent(pending_[i]);
+        if (pendingFrom_[i]) { pendingFrom_[i]->plain = pending_[i].plain; pendingFrom_[i]->loaded = pending_[i].loaded; }
+    };
+    auto hold = [&](NoteEvent& e) {
         if (pendingCount_ == pending_.size()) {
             // More waiting notes than the queue holds: the oldest one runs now
             // rather than the newest jumping the line, so a note-off can never
             // execute before its note-on (section 8).
-            const NoteEvent old = pending_[0];
-            for (size_t i = 1; i < pendingCount_; ++i) pending_[i - 1] = pending_[i];
-            --pendingCount_;
             const uint64_t at = cycleAt(frameAbs + offOf(e.offset));
             pitchBefore(at);
             moveTo(at);
-            handleEvent(old);
+            fire(0);
+            for (size_t i = 1; i < pendingCount_; ++i) { pending_[i - 1] = pending_[i]; pendingFrom_[i - 1] = pendingFrom_[i]; }
+            --pendingCount_;
         }
+        pendingFrom_[pendingCount_] = &e;
         pending_[pendingCount_++] = e;
     };
 
     for (size_t k = 0; k < nTicks; ++k) {
         const uint32_t off = std::min<uint32_t>(ticks[k].offset, numSamples ? numSamples - 1 : 0);
-        while (ei < n && events[ei].offset <= off) { const NoteEvent& e = events[ei++]; if (waits(e)) hold(e); else runEvent(e); }
+        while (ei < n && events[ei].offset <= off) { NoteEvent& e = events[ei++]; if (waits(e)) hold(e); else runEvent(e); }
         const uint64_t at = cycleAt(frameAbs + off);
         pitchBefore(at);
         moveTo(at);
-        for (size_t i = 0; i < pendingCount_; ++i) handleEvent(pending_[i]);   // notes that were waiting for a tick
+        for (size_t i = 0; i < pendingCount_; ++i) fire(i);   // notes that were waiting for a tick
         pendingCount_ = 0;
         tickAll();
     }
-    while (ei < n) { const NoteEvent& e = events[ei++]; if (waits(e)) hold(e); else runEvent(e); }
+    while (ei < n) { NoteEvent& e = events[ei++]; if (waits(e)) hold(e); else runEvent(e); }
     pitchBefore(cycleAt(blockEnd));
+    // The caller's events go away with the block; a note still waiting has
+    // nothing left to report to.
+    for (size_t i = 0; i < pendingCount_; ++i) pendingFrom_[i] = nullptr;
 
     // --- wave RAM streaming, cycle domain ---------------------------------
     scheduleStreams(cycleAt(frameAbs), cycleAt(blockEnd));

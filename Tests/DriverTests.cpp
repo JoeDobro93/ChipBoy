@@ -24,6 +24,7 @@ struct Rig {
     Clock clock;
     render::Renderer ren;
     std::vector<RegWrite> writes;
+    std::vector<NoteEvent> events;   ///< the last block's events, as the driver stamped them
     uint64_t frame = 0;
     uint64_t tick = 0;
     double rate = 48000.0;
@@ -57,9 +58,19 @@ struct Rig {
     std::vector<RegWrite> block(std::vector<NoteEvent> ev, uint32_t n, const std::vector<TickPoint>& ticks)
     {
         writes.clear();
-        drv.process(ev.data(), ev.size(), n, frame, ticks.data(), ticks.size(), [this](uint64_t f) { return ren.cycleForFrame(f); }, writes);
+        events = std::move(ev);
+        drv.process(events.data(), events.size(), n, frame, ticks.data(), ticks.size(), [this](uint64_t f) { return ren.cycleForFrame(f); }, writes);
         frame += n;
         return writes;
+    }
+    /// What the driver stamped on the last note-on of this block on a channel:
+    /// whether it was plain and the instrument it loaded (section 9.4).
+    const NoteEvent* report(int ch) const
+    {
+        const NoteEvent* r = nullptr;
+        for (const auto& e : events)
+            if ((e.channel & 3) == ch && e.kind == NoteEvent::NoteOn && e.b) r = &e;
+        return r;
     }
     static NoteEvent on(int ch, uint8_t note, uint8_t vel = 100, uint32_t off = 0) { NoteEvent e; e.channel = uint8_t(ch); e.kind = NoteEvent::NoteOn; e.a = note; e.b = vel; e.offset = off; return e; }
     static NoteEvent off(int ch, uint8_t note, uint32_t o = 0) { NoteEvent e; e.channel = uint8_t(ch); e.kind = NoteEvent::NoteOff; e.a = note; e.offset = o; return e; }
@@ -195,8 +206,8 @@ TEST_CASE("MIDI notes overlap as the instrument's Overlap says", "[driver][notes
         REQUIRE(hi != nullptr);
         CHECK((hi->value & 0x80) == 0);            // no trigger bit
         CHECK_FALSE(has(w, 0xFF12));               // and no envelope rewrite
-        CHECK_FALSE(r.drv.noteReport(0).plain);
-        CHECK(r.drv.noteReport(0).instrument == 1);
+        CHECK_FALSE(r.report(0)->plain);
+        CHECK(r.report(0)->loaded == 1);
     }
     SECTION("retrig: it starts the instrument again") {
         Rig r;
@@ -206,7 +217,7 @@ TEST_CASE("MIDI notes overlap as the instrument's Overlap says", "[driver][notes
         auto w = r.block({ Rig::on(0, 64, 100) }, 256);
         CHECK(anyTrigger(w, 0xFF14));
         CHECK(has(w, 0xFF12));
-        CHECK(r.drv.noteReport(0).plain);
+        CHECK(r.report(0)->plain);
     }
     SECTION("a different instrument is always plain") {
         Rig r;
@@ -214,8 +225,8 @@ TEST_CASE("MIDI notes overlap as the instrument's Overlap says", "[driver][notes
         r.block({ Rig::on(0, 60, 8) }, 256);        // slot 1 + 1
         auto w = r.block({ Rig::on(0, 64, 16) }, 256);   // slot 1 + 2: another instrument
         CHECK(anyTrigger(w, 0xFF14));
-        CHECK(r.drv.noteReport(0).plain);
-        CHECK(r.drv.noteReport(0).instrument == 3);
+        CHECK(r.report(0)->plain);
+        CHECK(r.report(0)->loaded == 3);
     }
     SECTION("a keyswitch since the last note is always plain") {
         Rig r;
@@ -224,8 +235,8 @@ TEST_CASE("MIDI notes overlap as the instrument's Overlap says", "[driver][notes
         r.block({ Rig::on(0, 26, 100) }, 256);      // D1 selects slot 3, and never sounds
         auto w = r.block({ Rig::on(0, 64, 100) }, 256);
         CHECK(anyTrigger(w, 0xFF14));
-        CHECK(r.drv.noteReport(0).plain);
-        CHECK(r.drv.noteReport(0).instrument == 3);
+        CHECK(r.report(0)->plain);
+        CHECK(r.report(0)->loaded == 3);
     }
 }
 
@@ -239,7 +250,6 @@ TEST_CASE("releasing a note over a held one returns to it bare", "[driver][notes
     CHECK_FALSE(anyTrigger(w, 0xFF14));            // no attack on the way back
     CHECK_FALSE(has(w, 0xFF12));
     CHECK(r.drv.view(0).period == note(60));
-    CHECK_FALSE(r.drv.noteReport(0).plain);
 }
 
 TEST_CASE("wave instruments load wave RAM through the DMG dance", "[driver]")
@@ -668,7 +678,7 @@ TEST_CASE("P bends at the instrument's pitch speed", "[driver][pitch]")
         // A bare note leaves it where it is (section 8).
         r.block({ Rig::on(0, 72, 100) }, 480);
         CHECK(r.drv.view(0).pitchOffset == stopped);
-        CHECK_FALSE(r.drv.noteReport(0).plain);
+        CHECK_FALSE(r.report(0)->plain);
         r.block({ Rig::off(0, 72) }, 480);
         // A plain note-on puts the offset back to zero.
         r.block({ Rig::off(0, 69) }, 480);
@@ -746,8 +756,8 @@ TEST_CASE("a tracker cell with a blank instrument column is bare", "[driver][not
     ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
     auto w = r.block({ cellOn(0, 69, 1) }, 480);
     CHECK(anyTrigger(w, 0xFF14));                        // an instrument column: a plain note
-    CHECK(r.drv.noteReport(0).plain);
-    CHECK(r.drv.noteReport(0).instrument == 1);
+    CHECK(r.report(0)->plain);
+    CHECK(r.report(0)->loaded == 1);
     r.block({}, 24000);                                  // half a second of vibrato
     const int bent = int(r.drv.view(0).period);
     CHECK(bent < note(69) - 20);                         // the vibrato is well away from the note
@@ -755,8 +765,8 @@ TEST_CASE("a tracker cell with a blank instrument column is bare", "[driver][not
     CHECK_FALSE(anyTrigger(w, 0xFF14));                  // no trigger
     CHECK_FALSE(has(w, 0xFF12));                         // the envelope is not rewritten
     CHECK(std::abs(int(r.drv.view(0).period) - bent) <= 12);   // the vibrato kept its phase
-    CHECK_FALSE(r.drv.noteReport(0).plain);
-    CHECK(r.drv.noteReport(0).instrument == 1);
+    CHECK_FALSE(r.report(0)->plain);
+    CHECK(r.report(0)->loaded == 1);
     // A plain cell starts the phase again, so the note is in tune at its start.
     w = r.block({ cellOn(0, 69, 1) }, 240);
     CHECK(anyTrigger(w, 0xFF14));

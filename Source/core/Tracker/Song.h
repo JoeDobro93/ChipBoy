@@ -75,7 +75,11 @@ struct Song {
     uint8_t stepsPerBar = 16;          ///< 8 or 16 (section 9.1)
     // The song's own timeline (docs/COMMANDS_AND_TEMPO.md section 4), used
     // when the tempo source is Song.
-    double  tempoBpm = 120.0;          ///< the base tempo, before any T
+    /// The base tempo the file carries, written from the Song tempo
+    /// parameter when the song is saved and read back into it when one is
+    /// loaded, so a saved song opens at its own tempo. It never overrides the
+    /// live parameter: the clock's base is always the parameter (section 4).
+    double  tempoBpm = 120.0;
     double  songStartSeconds = 0.0;    ///< host time where tick 0 sits
     double  beatsPerBar = 4.0;
     /// Built from the T cells by buildTempoMap() when the song is published;
@@ -102,7 +106,10 @@ Groove grooveFor(const Song& s, const Phrase* p, uint8_t slot);
 void stepStartTicks(const Song& s, const Phrase* p, uint8_t groove, int* start);
 
 /// Scan the chains for T cells: the tempo map the clock integrates. Message
-/// thread, when a song is published.
-void buildTempoMap(Song& s);
+/// thread, when a song is published. The base tempo is the caller's -- the
+/// Song tempo parameter -- and is not itself a point in the map; a T cell
+/// modifies it from its tick, and a T reverting is the base again from there
+/// (docs/COMMANDS_AND_TEMPO.md section 4).
+void buildTempoMap(Song& s, double baseBpm);
 
 } // namespace chipboy::tracker

@@ -77,10 +77,23 @@ String retrigStepText(int x)
     if (n == 0 || n == 8) return {};
     return n < 8 ? "vol +" + String(n) : "vol " + String(CharPointer_UTF8("\xe2\x88\x92")) + String(n - 8);
 }
+/// What a letter's revert form puts back (docs/COMMANDS_AND_TEMPO.md 3).
+String commandRevertText(bank::Cmd c)
+{
+    switch (c) {
+        case bank::Cmd::A: return "stop the table";
+        case bank::Cmd::G: return "the phrase's groove";
+        case bank::Cmd::M: return "the master parameters";
+        case bank::Cmd::P: return "no offset, no bend";
+        case bank::Cmd::T: return "the song tempo";
+        default: return "the instrument's own";
+    }
+}
 } // namespace
 
 String commandArgText(const bank::Command& c)
 {
+    if (bank::isRevert(c) && bank::cmdPersists(c.cmd)) return commandRevertText(c.cmd);
     const int x = c.a, y = c.b;
     const String dot = String(CharPointer_UTF8(" \xc2\xb7 "));
     switch (c.cmd) {

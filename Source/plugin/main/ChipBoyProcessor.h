@@ -68,8 +68,11 @@ public:
     std::shared_ptr<const tracker::Song> song() const { return songShared_; }
     void publishBank(std::shared_ptr<const bank::Bank> b);
     /// Publishes a song after building its tempo map (section 4), so the
-    /// audio thread never scans the chains.
-    void publishSong(std::shared_ptr<tracker::Song> s);
+    /// audio thread never scans the chains. The Song tempo parameter is the
+    /// base that map is built on and is stamped into the song, so a song
+    /// saved from here carries it; `fromFile` reverses that for a song that
+    /// arrives with its own tempo, which becomes the parameter's value.
+    void publishSong(std::shared_ptr<tracker::Song> s, bool fromFile = false);
     /// Copy-on-write edits: the editor mutates a copy, the audio thread swaps to it.
     void mutateBank(const std::function<void(bank::Bank&)>& fn);
     void mutateSong(const std::function<void(tracker::Song&)>& fn);
@@ -130,19 +133,16 @@ private:
     void consumeLink(int n, uint64_t hostFrame, bool hostTimeKnown);
     void placeLinkEvent(const link::LinkEvent& e, int n, uint64_t hostFrame, bool hostTimeKnown);
     void recordNote(const driver::NoteEvent& e, double tickAtEvent, const bank::Bank* bank);
-    void recordSlots(int ch, double tick, const bank::Bank* bank);
+    void recordSlots(int ch, double tick);
     void applyRecordMessages();
     /// Notes in a channel's keyswitch octave select an instrument and never
     /// sound, so the recorder never writes them as cells (section 9.4).
     bool keyswitchNote(int ch, const bank::Bank* bank, uint8_t note) const;
-    /// What this channel's slots revert to when they go to none (section 9.4).
-    tracker::SlotRevert slotRevert(int ch, const bank::Bank* bank) const;
+    /// The Song tempo parameter: the song's base tempo (section 4).
+    double songTempoParam() const { return double(std::clamp(paramInt(pSongTempo_, 120), 40, 255)); }
     /// All notes off on a channel: unconditional, never filtered by the
     /// Trk/MIDI gate, so a lane changing hands leaves nothing ringing (9.1).
     void flushChannel(int ch, std::vector<driver::NoteEvent>& dst, uint32_t offset = 0);
-    /// Whether the last note-on on a channel loaded its instrument, and which
-    /// slot it loaded -- what the recorder puts in the instrument column.
-    driver::NoteReport lastNote(int ch) const { return driver_.noteReport(ch); }
     void publishInstrumentNames();
     void handleVoiceRequests();
     void tapScopes(int n, const float* L, const float* R);
@@ -185,6 +185,7 @@ private:
     std::atomic<double> ppq_{ 0.0 }, bpm_{ 120.0 }, beatsPerBar_{ 4.0 }, tempo_{ 120.0 };
     std::atomic<int64_t> trackerTick_{ 0 };
     std::atomic<int> barTicks_{ driver::kTicksPerBeat * 4 };
+    double tempoBase_ = 120.0;      ///< the Song tempo the published song's map was built on
     bool recWasArmed_ = false;
     // What each lane looked like last block, so a change of hands can be
     // flushed (section 9.1). -1 means "nothing seen yet".

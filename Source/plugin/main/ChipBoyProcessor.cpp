@@ -62,10 +62,20 @@ void ChipBoyProcessor::publishBank(std::shared_ptr<const bank::Bank> b)
     bankPtr_.store(bankShared_.get(), std::memory_order_release);
 }
 
-void ChipBoyProcessor::publishSong(std::shared_ptr<tracker::Song> s)
+void ChipBoyProcessor::publishSong(std::shared_ptr<tracker::Song> s, bool fromFile)
 {
     if (!s) return;
-    tracker::buildTempoMap(*s);          // the T cells, at their ticks, for the clock
+    // The Song tempo parameter is the song's base tempo (section 4). A song
+    // arriving from a file brings its own, which becomes the parameter's
+    // value; otherwise the parameter is stamped into the song, so whatever is
+    // saved from here carries the tempo it was played at.
+    if (fromFile) {
+        if (auto* prm = apvts.getParameter(ids::songTempo))
+            prm->setValueNotifyingHost(prm->getNormalisableRange().convertTo0to1(float(std::clamp(s->tempoBpm, 40.0, 255.0))));
+    }
+    s->tempoBpm = songTempoParam();
+    tempoBase_ = s->tempoBpm;
+    tracker::buildTempoMap(*s, s->tempoBpm);   // the T cells, at their ticks, for the clock
     if (songShared_) retired_.push_back(songShared_);
     while (retired_.size() > 32) retired_.pop_front();
     songShared_ = std::move(s);
@@ -228,25 +238,6 @@ bool ChipBoyProcessor::keyswitchNote(int ch, const bank::Bank* bank, uint8_t not
     return note >= base && note < base + 12;
 }
 
-tracker::SlotRevert ChipBoyProcessor::slotRevert(int ch, const bank::Bank* bank) const
-{
-    tracker::SlotRevert r;
-    r.m[0] = uint8_t(std::clamp(paramInt(pMasterL_, 7), 0, 7));
-    r.m[1] = uint8_t(std::clamp(paramInt(pMasterR_, 7), 0, 7));
-    r.t = uint8_t(std::clamp(paramInt(pSongTempo_, 120), 40, 255));
-    const bank::Instrument* i = bank ? bank->instrument(driver_.view(ch).instrument) : nullptr;
-    if (!i) return r;
-    const bool wave = i->type == bank::InstrumentType::Wave || i->type == bank::InstrumentType::Kit;
-    r.e[0] = wave ? i->waveLevel : i->envVol;
-    r.e[1] = wave ? 0 : uint8_t(i->envDir == bank::EnvDir::Up ? 8 + (i->envRate & 7) : (i->envRate & 7));
-    r.f = 1;                                   // the instrument starts at its first frame
-    r.o = uint8_t(i->pan);
-    r.s[0] = i->sweepRate; r.s[1] = i->sweepShift;
-    r.v[0] = std::max<uint8_t>(1, i->vib.speed); r.v[1] = i->vib.depth;
-    r.w = wave ? i->wave : i->duty;
-    return r;
-}
-
 void ChipBoyProcessor::flushChannel(int ch, std::vector<driver::NoteEvent>& dst, uint32_t offset)
 {
     driver::NoteEvent e;
@@ -270,18 +261,18 @@ void ChipBoyProcessor::recordNote(const driver::NoteEvent& e, double tickAtEvent
     if (keyswitchNote(ch, bank, e.a)) return;      // it selects an instrument, it is not a cell
     const bool off = e.kind == driver::NoteEvent::NoteOff || (e.kind == driver::NoteEvent::NoteOn && e.b == 0);
     const auto& p = driver_.params(ch);
-    const auto last = lastNote(ch);
     tracker::RecordMessage m;
-    if (player_.recordNote(ch, tickAtEvent, e.a, e.b, off, last.plain, last.instrument, p.table,
-                           p.cmd[0], p.cmd[1], slotRevert(ch, bank), m))
+    // The driver stamped this event with what the note did: the instrument it
+    // loaded and whether it was plain (section 9.4).
+    if (player_.recordNote(ch, tickAtEvent, e.a, e.b, off, e.plain, e.loaded, p.table, p.cmd[0], p.cmd[1], m))
         recordFifo_.push(m);
 }
 
-void ChipBoyProcessor::recordSlots(int ch, double tick, const bank::Bank* bank)
+void ChipBoyProcessor::recordSlots(int ch, double tick)
 {
     const auto& p = driver_.params(ch);
     tracker::RecordMessage m;
-    if (player_.recordSlots(ch, tick, p.cmd[0], p.cmd[1], slotRevert(ch, bank), m)) recordFifo_.push(m);
+    if (player_.recordSlots(ch, tick, p.cmd[0], p.cmd[1], m)) recordFifo_.push(m);
 }
 
 void ChipBoyProcessor::applyRecordMessages()
@@ -383,6 +374,12 @@ void ChipBoyProcessor::timerCallback()
         handleVoiceRequests();
     }
     applyRecordMessages();
+    // The Song tempo parameter is the base a T cell modifies (section 4), and
+    // a T reverting is that base again, so a song whose map holds T cells is
+    // rebuilt when the parameter moves. A song without them never is: its
+    // base is the clock's, live.
+    if (songShared_ && !songShared_->tempoMap.empty() && std::fabs(songTempoParam() - tempoBase_) > 1e-9)
+        mutateSong([](tracker::Song&) {});
 }
 
 /* ------------------------------------------------------------- audio */
@@ -460,7 +457,7 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     // --- the clock: where the ticks are, and where the tracker is --------
     driver::ClockConfig cc;
     cc.source = paramInt(pTempoSource_) != 0 ? driver::TempoSource::Song : driver::TempoSource::Host;
-    cc.songTempo = double(std::clamp(paramInt(pSongTempo_, 120), 40, 255));
+    cc.songTempo = songTempoParam();
     cc.songStartSeconds = song ? song->songStartSeconds : 0.0;
     cc.beatsPerBar = song ? song->beatsPerBar : 4.0;
     // A T slot in force is the song's tempo from now on; the lowest channel
@@ -469,7 +466,7 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
         bool found = false;
         for (int i = 0; i < 2; ++i) {
             const auto& c = driver_.slot(ch, i);
-            if (c.cmd == bank::Cmd::T) { cc.songTempo = double(std::clamp<int>(c.a, 40, 255)); found = true; break; }
+            if (c.cmd == bank::Cmd::T && !bank::isRevert(c)) { cc.songTempo = double(std::clamp<int>(c.a, 40, 255)); found = true; break; }
         }
         if (found) break;
     }
@@ -560,7 +557,7 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
         // A G slot is the channel's groove; the Player owns the timing and
         // works out at every tick which groove that leaves in force (9.2).
         uint8_t groove = tracker::kGrooveNone;
-        for (int i = 0; i < 2; ++i) if (driver_.params(ch).cmd[i].cmd == bank::Cmd::G) groove = uint8_t(std::clamp<int>(driver_.params(ch).cmd[i].a, 0, 16));
+        for (int i = 0; i < 2; ++i) if (driver_.params(ch).cmd[i].cmd == bank::Cmd::G && !bank::isRevert(driver_.params(ch).cmd[i])) groove = uint8_t(std::clamp<int>(driver_.params(ch).cmd[i].a, 0, 16));
         player_.setGrooveSlot(ch, groove);
         driver_.setViewGroove(ch, player_.groove(ch));
         // A G inside a table sets that run's row lengths from the song's
@@ -591,7 +588,7 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
         for (size_t k = 0; k < clock_.tickCount(); ++k)
             for (int ch = 0; ch < 4; ++ch) {
                 int bar = 0, step = 0;
-                if ((trackerMask & (1u << ch)) && player_.stepAt(ch, tk[k].tick, bar, step)) recordSlots(ch, double(tk[k].tick), bankNow);
+                if ((trackerMask & (1u << ch)) && player_.stepAt(ch, tk[k].tick, bar, step)) recordSlots(ch, double(tk[k].tick));
             }
     }
     recWasArmed_ = rec;
@@ -608,8 +605,8 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     // The notes are recorded now that the driver has played them: the cell's
     // instrument column is the instrument the note actually loaded, and
     // whether it was plain, which only the note-on itself decides (9.4). The
-    // report is the block's last note-on on that channel -- the cell that
-    // survives, since a block is far shorter than a step.
+    // driver stamped both on each event as it played it, so two notes in one
+    // block are recorded as the two things they were.
     if (rec) {
         const double tickPerFrame = clock_.bpm() * driver::kTicksPerBeat / 60.0 / sampleRate_;
         const double tick0 = double(clock_.tickAtBlockStart());
@@ -697,7 +694,7 @@ void ChipBoyProcessor::setStateInformation(const void* data, int size)
     const ValueTree params = root.getChildWithName(apvts.state.getType());
     if (params.isValid()) apvts.replaceState(params);
     if (root.hasProperty("bank")) { auto b = std::make_shared<bank::Bank>(); if (bankFromJson(root["bank"].toString(), *b)) publishBank(b); }
-    if (root.hasProperty("song")) { auto s = std::make_shared<tracker::Song>(); if (songFromJson(root["song"].toString(), *s)) publishSong(std::move(s)); }
+    if (root.hasProperty("song")) { auto s = std::make_shared<tracker::Song>(); if (songFromJson(root["song"].toString(), *s)) publishSong(std::move(s), true); }
 }
 
 } // namespace chipboy::plugin
