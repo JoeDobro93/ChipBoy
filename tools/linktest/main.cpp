@@ -5,20 +5,37 @@
 #include "plugin/voice/VoiceProcessor.h"
 
 #include <cmath>
+#include <csignal>
 #include <cstdio>
+#include <cstdlib>
 
 using namespace chipboy::plugin;
 
 namespace {
 
 int failures = 0;
+std::FILE* diag = nullptr;          ///< chipboy_linktest.stages.txt in the working directory: what ran, kept through a crash
+const char* lastLine = "(before main)";
+void line(const char* text)
+{
+    lastLine = text;
+    std::printf("%s\n", text); std::fflush(stdout);   // a crash must not eat the lines before it (CI pipes stdout)
+    if (diag) { std::fprintf(diag, "%s\n", text); std::fflush(diag); }
+}
 void check(bool ok, const char* what)
 {
-    std::printf("%s  %s\n", ok ? "ok  " : "FAIL", what);
-    std::fflush(stdout);   // a crash must not eat the lines before it (CI pipes stdout)
+    char buf[256]; std::snprintf(buf, sizeof buf, "%s  %s", ok ? "ok  " : "FAIL", what);
+    line(buf);
     if (!ok) ++failures;
 }
-void stage(const char* what) { std::printf("--   %s\n", what); std::fflush(stdout); }
+void stage(const char* what) { char buf[256]; std::snprintf(buf, sizeof buf, "--   %s", what); line(buf); }
+void onCrash(int sig)
+{
+    char buf[320]; std::snprintf(buf, sizeof buf, "CRASH signal %d after: %s", sig, lastLine);
+    std::fputs(buf, stderr); std::fputs("\n", stderr); std::fflush(stderr);
+    if (diag) { std::fputs(buf, diag); std::fputs("\n", diag); std::fflush(diag); }
+    std::_Exit(3);
+}
 
 struct FakePlayHead : juce::AudioPlayHead {
     int64_t frame = 0; bool playing = true;
@@ -48,6 +65,8 @@ float peak(const juce::AudioBuffer<float>& b)
 int main()
 {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
+    diag = std::fopen("chipboy_linktest.stages.txt", "w");
+    std::signal(SIGSEGV, onCrash); std::signal(SIGABRT, onCrash); std::signal(SIGILL, onCrash); std::signal(SIGFPE, onCrash);
     stage("juce init");
     juce::ScopedJuceInitialiser_GUI init;
     stage("main processor");

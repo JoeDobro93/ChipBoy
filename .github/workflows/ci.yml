@@ -91,6 +91,10 @@ jobs:
         run: cmake --build build --config Release --parallel --target ChipBoy_AU ChipBoyVoice_AU
       - name: Link and record integration tests
         run: ctest --test-dir build -C Release -R "linktest|recordtest" --output-on-failure
+      - name: Link test stages (on failure)
+        if: failure()
+        shell: bash
+        run: find build -name 'chipboy_linktest.stages.txt' -exec cat {} \; || true
       - name: Parameter table matches the demo generator
         shell: bash
         run: |
