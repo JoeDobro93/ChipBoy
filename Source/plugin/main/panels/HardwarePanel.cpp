@@ -205,7 +205,7 @@ HardwarePanel::HardwarePanel(ChipBoyProcessor& p) : EditorPanel(p)
     addAndMakeVisible(scroll_);
     auto stack = std::make_unique<Stack>(14);
 
-    auto models = std::make_unique<ModelRow>([this](int i) { setParam(param(processor, ids::model), float(i)); });
+    auto models = std::make_unique<ModelRow>([this](int i) { setParam(*this, param(processor, ids::model), float(i)); });
     models_ = models.get();
     stack->add(std::move(models));
     modelWatch_ = std::make_unique<ParamWatch>(param(processor, ids::model), [this](float v) { if (models_) models_->setModel(int(std::lround(v))); });

@@ -62,7 +62,7 @@ TablesPanel::TablesPanel(ChipBoyProcessor& p)
     list_.onSelect = [this](int slot) { showSlot(slot); };
     list_.onRename = [this](int slot, const String& n) {
         const int s = std::clamp(slot, 1, bank::kTableSlots);
-        processor.mutateBank([s, n](bank::Bank& b) { auto& t = b.tables[size_t(s - 1)]; t.used = true; t.name = n.toStdString(); });
+        processor.editBank("Table " + ValueFormat::number(s) + " named " + n, [s, n](bank::Bank& b) { auto& t = b.tables[size_t(s - 1)]; t.used = true; t.name = n.toStdString(); });
         selfBank_ = processor.bank().get();
         if (s == slot_) name_.setText(n);
         rebuildList();
@@ -75,25 +75,25 @@ TablesPanel::TablesPanel(ChipBoyProcessor& p)
         int slot = 0;
         for (int k = 0; k < bank::kTableSlots; ++k) if (!b->tables[size_t(k)].used) { slot = k + 1; break; }
         if (slot == 0) return;
-        processor.mutateBank([slot](bank::Bank& bk) { auto& t = bk.tables[size_t(slot - 1)]; t = bank::Table{}; t.used = true; t.name = ("Table " + String(slot)).toStdString(); });
+        processor.editBank("New table " + ValueFormat::number(slot), [slot](bank::Bank& bk) { auto& t = bk.tables[size_t(slot - 1)]; t = bank::Table{}; t.used = true; t.name = ("Table " + String(slot)).toStdString(); });
         selfBank_ = processor.bank().get();
         rebuildList();
         showSlot(slot);
     };
-    name_.onChange = [this](const String& n) { editTable([n](bank::Table& t) { t.name = n.toStdString(); }, false); };
+    name_.onChange = [this](const String& n) { editTable("named " + n, [n](bank::Table& t) { t.name = n.toStdString(); }, false); };
 
     auto stack = std::make_unique<Stack>(10);
     stack->add(std::make_unique<Hold>(grid_, TableGrid::preferredHeight()));
     auto end = std::make_unique<EndRow>();
     endRow_ = end.get();
     end->end.onChange = [this](int i) {
-        editTable([i](bank::Table& t) { t.end = bank::TableEnd(std::clamp(i, 0, 2)); }, true);
+        editTable("end", [i](bank::Table& t) { t.end = bank::TableEnd(std::clamp(i, 0, 2)); }, true);
         endRow_->hop.setVisible(i == 1);
     };
-    end->hop.onChange = [this](int v) { editTable([v](bank::Table& t) { t.hopStep = uint8_t(std::clamp(v, 1, 16)); }, true); };
+    end->hop.onChange = [this](int v) { editTable("hop step " + ValueFormat::number(v), [v](bank::Table& t) { t.hopStep = uint8_t(std::clamp(v, 1, 16)); }, true); };
     stack->add(std::move(end));
     scroll_.setContent(std::move(stack));
-    grid_.onChange = [this](const bank::Table& t) { const auto steps = t.steps; editTable([steps](bank::Table& tb) { tb.steps = steps; }, false); };
+    grid_.onChange = [this](const bank::Table& t) { const auto steps = t.steps; editTable("steps", [steps](bank::Table& tb) { tb.steps = steps; }, false); };
 
     rebuildList();
     syncFromBank(true);
@@ -177,10 +177,10 @@ void TablesPanel::syncFromBank(bool pushToGrid)
     stepRate_.setText(stepRateText());
 }
 
-void TablesPanel::editTable(const std::function<void(bank::Table&)>& fn, bool pushToGrid)
+void TablesPanel::editTable(const String& what, const std::function<void(bank::Table&)>& fn, bool pushToGrid)
 {
     const int slot = slot_;
-    processor.mutateBank([&fn, slot](bank::Bank& b) {
+    processor.editBank("Table " + ValueFormat::number(slot) + " " + what, [&fn, slot](bank::Bank& b) {
         auto& t = b.tables[size_t(slot - 1)];
         if (!t.used) { t.used = true; if (t.name.empty()) t.name = ("Table " + String(slot)).toStdString(); }
         fn(t);

@@ -23,7 +23,8 @@ private:
     void rebuildList();
     void showSlot(int slot);
     void syncFromBank(bool pushToGrid);
-    void editTable(const std::function<void(bank::Table&)>& fn, bool pushToGrid);
+    /// One edit of the shown table; `what` names it on the undo history.
+    void editTable(const juce::String& what, const std::function<void(bank::Table&)>& fn, bool pushToGrid);
     static int usedBy(const bank::Bank& b, int slot);
     juce::String stepRateText() const;
 

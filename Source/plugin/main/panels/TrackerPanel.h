@@ -26,6 +26,8 @@ public:
     RichText contextLine() const override;
     void setChannel(int ch) override;
     void songChanged() override;
+    /// The lane's right-click lists read the bank by name.
+    void bankChanged() override { grid_.setBank(processor.bank()); }
     void hexChanged() override;
     void tick() override;
     void resized() override;
@@ -40,7 +42,10 @@ private:
     void showSongSummary();
     void saveSong();
     void loadSong();
-    void editSong(const std::function<void(tracker::Song&)>& fn);
+    /// One edit of the song; `what` names it on the undo history, and a run
+    /// of edits under the same name -- the digits of one typed value -- is
+    /// one undo (UI_DESIGN section 2.1).
+    void editSong(const juce::String& what, const std::function<void(tracker::Song&)>& fn);
     static uint8_t ensurePhrase(tracker::Song& s, int ch, int bar);
 
     ui::Led playLed_;

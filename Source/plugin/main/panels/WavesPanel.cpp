@@ -107,7 +107,7 @@ WavesPanel::WavesPanel(ChipBoyProcessor& p)
     list_.onSelect = [this](int slot) { showSlot(slot); };
     list_.onRename = [this](int slot, const String& n) {
         const int s = std::clamp(slot, 1, bank::kWaveSlots);
-        processor.mutateBank([s, n](bank::Bank& b) { auto& w = b.waves[size_t(s - 1)]; w.used = true; if (w.frames.empty()) w.frames.push_back(bank::Frame{}); w.name = n.toStdString(); });
+        processor.editBank("Wave " + ValueFormat::number(s) + " named " + n, [s, n](bank::Bank& b) { auto& w = b.waves[size_t(s - 1)]; w.used = true; if (w.frames.empty()) w.frames.push_back(bank::Frame{}); w.name = n.toStdString(); });
         selfBank_ = processor.bank().get();
         if (s == slot_) name_.setText(n);
         rebuildList();
@@ -120,12 +120,12 @@ WavesPanel::WavesPanel(ChipBoyProcessor& p)
         int slot = 0;
         for (int k = 0; k < bank::kWaveSlots; ++k) if (!b->waves[size_t(k)].used) { slot = k + 1; break; }
         if (slot == 0) return;
-        processor.mutateBank([slot](bank::Bank& bk) { auto& w = bk.waves[size_t(slot - 1)]; w.used = true; w.name = ("Wave " + String(slot)).toStdString(); w.frames = { bank::frameTriangle() }; });
+        processor.editBank("New wave " + ValueFormat::number(slot), [slot](bank::Bank& bk) { auto& w = bk.waves[size_t(slot - 1)]; w.used = true; w.name = ("Wave " + String(slot)).toStdString(); w.frames = { bank::frameTriangle() }; });
         selfBank_ = processor.bank().get();
         rebuildList();
         showSlot(slot);
     };
-    name_.onChange = [this](const String& n) { editWave([n](bank::Wave& w) { w.name = n.toStdString(); }, false); };
+    name_.onChange = [this](const String& n) { editWave("named " + n, [n](bank::Wave& w) { w.name = n.toStdString(); }, false); };
     shape_.setMini(true);
     shape_.setTooltip("Generate a shape into the current frame, quantized to 4 bits");
     shape_.onChange = [this](int i) { generate(i); };
@@ -138,20 +138,20 @@ WavesPanel::WavesPanel(ChipBoyProcessor& p)
     frames_ = frames.get();
     frames->onSelect = [this](int k) { frame_ = k; syncFromBank(true); contextChanged(); };
     frames->onExtendTo = [this](int k) {
-        editWave([k](bank::Wave& w) { const bank::Frame last = w.frames.empty() ? bank::Frame{} : w.frames.back(); while (int(w.frames.size()) <= k && int(w.frames.size()) < bank::kMaxFrames) w.frames.push_back(last); }, false);
+        editWave("frame count", [k](bank::Wave& w) { const bank::Frame last = w.frames.empty() ? bank::Frame{} : w.frames.back(); while (int(w.frames.size()) <= k && int(w.frames.size()) < bank::kMaxFrames) w.frames.push_back(last); }, false);
         frame_ = k;
         syncFromBank(true);
     };
     frames->onAdd = [this] {
         const int cur = frame_;
-        editWave([cur](bank::Wave& w) { if (int(w.frames.size()) >= bank::kMaxFrames) return; const bank::Frame f = w.frames.empty() ? bank::Frame{} : w.frames[size_t(std::clamp(cur, 0, int(w.frames.size()) - 1))]; w.frames.insert(w.frames.begin() + std::min<long>(long(cur) + 1, long(w.frames.size())), f); }, false);
+        editWave("frame inserted", [cur](bank::Wave& w) { if (int(w.frames.size()) >= bank::kMaxFrames) return; const bank::Frame f = w.frames.empty() ? bank::Frame{} : w.frames[size_t(std::clamp(cur, 0, int(w.frames.size()) - 1))]; w.frames.insert(w.frames.begin() + std::min<long>(long(cur) + 1, long(w.frames.size())), f); }, false);
         const auto b = processor.bank();
         if (b) frame_ = std::min(frame_ + 1, int(b->waves[size_t(slot_ - 1)].frames.size()) - 1);
         syncFromBank(true);
     };
     frames->onRemove = [this] {
         const int cur = frame_;
-        editWave([cur](bank::Wave& w) { if (w.frames.size() > 1 && cur >= 0 && cur < int(w.frames.size())) w.frames.erase(w.frames.begin() + cur); }, false);
+        editWave("frame deleted", [cur](bank::Wave& w) { if (w.frames.size() > 1 && cur >= 0 && cur < int(w.frames.size())) w.frames.erase(w.frames.begin() + cur); }, false);
         const auto b = processor.bank();
         if (b) frame_ = std::clamp(frame_, 0, std::max(0, int(b->waves[size_t(slot_ - 1)].frames.size()) - 1));
         syncFromBank(true);
@@ -164,7 +164,7 @@ WavesPanel::WavesPanel(ChipBoyProcessor& p)
     scroll_.setContent(std::move(stack));
     grid_.onChange = [this](const bank::Frame& f) {
         const int k = frame_;
-        editWave([f, k](bank::Wave& w) { if (w.frames.empty()) w.frames.push_back(bank::Frame{}); w.frames[size_t(std::clamp(k, 0, int(w.frames.size()) - 1))] = f; }, false);
+        editWave("frame " + String(k + 1), [f, k](bank::Wave& w) { if (w.frames.empty()) w.frames.push_back(bank::Frame{}); w.frames[size_t(std::clamp(k, 0, int(w.frames.size()) - 1))] = f; }, false);
     };
 
     rebuildList();
@@ -232,10 +232,10 @@ void WavesPanel::syncFromBank(bool pushToGrid)
     interp_.setEnabled(w.frames.size() >= 3);
 }
 
-void WavesPanel::editWave(const std::function<void(bank::Wave&)>& fn, bool pushToGrid)
+void WavesPanel::editWave(const String& what, const std::function<void(bank::Wave&)>& fn, bool pushToGrid)
 {
     const int slot = slot_;
-    processor.mutateBank([&fn, slot](bank::Bank& b) {
+    processor.editBank("Wave " + ValueFormat::number(slot) + " " + what, [&fn, slot](bank::Bank& b) {
         auto& w = b.waves[size_t(slot - 1)];
         if (!w.used) { w.used = true; if (w.name.empty()) w.name = ("Wave " + String(slot)).toStdString(); }
         if (w.frames.empty()) w.frames.push_back(bank::Frame{});
@@ -252,12 +252,12 @@ void WavesPanel::generate(int shape)
 {
     const bank::Frame f = shape == 0 ? bank::frameSine() : shape == 1 ? bank::frameTriangle() : shape == 2 ? bank::frameSaw() : bank::framePulse(16);
     const int k = frame_;
-    editWave([f, k](bank::Wave& w) { w.frames[size_t(std::clamp(k, 0, int(w.frames.size()) - 1))] = f; }, true);
+    editWave("frame " + String(k + 1), [f, k](bank::Wave& w) { w.frames[size_t(std::clamp(k, 0, int(w.frames.size()) - 1))] = f; }, true);
 }
 
 void WavesPanel::interpolate()
 {
-    editWave([](bank::Wave& w) {
+    editWave("frames interpolated", [](bank::Wave& w) {
         const int n = int(w.frames.size());
         if (n < 3) return;
         const bank::Frame a = w.frames.front(), b = w.frames.back();

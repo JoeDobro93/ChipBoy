@@ -87,6 +87,8 @@ ChipBoyEditor::ChipBoyEditor(ChipBoyProcessor& p)
 
     header_.onScale = [this](float f) { setScale(f); };
     header_.onToggleVisualizer = [this] { toggleVisualizer(); };
+    header_.onUndo = [this] { undo(); };
+    header_.onRedo = [this] { redo(); };
     mixer_.onSelect = [this](int ch) { selectChannel(ch); };
     tabs_->onChange = [this](int i) { showTab(i); };
 
@@ -249,9 +251,48 @@ void ChipBoyEditor::layoutContent()
     for (auto& panel : panels_) if (panel) panel->setBounds(editor);
 }
 
+/* -------------------------------------------------------------- undo */
+
+/// Ctrl+Z belongs to a text box while one has the keys: a name being typed
+/// is not a bank edit yet (UI_DESIGN section 2.1).
+bool ChipBoyEditor::typing() const
+{
+    auto* focused = Component::getCurrentlyFocusedComponent();
+    return focused != nullptr && dynamic_cast<TextEditor*>(focused) != nullptr;
+}
+
+void ChipBoyEditor::undo()
+{
+    auto& history = processor_.history();
+    const String what = history.undoName();
+    if (!history.undo()) return;
+    status_.setMessage(what.isEmpty() ? String("Undone") : "Undone: " + what);
+    header_.tick();
+}
+
+void ChipBoyEditor::redo()
+{
+    auto& history = processor_.history();
+    const String what = history.redoName();
+    if (!history.redo()) return;
+    status_.setMessage(what.isEmpty() ? String("Redone") : "Redone: " + what);
+    header_.tick();
+}
+
 bool ChipBoyEditor::keyPressed(const KeyPress& key)
 {
     if (key == KeyPress::escapeKey) { content_.grabKeyboardFocus(); return true; }
+    // Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y (Command on macOS), unless a text box
+    // has the keys.
+    const auto mods = key.getModifiers();
+    if ((mods.isCtrlDown() || mods.isCommandDown()) && !typing()) {
+        const auto ch = key.getTextCharacter();
+        const int code = key.getKeyCode();
+        const bool isZ = code == 'Z' || code == 'z' || ch == 'z' || ch == 'Z';
+        const bool isY = code == 'Y' || code == 'y' || ch == 'y' || ch == 'Y';
+        if (isZ) { if (mods.isShiftDown()) redo(); else undo(); return true; }
+        if (isY) { redo(); return true; }
+    }
     return false;
 }
 

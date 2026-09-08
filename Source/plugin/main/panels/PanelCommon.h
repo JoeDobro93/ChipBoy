@@ -205,8 +205,9 @@ juce::RangedAudioParameter& param(ChipBoyProcessor& p, const juce::String& id);
 int paramValue(const ChipBoyProcessor& p, const juce::String& id);          ///< denormalised, rounded
 float paramFloat(const ChipBoyProcessor& p, const juce::String& id);
 juce::String paramText(ChipBoyProcessor& p, const juce::String& id);
-/// Set from the message thread as one gesture (begin / set / end).
-void setParam(juce::RangedAudioParameter& p, float denormalised);
+/// Set by hand from `owner`'s window: one gesture, on that window's undo
+/// history (UI_DESIGN section 2.1).
+void setParam(const juce::Component& owner, juce::RangedAudioParameter& p, float denormalised);
 
 /// A Segmented whose option order differs from the parameter's value order.
 class SegmentedParam {
@@ -214,7 +215,7 @@ public:
     SegmentedParam(ui::Segmented& seg, juce::RangedAudioParameter& p, std::vector<int> valueForOption);
     ~SegmentedParam();
 private:
-    ui::Segmented& seg_; std::vector<int> map_; std::unique_ptr<juce::ParameterAttachment> att_;
+    ui::Segmented& seg_; juce::RangedAudioParameter& p_; std::vector<int> map_; std::unique_ptr<juce::ParameterAttachment> att_;
 };
 
 /// A Stepper over integer steps of a float parameter (value = step * scale).
@@ -223,7 +224,20 @@ public:
     StepperParam(ui::Stepper& stepper, juce::RangedAudioParameter& p, float scale, int lo, int hi);
     ~StepperParam();
 private:
-    ui::Stepper& stepper_; float scale_; std::unique_ptr<juce::ParameterAttachment> att_;
+    ui::Stepper& stepper_; juce::RangedAudioParameter& p_; float scale_; std::unique_ptr<juce::ParameterAttachment> att_;
+};
+
+/// A juce::Button bound to a bool parameter both ways, with the click going
+/// on the window's undo history -- juce::ButtonParameterAttachment writes
+/// straight to the parameter and would not be undoable.
+class ToggleParam {
+public:
+    ToggleParam(juce::Button& b, juce::RangedAudioParameter& p);
+    ~ToggleParam();
+private:
+    juce::Button& button_;
+    juce::RangedAudioParameter& param_;
+    std::unique_ptr<juce::ParameterAttachment> att_;
 };
 
 /// A callback when a parameter changes (message thread), with the value.

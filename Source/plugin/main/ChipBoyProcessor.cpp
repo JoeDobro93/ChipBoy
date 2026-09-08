@@ -4,6 +4,9 @@
 
 #include "plugin/shared/BankJson.h"
 
+#include <algorithm>
+#include <limits>
+
 namespace chipboy::plugin {
 
 using namespace juce;
@@ -101,6 +104,139 @@ void ChipBoyProcessor::mutateSong(const std::function<void(tracker::Song&)>& fn)
     if (songShared_) *copy = *songShared_;
     fn(*copy);
     publishSong(std::move(copy));
+}
+
+/* ---------------------------------------------------------------- undo */
+
+namespace {
+
+/// How much a bank snapshot costs the history: the bank itself plus the kit
+/// samples it points at (UI_DESIGN section 2.1 -- the cap is in bytes).
+int bankUnits(const bank::Bank* b)
+{
+    int64_t bytes = int64_t(sizeof(bank::Bank));
+    if (b != nullptr)
+        for (const auto& kit : b->kits)
+            for (const auto& sample : kit.samples) bytes += int64_t(sample.data.size());
+    return int(std::min<int64_t>(bytes, std::numeric_limits<int>::max()));
+}
+
+/// A bank the musician changed: the snapshot before and the snapshot after,
+/// which are the copies the copy-on-write path already made. Constructed
+/// with the change already in place, so the first perform() has nothing to
+/// do; a redo after an undo does.
+struct BankAction : juce::UndoableAction {
+    ChipBoyProcessor& processor;
+    std::shared_ptr<const bank::Bank> before, after;
+    juce::String nameBefore, nameAfter;
+    bool inPlace = true;
+
+    BankAction(ChipBoyProcessor& p, std::shared_ptr<const bank::Bank> b, juce::String nb,
+               std::shared_ptr<const bank::Bank> a, juce::String na)
+        : processor(p), before(std::move(b)), after(std::move(a)), nameBefore(std::move(nb)), nameAfter(std::move(na)) {}
+
+    bool perform() override
+    {
+        if (inPlace) { inPlace = false; return true; }
+        processor.restoreBank(after, nameAfter);
+        return true;
+    }
+    bool undo() override
+    {
+        inPlace = false;
+        processor.restoreBank(before, nameBefore);
+        return true;
+    }
+    int getSizeInUnits() override { return bankUnits(after.get()); }
+};
+
+/// The same for the song. A Song is the big one, about 300 KB.
+struct SongAction : juce::UndoableAction {
+    ChipBoyProcessor& processor;
+    std::shared_ptr<const tracker::Song> before, after;
+    bool inPlace = true;
+
+    SongAction(ChipBoyProcessor& p, std::shared_ptr<const tracker::Song> b, std::shared_ptr<const tracker::Song> a)
+        : processor(p), before(std::move(b)), after(std::move(a)) {}
+
+    bool perform() override
+    {
+        if (inPlace) { inPlace = false; return true; }
+        processor.restoreSong(after);
+        return true;
+    }
+    bool undo() override
+    {
+        inPlace = false;
+        processor.restoreSong(before);
+        return true;
+    }
+    int getSizeInUnits() override { return int(sizeof(tracker::Song)); }
+};
+
+const char* channelShortName(int ch)
+{
+    static const char* names[] = { "PU1", "PU2", "WAV", "NOI" };
+    return names[size_t(ch & 3)];
+}
+
+} // namespace
+
+void ChipBoyProcessor::editBank(const String& name, const std::function<void(bank::Bank&)>& fn)
+{
+    auto before = bankShared_;
+    const String nameBefore = bankName_;
+    mutateBank(fn);
+    if (bankShared_ == before) return;
+    history_.perform(std::make_unique<BankAction>(*this, before, nameBefore, bankShared_, bankName_), name);
+}
+
+void ChipBoyProcessor::editSong(const String& name, const std::function<void(tracker::Song&)>& fn)
+{
+    auto before = songShared_;
+    mutateSong(fn);
+    if (songShared_ == before) return;
+    history_.perform(std::make_unique<SongAction>(*this, before, songShared_), name);
+}
+
+void ChipBoyProcessor::loadBankEdit(const String& name, const bank::Bank& b, const String& newName)
+{
+    auto before = bankShared_;
+    const String nameBefore = bankName_;
+    publishBank(std::shared_ptr<const bank::Bank>(new bank::Bank(b)));
+    bankName_ = newName;
+    history_.perform(std::make_unique<BankAction>(*this, before, nameBefore, bankShared_, bankName_), name);
+}
+
+void ChipBoyProcessor::setBankNameEdit(const String& n)
+{
+    if (n == bankName_) return;
+    auto snapshot = bankShared_;
+    const String nameBefore = bankName_;
+    bankName_ = n;
+    history_.perform(std::make_unique<BankAction>(*this, snapshot, nameBefore, snapshot, n), "Bank name " + nameBefore + " " + String(CharPointer_UTF8("\xe2\x86\x92")) + " " + n);
+}
+
+void ChipBoyProcessor::restoreBank(std::shared_ptr<const bank::Bank> b, const String& newName)
+{
+    if (!b) return;
+    publishBank(std::move(b));
+    bankName_ = newName;
+}
+
+void ChipBoyProcessor::restoreSong(std::shared_ptr<const tracker::Song> s)
+{
+    if (!s) return;
+    auto copy = std::make_shared<tracker::Song>();          // on the heap, as mutateSong's is
+    *copy = *s;
+    publishSong(std::move(copy));
+}
+
+void ChipBoyProcessor::setChannelArm(int ch, bool on)
+{
+    const int c = ch & 3;
+    editSong(String(channelShortName(c)) + (on ? " armed" : " unarmed"),
+             [c, on](tracker::Song& s) { s.recordArm[size_t(c)] = on; });
 }
 
 /* --------------------------------------------------------- lifecycle */
@@ -331,7 +467,9 @@ bool ChipBoyProcessor::loadSongFile(const File& file, SongReport& report)
 {
     auto s = std::make_shared<tracker::Song>();          // 300 KB: never on the stack
     if (!plugin::loadSong(file, *s, report, bankShared_.get())) return false;
+    auto before = songShared_;
     publishSong(std::move(s), /*fromFile*/ true);
+    history_.perform(std::make_unique<SongAction>(*this, before, songShared_), "Load song " + file.getFileNameWithoutExtension());
     return true;
 }
 
@@ -768,6 +906,9 @@ void ChipBoyProcessor::setStateInformation(const void* data, int size)
 {
     const ValueTree root = ValueTree::readFromData(data, size_t(size));
     if (!root.isValid() || !root.hasType("ChipBoyState")) return;
+    // A state restore is the host loading a project, not an edit: what came
+    // before it is gone (UI_DESIGN section 2.1).
+    history_.clear();
     if (root.hasProperty("uuid") && root["uuid"].toString().isNotEmpty()) {
         const String u = root["uuid"].toString();
         if (u != uuid_) { uuid_ = u; if (linkHost_.published()) linkHost_.unpublish(); }   // the timer republishes under the saved UUID

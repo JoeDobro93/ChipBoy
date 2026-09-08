@@ -233,7 +233,7 @@ InstrumentPanel::InstrumentPanel(ChipBoyProcessor& p)
     list_.onRename = [this](int slot, const String& name) {
         const int s = std::clamp(slot, 1, bank::kInstrumentSlots);
         const int ch = channel;
-        processor.mutateBank([s, ch, name](bank::Bank& b) {
+        processor.editBank("Instrument " + ValueFormat::number(s) + " named " + name, [s, ch, name](bank::Bank& b) {
             auto& i = b.instruments[size_t(s - 1)];
             if (!i.used) i = bank::Instrument::defaults(channelInstrumentType(ch), "");
             i.name = name.toStdString();
@@ -405,7 +405,7 @@ void InstrumentPanel::assignSlot(int slot)
     const bank::Instrument* inst = b ? b->instrument(slot_) : nullptr;
     if (inst && instrumentFitsChannel(inst->type, channel)) {
         lastChannelInst_[size_t(channel)] = slot_;
-        setParam(param(processor, channelParamId(channel, ids::instrument)), float(slot_));
+        setParam(*this, param(processor, channelParamId(channel, ids::instrument)), float(slot_));
         updateUsedOn();
         rebuildList();
     }
@@ -431,7 +431,7 @@ void InstrumentPanel::newInstrument()
     if (slot == 0) return;
     const bank::InstrumentType t = channelInstrumentType(channel);
     const String name = instrumentTypeName(t) + " " + String(slot);
-    processor.mutateBank([slot, t, name](bank::Bank& bk) { bk.instruments[size_t(slot - 1)] = bank::Instrument::defaults(t, name.toRawUTF8()); });
+    processor.editBank("New instrument " + ValueFormat::number(slot), [slot, t, name](bank::Bank& bk) { bk.instruments[size_t(slot - 1)] = bank::Instrument::defaults(t, name.toRawUTF8()); });
     selfBank_ = processor.bank().get();
     rebuildList();
     assignSlot(slot);
@@ -447,7 +447,7 @@ void InstrumentPanel::duplicate()
     if (slot == 0) return;
     bank::Instrument copy = src;
     copy.name += " copy";
-    processor.mutateBank([slot, copy](bank::Bank& bk) { bk.instruments[size_t(slot - 1)] = copy; });
+    processor.editBank("Duplicate into instrument " + ValueFormat::number(slot), [slot, copy](bank::Bank& bk) { bk.instruments[size_t(slot - 1)] = copy; });
     selfBank_ = processor.bank().get();
     rebuildList();
     showSlot(slot);
@@ -489,7 +489,8 @@ void InstrumentPanel::loadPreset()
         InstrumentPanel& panel = *safe;
         const int slot = panel.slot_;
         bank::PlaceReport report;
-        panel.processor.mutateBank([&preset, slot, &report](bank::Bank& b) { bank::placePreset(b, *preset, slot, report); });
+        panel.processor.editBank("Preset " + String(preset->instrument.name) + " into slot " + ValueFormat::number(slot),
+                                 [&preset, slot, &report](bank::Bank& b) { bank::placePreset(b, *preset, slot, report); });
         panel.selfBank_ = panel.processor.bank().get();
         panel.rebuildList();
         panel.rebuildEditor();
@@ -502,11 +503,11 @@ void InstrumentPanel::loadPreset()
 
 /* ----------------------------------------------------------- editor */
 
-void InstrumentPanel::edit(const std::function<void(bank::Instrument&)>& fn)
+void InstrumentPanel::edit(const String& what, const std::function<void(bank::Instrument&)>& fn)
 {
     const int slot = slot_;
     const int ch = channel;
-    processor.mutateBank([&fn, slot, ch](bank::Bank& b) {
+    processor.editBank("Instrument " + ValueFormat::number(slot) + middot() + what, [&fn, slot, ch](bank::Bank& b) {
         auto& i = b.instruments[size_t(slot - 1)];
         if (!i.used) i = bank::Instrument::defaults(channelInstrumentType(ch), ("Inst " + String(slot)).toRawUTF8());
         fn(i);
@@ -544,8 +545,9 @@ void InstrumentPanel::rebuildEditor()
         auto k = std::make_unique<Knob>();
         k->setRange(lo, hi, def);
         k->setAccent(accent);
+        const auto show = text;
         if (text) k->setTextFunction(std::move(text));
-        k->onChange = [this, set](int v) { edit([set, v](bank::Instrument& i) { set(i, v); }); };
+        k->onChange = [this, set, label, show](int v) { edit(label + " " + (show ? show(v) : ValueFormat::number(v)), [set, v](bank::Instrument& i) { set(i, v); }); };
         Knob* raw = k.get();
         Field* f = g.add(std::make_unique<Field>(label, hint, std::move(k), Knob::kHeight, Knob::kWidth));
         if (field) *field = f;
@@ -556,7 +558,7 @@ void InstrumentPanel::rebuildEditor()
     auto seg = [this](FlowGrid& g, const String& label, const String& hint, const StringArray& opts, std::function<void(bank::Instrument&, int)> set, int columns = 1, Field** field = nullptr) {
         auto s = std::make_unique<Segmented>(opts);
         s->setMini(true);
-        s->onChange = [this, set](int v) { edit([set, v](bank::Instrument& i) { set(i, v); }); };
+        s->onChange = [this, set, label, opts](int v) { edit(label + " " + opts[std::clamp(v, 0, opts.size() - 1)], [set, v](bank::Instrument& i) { set(i, v); }); };
         Segmented* raw = s.get();
         const int h = s->preferredHeight(), w = s->preferredWidth();
         Field* f = g.add(std::make_unique<Field>(label, hint, std::move(s), h, w, columns));
@@ -566,8 +568,9 @@ void InstrumentPanel::rebuildEditor()
     auto stepper = [this](FlowGrid& g, const String& label, const String& hint, int lo, int hi, int def, std::function<String(int)> text, std::function<void(bank::Instrument&, int)> set, int width, Field** field = nullptr) {
         auto s = std::make_unique<Stepper>();
         s->setRange(lo, hi, def);
+        const auto show = text;
         if (text) s->setTextFunction(std::move(text));
-        s->onChange = [this, set](int v) { edit([set, v](bank::Instrument& i) { set(i, v); }); };
+        s->onChange = [this, set, label, show](int v) { edit(label + " " + (show ? show(v) : ValueFormat::number(v)), [set, v](bank::Instrument& i) { set(i, v); }); };
         Stepper* raw = s.get();
         Field* f = g.add(std::make_unique<Field>(label, hint, std::move(s), Stepper::kHeight, width));
         if (field) *field = f;
@@ -577,11 +580,11 @@ void InstrumentPanel::rebuildEditor()
     // --- head: name, type, where it is used --------------------------------
     auto head = std::make_unique<HeadRow>();
     w_->head = head.get();
-    head->name.onChange = [this](const String& n) { edit([n](bank::Instrument& i) { i.name = n.toStdString(); }); };
+    head->name.onChange = [this](const String& n) { edit("named " + n, [n](bank::Instrument& i) { i.name = n.toStdString(); }); };
     head->type.onChange = [this](int t) {
         // Only the type changes: every type's fields live in the instrument, so
         // switching back finds them as they were (nothing is reset).
-        edit([t](bank::Instrument& i) { i.type = bank::InstrumentType(std::clamp(t, 0, 3)); });
+        edit("type " + instrumentTypeName(bank::InstrumentType(std::clamp(t, 0, 3))), [t](bank::Instrument& i) { i.type = bank::InstrumentType(std::clamp(t, 0, 3)); });
         rebuildEditor();
     };
     stack->add(std::move(head));
@@ -592,7 +595,7 @@ void InstrumentPanel::rebuildEditor()
     if (type == bank::InstrumentType::Pulse) {
         w_->duty = seg(*sound, "Duty", "NRx1 7-6", { "12.5", "25", "50", "75" }, [](bank::Instrument& i, int v) { i.duty = uint8_t(v); });
         auto f = std::make_unique<NameField>();
-        f->onChange = [this](const String& t) { edit([t](bank::Instrument& i) { parseDutySeq(t, i); }); };
+        f->onChange = [this](const String& t) { edit("duty sequence " + t, [t](bank::Instrument& i) { parseDutySeq(t, i); }); };
         w_->dutySeq = sound->addField("Duty sequence", "one NRx1 write per tick, looped", std::move(f), NameField::kHeight, 0, 2);
         w_->sweepRate = knob(*sound, "Sweep rate", "NR10 6-4" + middot() + "PU1 only", 0, 7, 0, [](bank::Instrument& i, int v) { i.sweepRate = uint8_t(v); });
         w_->sweepDir = seg(*sound, "Sweep dir", "NR10 bit 3", { "Up", "Down" }, [](bank::Instrument& i, int v) { i.sweepDown = v == 1; });
@@ -649,11 +652,11 @@ void InstrumentPanel::rebuildEditor()
         auto shape = std::make_unique<Segmented>(StringArray { "Tri", "Saw", "Sq" });
         shape->setMini(true);
         shape->setTooltip("The waveform of V and of the instrument's own vibrato.");
-        shape->onChange = [this](int v) { edit([v](bank::Instrument& i) { i.vib.shape = bank::VibShape(std::clamp(v, 0, 2)); }); };
+        shape->onChange = [this](int v) { edit("vibrato shape", [v](bank::Instrument& i) { i.vib.shape = bank::VibShape(std::clamp(v, 0, 2)); }); };
         auto dir = std::make_unique<Segmented>(StringArray { utf8("\xe2\x86\x93"), utf8("\xe2\x86\x91") });
         dir->setMini(true);
         dir->setTooltip("Down swings between the note and the note minus the depth; up, between the note and the note plus it.");
-        dir->onChange = [this](int v) { edit([v](bank::Instrument& i) { i.vib.dir = v == 1 ? bank::VibDir::Up : bank::VibDir::Down; }); };
+        dir->onChange = [this](int v) { edit("vibrato direction", [v](bank::Instrument& i) { i.vib.dir = v == 1 ? bank::VibDir::Up : bank::VibDir::Down; }); };
         w_->vibShape = shape.get();
         w_->vibDir = dir.get();
         const int sw = shape->preferredWidth(), dw = dir->preferredWidth(), h = shape->preferredHeight();

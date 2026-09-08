@@ -115,7 +115,7 @@ KitsPanel::KitsPanel(ChipBoyProcessor& p)
     list_.onSelect = [this](int slot) { showSlot(slot); };
     list_.onRename = [this](int slot, const String& n) {
         const int s = std::clamp(slot, 1, bank::kKitSlots);
-        processor.mutateBank([s, n](bank::Bank& b) { auto& k = b.kits[size_t(s - 1)]; k.used = true; k.name = n.toStdString(); });
+        processor.editBank("Kit " + ValueFormat::number(s) + " named " + n, [s, n](bank::Bank& b) { auto& k = b.kits[size_t(s - 1)]; k.used = true; k.name = n.toStdString(); });
         selfBank_ = processor.bank().get();
         rebuildList();
         contextChanged();
@@ -192,7 +192,7 @@ void KitsPanel::rebuildContent()
     const int cur = sample_;
     {
         auto f = std::make_unique<NameField>();
-        f->onChange = [this, cur](const String& n) { editKit([cur, n](bank::Kit& k) { if (cur >= 0 && cur < int(k.samples.size())) k.samples[size_t(cur)].name = n.toStdString(); }); };
+        f->onChange = [this, cur](const String& n) { editKit("sample " + String(cur + 1) + " named " + n, [cur, n](bank::Kit& k) { if (cur >= 0 && cur < int(k.samples.size())) k.samples[size_t(cur)].name = n.toStdString(); }); };
         f->setEnabled(have);
         name_ = grid->addField("Name", have ? String() : "select a sample", std::move(f), NameField::kHeight, 0, 2);
     }
@@ -201,7 +201,7 @@ void KitsPanel::rebuildContent()
         s->setRange(0, 127, 60);
         s->setTextFunction([](int v) { return ValueFormat::noteName(v); });
         s->setTooltip("The MIDI note that plays this sample");
-        s->onChange = [this, cur](int v) { editKit([cur, v](bank::Kit& k) { if (cur >= 0 && cur < int(k.samples.size())) k.samples[size_t(cur)].note = uint8_t(v); }); };
+        s->onChange = [this, cur](int v) { editKit("sample " + String(cur + 1) + " note", [cur, v](bank::Kit& k) { if (cur >= 0 && cur < int(k.samples.size())) k.samples[size_t(cur)].note = uint8_t(v); }); };
         s->setEnabled(have);
         note_ = grid->addField("Note", "note map", std::move(s), Stepper::kHeight, 100);
     }
@@ -210,7 +210,7 @@ void KitsPanel::rebuildContent()
         s->setRange(0, 0, 0);
         s->setTextFunction([](int v) { return v == 0 ? String("start") : String(v) + " smp"; });
         s->setTooltip("Where a looped sample continues from (Loop from point)");
-        s->onChange = [this, cur](int v) { editKit([cur, v](bank::Kit& k) { if (cur >= 0 && cur < int(k.samples.size())) k.samples[size_t(cur)].loopPoint = uint32_t(std::max(0, v)); }); };
+        s->onChange = [this, cur](int v) { editKit("sample " + String(cur + 1) + " loop point", [cur, v](bank::Kit& k) { if (cur >= 0 && cur < int(k.samples.size())) k.samples[size_t(cur)].loopPoint = uint32_t(std::max(0, v)); }); };
         s->setEnabled(have);
         loopPoint_ = grid->addField("Loop point", "in 4-bit samples", std::move(s), Stepper::kHeight, 0);
     }
@@ -219,7 +219,7 @@ void KitsPanel::rebuildContent()
         remove->setTooltip("Remove this sample from the kit");
         remove->setEnabled(have);
         remove->onClick = [this, cur] {
-            editKit([cur](bank::Kit& k) { if (cur >= 0 && cur < int(k.samples.size())) k.samples.erase(k.samples.begin() + cur); });
+            editKit("sample " + String(cur + 1) + " removed", [cur](bank::Kit& k) { if (cur >= 0 && cur < int(k.samples.size())) k.samples.erase(k.samples.begin() + cur); });
             Component::SafePointer<KitsPanel> safe(this);
             MessageManager::callAsync([safe] { if (safe != nullptr) safe->rebuildContent(); });   // the button lives in the content being rebuilt
         };
@@ -230,14 +230,14 @@ void KitsPanel::rebuildContent()
         s->setRange(kMinPeriod, kMaxPeriod, 1865);
         s->setTextFunction([](int v) { return withThousands(int(std::lround(bank::sampleRateForPeriod(uint16_t(v))))) + " Hz"; });
         s->setTooltip("The kit's playback rate, quantized to what the period register allows (NR33/34 = " + String(kit ? int(kit->period) : 1865) + ")");
-        s->onChange = [this](int v) { editKit([v](bank::Kit& k) { k.period = uint16_t(std::clamp(v, 0, 2047)); }); };
+        s->onChange = [this](int v) { editKit("period " + String(v), [v](bank::Kit& k) { k.period = uint16_t(std::clamp(v, 0, 2047)); }); };
         rate_ = grid->addField("Rate", "NR33/34" + middot() + "whole kit", std::move(s), Stepper::kHeight, 0);
     }
     {
         auto s = std::make_unique<Segmented>(StringArray{ "One-shot", "Loop", "From point" });
         s->setMini(true);
         s->setTooltip("How every sample of this kit plays; the instrument's own loop setting overrides per note");
-        s->onChange = [this](int v) { editKit([v](bank::Kit& k) { k.loop = bank::KitLoop(std::clamp(v, 0, 2)); }); };
+        s->onChange = [this](int v) { editKit("loop", [v](bank::Kit& k) { k.loop = bank::KitLoop(std::clamp(v, 0, 2)); }); };
         const int h = s->preferredHeight(), w = s->preferredWidth();
         loop_ = grid->addField("Loop", "whole kit", std::move(s), h, w);
     }
@@ -280,10 +280,10 @@ void KitsPanel::syncValues()
     scroll_.relayout();
 }
 
-void KitsPanel::editKit(const std::function<void(bank::Kit&)>& fn)
+void KitsPanel::editKit(const String& what, const std::function<void(bank::Kit&)>& fn)
 {
     const int slot = slot_;
-    processor.mutateBank([&fn, slot](bank::Bank& b) {
+    processor.editBank("Kit " + ValueFormat::number(slot) + " " + what, [&fn, slot](bank::Bank& b) {
         auto& k = b.kits[size_t(slot - 1)];
         if (!k.used) { k.used = true; if (k.name.empty()) k.name = ("Kit " + String(slot)).toStdString(); }
         fn(k);
@@ -316,7 +316,7 @@ void KitsPanel::appendSample(int slot, const bank::KitSample& sample)
         AlertWindow::showMessageBoxAsync(MessageBoxIconType::InfoIcon, "ChipBoy", "A kit holds 32 samples; this one is full.");
         return;
     }
-    processor.mutateBank([slot, sample](bank::Bank& bk) {
+    processor.editBank("Kit " + ValueFormat::number(slot) + " sample " + String(sample.name), [slot, sample](bank::Bank& bk) {
         auto& k = bk.kits[size_t(slot - 1)];
         if (!k.used) { k.used = true; if (k.name.empty()) k.name = ("Kit " + String(slot)).toStdString(); }
         if (k.samples.size() >= size_t(bank::kMaxKitSamples)) return;

@@ -63,7 +63,7 @@ private:
     TextLine state_;
     TipBox stateBox_;
     std::unique_ptr<SegmentedParam> panParam_;
-    std::unique_ptr<juce::ButtonParameterAttachment> keyswitchAtt_;
+    std::unique_ptr<ToggleParam> keyswitchAtt_;
     std::unique_ptr<juce::ParameterAttachment> sourceAtt_;
     int sourceValue_ = 0;
     const bank::Bank* namesFor_ = nullptr;

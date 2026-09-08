@@ -24,6 +24,8 @@ const char* kStockTip = "STOCK: every audible setting is something a real unit d
 const char* kVisualizerTip = "Open the visualizer window: the five scopes, no chrome, made for screen capture";
 const char* kHexTip = "Show values in hex, the LSDj habit. Display only.";
 const char* kQuantizeTip = "Quantize MIDI notes to ticks: notes wait for the next tick, the tracker feel. Off: sample-accurate.";
+const char* kNothingToUndo = "Nothing to undo. Every edit made here goes on the history; what the host automates does not.";
+const char* kNothingToRedo = "Nothing to redo.";
 /// The source cannot be Host when there is no host transport to follow
 /// (docs/COMMANDS_AND_TEMPO.md section 16).
 const char* kOwnTransportTip = "The plugin is running the transport itself -- no host offers one -- so the ticks are the song's and this is fixed on Song. "
@@ -31,7 +33,14 @@ const char* kOwnTransportTip = "The plugin is running the transport itself -- no
 /// The wordmark is a two-line lockup so the row has the width for four
 /// groups; the rest of the row is laid out to these.
 constexpr int kWordmark = 19, kWordmarkSmall = 13, kGroupGap = 16, kLabelGap = 8;
-constexpr int kSongTempoWidth = 92, kQuantizeWidth = 74, kBankNameMin = 80, kBankNameMax = 150;
+constexpr int kSongTempoWidth = 92, kQuantizeWidth = 70, kBankNameMin = 64, kBankNameMax = 150;
+/// Undo and redo, right of the bank: two arrow buttons, a shade narrower
+/// than the bank's own, so the row keeps its height (UI_DESIGN 2.1).
+constexpr int kHistoryButton = 22, kHistoryGap = 3;
+/// The right-hand cluster. The visualizer button keeps its width whether the
+/// window is open or not -- it says so in its colour -- so nothing in the row
+/// moves when it is toggled.
+constexpr int kVisualizerWidth = 80, kHexWidth = 40, kSettingsWidth = 28;
 }
 
 HeaderBar::HeaderBar(ChipBoyProcessor& p)
@@ -45,6 +54,7 @@ HeaderBar::HeaderBar(ChipBoyProcessor& p)
       tempoSource_({ "Host", "Song" }),
       quantize_("Quantize"),
       bankPrev_(String(CharPointer_UTF8("\xe2\x80\xb9"))), bankNext_(String(CharPointer_UTF8("\xe2\x80\xba"))), bankMenu_(String(CharPointer_UTF8("\xe2\x96\xbe"))),
+      undo_(String(CharPointer_UTF8("\xe2\x86\xb6"))), redo_(String(CharPointer_UTF8("\xe2\x86\xb7"))),
       stockBox_(stock_),
       visualizer_("Visualizer"), hex_("Hex"), settings_(String(CharPointer_UTF8("\xe2\x9a\x99")))
 {
@@ -53,7 +63,7 @@ HeaderBar::HeaderBar(ChipBoyProcessor& p)
     tempoLabel_.setUpperCase(true);
     bankLabel_.setUpperCase(true);
     for (auto* c : std::initializer_list<Component*>{ &wordmark_, &wordmarkSmall_, &modelLabel_, &model_, &tempoLabel_, &tempoSource_, &songTempo_, &quantize_,
-                                                     &bankLabel_, &bankPrev_, &bankName_, &bankNext_, &bankMenu_, &stockBox_, &visualizer_, &hex_, &settings_ })
+                                                     &bankLabel_, &bankPrev_, &bankName_, &bankNext_, &bankMenu_, &undo_, &redo_, &stockBox_, &visualizer_, &hex_, &settings_ })
         addAndMakeVisible(c);
 
     model_.setOptionColour(0, colours::wav);
@@ -75,7 +85,7 @@ HeaderBar::HeaderBar(ChipBoyProcessor& p)
     songTempo_.attach(param(processor_, ids::songTempo));
     quantize_.setTooltip(kQuantizeTip);
     quantize_.setClickingTogglesState(true);
-    quantizeAtt_ = std::make_unique<ButtonParameterAttachment>(param(processor_, ids::notesOnTick), quantize_);
+    quantizeAtt_ = std::make_unique<ToggleParam>(quantize_, param(processor_, ids::notesOnTick));
     tempoWatch_ = std::make_unique<ParamWatch>(param(processor_, ids::tempoSource), [this](float v) { songTempo_.setEnabled(v > 0.5f || processor_.ownsTransport()); });
 
     bankPrev_.setTooltip("Previous bank");
@@ -85,16 +95,29 @@ HeaderBar::HeaderBar(ChipBoyProcessor& p)
     bankNext_.onClick = [this] { cycleBank(1); };
     bankMenu_.onClick = [this] { showBankMenu(); };
     bankName_.setText(processor_.bankName());
-    bankName_.onChange = [this](const String& n) { processor_.setBankName(n.trim().isEmpty() ? String("Bank") : n.trim()); };
+    bankName_.onChange = [this](const String& n) { processor_.setBankNameEdit(n.trim().isEmpty() ? String("Bank") : n.trim()); };
+
+    // Undo and redo: the same history Ctrl+Z uses, and their tooltips say
+    // what they would take back (UI_DESIGN section 2.1).
+    undo_.onClick = [this] { if (onUndo) onUndo(); };
+    redo_.onClick = [this] { if (onRedo) onRedo(); };
+    undo_.setEnabled(false);
+    redo_.setEnabled(false);
+    undo_.setTooltip(kNothingToUndo);
+    redo_.setTooltip(kNothingToRedo);
 
     stock_.set("STOCK", Pill::Tone::Ok);
     stockBox_.setTooltip(kStockTip);
 
     visualizer_.setTooltip(kVisualizerTip);
+    // Open or closed shows in the colour, not in the width: a button that
+    // grew would shove the bank along beside it.
+    visualizer_.setColour(TextButton::buttonOnColourId, colours::accentSoft);
+    visualizer_.setColour(TextButton::textColourOnId, colours::accentHi);
     visualizer_.onClick = [this] { if (onToggleVisualizer) onToggleVisualizer(); };
     hex_.setTooltip(kHexTip);
     hex_.setClickingTogglesState(true);
-    hexAtt_ = std::make_unique<ButtonParameterAttachment>(param(processor_, ids::hexDisplay), hex_);
+    hexAtt_ = std::make_unique<ToggleParam>(hex_, param(processor_, ids::hexDisplay));
     settings_.setTooltip(processor_.wrapperType == AudioProcessor::wrapperType_Standalone
                              ? "Settings: scaling, tick source. Audio and MIDI devices are under the standalone's Options button."
                              : "Settings: scaling, tick source");
@@ -106,8 +129,8 @@ HeaderBar::~HeaderBar() = default;
 void HeaderBar::setVisualizerOpen(bool open)
 {
     visualizer_.setToggleState(open, dontSendNotification);
-    visualizer_.setButtonText(open ? "Visualizer (open)" : "Visualizer");
-    resized();
+    visualizer_.setTooltip(open ? "Close the visualizer window" : kVisualizerTip);
+    repaint();
 }
 
 void HeaderBar::tick()
@@ -139,6 +162,19 @@ void HeaderBar::tick()
     if (owns != 0) tempoSource_.setSelected(1, dontSendNotification);   // automation cannot move it either
     const String n = processor_.bankName();
     if (n != bankName_.text()) bankName_.setText(n);
+
+    auto& history = processor_.history();
+    const String u = history.undoName(), r = history.redoName();
+    if (u != undoShown_) {
+        undoShown_ = u;
+        undo_.setEnabled(u.isNotEmpty());
+        undo_.setTooltip(u.isEmpty() ? String(kNothingToUndo) : "Undo: " + u + "   (Ctrl+Z)");
+    }
+    if (r != redoShown_) {
+        redoShown_ = r;
+        redo_.setEnabled(r.isNotEmpty());
+        redo_.setTooltip(r.isEmpty() ? String(kNothingToRedo) : "Redo: " + r + "   (Ctrl+Shift+Z)");
+    }
 }
 
 /* ------------------------------------------------------------- banks */
@@ -174,8 +210,7 @@ void HeaderBar::loadBankByName(const String& name)
 
 void HeaderBar::applyBank(const bank::Bank& b, const String& name)
 {
-    processor_.loadBank(b);
-    processor_.setBankName(name);
+    processor_.loadBankEdit("Load bank " + name, b, name);
     bankName_.setText(name);
     if (onBankLoaded) onBankLoaded();
 }
@@ -203,7 +238,7 @@ void HeaderBar::showBankMenu()
             if (!snapshot) return;
             saveBankAs(&h, *snapshot, h.processor_.bankName(), [safe, snapshot](bool ok, File f) {
                 if (safe == nullptr || !ok) return;
-                safe->processor_.setBankName(f.getFileNameWithoutExtension());
+                safe->processor_.setBankNameEdit(f.getFileNameWithoutExtension());
                 safe->bankName_.setText(f.getFileNameWithoutExtension());
             });
         } else if (r == 3) {
@@ -267,16 +302,22 @@ void HeaderBar::resized()
     const int sourceW = tempoSource_.preferredWidth();
     centred(tempoSource_, x, sourceW, tempoSource_.preferredHeight()); x += sourceW + kLabelGap;
     centred(songTempo_, x, kSongTempoWidth, Stepper::kHeight); x += kSongTempoWidth + kLabelGap;
-    centred(quantize_, x, kQuantizeWidth, 24); x += kQuantizeWidth + kGroupGap;
+    centred(quantize_, x, kQuantizeWidth, 24); x += kQuantizeWidth + 12;
 
     // the right-hand cluster, laid out from the right edge inwards
-    int r = getWidth() - 14;
-    centred(settings_, r - 30, 30, 24); r -= 38;
-    centred(hex_, r - 46, 46, 24); r -= 54;
-    const int vw = visualizer_.getToggleState() ? 118 : 86;
-    centred(visualizer_, r - vw, vw, 24); r -= vw + 12;
+    int r = getWidth() - 12;
+    centred(settings_, r - kSettingsWidth, kSettingsWidth, 24); r -= kSettingsWidth + 8;
+    centred(hex_, r - kHexWidth, kHexWidth, 24); r -= kHexWidth + 8;
+    centred(visualizer_, r - kVisualizerWidth, kVisualizerWidth, 24); r -= kVisualizerWidth + 10;
     const int pw = std::max(stock_.preferredWidth(), 60);
-    centred(stockBox_, r - pw, pw, 20); r -= pw + kGroupGap;
+    centred(stockBox_, r - pw, pw, 20); r -= pw + 8;
+
+    // undo and redo sit at the right of the bank group, against the badge
+    const int historyW = 2 * kHistoryButton + kHistoryGap;
+    r -= historyW;
+    centred(undo_, r, kHistoryButton, 22);
+    centred(redo_, r + kHistoryButton + kHistoryGap, kHistoryButton, 22);
+    r -= 12;
 
     // the bank fills what is left between the two; its name field is the
     // part that gives way, down to kBankNameMin, so nothing ever overlaps

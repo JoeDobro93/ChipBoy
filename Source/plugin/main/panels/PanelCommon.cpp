@@ -388,33 +388,56 @@ String paramText(ChipBoyProcessor& p, const String& id)
     return {};
 }
 
-void setParam(RangedAudioParameter& p, float denormalised)
+void setParam(const Component& owner, RangedAudioParameter& p, float denormalised)
 {
+    if (auto* history = ui::historyFor(owner)) { history->setParameter(p, denormalised); return; }
     p.beginChangeGesture();
     p.setValueNotifyingHost(p.convertTo0to1(denormalised));
     p.endChangeGesture();
 }
 
+ToggleParam::ToggleParam(Button& b, RangedAudioParameter& p) : button_(b), param_(p)
+{
+    att_ = std::make_unique<ParameterAttachment>(p, [this](float v) { button_.setToggleState(v >= 0.5f, dontSendNotification); });
+    att_->sendInitialUpdate();
+    button_.onClick = [this] {
+        const float v = button_.getToggleState() ? 1.0f : 0.0f;
+        if (auto* history = ui::historyFor(button_)) history->setParameter(param_, v);
+        else att_->setValueAsCompleteGesture(v);
+    };
+}
+
+ToggleParam::~ToggleParam() { button_.onClick = nullptr; }
+
 SegmentedParam::SegmentedParam(Segmented& seg, RangedAudioParameter& p, std::vector<int> valueForOption)
-    : seg_(seg), map_(std::move(valueForOption))
+    : seg_(seg), p_(p), map_(std::move(valueForOption))
 {
     att_ = std::make_unique<ParameterAttachment>(p, [this](float v) {
         const int iv = int(std::lround(v));
         for (int i = 0; i < int(map_.size()); ++i)
             if (map_[size_t(i)] == iv) { seg_.setSelected(i, dontSendNotification); return; }
     });
-    seg_.onChange = [this](int i) { if (i >= 0 && i < int(map_.size())) att_->setValueAsCompleteGesture(float(map_[size_t(i)])); };
+    seg_.onChange = [this](int i) {
+        if (i < 0 || i >= int(map_.size())) return;
+        const float v = float(map_[size_t(i)]);
+        if (auto* history = ui::historyFor(seg_)) history->setParameter(p_, v);
+        else att_->setValueAsCompleteGesture(v);
+    };
     att_->sendInitialUpdate();
 }
 
 SegmentedParam::~SegmentedParam() { seg_.onChange = nullptr; }
 
 StepperParam::StepperParam(Stepper& stepper, RangedAudioParameter& p, float scale, int lo, int hi)
-    : stepper_(stepper), scale_(scale)
+    : stepper_(stepper), p_(p), scale_(scale)
 {
     stepper_.setRange(lo, hi, int(std::lround(p.convertFrom0to1(p.getDefaultValue()) / scale_)));
     att_ = std::make_unique<ParameterAttachment>(p, [this](float v) { stepper_.setValue(int(std::lround(v / scale_)), dontSendNotification); });
-    stepper_.onChange = [this](int v) { att_->setValueAsCompleteGesture(float(v) * scale_); };
+    stepper_.onChange = [this](int v) {
+        const float d = float(v) * scale_;
+        if (auto* history = ui::historyFor(stepper_)) history->setParameter(p_, d);
+        else att_->setValueAsCompleteGesture(d);
+    };
     att_->sendInitialUpdate();
 }
 

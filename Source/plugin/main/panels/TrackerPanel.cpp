@@ -71,7 +71,7 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
                       "A single bar can take a count of its own in the chain's STP column.");
     steps_.onChange = [this](int v) {
         const auto n = uint8_t(std::clamp(v, 1, tracker::kMaxSteps));
-        editSong([n](tracker::Song& s) { s.stepsPerBar = n; });
+        editSong("Steps per bar " + String(int(n)), [n](tracker::Song& s) { s.stepsPerBar = n; });
     };
 
     saveSong_.setTooltip("Write the song " + String(CharPointer_UTF8("\xe2\x80\x94")) + " chains, phrases, grooves, steps, arms and its tempo " + String(CharPointer_UTF8("\xe2\x80\x94"))
@@ -89,10 +89,10 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     songStart_.setRange(0, kStartMax, 0);
     songStart_.setTooltip("Where tick 0 of the song sits on the host's timeline, in seconds");
     songStart_.setTextFunction([](int v) { return String(double(v) / kStartSteps, 1) + " s"; });
-    songStart_.onChange = [this](int v) { editSong([v](tracker::Song& s) { s.songStartSeconds = double(v) / kStartSteps; }); };
+    songStart_.onChange = [this](int v) { editSong("Song start", [v](tracker::Song& s) { s.songStartSeconds = double(v) / kStartSteps; }); };
     beats_.setRange(1, 16, 4);
     beats_.setTooltip("How many beats the song's own bar holds; in Host mode the host's time signature says instead");
-    beats_.onChange = [this](int v) { editSong([v](tracker::Song& s) { s.beatsPerBar = double(v); }); };
+    beats_.onChange = [this](int v) { editSong("Beats per bar " + String(v), [v](tracker::Song& s) { s.beatsPerBar = double(v); }); };
     tempoWatch_ = std::make_unique<ParamWatch>(param(processor, ids::tempoSource), [this](float v) {
         songMode_ = v > 0.5f || processor.ownsTransport();
         songStart_.setEnabled(songMode_);
@@ -107,7 +107,7 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
 
     chain_.onSelectBar = [this](int bar) { bar_ = std::max(0, bar); refreshViews(); contextChanged(); };
     chain_.onChainChange = [this](int ch, int bar, int slot) {
-        editSong([ch, bar, slot](tracker::Song& s) {
+        editSong("Chain: " + String(colours::channelName(ch)) + " bar " + String(bar + 1), [ch, bar, slot](tracker::Song& s) {
             if (bar < 0 || bar > 4095) return;
             auto& chain = s.chain[size_t(ch & 3)];
             if (int(chain.size()) <= bar) chain.resize(size_t(bar) + 1, 0);
@@ -118,7 +118,7 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     // The bar's own step count (section 11): blank is the song's, and a
     // cleared last entry goes away so the song does not keep the bar.
     chain_.onBarStepsChange = [this](int bar, int steps) {
-        editSong([bar, steps](tracker::Song& s) {
+        editSong("Chain: bar " + String(bar + 1) + " steps", [bar, steps](tracker::Song& s) {
             if (bar < 0 || bar > 4095) return;
             if (int(s.barSteps.size()) <= bar) {
                 if (steps == 0) return;
@@ -130,21 +130,29 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     };
     grid_.onCellChange = [this](int ch, int step, const tracker::Cell& cell) {
         const int bar = bar_;
-        editSong([ch, step, bar, cell](tracker::Song& s) {
+        editSong("Tracker: " + String(colours::channelName(ch)) + " bar " + String(bar + 1) + " step " + String(step + 1),
+                 [ch, step, bar, cell](tracker::Song& s) {
             const uint8_t slot = ensurePhrase(s, ch, bar);
             if (slot == 0 || step < 0 || step >= tracker::kMaxSteps) return;
             s.phrases[size_t(slot - 1)].steps[size_t(step)] = cell;
         });
     };
-    grid_.onSourceChange = [this](int ch, tracker::NoteSource src) { editSong([ch, src](tracker::Song& s) { s.noteSource[size_t(ch & 3)] = src; }); };
+    grid_.onSourceChange = [this](int ch, tracker::NoteSource src) {
+        editSong(String(colours::channelName(ch)) + " plays " + (src == tracker::NoteSource::Tracker ? "Trkr" : "MIDI"),
+                 [ch, src](tracker::Song& s) { s.noteSource[size_t(ch & 3)] = src; });
+    };
     grid_.onArmChange = [this](int ch, bool on) { processor.setChannelArm(ch, on); refreshViews(); };
     grid_.onGrooveChange = [this](int ch, int groove) {
         const int bar = bar_;
-        editSong([ch, bar, groove](tracker::Song& s) {
+        editSong(String(colours::channelName(ch)) + " phrase groove " + ValueFormat::number(groove), [ch, bar, groove](tracker::Song& s) {
             const uint8_t slot = ensurePhrase(s, ch, bar);
             if (slot) s.phrases[size_t(slot - 1)].groove = uint8_t(std::clamp(groove, 0, 16));
         });
     };
+    // A cursor move or a click closes the run of digits being typed, so what
+    // follows is a new undo (UI_DESIGN section 2.1).
+    grid_.onEntryEnd = [this] { processor.history().endGesture(); };
+    chain_.onEntryEnd = [this] { processor.history().endGesture(); };
     grid_.onCursorRow = [this](int row) {
         scroll_.scrollToKeepVisible(PhraseGrid::kHeaderHeight + row * PhraseGrid::kRowHeight, PhraseGrid::kRowHeight);
     };
@@ -192,6 +200,7 @@ void TrackerPanel::refreshViews()
 {
     const auto s = processor.song();
     chain_.setSong(s, bar_, playingBar_);
+    grid_.setBank(processor.bank());
     grid_.setSong(s, bar_);
     const int spb = s ? s->stepsOfBar(bar_) : 16;
     steps_.setValue(s ? s->steps() : 16, dontSendNotification);
@@ -219,9 +228,9 @@ void TrackerPanel::syncSongTime()
     beats_.setValue(std::clamp(int(std::lround(s->beatsPerBar)), 1, 16), dontSendNotification);
 }
 
-void TrackerPanel::editSong(const std::function<void(tracker::Song&)>& fn)
+void TrackerPanel::editSong(const String& what, const std::function<void(tracker::Song&)>& fn)
 {
-    processor.mutateSong(fn);
+    processor.editSong(what, fn);
     reported_ = {};                 // an edit answers the last file's line
     refreshViews();
     contextChanged();

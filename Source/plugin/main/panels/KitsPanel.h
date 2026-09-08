@@ -24,7 +24,8 @@ private:
     void showSlot(int slot);
     void rebuildContent();
     void syncValues();
-    void editKit(const std::function<void(bank::Kit&)>& fn);
+    /// One edit of the shown kit; `what` names it on the undo history.
+    void editKit(const juce::String& what, const std::function<void(bank::Kit&)>& fn);
     void importSamples();
     void appendSample(int slot, const bank::KitSample& s);
 

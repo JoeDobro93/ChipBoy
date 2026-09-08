@@ -21,7 +21,8 @@ private:
     void rebuildList();
     void showSlot(int slot);
     void syncFromBank(bool pushToGrid);
-    void editWave(const std::function<void(bank::Wave&)>& fn, bool pushToGrid);
+    /// One edit of the shown wave; `what` names it on the undo history.
+    void editWave(const juce::String& what, const std::function<void(bank::Wave&)>& fn, bool pushToGrid);
     void generate(int shape);
     void interpolate();
 

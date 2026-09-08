@@ -159,7 +159,7 @@ ChannelStrip::ChannelStrip(ChipBoyProcessor& p, int ch)
     // keyswitches: the reserved octave picks an instrument instead of sounding
     keyswitch_.setTooltip(keyswitchTip(ch_));
     keyswitch_.setClickingTogglesState(true);
-    keyswitchAtt_ = std::make_unique<ButtonParameterAttachment>(param(processor_, channelParamId(ch_, ids::keyswitch)), keyswitch_);
+    keyswitchAtt_ = std::make_unique<ToggleParam>(keyswitch_, param(processor_, channelParamId(ch_, ids::keyswitch)));
 
     // pan: the parameter's order is off, L, R, both, inst; the display's is the hardware's
     pan_.setMini(true);
@@ -202,7 +202,7 @@ void ChannelStrip::showSourceMenu()
     Component::SafePointer<ChannelStrip> safe(this);
     m.showMenuAsync(PopupMenu::Options().withTargetComponent(&sourceBox_), [safe](int r) {
         if (safe == nullptr || r < 1 || r > 18) return;
-        safe->sourceAtt_->setValueAsCompleteGesture(float(r - 1));
+        setParam(*safe, param(safe->processor_, channelParamId(safe->ch_, ids::source)), float(r - 1));
     });
 }
 

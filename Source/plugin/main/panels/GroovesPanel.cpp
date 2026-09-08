@@ -29,9 +29,14 @@ GroovesPanel::GroovesPanel(ChipBoyProcessor& p)
     list_.setRenameable(false);                 // a groove is its ticks; there is no name to type
     list_.onSelect = [this](int slot) { showSlot(slot); };
     editor_.onChange = [this](int slot, const tracker::Groove& g) {
-        processor.mutateSong([slot, g](tracker::Song& s) { if (slot >= 1 && slot <= int(s.grooves.size())) s.grooves[size_t(slot - 1)] = g; });
+        processor.editSong("Groove " + ValueFormat::number(slot), [slot, g](tracker::Song& s) { if (slot >= 1 && slot <= int(s.grooves.size())) s.grooves[size_t(slot - 1)] = g; });
         rebuildList();
         contextChanged();
+    };
+    // A drag down one cell, or a value typed into it, is one undo.
+    editor_.onGesture = [this](bool begin) {
+        if (begin) processor.history().beginGesture("Groove " + ValueFormat::number(slot_));
+        else processor.history().endGesture();
     };
     // The stepper in the editor's head and the list are one selection.
     editor_.onSlotChange = [this](int slot) { slot_ = slot; list_.setSelected(slot, dontSendNotification); contextChanged(); };

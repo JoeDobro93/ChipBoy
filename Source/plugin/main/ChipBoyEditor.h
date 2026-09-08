@@ -23,7 +23,7 @@
 
 namespace chipboy::plugin {
 
-class ChipBoyEditor : public juce::AudioProcessorEditor, private juce::Timer {
+class ChipBoyEditor : public juce::AudioProcessorEditor, public ui::EditHistoryHost, private juce::Timer {
 public:
     explicit ChipBoyEditor(ChipBoyProcessor& p);
     ~ChipBoyEditor() override;
@@ -33,6 +33,12 @@ public:
     void selectChannel(int ch);      ///< the editing context: strip highlight, panels, context line
     void showTab(int tab);
     void setScale(float factor);     ///< 1.0, 1.25 or 1.5, remembered as apvts.state "ui_scale"
+
+    /// Every control in this window writes its edits here (UI_DESIGN 2.1).
+    ui::EditHistory& editHistory() override { return processor_.history(); }
+    /// Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y, and the header's two buttons.
+    void undo();
+    void redo();
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -44,6 +50,8 @@ private:
     void refreshContext();
     void toggleVisualizer();
     void layoutContent();
+    /// True while a text box has the keys, so Ctrl+Z belongs to it.
+    bool typing() const;
 
     ChipBoyProcessor& processor_;
     ui::ChipBoyLookAndFeel lookAndFeel_;

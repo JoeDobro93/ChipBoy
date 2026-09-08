@@ -36,7 +36,10 @@ private:
     void syncValues();
     void updateUsedOn();
     void refreshDerived();               ///< the envelope preview and every hint that shows a value
-    void edit(const std::function<void(bank::Instrument&)>& fn);
+    /// One edit of the shown instrument. `what` names it on the undo
+    /// history ("Instrument 7 . Duty 25"); a run of edits under the same
+    /// name is one undo (UI_DESIGN section 2.1).
+    void edit(const juce::String& what, const std::function<void(bank::Instrument&)>& fn);
     void newInstrument();
     void duplicate();
     /// The instrument with every table, wave and kit it uses, as a .cbi file

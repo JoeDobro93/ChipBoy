@@ -19,6 +19,7 @@
 #include "plugin/shared/Parameters.h"
 #include "plugin/shared/ScopeBuffers.h"
 #include "plugin/shared/SongFiles.h"
+#include "plugin/ui/EditHistory.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -74,13 +75,38 @@ public:
     /// saved from here carries it; `fromFile` reverses that for a song that
     /// arrives with its own tempo, which becomes the parameter's value.
     void publishSong(std::shared_ptr<tracker::Song> s, bool fromFile = false);
-    /// Copy-on-write edits: the editor mutates a copy, the audio thread swaps to it.
+    /// Copy-on-write edits: the editor mutates a copy, the audio thread swaps
+    /// to it. These are the plain path -- nothing about them is undoable, so
+    /// the timer and the link can use them.
     void mutateBank(const std::function<void(bank::Bank&)>& fn);
     void mutateSong(const std::function<void(tracker::Song&)>& fn);
     /// Replace the bank wholesale (file import, factory reset).
     void loadBank(const bank::Bank& b) { publishBank(std::make_shared<const bank::Bank>(b)); }
     juce::String bankName() const { return bankName_; }
-    void setBankName(const juce::String& n) { bankName_ = n; }
+
+    // --- undo (message thread only; UI_DESIGN section 2.1) --------------
+    //
+    // Everything a hand does here goes on this history. Host automation, a
+    // state restore, the Voice's own edits and anything the audio thread
+    // does never open a transaction, so a lane the host is drawing cannot
+    // bury what the musician typed.
+
+    /// The history the window's controls, its buttons and its keys use.
+    ui::UndoHistory& history() { return history_; }
+
+    /// A hand edit of the bank or the song: the copy-on-write path above,
+    /// with the snapshots it already makes put on the history under `name`.
+    void editBank(const juce::String& name, const std::function<void(bank::Bank&)>& fn);
+    void editSong(const juce::String& name, const std::function<void(tracker::Song&)>& fn);
+    /// A whole bank arriving (a file, the factory reset): the bank and the
+    /// name it goes under are one step.
+    void loadBankEdit(const juce::String& name, const bank::Bank& b, const juce::String& bankName);
+    /// The bank's name, typed in the header.
+    void setBankNameEdit(const juce::String& n);
+    /// Puts a snapshot back. The history's own actions call these; nothing
+    /// else should.
+    void restoreBank(std::shared_ptr<const bank::Bank> b, const juce::String& bankName);
+    void restoreSong(std::shared_ptr<const tracker::Song> s);
 
     const driver::Driver& driverView() const { return driver_; }   ///< read-only, may be a block stale
     /// Tap every register write the driver emits, for the record test
@@ -109,8 +135,8 @@ public:
     void setRecordArm(bool on) { recordArm_.store(on); }
     bool recordArm() const { return recordArm_.load(); }
     /// The per-channel arm lives in the song (section 14), so it travels with
-    /// the song file and the plugin state.
-    void setChannelArm(int ch, bool on) { const int c = ch & 3; mutateSong([c, on](tracker::Song& s) { s.recordArm[size_t(c)] = on; }); }
+    /// the song file and the plugin state -- and is an edit like any other.
+    void setChannelArm(int ch, bool on);
     bool channelArm(int ch) const { const auto s = songShared_; return s ? s->recordArm[size_t(ch & 3)] : true; }
     const tracker::Player& player() const { return player_; }
 
@@ -240,6 +266,10 @@ private:
     std::deque<std::shared_ptr<const void>> retired_;   ///< kept alive a while after a swap
     const bank::Bank* namesPublishedFor_ = nullptr;
     juce::String bankName_ { "Factory" };
+
+    /// Undo, message thread only. It outlives every window, so its actions
+    /// can hold parameters and bank / song snapshots safely.
+    ui::UndoHistory history_;
 
     // parameters
     std::atomic<float>* pModel_ = nullptr; std::atomic<float>* pMasterL_ = nullptr; std::atomic<float>* pMasterR_ = nullptr;
