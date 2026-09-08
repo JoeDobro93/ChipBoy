@@ -236,6 +236,26 @@ if(CHIPBOY_BUILD_PLUGIN)
     enable_testing()
     add_test(NAME chipboy_linktest COMMAND chipboy_linktest)
 
+    # --- chipboy_recordtest: the demo recorded and played back, register for
+    # register (docs/COMMANDS_AND_TEMPO.md section 9.5) ----------------------
+    juce_add_console_app(chipboy_recordtest PRODUCT_NAME "chipboy_recordtest")
+    target_sources(chipboy_recordtest PRIVATE
+        ${CHIPBOY_PLUGIN_SHARED_SOURCES} ${CHIPBOY_MAIN_SOURCES}
+        tools/recordtest/main.cpp)
+    target_compile_definitions(chipboy_recordtest PRIVATE
+        CHIPBOY_NO_PLUGIN_FILTER=1
+        JUCE_STANDALONE_APPLICATION=1
+        CHIPBOY_DEMO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Demo"
+        JucePlugin_Name="ChipBoy" JucePlugin_Manufacturer="ChipBoy" JucePlugin_ManufacturerCode=0x43687062 JucePlugin_PluginCode=0x43686279
+        JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0 JucePlugin_IsMidiEffect=0
+        JucePlugin_EditorRequiresKeyboardFocus=1 JucePlugin_Version=0.1.0 JucePlugin_VersionCode=0x100 JucePlugin_VersionString="0.1.0"
+        JucePlugin_Build_VST3=0 JucePlugin_Build_AU=0 JucePlugin_Build_Standalone=0
+        JucePlugin_MaxNumInputChannels=0 JucePlugin_MaxNumOutputChannels=2 JucePlugin_PreferredChannelConfigurations= )
+    set(CHIPBOY_MODAL_LOOPS 1)
+    chipboy_configure_plugin(chipboy_recordtest)
+    set(CHIPBOY_MODAL_LOOPS 0)
+    add_test(NAME chipboy_recordtest COMMAND chipboy_recordtest --out "${CMAKE_CURRENT_BINARY_DIR}/recordtest")
+
     # --- chipboy_uishot: PNG snapshots of the windows (needs a display) ----
     juce_add_console_app(chipboy_uishot PRODUCT_NAME "chipboy_uishot")
     target_sources(chipboy_uishot PRIVATE
