@@ -26,6 +26,110 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-08 — song tabs, the head, the master section, scopes, Hybrid (interface)
+
+The third addendum ([`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md) §18–§23),
+interface side, on top of the engine stage below. Nothing here is new behaviour: it is
+the window catching up with the tabs, the tempo readout, the noise split, the third
+playback source and the scope that was meant to hold still.
+
+**Changed:**
+
+- **The song tab strip (§18).** `ui::SongTabStrip` stands where the Tracker tab's
+  summary line was: one tab per loaded song with its name, a dot while it has unsaved
+  work and an × that closes it — asking first when that dot is there — and a **+** that
+  starts an empty song on the factory bank. Clicking a tab calls `setActiveTab`, and the
+  strip is rebuilt from `tabCount` / `tabName` / `tabFile` / `tabDirty` on the panel's
+  timer, which costs a comparison when nothing moved. *Load song…* now calls
+  `openSongFileInTab`, so a song opens in a tab of its own — unless the active tab is a
+  fresh untitled song with nothing to lose, where it lands in place through
+  `loadSongFile`; *Save song…* writes the tab's own file, or opens a chooser when it has
+  none, and the tab takes the file's name. The window keeps at least one song open.
+- **Every other tab already followed the active one**, through `song()` and `bank()`;
+  the editor's timer notices the two pointers change on a switch and sends
+  `songChanged` / `bankChanged` everywhere. `chipboy_uishot --tab-switch` proves it
+  rather than assuming it: it marks the *other* tab's bank and song — a renamed
+  instrument, a table step, a wave sample, a kit, a groove — then shoots the Instrument,
+  Tables, Grooves, Waves and Kits panes on either side of a switch and fails if any of
+  them drew the same picture twice. (Without the marking the test is worthless: both
+  tabs start on copies of the factory bank, and a new song's grooves *are* the factory
+  grooves, so four of the five panes were identical for good reasons.)
+- **The header's Bank group is the active song's bank (§18).** Its menu reads *Load bank
+  into this song…*, *Save this song's bank…* and *Reset this song's bank to factory*,
+  and the arrows say so too. The **STOCK / MODIFIED badge stays the window's**: it reads
+  the de-click and soften-pops departures, which §18 lists among the things that are
+  global and not per song, so there is nothing per tab for it to say. Considered making
+  it per tab as the brief reads; rejected because its two inputs are global parameters
+  and a badge that never differed between tabs would only imply that they could.
+- **The header's tempo is a readout (§19).** The Song tempo stepper leaves the header; a
+  small well takes its place with the tempo in force — `effectiveTempo()`, one decimal —
+  and a *host* or *song* tag beside it, sized to the tag so neither word is ever cut
+  short. The Host / Song switch stays, with the same rules about the plugin's own
+  transport. The song's **master tempo** is typed in the Tracker head instead, through
+  `setMasterTempo`, which is one undo step over the song and the parameter together.
+- **The Tracker head is two rows of grouped tools (§23).** TRANSPORT (*Play* 62, *Stop*
+  62, *Loop* 52, the LED, *playing*, the position readout) · RECORD (*Rec* 62) on the
+  first row; SONG (*Tempo* 84, *Start* 84, *Beats* 62, *Steps / bar* 80) · FILE (*Save
+  song…* 104, *Load song…* 104, *Export .gb* 96) on the second, each group under a
+  `draw::caption` and separated by a 16 px gap with a hairline down the middle. The
+  budget is unchanged and asserted in the source: 12 caption + 26 controls, 4, the same
+  again, 6, and the 26 px tab strip is 112 exactly, so the lane keeps its 400 px and the
+  tab still asks for no scrolling at 1180 × 1020. **Beats is live in both tempo modes**
+  now (§11 as amended, §19); *Start* still greys in Host mode. What a file did goes to
+  the status bar, which always had it — the head has no line of its own any more.
+- **The master section (§21).** One **VOL** stepper, 0–7, writes `master_l` and
+  `master_r` as one undo step (an explicit `beginGesture` / `endGesture` around the two
+  `setParam` calls). Both parameters stay, so the `M` command and existing automation
+  still address left and right; the readout shows the left value and, when something has
+  moved them apart, both — `7·5` — with the tooltip naming which is which. VOL L and
+  VOL R are gone. **LCD Whine** joins Headphone Noise and De-click as the third switch,
+  and the three of them plus the one stepper take exactly the height the two steppers
+  and two switches did, so the master scope is the same size. In the Hardware tab the
+  whine row no longer greys when the hiss is off — they are independent now — and the
+  two rows' measured facts were split along with them.
+- **The scopes hold still (§22).** The window was always meant to be two periods from a
+  rising edge; what it actually did was start on *the last rising edge before the
+  window*, and the window's end moves with the audio thread. A pulse has one rising edge
+  in a period, so it picked the same one every frame and was already still — a wave has
+  up to sixteen, so which one was "last" was effectively random and the trace jumped by a
+  fraction of a period every frame. Measured, not guessed: two frames of a steady tone
+  through the old code differ by 3832 pixels on the wave scope and by 0 on both pulses.
+  The edge is now chosen by what the waveform *is* — the furthest rise, then the level
+  held longest before it, then the lowest level rise
+  — three keys that are properties of the shape rather than of where the search began, so
+  they name the same phase every frame, re-lock in one frame when the shape changes, and
+  hold the same edge while vibrato moves the period. `paint()` also stopped reading the
+  `latestCycle` atomic live: the timer captures it with the samples, so one snapshot
+  draws one picture however often it is painted. With less history in the ring than the
+  window asks for the search moves up to what there is and the window keeps its length.
+  Noise keeps its fixed window, and **a kit now keeps one too** (`setFixedWindow`, set
+  from the instrument the driver is actually playing): a kit is a sample, not a repeating
+  wave, so there is no period to lock to. `chipboy_uishot --scope-check` holds a note on
+  each channel and compares two renderings of every scope a fifth of a second apart; all
+  four are pixel-identical now.
+- **PLAYS is a three-way switch (§20).** MIDI / Trkr / **Hyb**, writing
+  `tracker::NoteSource::Hybrid`, with a sentence of tooltip each. A Hybrid channel shows
+  the roll's note greyed in the note column, as a MIDI channel does, since its cells'
+  notes and OFFs are ignored. Its **strip** says so where it matters: a HYBRID tag beside
+  the channel name, and the Instrument, Table and both command slots greyed — the slots
+  reading *from the cells* where the resolved command would be — with the same tooltip on
+  all four, *the tracker's cells drive this channel*. The third choice costs the head
+  row about 30 px, which comes out of the phrase's groove chip: it now says as much as
+  fits, the slot and its ticks where there is room, the ticks alone at the demo's width,
+  the slot number when a narrower window leaves only a chip, and the whole of it stays in
+  the tooltip and the menu.
+- **`chipboy_uishot`** opens `--song` with `openSongFileInTab`, so a shot shows the strip
+  with two tabs in it, and gained `--hybrid`, `--scope-check` and `--tab-switch`.
+- Screenshots regenerated: the Tracker tab, the header and mixer (`main-instrument.png`),
+  the Hardware tab, Grooves and the Voice window.
+
+**Tests:** `chipboy_linktest`, `chipboy_recordtest`, `demo_song_matches` and
+`demo_state_matches` pass unchanged — no engine file was touched. The two new
+`chipboy_uishot` modes are the interface's own checks and are run by hand, since they
+need a display.
+
+**Departures from the brief:** the STOCK badge is not per tab, for the reason above.
+
 ### 2026-09-08 — song tabs, hybrid playback, the noise split (engine)
 
 The third addendum ([`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md) §18–§21),
