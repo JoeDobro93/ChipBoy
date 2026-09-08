@@ -245,12 +245,48 @@ and commands on a step. ChipBoy has that screen. It is a tracker with the DAW as
 transport, and it is the part of the product that can later leave the DAW entirely
 (§10, D10).
 
-Per channel: a **note** column, **instrument**, **table** and two **command** columns;
-sixteen steps to a phrase (a bar of sixteenths by default), phrases chained along the
-timeline by bar, a groove (6/6, 7/5, 8/4 ticks per step…) per phrase for swing. Cells
-fire at their step's tick and latch for the notes that follow — exactly the tracker
-behaviour. A cell's two commands are the channel's two command slots written from that
-step on, so the lane and the automation lane are one mechanism, not two.
+Per channel: a **note** column, **vel**, **instrument**, **table** and two **command**
+columns; sixteen steps to a phrase (a bar of sixteenths by default, and *Steps / bar*
+offers 8 or 16), phrases chained along the timeline by bar, a groove (6/6, 7/5, 8/4
+ticks per step…) per phrase for swing. Cells fire at their step's tick and latch for the
+notes that follow — exactly the tracker behaviour. A cell's two commands are the
+channel's two command slots written from that step on, so the lane and the automation
+lane are one mechanism, not two. **Vel** is the note's velocity, 1–127, blank meaning
+the default 100; a recorded note keeps the velocity it arrived with, and every column
+takes the same gestures — the wheel, typed digits, + and −, Backspace to blank.
+
+**The groove editor** stands to the right of the lane, its sixteen cells row for row
+with the lane's steps, because a groove is read down the steps and not across the bar. A
+groove is sixteen tick counts, each 1–48 with 0 unused, and step *i* lasts
+`ticks[i mod length]` — so two entries swing, three make triplets
+([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §9.2). Each row shows its count, a bar
+drawn against the longest entry so the swing is visible without arithmetic, and the tick
+that step starts on — in the warn colour when that start falls at or past the end of the
+bar, where the step does not fire at all. Rows past the groove's length are blank and
+repeat it. The head carries the slot being browsed (0 is straight and cannot be edited,
+1–16 are the song's), the **total** against the bar's ticks — green when they match,
+warn when the groove over- or under-fills the bar — the **swing** the first pair makes
+(61 % for 8/5, 50 % for 6/6), and a **◀ ▶ nudge** that moves one tick between the
+entries of every pair, keeping each pair's total: 6 6 → 7 5 → 8 4, and back. The editor
+shows whichever groove is in force for the selected channel — a `G` in a command slot or
+a cell, else the phrase's own chip in the lane header — and follows it until the stepper
+browses elsewhere. A cell takes the lane's gestures and a value drag as well: the wheel,
+a vertical drag, + and −, two typed digits, Backspace to end the groove there; ← and →
+are the nudge.
+
+**Numbers.** At the minimum window height the tab has 1156 × 512 and asks for no
+scrolling: a 112 px head — two rows of tools, the help line, and the bar chain beside
+them — over 400 px of lane, which is a 48 px header and sixteen 22 px rows. Across, the
+groove editor takes 164 px off the right with a 12 px gap, leaving 980 for the lane: a
+34 px step column and four channel groups of 236, each a 39 px note, 31 vel, 31 ins,
+29 tbl and two 53 px commands. The playing row is highlighted per channel on the step
+that channel's own groove is really playing, not on a sixteenth of the bar, so a swung
+phrase marks the row that is sounding; the position readout beside the transport stays
+bar . beat . sixteenth, which is the clock and not the groove.
+
+![The Phrases tab with a song in it](screenshots/main-phrases-groove.png)
+*Four channels of cells with their velocities, and the groove in force for PU1 — slot 2,
+7 5, filling the bar exactly — in the editor on the right.*
 
 **The clock is 24 ticks to the beat** and a straight step is six of them, as LSDj. Which
 tempo is in force — *Tempo source*, *Song BPM* and *Quantize* — is the header's group,

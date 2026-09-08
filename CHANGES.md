@@ -26,6 +26,54 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-08 — groove editor and VEL column (interface)
+
+The interface half of the addendum's §9.2 and §10 (`docs/COMMANDS_AND_TEMPO.md`), in the
+Phrases tab. Nothing in the engine moved; this is what the tab shows and how it is
+edited (`docs/UI_DESIGN.md` §7).
+
+**Changed:**
+
+- **A groove editor beside the lane**, sixteen cells row for row with the lane's steps
+  (the preferred placement of §10; the grid gave up the width). Each row is the count
+  that step lasts, a bar drawn against the longest entry, and the tick the step starts
+  on — in the warn colour when that start is at or past the end of the bar and the step
+  therefore never fires. The head carries the slot (0 straight and read-only, 1–16 the
+  song's), the total against the bar's ticks (green when they match, warn either way
+  round), the swing of the first pair, and a ◀ ▶ nudge that trades one tick inside every
+  pair keeping its total. The editor follows the groove in force for the selected
+  channel — a `G` in a slot or a cell, else the phrase's chip — until the stepper browses
+  somewhere else. Edits go through `mutateSong`, the path the cells already take, so the
+  Player picks them up with the next published song.
+- **The lane has a VEL column**, 1–127 with blank meaning the default 100, editing like
+  the instrument column. The cells always carried the velocity (the engine stage); it
+  was not visible or editable.
+- **The playing row is the row that is playing.** It was `inBar × steps / barTicks`, a
+  sixteenth of the bar, which is the wrong row on every swung groove; it is now read
+  from the channel's own step grid (`stepStartTicks` with the groove in force), and a
+  step whose start falls past the bar's end never lights.
+- The lane's columns were re-measured for the width the editor took: of 1156 px, 164 to
+  the editor and 12 to the gap leave 980 — a 34 px step column and four groups of 236
+  (note 39, vel 31, ins 31, tbl 29, two commands of 53). Command arguments of seven
+  characters (`C 60,60`) clip a little sooner than they did; they clipped before too, at
+  nine (`R 255,255`).
+- *Steps / bar* already offered 8 and 16 only, and the groove preset combo was already
+  gone, both from the engine stage. Nothing was left to remove.
+
+**Why:** a sixteen-tick groove cannot be typed anywhere else — the lane's chip picks a
+slot, it does not write one — and the total against the bar is the one number that says
+whether a groove will drift, so it belongs beside the steps it lengthens.
+
+**Considered:** the second row of tools, §10's fallback, which has ~560 px free. Sixteen
+cells in a row there fit, but they lose what the column gives for nothing: step 3 of the
+groove sits on step 3 of the lane, and the playing row crosses both.
+
+**Note on the screenshots:** `chipboy_uishot` builds no song, so
+`docs/screenshots/main-phrases.png` is the empty tab as the tool renders it.
+`main-phrases-groove.png` is the same tab with a bar of cells and a groove typed into the
+song by hand, since an empty tracker shows neither the velocities nor a groove worth
+looking at.
+
 ### 2026-09-08 — the tracker audit (engine)
 
 The engine half of the addendum's §9 (`docs/COMMANDS_AND_TEMPO.md`): the song model, the
