@@ -13,6 +13,15 @@ constexpr uint32_t kBurstSpacing = 20;     ///< cycles between consecutive write
 constexpr uint32_t kCpuHz = 4194304u;
 constexpr int      kMaxTicksPerBlock = 512;
 
+/// The pitch clock (section 7): 11651 CPU cycles is 360.0 Hz. Every voice has
+/// its own, restarted at each plain note-on, so a note's vibrato and slide are
+/// the same whatever sample the note started on.
+constexpr uint64_t kPitchCycles = 11651;
+constexpr uint32_t kVibCycle = 65536;      ///< one vibrato cycle, in phase units
+
+/// V's depth, in 1/32 semitones: LSDj's table, 0 = 1/8 of a semitone, 15 = 8.
+constexpr int kVibDepthFine[16] = { 4, 8, 12, 16, 24, 32, 48, 64, 80, 96, 112, 128, 160, 192, 224, 256 };
+
 uint16_t regAddr(int ch, int r) { return uint16_t(0xFF10 + ch * 5 + r); }
 
 double noteHz(double note) { return 440.0 * std::pow(2.0, (note - 69.0) / 12.0); }
@@ -32,9 +41,6 @@ uint8_t nr32Code(uint8_t level) { static const uint8_t c[4] = { 0, 3, 2, 1 }; re
 
 // NRx1's length bits from an instrument's length (0 = no length counter).
 uint8_t lengthCode6(uint16_t length) { return length ? uint8_t(uint8_t(64 - std::min<int>(64, length)) & 0x3F) : 0; }
-
-// A command argument read as a signed step: 0-127 up, 128-255 down.
-int16_t signedArg(int x) { return int16_t(x < 128 ? x : x - 256); }
 
 } // namespace
 
@@ -91,6 +97,7 @@ void Driver::reset()
     masterL_ = masterR_ = 255;
     tickCount_ = 0;
     pendingCount_ = 0;
+    for (auto& g : tableGroove_) g.fill(0);
     for (auto& vw : view_) vw = VoiceView{};
 }
 
@@ -118,13 +125,50 @@ uint8_t Driver::levelFromVelocity(uint8_t vel) const { return uint8_t(std::min(1
 
 /* --------------------------------------------------------- resolution */
 
-const Instrument* Driver::resolveInstrument(int ch, uint8_t vel)
+int Driver::resolveSlot(int ch, uint8_t vel) const
 {
     const auto& p = params_[size_t(ch)];
-    if (local_[size_t(ch)] && !v_[size_t(ch)].ksInstrument) return local_[size_t(ch)];
     int slot = v_[size_t(ch)].ksInstrument ? v_[size_t(ch)].ksInstrument : p.instrument;
     if (p.velocityMode == 1 && slot) slot += vel / 8;           // velocity -> instrument bank of 16
-    return bank_ ? bank_->instrument(slot) : nullptr;
+    return slot;
+}
+
+const Instrument* Driver::resolveInstrument(int ch, uint8_t vel)
+{
+    if (local_[size_t(ch)] && !v_[size_t(ch)].ksInstrument) return local_[size_t(ch)];
+    return bank_ ? bank_->instrument(resolveSlot(ch, vel)) : nullptr;
+}
+
+/// Which instrument a note-on would load, as one comparable number: a bank
+/// slot, or a mark of its own for a Voice's local instrument. An overlapping
+/// MIDI note is only bare while this does not change (section 8).
+uint32_t Driver::instrumentKey(int ch, uint8_t vel) const
+{
+    if (local_[size_t(ch)] && !v_[size_t(ch)].ksInstrument) return 0x10000u;
+    return uint32_t(std::max(0, resolveSlot(ch, vel)));
+}
+
+NoteReport Driver::noteReport(int ch) const
+{
+    const Voice& v = v_[size_t(ch & 3)];
+    return { v.reportPlain, v.reportInst };
+}
+
+void Driver::setTableGroove(int ch, const uint8_t* ticks16)
+{
+    auto& g = tableGroove_[size_t(ch & 3)];
+    if (!ticks16) { g.fill(0); return; }
+    for (size_t i = 0; i < g.size(); ++i) g[i] = ticks16[i];
+}
+
+uint8_t Driver::tableGrooveSlot(int ch) const { return v_[size_t(ch & 3)].tableGroove; }
+
+PitchSpeed Driver::pitchSpeed(const Voice& v) const
+{
+    // Noise has no pitch effects at all, and a kit has no Drum (section 7).
+    if (v.inst.type == InstrumentType::Noise) return PitchSpeed::Fast;
+    if (v.inst.type == InstrumentType::Kit && v.inst.pitchSpeed == PitchSpeed::Drum) return PitchSpeed::Fast;
+    return v.inst.pitchSpeed;
 }
 
 void Driver::latch(int ch)
@@ -142,7 +186,8 @@ void Driver::latch(int ch)
     v.noiseShift = i.noiseShift; v.noiseDiv = i.noiseDivisor; v.noiseSweep = i.noiseSweep;
     v.pan = p.pan != 255 ? Pan(p.pan & 3) : i.pan;
     v.vibShape = i.vib.shape;
-    v.vibSpeed = std::max<uint8_t>(1, i.vib.speed);
+    v.vibDir = i.vib.dir;
+    v.vibSpeed = uint8_t(std::clamp<int>(i.vib.speed, 1, 15));
     v.vibDepth = i.vib.depth;
     v.vibDelay = i.vib.delay;
     v.waveSlot = i.wave;
@@ -177,7 +222,9 @@ void Driver::reloadInstrument(int ch)
     latch(ch);
     applyLevelParam(ch);
     const uint8_t tbl = v.tableOverride ? v.tableOverride : core.table;
-    v.tableSlot = tbl; v.tableStep = 0; v.tableOn = tbl && bank_ && bank_->table(tbl);
+    v.tableSlot = tbl; v.tableStep = 0; v.tableRow = 0; v.tableWait = 0; v.tableGroove = 0;
+    v.tableOn = tbl && bank_ && bank_->table(tbl);
+    restartPitchClock(ch);                 // the new instrument may run its pitch elsewhere
     fireSlots(ch);
     if (v.active) {
         if (core.type == InstrumentType::Pulse) emit(regAddr(ch, 1), uint8_t((v.duty << 6) | (core.length ? uint8_t(64 - std::min<int>(64, core.length)) & 0x3F : 0)));
@@ -187,6 +234,12 @@ void Driver::reloadInstrument(int ch)
 }
 
 /* -------------------------------------------------------------- notes */
+
+namespace {
+/// The letters a bare note fires again (section 8): the per-note ones. The
+/// rest -- E, F, O, P, S, V, W, A -- are already in force and are left alone.
+bool perNoteCmd(Cmd c) { return c == Cmd::C || c == Cmd::D || c == Cmd::K || c == Cmd::L || c == Cmd::R; }
+} // namespace
 
 void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
 {
@@ -199,6 +252,9 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
         const int base = keyswitchBase(t);
         if (note >= base && note < base + 12) { v.ksInstrument = uint8_t(note - base + 1); return; }
     }
+    // Whether a note is still held under this one decides, with the
+    // instrument's Overlap, if the new note is plain or bare (section 8).
+    const bool over = v.active && v.haveInst && v.heldCount > 0;
     if (v.heldCount < v.held.size()) v.held[v.heldCount++] = note;
     // The parameters' slots are in force from here; a cell's columns then
     // write over them, and fireSlots() applies the result in order.
@@ -210,14 +266,21 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
         if (cell->cmd1.cmd != Cmd::None) v.slot[0] = cell->cmd1;
         if (cell->cmd2.cmd != Cmd::None) v.slot[1] = cell->cmd2;
     }
+    // A tracker cell is plain when its instrument column is filled and bare
+    // when it is blank; a MIDI note is bare only when it lands over a held
+    // note, would load the instrument already sounding, and that instrument
+    // overlaps legato.
+    bool plain = true;
+    if (cell) plain = cell->inst != 0;
+    else if (over && v.inst.overlap == Overlap::Legato && instrumentKey(ch, vel) == v.instKey) plain = false;
     // D postpones the start, whether it came from a cell or a slot.
     for (int i = 0; i < 2; ++i)
         if (v.slot[size_t(i)].cmd == Cmd::D) {
-            v.pendingOn = true; v.pendingNote = note; v.pendingVel = vel; v.delay = int16_t(std::clamp<int>(v.slot[size_t(i)].a, 0, 255));
+            v.pendingOn = true; v.pendingNote = note; v.pendingVel = vel; v.pendingPlain = plain;
+            v.delay = int16_t(std::clamp<int>(v.slot[size_t(i)].a, 0, 255));
             return;
         }
-    const bool legato = v.active && v.haveInst && v.inst.legato;
-    startVoice(ch, note, vel, legato);
+    startVoice(ch, note, vel, plain);
 }
 
 void Driver::noteOff(int ch, uint8_t note)
@@ -228,39 +291,110 @@ void Driver::noteOff(int ch, uint8_t note)
         if (v.held[i] == note) { for (uint8_t k = i; k + 1 < v.heldCount; ++k) v.held[k] = v.held[k + 1]; --v.heldCount; break; }
     if (v.pendingOn && v.pendingNote == note) { v.pendingOn = false; return; }
     if (!v.active || v.note != note) return;
-    if (v.heldCount > 0) {                 // return to the most recent held note
-        startVoice(ch, v.held[v.heldCount - 1], v.vel, v.inst.legato);
+    if (v.heldCount > 0) {                 // back to the most recent held note, bare: no attack
+        startVoice(ch, v.held[v.heldCount - 1], v.vel, false);
         return;
     }
     switch (v.inst.noteOff) {
         case NoteOff::Kill:    stopVoice(ch, true); break;
-        case NoteOff::Release: v.active = false; v.tableOn = false; v.sliding = false; v.chordN = 0; break;
+        case NoteOff::Release: beginRelease(ch); break;
         case NoteOff::Ignore:  break;
     }
 }
 
-void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool legato)
+/// Release: the note stops being played but is left to finish by itself.
+void Driver::beginRelease(int ch)
 {
     Voice& v = v_[size_t(ch)];
+    v.active = false; v.tableOn = false; v.sliding = false; v.chordN = 0;
+    v.pitchClockOn = false; v.retrigEvery = 0; v.retrigOnce = false; v.bendSpeed = 0;
+    if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) {
+        v.releasing = v.dacOn;              // the level steps down from here, a tick apart
+        return;
+    }
+    // A held or rising envelope would never finish: write a decrease at rate 1
+    // so the note fades out. No trigger -- that would start it again.
+    if (v.dacOn && (v.envRate == 0 || v.envDir == EnvDir::Up)) {
+        v.envRate = 1; v.envDir = EnvDir::Down;
+        emit(regAddr(ch, 2), uint8_t((v.envVol << 4) | 1), true);
+        v.volume = v.envVol;
+    }
+}
+
+/// WAV and KIT have no envelope generator, so their release is four levels one
+/// tick apart: 100, 50, 25, mute (section 8).
+void Driver::stepRelease(int ch)
+{
+    Voice& v = v_[size_t(ch)];
+    if (v.waveLevel > 0) {
+        v.waveLevel = uint8_t(v.waveLevel - 1);
+        emit(regAddr(2, 2), nr32Code(v.waveLevel));
+        if (v.waveLevel > 0) return;
+    }
+    v.releasing = false;
+    stopVoice(ch, true);
+}
+
+void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
+{
+    Voice& v = v_[size_t(ch)];
+    if (!plain && v.haveInst) {
+        // A bare note (section 8): only the period moves. No trigger, no
+        // instrument reload, no table restart, no state reset -- the envelope
+        // runs on, the vibrato keeps its phase, the P offset stays, and a
+        // slide in force starts from the pitch the channel is at.
+        v.note = note; v.vel = vel; v.active = true;
+        // The recorder writes a blank instrument column for this, and the slot
+        // that is sounding is the one the note before it loaded.
+        v.reportPlain = false;
+        const bool was = inNoteOn_; inNoteOn_ = true;
+        if (v.inst.tableMode == TableMode::Step && v.tableOn) stepTable(ch);   // a row per note, bare notes included
+        for (int i = 0; i < 2; ++i) {
+            const Command c = slotForNoteOn(ch, i);
+            if (perNoteCmd(c.cmd) && c.cmd != Cmd::D) applyCommand(ch, c, false);
+        }
+        inNoteOn_ = was;
+        writePeriod(ch, false);
+        writeNr51();
+        return;
+    }
+
     const Instrument* inst = resolveInstrument(ch, vel);
     InstrumentCore core;
     if (inst) core = *inst;
     else core = Instrument::defaults(defaultType(ch));
     if (!typeFits(ch, core.type)) core = Instrument::defaults(defaultType(ch));
 
-    const bool wasActive = v.active;
+    // A Step-mode table keeps its place across notes, note-offs included: the
+    // slot it was on, not whether it happens to be running.
+    const uint8_t hadTable = v.tableSlot;
     v.inst = core; v.haveInst = true;
     latch(ch);
-    v.note = note; v.vel = vel; v.active = true; v.killed = false;
-    v.ticks = 0; v.vibPos = 0; v.pOffset = 0; v.sliding = false; v.chordN = 0; v.chordIdx = 0;
-    v.dutyIdx = 0; v.kill = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.lastCmd = {}; v.frameIdx = 0;
+    v.note = note; v.vel = vel; v.active = true; v.killed = false; v.releasing = false;
+    v.instKey = instrumentKey(ch, vel);
+    v.reportPlain = true; v.reportInst = uint8_t(std::clamp(resolveSlot(ch, vel), 0, kInstrumentSlots));
+    v.ticks = 0; v.vibPhase = 0; v.pitchCount = 0;
+    v.pOffset = 0; v.fineOffset = 0; v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0;
+    v.chordN = 0; v.chordIdx = 0; v.chordCount = 0;
+    v.dutyIdx = 0; v.kill = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOnce = false; v.lastCmd = {}; v.frameIdx = 0;
     v.rng = v.rng * 1664525u + 1013904223u + note;
+    restartPitchClock(ch);
     // volume from velocity
     if (v.p.velocityMode == 0 && (core.type == InstrumentType::Pulse || core.type == InstrumentType::Noise)) v.envVol = levelFromVelocity(vel);
     applyLevelParam(ch);
     // table
     const uint8_t tbl = v.tableOverride ? v.tableOverride : core.table;
-    v.tableSlot = tbl; v.tableStep = 0; v.tableOn = tbl && bank_ && bank_->table(tbl);
+    v.tableSlot = tbl; v.tableOn = tbl && bank_ && bank_->table(tbl);
+    v.tableWait = 0;
+    // A Step-mode table advances one row per trigger instead of restarting,
+    // which is the whole point of it; a table that was not already running
+    // starts at its first row (section 7).
+    if (core.tableMode != TableMode::Step || hadTable != tbl) { v.tableStep = 0; v.tableRow = 0; v.tableGroove = 0; }
+    if (core.tableMode == TableMode::Step && v.tableOn) {
+        const bool was = inNoteOn_; inNoteOn_ = true;
+        stepTable(ch);
+        inNoteOn_ = was;
+    }
     if (core.dutySeqLen) v.duty = uint8_t(core.dutySeq[0] & 3);
     // instrument, then its table, then CMD1 and CMD2: the slots in force apply
     // to every note in their span (section 3). Their registers go out with the
@@ -269,17 +403,14 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool legato)
 
     const int base = computePeriod(ch);
     if (base < 0 && core.type != InstrumentType::Noise && core.type != InstrumentType::Kit) {
-        // Below the chip's range: does not sound (C4).
-        v.basePeriod = 0; stopVoice(ch, true); v.active = true; view_[size_t(ch)].outOfRange = true;
+        // Below the chip's range: does not sound (C4). The key is still held,
+        // so the held stack stays as it is.
+        v.basePeriod = 0; v.tableOn = false; v.sliding = false; v.chordN = 0; v.pitchClockOn = false;
+        killDac(ch);
+        v.active = true; view_[size_t(ch)].outOfRange = true;
         return;
     }
     view_[size_t(ch)].outOfRange = false;
-
-    if (legato && wasActive && !v.killed && core.type != InstrumentType::Kit) {
-        writePeriod(ch, false);
-        writeNr51();
-        return;
-    }
 
     switch (core.type) {
         case InstrumentType::Pulse: {
@@ -338,20 +469,83 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool legato)
     writeNr51();
 }
 
+void Driver::killDac(int ch)
+{
+    Voice& v = v_[size_t(ch)];
+    if (!v.dacOn) return;
+    // Clearing the DAC holds the level on this hardware, so it is silent
+    // (reference section 9).
+    if (ch == 2) emit(regAddr(2, 0), 0x00, true);
+    else emit(regAddr(ch, 2), 0x00, true);
+    v.dacOn = false; v.killed = true;
+}
+
 void Driver::stopVoice(int ch, bool kill)
 {
     Voice& v = v_[size_t(ch)];
     v.active = false; v.tableOn = false; v.sliding = false; v.chordN = 0; v.kitOn = false; v.streamActive = false; v.pendingOn = false;
-    if (kill && v.dacOn) {
-        // Kill clears the DAC: on this hardware that holds the level, so it
-        // is silent (reference section 9).
-        if (ch == 2) emit(regAddr(2, 0), 0x00, true);
-        else emit(regAddr(ch, 2), 0x00, true);
-        v.dacOn = false; v.killed = true;
-    }
+    v.pitchClockOn = false; v.releasing = false;
+    // A kill or a stop ends the phrase: a key released afterwards must not
+    // bring a note back that nobody is playing (section 8).
+    v.heldCount = 0;
+    if (kill) killDac(ch);
+}
+
+/// Everything a channel is doing stops and it goes quiet, whatever the state
+/// says: MIDI CC 120/123, and every flush the Player or the processor sends.
+void Driver::allNotesOff(int ch)
+{
+    Voice& v = v_[size_t(ch)];
+    v.delay = -1; v.kill = -1;
+    v.retrigEvery = 0; v.retrigCount = 0; v.retrigOnce = false;
+    v.bendSpeed = 0; v.slideLeft = 0; v.chordIdx = 0; v.chordCount = 0;
+    stopVoice(ch, true);
 }
 
 /* ------------------------------------------------------------- pitch */
+
+/// What is left of a slide, in the domain it started in: period units, or
+/// 1/32 semitones in Drum. It walks to zero over the duration L asked for, so
+/// the note arrives exactly, without accumulating rounding.
+int32_t Driver::slideResidual(const Voice& v) const
+{
+    if (!v.sliding || v.slideTotal <= 0) return 0;
+    return int32_t(int64_t(v.slideFrom) * int64_t(v.slideLeft) / int64_t(v.slideTotal));
+}
+
+/// The vibrato's offset in 1/32 semitones, from the phase: the shape over one
+/// cycle scaled by LSDj's depth table, downward or upward from the note.
+int Driver::vibratoFine(const Voice& v) const
+{
+    if (!v.vibDepth || !v.vibSpeed || v.ticks < v.vibDelay) return 0;
+    const uint32_t ph = v.vibPhase % kVibCycle;
+    const double half = double(kVibCycle / 2);
+    double u = 0.0;                                   // 0 at the note, 1 at full depth
+    switch (v.vibShape) {
+        case VibShape::Triangle: u = ph < kVibCycle / 2 ? double(ph) / half : 2.0 - double(ph) / half; break;
+        case VibShape::Saw:      u = double(ph) / double(kVibCycle); break;
+        case VibShape::Square:   u = ph < kVibCycle / 2 ? 0.0 : 1.0; break;
+    }
+    const int off = int(std::lround(u * kVibDepthFine[v.vibDepth & 15]));
+    return v.vibDir == VibDir::Up ? off : -off;
+}
+
+/// The note the channel is at, in semitones and vibrato apart: the note, the
+/// channel's transpose, the bend wheel, the chord, the table's transpose
+/// column, and the 1/32-semitone offsets Drum-mode P and L work in.
+double Driver::noteOfVoice(int ch) const
+{
+    const Voice& v = v_[size_t(ch)];
+    double note = v.note + v.p.transpose + v.bend;
+    if (v.chordN) note += v.chord[v.chordIdx % v.chordN];
+    if (v.tableOn && v.inst.transpose && bank_) {
+        const Table* t = bank_->table(v.tableSlot);
+        if (t) { const auto& st = t->steps[v.tableRow]; if (st.hasTranspose) note += st.transpose; }
+    }
+    int32_t fine = v.fineOffset;
+    if (v.slideDrum) fine += slideResidual(v);
+    return note + double(fine) / 32.0;
+}
 
 int Driver::computePeriod(int ch)
 {
@@ -365,29 +559,55 @@ int Driver::computePeriod(int ch)
         const double semis = p.transpose + v.bend;
         const double r = rate * std::pow(2.0, semis / 12.0);
         const double per = 2048.0 - 2097152.0 / std::max(1024.0, r);
-        return std::clamp(int(std::lround(per)) + v.pOffset, 0, 2047);
+        return std::clamp(int(std::lround(per)) + v.pOffset + (v.slideDrum ? 0 : slideResidual(v)), 0, 2047);
     }
-    double note = v.note + p.transpose + v.bend;
-    if (v.chordN) note += v.chord[v.chordIdx % v.chordN];
-    // the table's transpose column
-    if (v.tableOn && v.inst.transpose && bank_) { const Table* t = bank_->table(v.tableSlot); if (t) { const auto& s = t->steps[v.tableStep]; if (s.hasTranspose) note += s.transpose; } }
+    // period = periodOf(noteFine) + periodOffset (section 7): the note and the
+    // vibrato are semitones, P and a slide are register units unless the
+    // instrument's pitch speed is Drum, where they are semitones too.
+    const double note = noteOfVoice(ch) + double(vibratoFine(v)) / 32.0;
     int per = periodForNote(note, v.inst.type == InstrumentType::Wave);
     if (per < 0) return -1;
-    // vibrato: signed period offset, recomputed per tick (section 8.4)
-    int vib = 0;
-    if (v.vibDepth && v.ticks >= v.vibDelay) {
-        const int step = v.vibSpeed;
-        const int pos = v.vibPos;
-        switch (v.vibShape) {
-            case VibShape::Triangle: { const int cyc = step * 4; const int ph = pos % cyc; const double tri = ph < cyc / 2 ? (ph * 2.0 / cyc) : (2.0 - ph * 2.0 / cyc); vib = int(std::lround((tri * 2.0 - 1.0) * v.vibDepth)); break; }
-            case VibShape::Square:   vib = ((pos / step) & 1) ? -v.vibDepth : v.vibDepth; break;
-            case VibShape::SawUp:    { const int cyc = step * 2; vib = int(std::lround((double(pos % cyc) / cyc * 2.0 - 1.0) * v.vibDepth)); break; }
-            case VibShape::SawDown:  { const int cyc = step * 2; vib = int(std::lround((1.0 - double(pos % cyc) / cyc * 2.0) * v.vibDepth)); break; }
+    per += v.pOffset;
+    if (!v.slideDrum) per += slideResidual(v);
+    return std::clamp(per, 0, 2047);
+}
+
+/// One pitch update: the vibrato phase, a slide and a P bend move on, and the
+/// period goes out without a trigger. The 360 Hz clock calls this in Fast,
+/// Step and Drum; the tracker tick calls it in Tick, where the instrument's
+/// command rate slows P and V to one step every rate + 1 ticks.
+void Driver::pitchStep(int ch, bool onTick)
+{
+    Voice& v = v_[size_t(ch)];
+    if (!v.active) return;
+    bool advance = true;
+    if (onTick) {
+        const int every = int(v.inst.cmdRate) + 1;
+        if (every > 1) { if (++v.pitchCount < every) advance = false; else v.pitchCount = 0; }
+    }
+    if (advance) {
+        // One cycle is 720 / speed updates at 360 Hz, or 96 / speed ticks.
+        if (v.vibSpeed && v.vibDepth && v.ticks >= v.vibDelay)
+            v.vibPhase += uint32_t((uint64_t(v.vibSpeed) * kVibCycle) / (onTick ? 96u : 720u));
+        if (v.bendSpeed) {
+            if (pitchSpeed(v) == PitchSpeed::Drum) v.fineOffset = std::clamp<int32_t>(v.fineOffset + v.bendSpeed * 2, -32000, 32000);
+            else                                   v.pOffset = int16_t(std::clamp<int>(v.pOffset + v.bendSpeed, -2047, 2047));
         }
     }
-    per += v.pOffset + vib;
-    if (v.sliding) per = v.basePeriod;    // slides own the period until they arrive
-    return std::clamp(per, 0, 2047);
+    // A slide's duration is in updates of this clock; the command rate leaves
+    // it alone.
+    if (v.sliding) { if (v.slideLeft > 0) --v.slideLeft; if (v.slideLeft <= 0) { v.sliding = false; v.slideLeft = 0; } }
+    writePeriod(ch, false);
+}
+
+void Driver::restartPitchClock(int ch)
+{
+    Voice& v = v_[size_t(ch)];
+    v.pitchClock = cycle_ + kPitchCycles;
+    // Noise has no pitch effects, and a kit's period is its sample rate, read
+    // by the streaming timer: neither is bent between ticks.
+    v.pitchClockOn = (v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Wave)
+                     && pitchSpeed(v) != PitchSpeed::Tick;
 }
 
 void Driver::writePeriod(int ch, bool trigger)
@@ -406,6 +626,15 @@ void Driver::writePeriod(int ch, bool trigger)
     int per = computePeriod(ch);
     if (per < 0) per = 0;
     v.basePeriod = int16_t(per);
+    // Where the channel is now, for an L that fires later: the pitch without
+    // the vibrato, in both domains, the slide it is in the middle of included.
+    {
+        const double note = noteOfVoice(ch);
+        v.pitchNowFine = int32_t(std::lround(note * 32.0));
+        const int base = periodForNote(note, v.inst.type == InstrumentType::Wave);
+        v.pitchNowPeriod = (base < 0 ? 0 : base) + v.pOffset + (v.slideDrum ? 0 : slideResidual(v));
+        v.pitchValid = true;
+    }
     const uint16_t f = uint16_t(per);
     const bool changed = v.lastPeriod != int16_t(f);
     if (changed || trigger) {
@@ -572,31 +801,59 @@ void Driver::scheduleStreams(uint64_t cycleStart, uint64_t cycleEnd)
 
 /* ----------------------------------------------------------- commands */
 
+namespace {
+
+/// R's volume step per retrigger (section 7): 0 none, 1-7 up by that much,
+/// 9-15 down by x - 8.
+int16_t retrigVolStep(int x)
+{
+    const int n = std::clamp(x, 0, 15);
+    return int16_t(n < 8 ? n : -(n - 8));
+}
+
+/// One side of M: 0-7 sets it, 8 leaves it, 9-11 raise it by 1-3 and 13-15
+/// lower it by 1-3. 12 is a value LSDj does not document; it changes nothing.
+int masterFromArg(int x, int cur)
+{
+    const int n = std::clamp(x, 0, 15);
+    if (n < 8) return n;
+    if (n >= 9 && n <= 11) return std::min(7, cur + (n - 8));
+    if (n >= 13) return std::max(0, cur - (n - 12));
+    return cur;
+}
+
+} // namespace
+
 void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
 {
     Voice& v = v_[size_t(ch)];
-    Command c = cIn;
-    if (c.cmd == Cmd::Z) {
-        // In a table step Z randomises the command before it on that step; in
-        // a slot it randomises the other slot, at every note-on (fireSlots).
-        if (!fromTable || v.lastCmd.cmd == Cmd::None) return;
-        c = v.lastCmd; c.a = randomArg(ch, cIn.a);
-    }
-    v.lastCmd = c;
+    const Command c = cIn;
+    if (c.cmd == Cmd::None) return;
+    // Z is resolved by whoever fires it -- a slot at a note-on, a table step --
+    // because what it re-runs is the other slot or column.
+    if (c.cmd == Cmd::Z) return;
+    if (c.cmd != Cmd::H) v.lastCmd = c;            // what a later Z re-runs
     const bool pulse = v.inst.type == InstrumentType::Pulse;
     const bool wave = v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit;
+    const bool noise = v.inst.type == InstrumentType::Noise;
     // Inside a note-on the commands only set the running state: the note's own
     // writes carry it out, so a slot does not cost a second burst or a pop.
     const bool live = v.active && !inNoteOn_;
     switch (c.cmd) {
         case Cmd::A:                                  // table select, 0 stops
             if (c.a <= 0) v.tableOn = false;
-            else { v.tableSlot = uint8_t(std::clamp<int>(c.a, 1, kTableSlots)); v.tableStep = 0; v.tableOn = bank_ && bank_->table(v.tableSlot); }
+            else { v.tableSlot = uint8_t(std::clamp<int>(c.a, 1, kTableSlots)); v.tableStep = 0; v.tableRow = 0; v.tableWait = 0; v.tableGroove = 0; v.tableOn = bank_ && bank_->table(v.tableSlot); }
             break;
-        case Cmd::C: v.chord[0] = 0; v.chord[1] = uint8_t(std::clamp<int>(c.a, 0, 60)); v.chord[2] = uint8_t(std::clamp<int>(c.b, 0, 60)); v.chordN = c.b ? 3 : (c.a ? 2 : 0); v.chordIdx = 0; break;
+        case Cmd::C:                                  // 0, x, y one step per cmdRate + 1 ticks
+            if (noise) break;
+            v.chord[0] = 0; v.chord[1] = uint8_t(std::clamp<int>(c.a, 0, 60)); v.chord[2] = uint8_t(std::clamp<int>(c.b, 0, 60));
+            v.chordN = c.b ? 3 : (c.a ? 2 : 0);
+            v.chordIdx = 0; v.chordCount = 0;
+            break;
         case Cmd::D: if (fromTable) v.delay = int16_t(std::clamp<int>(c.a, 0, 255)); break;   // a slot's D is read at the note-on
         case Cmd::E: {
-            // Envelope: volume in x; y is the speed, 0-7 decaying, 8-15 rising.
+            // Envelope: volume in x; y is the NRx2 encoding, 0 and 8 holding,
+            // 1-7 decaying at that rate and 9-15 rising at y - 8.
             if (wave) { v.waveLevel = uint8_t(std::clamp<int>(c.a, 0, 3)); if (live) writeEnvelope(ch, false); }
             else {
                 v.envVol = uint8_t(std::clamp<int>(c.a, 0, 15));
@@ -604,19 +861,66 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
                 v.envDir = (c.b & 8) ? EnvDir::Up : EnvDir::Down;
                 // A rewrite of NRx2 alone is zombie mode; the retrigger keeps
                 // the level honest and the duty phase intact (reference 4).
-                if (live) writeEnvelope(ch, pulse || v.inst.type == InstrumentType::Noise);
+                if (live) writeEnvelope(ch, pulse || noise);
             }
             break;
         }
         case Cmd::F: if (v.inst.type == InstrumentType::Wave) { const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr; if (w && !w->frames.empty()) { v.frameIdx = uint8_t(std::clamp<int>(c.a - 1, 0, int(w->frames.size()) - 1)); v.frameCount = 0; if (live) loadFrame(ch, w->frames[v.frameIdx], model_ == Console::DMG); } } break;
-        case Cmd::G: case Cmd::T: break;              // timeline: the Player and the Clock own these
+        case Cmd::G:
+            // Inside a table G sets that run's row lengths: the driver keeps
+            // the slot for the Player, which hands back the groove's ticks
+            // through setTableGroove(). On the timeline the Player owns it.
+            if (fromTable) { v.tableGroove = uint8_t(std::clamp<int>(c.a, 0, 16)); if (!v.tableGroove) tableGroove_[size_t(ch)].fill(0); }
+            break;
+        case Cmd::T: break;                           // timeline: the Player and the Clock own this
         case Cmd::H: if (fromTable) { if (c.a <= 0) v.tableOn = false; else v.tableStep = uint8_t(std::clamp<int>(c.a - 1, 0, 15)); } break;
         case Cmd::K: v.kill = int16_t(std::clamp<int>(c.a, 0, 255)); break;
-        case Cmd::L: v.slideRate = uint8_t(std::clamp<int>(c.a, 0, 15)); v.sliding = v.slideRate > 0; v.slideTarget = int16_t(std::clamp(periodForNote(v.note + v.p.transpose, v.inst.type == InstrumentType::Wave), 0, 2047)); break;
-        case Cmd::M: writeNr50(uint8_t(std::clamp<int>(c.a, 0, 7)), uint8_t(std::clamp<int>(c.b, 0, 7))); break;
+        case Cmd::L: {
+            // A slide is a residual that walks to zero over x updates: ticks in
+            // Tick, 1/360 s otherwise, 0 instant. It starts wherever the
+            // channel is, mid-slide included, and ends on the note of this
+            // cell or note-on -- in period units, or semitones in Drum.
+            if (noise) break;
+            const bool drum = pitchSpeed(v) == PitchSpeed::Drum;
+            const int32_t fromFine = v.pitchNowFine, fromPeriod = v.pitchNowPeriod;
+            const bool have = v.pitchValid;
+            v.sliding = false; v.slideLeft = 0; v.slideDrum = drum;
+            const int dur = std::clamp<int>(c.a, 0, 32767);
+            if (!have || dur <= 0) { if (live) writePeriod(ch, false); break; }
+            int32_t from = 0;
+            if (drum) from = fromFine - int32_t(std::lround(noteOfVoice(ch) * 32.0));
+            else {
+                const int b = periodForNote(noteOfVoice(ch), v.inst.type == InstrumentType::Wave);
+                from = fromPeriod - ((b < 0 ? 0 : b) + v.pOffset);
+            }
+            if (from != 0) { v.slideFrom = from; v.slideTotal = dur; v.slideLeft = dur; v.sliding = true; }
+            if (live) writePeriod(ch, false);
+            break;
+        }
+        case Cmd::M: {
+            const uint8_t cur = known_[0x14] ? shadow_[0x14] : uint8_t(((global_.masterL & 7) << 4) | (global_.masterR & 7));
+            writeNr50(uint8_t(masterFromArg(c.a, (cur >> 4) & 7)), uint8_t(masterFromArg(c.b, cur & 7)));
+            break;
+        }
         case Cmd::O: v.pan = Pan(std::clamp<int>(c.a, 0, 3)); writeNr51(); break;
-        case Cmd::P: v.pOffset = int16_t(std::clamp<int>(c.a, 0, 255) - 128); if (live) writePeriod(ch, false); break;
-        case Cmd::R: v.retrigEvery = uint8_t(std::clamp<int>(c.b, 0, 255)); v.retrigStep = signedArg(c.a); v.retrigCount = 0; break;
+        case Cmd::P: {
+            // The bend speed, signed around 128: period units per update, or
+            // (x - 128)/16 semitones in Drum. Step has no bend, so it is an
+            // immediate offset instead. P 128 stops a bend and keeps what it
+            // reached; a plain note-on is what puts the offset back to zero.
+            if (noise) break;
+            const int speed = std::clamp<int>(c.a, 0, 255) - 128;
+            if (pitchSpeed(v) == PitchSpeed::Step) { v.pOffset = int16_t(speed); v.bendSpeed = 0; }
+            else v.bendSpeed = int16_t(speed);
+            if (live) writePeriod(ch, false);
+            break;
+        }
+        case Cmd::R:
+            v.retrigEvery = uint8_t(std::clamp<int>(c.b, 0, 255));
+            v.retrigOnce = v.retrigEvery == 0;        // y = 0 retriggers once
+            v.retrigStep = retrigVolStep(c.a);
+            v.retrigCount = 0;
+            break;
         case Cmd::S: {
             // PU1's sweep. The direction is the instrument's unless x asks for
             // down; on WAV and NOI there is no sweep unit, so S is inert.
@@ -631,7 +935,16 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
             }
             break;
         }
-        case Cmd::V: v.vibSpeed = uint8_t(std::clamp<int>(c.a, 1, 15)); v.vibDepth = uint8_t(std::clamp<int>(c.b, 0, 15)); v.vibDelay = 0; break;
+        case Cmd::V:
+            // Speed 1-15 is V's own: one cycle every 720 / x updates (x / 2 Hz
+            // in Fast) or 96 / x ticks. x = 0 turns the vibrato off.
+            if (noise) break;
+            v.vibSpeed = uint8_t(std::clamp<int>(c.a, 0, 15));
+            v.vibDepth = uint8_t(std::clamp<int>(c.b, 0, 15));
+            v.vibDelay = 0;
+            if (!v.vibSpeed) { v.vibDepth = 0; v.vibPhase = 0; }
+            if (live) writePeriod(ch, false);
+            break;
         case Cmd::W: {
             // Duty on the pulses, wave slot on WAV: one letter, the thing the
             // channel's waveform actually is.
@@ -668,14 +981,17 @@ void Driver::revertCommand(int ch, Cmd cmd)
             break;
         case Cmd::M: writeNr50(global_.masterL, global_.masterR); break;
         case Cmd::O: v.pan = v.p.pan != 255 ? Pan(v.p.pan & 3) : i.pan; writeNr51(); break;
-        case Cmd::P: v.pOffset = 0; if (live) writePeriod(ch, false); break;
+        case Cmd::P: v.pOffset = 0; v.fineOffset = 0; v.bendSpeed = 0; if (live) writePeriod(ch, false); break;
         case Cmd::S:
             if (ch == 0 && pulse) {
                 v.sweepRate = i.sweepRate; v.sweepDown = i.sweepDown; v.sweepShift = i.sweepShift;
                 emit(0xFF10, uint8_t((v.sweepRate << 4) | (v.sweepDown ? 8 : 0) | v.sweepShift), true);
             }
             break;
-        case Cmd::V: v.vibSpeed = std::max<uint8_t>(1, i.vib.speed); v.vibDepth = i.vib.depth; v.vibDelay = i.vib.delay; break;
+        case Cmd::V:
+            v.vibShape = i.vib.shape; v.vibDir = i.vib.dir;
+            v.vibSpeed = uint8_t(std::clamp<int>(i.vib.speed, 1, 15)); v.vibDepth = i.vib.depth; v.vibDelay = i.vib.delay;
+            break;
         case Cmd::W:
             if (wave) { const Wave* w = bank_ ? bank_->wave(i.wave) : nullptr; v.waveSlot = i.wave; v.frameIdx = 0; v.frameCount = 0; if (live && w && !w->frames.empty()) loadFrame(ch, w->frames[0], model_ == Console::DMG); }
             else if (pulse) { v.duty = i.duty; if (live) emit(regAddr(ch, 1), uint8_t((v.duty << 6) | lengthCode6(i.length))); }
@@ -687,19 +1003,31 @@ void Driver::revertCommand(int ch, Cmd cmd)
 int16_t Driver::randomArg(int ch, int max)
 {
     Voice& v = v_[size_t(ch)];
+    if (max <= 0) return 0;
     v.rng = v.rng * 1664525u + 1013904223u;
-    return int16_t((v.rng >> 16) % uint32_t(std::max(1, max + 1)));
+    return int16_t((v.rng >> 16) % uint32_t(max + 1));
 }
 
-/// The slot as it applies to this note: Z in the other slot replaces x with a
-/// fresh random value up to its own x (section 2).
+/// Z re-runs the last command that is not Z or H -- the other slot or column
+/// when that is set, else the last one the channel fired -- with a random
+/// 0..x added to its x and 0..y to its y (section 7).
+Command Driver::resolveRandom(int ch, const Command& z, const Command& other)
+{
+    Voice& v = v_[size_t(ch)];
+    Command c = (other.cmd != Cmd::None && other.cmd != Cmd::Z && other.cmd != Cmd::H) ? other : v.lastCmd;
+    if (c.cmd == Cmd::None || c.cmd == Cmd::Z || c.cmd == Cmd::H) return {};
+    c.a = int16_t(c.a + randomArg(ch, z.a));
+    c.b = int16_t(c.b + randomArg(ch, z.b));
+    return c;
+}
+
+/// The slot as it applies to this note: itself, or what Z re-runs.
 Command Driver::slotForNoteOn(int ch, int i)
 {
     Voice& v = v_[size_t(ch)];
-    Command c = v.slot[size_t(i)];
-    const Command& other = v.slot[size_t(i ^ 1)];
-    if (c.cmd != Cmd::None && c.cmd != Cmd::Z && other.cmd == Cmd::Z) c.a = randomArg(ch, other.a);
-    return c;
+    const Command& c = v.slot[size_t(i)];
+    if (c.cmd != Cmd::Z) return c;
+    return resolveRandom(ch, c, v.slot[size_t(i ^ 1)]);
 }
 
 void Driver::fireSlots(int ch)
@@ -708,10 +1036,22 @@ void Driver::fireSlots(int ch)
     inNoteOn_ = true;
     for (int i = 0; i < 2; ++i) {
         const Command c = slotForNoteOn(ch, i);
-        if (c.cmd == Cmd::None || c.cmd == Cmd::Z || c.cmd == Cmd::D) continue;   // D was read before the note started
+        if (c.cmd == Cmd::None || c.cmd == Cmd::D) continue;   // D was read before the note started
         applyCommand(ch, c, false);
     }
     inNoteOn_ = was;
+}
+
+/// A keyswitch or a cell's instrument column holds until the Instrument
+/// parameter moves; moving it hands the channel back to the parameter, so the
+/// lane is never dead (section 8).
+void Driver::adoptInstrumentParam(int ch)
+{
+    Voice& v = v_[size_t(ch)];
+    const int16_t p = int16_t(params_[size_t(ch)].instrument);
+    if (v.instParam == p) return;
+    if (v.instParam >= 0) v.ksInstrument = 0;
+    v.instParam = p;
 }
 
 /// Take the parameters' slots as the ones in force, without firing them: what
@@ -720,6 +1060,7 @@ void Driver::syncSlots(int ch)
 {
     Voice& v = v_[size_t(ch)];
     const auto& p = params_[size_t(ch)];
+    adoptInstrumentParam(ch);
     if (p.table != v.tableParam) { v.tableParam = p.table; v.tableOverride = p.table; }
     for (int i = 0; i < 2; ++i)
         if (!sameCmd(p.cmd[i], v.slotParam[size_t(i)])) { v.slotParam[size_t(i)] = p.cmd[i]; v.slot[size_t(i)] = p.cmd[i]; }
@@ -731,6 +1072,7 @@ void Driver::updateSlots(int ch)
 {
     Voice& v = v_[size_t(ch)];
     const auto& p = params_[size_t(ch)];
+    adoptInstrumentParam(ch);
     if (p.table != v.tableParam) { v.tableParam = p.table; v.tableOverride = p.table; }
     for (int i = 0; i < 2; ++i) {
         if (sameCmd(p.cmd[i], v.slotParam[size_t(i)])) continue;
@@ -738,8 +1080,22 @@ void Driver::updateSlots(int ch)
         v.slotParam[size_t(i)] = p.cmd[i];
         v.slot[size_t(i)] = p.cmd[i];
         if (p.cmd[i].cmd == Cmd::None) { if (was != Cmd::None) revertCommand(ch, was); continue; }
-        applyCommand(ch, p.cmd[i], false);
+        applyCommand(ch, p.cmd[i], false);        // Z waits for the note-on
     }
+}
+
+/// The ticks a table row lasts: one, unless a G in the table asked for a
+/// groove and the Player handed its counts over (setTableGroove).
+uint16_t Driver::tableRowTicks(int ch, int row) const
+{
+    const Voice& v = v_[size_t(ch)];
+    if (!v.tableGroove) return 1;
+    const auto& g = tableGroove_[size_t(ch)];
+    size_t len = 0;
+    while (len < g.size() && g[len]) ++len;
+    if (len == 0) return 1;
+    const uint8_t n = g[size_t(row) % len];
+    return uint16_t(n ? n : 1);
 }
 
 void Driver::stepTable(int ch)
@@ -749,14 +1105,21 @@ void Driver::stepTable(int ch)
     const Table* t = bank_ ? bank_->table(v.tableSlot) : nullptr;
     if (!t) { v.tableOn = false; return; }
     if (v.delay > 0) { --v.delay; return; }
-    const TableStep& s = t->steps[v.tableStep];
+    // The row's transpose column and its commands take effect together.
+    v.tableRow = v.tableStep;
+    const TableStep& s = t->steps[v.tableRow];
     if (s.vol >= 0) {
-        if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) { v.waveLevel = uint8_t(std::clamp<int>(s.vol / 4, 0, 3)); if (v.active) writeEnvelope(ch, false); }
-        else { v.envVol = uint8_t(s.vol); if (v.active) writeEnvelope(ch, true); }
+        // Inside a note-on the level only changes the running state: the
+        // note's own writes carry it, as a slot's would.
+        const bool live = v.active && !inNoteOn_;
+        if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) { v.waveLevel = uint8_t(std::clamp<int>(s.vol / 4, 0, 3)); if (live) writeEnvelope(ch, false); }
+        else { v.envVol = uint8_t(s.vol); if (live) writeEnvelope(ch, true); }
     }
-    v.lastCmd = {};                               // Z randomises the command before it on this step
-    if (s.cmd1.cmd != Cmd::None) applyCommand(ch, s.cmd1, true);
-    if (s.cmd2.cmd != Cmd::None) applyCommand(ch, s.cmd2, true);
+    const Command c1 = s.cmd1.cmd == Cmd::Z ? resolveRandom(ch, s.cmd1, s.cmd2) : s.cmd1;
+    const Command c2 = s.cmd2.cmd == Cmd::Z ? resolveRandom(ch, s.cmd2, s.cmd1) : s.cmd2;
+    if (c1.cmd != Cmd::None) applyCommand(ch, c1, true);
+    if (c2.cmd != Cmd::None) applyCommand(ch, c2, true);
+    v.tableWait = tableRowTicks(ch, v.tableRow);
     if (!v.tableOn) return;                       // H 0 stopped it
     if (s.cmd1.cmd == Cmd::H || s.cmd2.cmd == Cmd::H) return;   // hopped: step already set
     if (v.tableStep + 1 < kTableSteps) { ++v.tableStep; return; }
@@ -783,7 +1146,7 @@ void Driver::tick(int ch)
             if (before.instrument != v.p.instrument) { reloadInstrument(ch); return; }
             if (before.table != v.p.table || v.tableOverride != v.tableSlot) {
                 const uint8_t tbl = v.tableOverride ? v.tableOverride : v.inst.table;
-                if (tbl != v.tableSlot) { v.tableSlot = tbl; v.tableStep = 0; v.tableOn = tbl && bank_ && bank_->table(tbl); }
+                if (tbl != v.tableSlot) { v.tableSlot = tbl; v.tableStep = 0; v.tableRow = 0; v.tableWait = 0; v.tableOn = tbl && bank_ && bank_->table(tbl); }
             }
             if (before.level != v.p.level) {
                 applyLevelParam(ch);
@@ -795,41 +1158,40 @@ void Driver::tick(int ch)
     // pending delayed start
     if (v.pendingOn) {
         if (v.delay > 0) { --v.delay; }
-        else { v.pendingOn = false; startVoice(ch, v.pendingNote, v.pendingVel, false); }
+        else { v.pendingOn = false; startVoice(ch, v.pendingNote, v.pendingVel, v.pendingPlain); }
     }
+    // A released WAV or KIT walks its level down whether it is active or not.
+    if (v.releasing) stepRelease(ch);
     if (!v.active) return;
     ++v.ticks;
     // kill countdown
     if (v.kill >= 0) { if (v.kill == 0) { stopVoice(ch, true); v.kill = -1; return; } --v.kill; }
-    // table and chord
-    stepTable(ch);
+    // The table: a row per tick, or per the row length a G inside it asked
+    // for. A Step-mode table advances at notes instead (section 7).
+    if (v.inst.tableMode == TableMode::Tick) {
+        if (v.tableWait > 1) --v.tableWait;
+        else stepTable(ch);
+    }
     if (!v.active) return;
-    if (v.chordN) v.chordIdx = uint8_t((v.chordIdx + 1) % v.chordN);
+    // chord: one step every cmdRate + 1 ticks
+    if (v.chordN && ++v.chordCount >= uint8_t(v.inst.cmdRate + 1)) { v.chordCount = 0; v.chordIdx = uint8_t((v.chordIdx + 1) % v.chordN); }
     // duty sequence
     if (v.inst.type == InstrumentType::Pulse && v.inst.dutySeqLen) {
         v.dutyIdx = uint8_t((v.dutyIdx + 1) % v.inst.dutySeqLen);
         const uint8_t d = uint8_t(v.inst.dutySeq[v.dutyIdx] & 3);
         if (d != v.duty) { v.duty = d; emit(regAddr(ch, 1), uint8_t((d << 6) | lengthCode6(v.inst.length))); }
     }
-    // vibrato phase
-    if (v.ticks >= v.vibDelay) ++v.vibPos;
-    // slide
-    if (v.sliding) {
-        const int cur = v.basePeriod, tgt = v.slideTarget, step = v.slideRate * 2;
-        if (std::abs(tgt - cur) <= step) { v.basePeriod = int16_t(tgt); v.sliding = false; }
-        else v.basePeriod = int16_t(cur + (tgt > cur ? step : -step));
-    }
     // noise sweep
     if (v.inst.type == InstrumentType::Noise && v.noiseSweep) { v.noiseShift = uint8_t(std::clamp<int>(int(v.noiseShift) + v.noiseSweep, 0, 13)); v.inst.noiseManual = true; }
-    // retrigger, and its volume step per repeat
+    // retrigger, every y ticks x (cmdRate + 1), or once when y is zero
     bool retrig = false;
-    if (v.retrigEvery) {
-        if (++v.retrigCount >= v.retrigEvery) {
-            v.retrigCount = 0; retrig = true;
-            if (v.retrigStep && v.inst.type != InstrumentType::Wave && v.inst.type != InstrumentType::Kit)
-                v.envVol = uint8_t(std::clamp<int>(int(v.envVol) + v.retrigStep, 0, 15));
-        }
+    if (v.retrigOnce) { v.retrigOnce = false; retrig = true; }
+    else if (v.retrigEvery) {
+        const uint16_t every = uint16_t(uint16_t(v.retrigEvery) * uint16_t(v.inst.cmdRate + 1));
+        if (++v.retrigCount >= every) { v.retrigCount = 0; retrig = true; }
     }
+    if (retrig && v.retrigStep && v.inst.type != InstrumentType::Wave && v.inst.type != InstrumentType::Kit)
+        v.envVol = uint8_t(std::clamp<int>(int(v.envVol) + v.retrigStep, 0, 15));
     // wave frames
     if (v.inst.type == InstrumentType::Wave && v.inst.frameAdvance) {
         if (++v.frameCount >= v.inst.frameAdvance) {
@@ -847,6 +1209,10 @@ void Driver::tick(int ch)
             }
         }
     }
+    // With the pitch speed at Tick this tick is the pitch update: the vibrato
+    // phase, a slide and a P bend move here rather than at 360 Hz.
+    if (!v.pitchClockOn && (v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Wave)
+        && pitchSpeed(v) == PitchSpeed::Tick) pitchStep(ch, true);
     // pitch for this tick
     if (v.inst.type == InstrumentType::Noise) { if (v.noiseSweep || v.pOffset) writePeriod(ch, retrig); else if (retrig) writePeriod(ch, true); }
     else if (v.inst.type == InstrumentType::Kit) { if (retrig) writePeriod(ch, true); }
@@ -870,6 +1236,7 @@ void Driver::handleEvent(const NoteEvent& e)
     const int ch = e.channel & 3;
     Voice& v = v_[size_t(ch)];
     // Channels playing from the tracker ignore the piano roll and vice versa.
+    // Only notes are gated: a flush silences a channel whatever its source is.
     if (song_) {
         const bool trackerCh = song_->noteSource[size_t(ch)] == tracker::NoteSource::Tracker;
         const bool note = e.kind == NoteEvent::NoteOn || e.kind == NoteEvent::NoteOff;
@@ -886,13 +1253,13 @@ void Driver::handleEvent(const NoteEvent& e)
         case NoteEvent::Control:
             if (e.a == 1) v.vibDepth = uint8_t(e.b / 8);       // the mod wheel is vibrato depth
             else if (e.a == 7 && v.active) { if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) { v.waveLevel = uint8_t(e.b / 32); writeEnvelope(ch, false); } else { v.envVol = uint8_t(e.b / 8); writeEnvelope(ch, true); } }
-            else if (e.a == 120 || e.a == 123) { v.heldCount = 0; if (v.active) stopVoice(ch, true); }
+            else if (e.a == 120 || e.a == 123) allNotesOff(ch);
             break;
-        case NoteEvent::AllNotesOff: v.heldCount = 0; if (v.active) stopVoice(ch, true); break;
+        case NoteEvent::AllNotesOff: allNotesOff(ch); break;
         case NoteEvent::Command:
             // A tracker cell with no note: its columns are the slots from here
             // on, and its instrument column reloads the instrument first.
-            if (e.table) { v.tableOverride = e.table; if (v.active) { v.tableSlot = e.table; v.tableStep = 0; v.tableOn = bank_ && bank_->table(e.table); } }
+            if (e.table) { v.tableOverride = e.table; if (v.active) { v.tableSlot = e.table; v.tableStep = 0; v.tableRow = 0; v.tableWait = 0; v.tableOn = bank_ && bank_->table(e.table); } }
             if (e.cmd1.cmd != Cmd::None) v.slot[0] = e.cmd1;
             if (e.cmd2.cmd != Cmd::None) v.slot[1] = e.cmd2;
             if (e.inst && e.inst != v.ksInstrument) { v.ksInstrument = e.inst; if (v.haveInst) { reloadInstrument(ch); break; } }
@@ -913,34 +1280,73 @@ void Driver::process(const NoteEvent* events, size_t n, uint32_t numSamples, uin
     const uint64_t blockEnd = frameAbs + numSamples;
 
     // Events land where the host put them (sample accurate); the tick drives
-    // what a driver runs from its interrupt: tables, vibrato, frames, the
-    // command slots. With notes-on-tick the note-ons and note-offs wait for
-    // the next tick as a tracker's do -- bends and controllers never do, and
-    // tracker cells already sit on ticks.
+    // what a driver runs from its interrupt: tables, frames, the command
+    // slots. The per-voice pitch clock runs at 360 Hz between them, in cycle
+    // order with both, so vibrato and slides are where they really are.
+    // With notes-on-tick the note-ons and note-offs wait for the next tick as
+    // a tracker's do -- bends and controllers never do, and tracker cells
+    // already sit on ticks.
     size_t ei = 0;
     auto moveTo = [&](uint64_t c) { if (c != cycle_) { cycle_ = c; burst_ = 0; } };
+    auto offOf = [&](uint32_t o) { return numSamples ? std::min<uint32_t>(o, numSamples - 1) : 0u; };
+    auto pitchBefore = [&](uint64_t limit) {
+        for (int ch = 0; ch < 4; ++ch) {
+            // A jump in the timeline (a locate, a long gap) must not walk the
+            // clock forward one update at a time.
+            Voice& v = v_[size_t(ch)];
+            if (v.pitchClockOn && v.pitchClock + kPitchCycles * 4096 < limit)
+                v.pitchClock = limit - (limit - v.pitchClock) % kPitchCycles;
+        }
+        for (;;) {
+            int best = -1; uint64_t at = 0;
+            for (int ch = 0; ch < 4; ++ch) {
+                const Voice& v = v_[size_t(ch)];
+                if (!v.pitchClockOn || !v.active || v.pitchClock >= limit) continue;
+                if (best < 0 || v.pitchClock < at) { best = ch; at = v.pitchClock; }
+            }
+            if (best < 0) break;
+            moveTo(at);
+            pitchStep(best, false);
+            v_[size_t(best)].pitchClock = at + kPitchCycles;
+        }
+    };
     auto runEvent = [&](const NoteEvent& e) {
-        const uint32_t off = numSamples ? std::min<uint32_t>(e.offset, numSamples - 1) : 0;
-        moveTo(cycleAt(frameAbs + off));
+        const uint64_t at = cycleAt(frameAbs + offOf(e.offset));
+        pitchBefore(at);
+        moveTo(at);
         handleEvent(e);
     };
     auto waits = [this](const NoteEvent& e) {
         return notesOnTick_ && e.source == NoteEvent::Midi && (e.kind == NoteEvent::NoteOn || e.kind == NoteEvent::NoteOff);
     };
     auto hold = [&](const NoteEvent& e) {
-        if (pendingCount_ < pending_.size()) pending_[pendingCount_++] = e;
-        else runEvent(e);                      // more held notes than a block can want: play it now
+        if (pendingCount_ == pending_.size()) {
+            // More waiting notes than the queue holds: the oldest one runs now
+            // rather than the newest jumping the line, so a note-off can never
+            // execute before its note-on (section 8).
+            const NoteEvent old = pending_[0];
+            for (size_t i = 1; i < pendingCount_; ++i) pending_[i - 1] = pending_[i];
+            --pendingCount_;
+            const uint64_t at = cycleAt(frameAbs + offOf(e.offset));
+            pitchBefore(at);
+            moveTo(at);
+            handleEvent(old);
+        }
+        pending_[pendingCount_++] = e;
     };
 
     for (size_t k = 0; k < nTicks; ++k) {
         const uint32_t off = std::min<uint32_t>(ticks[k].offset, numSamples ? numSamples - 1 : 0);
         while (ei < n && events[ei].offset <= off) { const NoteEvent& e = events[ei++]; if (waits(e)) hold(e); else runEvent(e); }
-        moveTo(cycleAt(frameAbs + off));
+        const uint64_t at = cycleAt(frameAbs + off);
+        pitchBefore(at);
+        moveTo(at);
         for (size_t i = 0; i < pendingCount_; ++i) handleEvent(pending_[i]);   // notes that were waiting for a tick
         pendingCount_ = 0;
         tickAll();
     }
     while (ei < n) { const NoteEvent& e = events[ei++]; if (waits(e)) hold(e); else runEvent(e); }
+    pitchBefore(cycleAt(blockEnd));
 
     // --- wave RAM streaming, cycle domain ---------------------------------
     scheduleStreams(cycleAt(frameAbs), cycleAt(blockEnd));
@@ -963,7 +1369,7 @@ void Driver::refreshView(int ch)
     // The running state the strip prints under the two slots (section 3).
     w.envVol = v.envVol; w.envRate = v.envRate; w.envDir = v.envDir == EnvDir::Up ? 1 : 0;
     w.vibSpeed = v.vibSpeed; w.vibDepth = v.vibDepth;
-    w.pitchOffset = v.pOffset; w.pan = uint8_t(v.pan);
+    w.pitchOffset = int16_t(v.pOffset + (v.slideDrum ? 0 : slideResidual(v))); w.pan = uint8_t(v.pan);
     for (int r = 0; r < 5; ++r) w.regs[r] = known_[size_t(ch * 5 + r)] ? shadow_[size_t(ch * 5 + r)] : 0;
 }
 

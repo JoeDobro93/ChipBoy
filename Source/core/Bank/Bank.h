@@ -24,7 +24,19 @@ enum class InstrumentType : uint8_t { Pulse = 0, Wave = 1, Kit = 2, Noise = 3 };
 enum class Pan : uint8_t { Off = 0, Left = 1, Right = 2, Both = 3 };
 enum class EnvDir : uint8_t { Down = 0, Up = 1 };
 enum class NoteOff : uint8_t { Kill = 0, Release = 1, Ignore = 2 };
-enum class VibShape : uint8_t { Triangle = 0, Square = 1, SawUp = 2, SawDown = 3 };
+enum class VibShape : uint8_t { Triangle = 0, Saw = 1, Square = 2 };
+enum class VibDir : uint8_t { Down = 0, Up = 1 };
+/// How fast P, L and V move (docs/COMMANDS_AND_TEMPO.md section 7). Fast is
+/// 360 updates a second, tempo-independent; Tick is one per tracker tick, so
+/// the effect follows the tempo; Step is Fast with P as an immediate offset
+/// instead of a bend; Drum is Fast with P and L in semitones, for pitch kicks.
+enum class PitchSpeed : uint8_t { Fast = 0, Tick = 1, Step = 2, Drum = 3 };
+/// Tick: the table runs a row per tick (or per its own G). Step: it advances
+/// one row each time the instrument is triggered.
+enum class TableMode : uint8_t { Tick = 0, Step = 1 };
+/// A note that arrives over a held one: Legato changes the pitch only (a bare
+/// note), Retrig starts the instrument again (section 8).
+enum class Overlap : uint8_t { Legato = 0, Retrig = 1 };
 enum class FrameLoop : uint8_t { Loop = 0, Once = 1, PingPong = 2 };
 enum class KitLoop : uint8_t { Once = 0, Loop = 1, FromPoint = 2 };
 enum class TableEnd : uint8_t { Loop = 0, Hop = 1, Stop = 2 };
@@ -33,11 +45,11 @@ enum class TableEnd : uint8_t { Loop = 0, Hop = 1, Stop = 2 };
 /// section 2). Both arguments are 0-255; the letter says what they mean:
 ///   A table slot 1-64, 0 stops              C x, y semitones        D ticks
 ///   E vol 0-15, y 0-7 decay / 8-15 attack   F frame 1-16            G groove 1-16, 0 straight
-///   H step 1-16 (0 stops), tables only      K ticks after note-on   L rate 0-15
-///   M left 0-7, right 0-7                   O pan 0-3 (off L R both)
-///   P offset x - 128 period units           R x volume step, y ticks
+///   H step 1-16 (0 stops), tables only      K ticks after note-on   L slide duration
+///   M left/right 0-7, 8 keep, 9-15 relative O pan 0-3 (off L R both)
+///   P bend speed x - 128                    R x volume step, y ticks
 ///   S rate 0-7, shift 0-7 (x >= 128 down)   T BPM 40-255            V speed 1-15, depth 0-15
-///   W duty 0-3 (pulse) / wave slot (WAV)    Z max, randomises the other slot
+///   W duty 0-3 (pulse) / wave slot (WAV)    Z random 0..x, 0..y added to the last command
 enum class Cmd : uint8_t { None = 0, A, C, D, E, F, G, H, K, L, M, O, P, R, S, T, V, W, Z };
 constexpr int kCmdCount = 18;                ///< letters, not counting None
 struct Command {
@@ -48,10 +60,14 @@ inline bool sameCmd(const Command& a, const Command& b) { return a.cmd == b.cmd 
 const char* cmdLetter(Cmd c);
 Cmd cmdFromLetter(char c);
 
+/// The instrument's own vibrato, in V's units (section 7): one cycle every
+/// 720 / speed pitch updates (speed / 2 Hz in Fast), depth an index into
+/// LSDj's semitone table (0 = 1/8 .. 15 = 8 semitones).
 struct Vibrato {
     VibShape shape = VibShape::Triangle;
-    uint8_t  speed = 4;     ///< ticks per step
-    uint8_t  depth = 0;     ///< raw period units
+    VibDir   dir = VibDir::Down;   ///< Down swings to note - depth, Up to note + depth
+    uint8_t  speed = 8;     ///< 1-15, as V's x (8 = 4 Hz)
+    uint8_t  depth = 0;     ///< 0-15, as V's y: the semitone table, 0 = off here
     uint8_t  delay = 0;     ///< ticks before it starts
 };
 
@@ -63,7 +79,10 @@ struct InstrumentCore {
     uint8_t  table = 0;              ///< 0 none, 1-64
     bool     transpose = true;       ///< whether table transpose applies
     NoteOff  noteOff = NoteOff::Kill;
-    bool     legato = false;
+    Overlap  overlap = Overlap::Legato;
+    PitchSpeed pitchSpeed = PitchSpeed::Fast;
+    uint8_t  cmdRate = 0;            ///< 0-15: C and R (and P, V in Tick) step every cmdRate + 1 ticks
+    TableMode tableMode = TableMode::Tick;
     Vibrato  vib;
     // pulse
     uint8_t  duty = 2;               ///< 0 12.5%, 1 25%, 2 50%, 3 75%

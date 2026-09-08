@@ -78,6 +78,15 @@ struct VoiceView {
     static constexpr uint8_t kNoGroove = 255;        ///< the phrase's own
 };
 
+/// What the last note-on on a channel did, for the recorder (section 9.4): a
+/// plain note loaded the instrument and records its slot in the cell's
+/// instrument column; a bare note only changed the pitch and records a blank
+/// column, so playing the song back overlaps the same way.
+struct NoteReport {
+    bool    plain = true;        ///< the note loaded the instrument
+    uint8_t instrument = 0;      ///< the slot it loaded, or the one sounding (1-128, 0 none)
+};
+
 class Driver {
 public:
     Driver();
@@ -125,6 +134,19 @@ public:
                  std::vector<RegWrite>& out);
 
     const VoiceView& view(int ch) const { return view_[size_t(ch & 3)]; }
+    /// The last note-on on this channel: plain or bare, and the instrument
+    /// slot involved. Updated at every note-on, keyswitches excepted.
+    NoteReport noteReport(int ch) const;
+
+    /// A G inside a running table sets that table run's row lengths from the
+    /// song's groove. The driver does not know the song, so the Player reads
+    /// the slot the table asked for here and hands back that groove's tick
+    /// counts: sixteen of them, 0 = unused, the length being the leading
+    /// non-zero run, row i lasting ticks[i % length] ticks. Null (or a table
+    /// that asked for no groove) is one tick per row, the default.
+    void setTableGroove(int ch, const uint8_t* ticks16);
+    uint8_t tableGrooveSlot(int ch) const;   ///< the slot a table's G asked for, 0 none
+
     uint8_t nr50() const { return shadow_[0x14]; }
     uint8_t nr51() const { return shadow_[0x15]; }
     uint64_t tickCount() const { return tickCount_; }
@@ -144,13 +166,29 @@ private:
         double   bend = 0.0;
         int16_t  basePeriod = 0;
         int16_t  lastPeriod = -1;
-        int16_t  pOffset = 0;
-        int16_t  slideTarget = 0; uint8_t slideRate = 0; bool sliding = false;
+        // --- pitch (section 7): the note in 1/32 semitones plus an offset in
+        // period units. P, L and V move one or the other; vibrato is computed
+        // from the phase, never accumulated.
+        int32_t  fineOffset = 0;      ///< Drum-mode P and its slides, 1/32 semitones
+        int16_t  pOffset = 0;         ///< P and slides in NRx3/NRx4 units
+        int16_t  bendSpeed = 0;       ///< P's speed per pitch update (units, or 1/32 semitones in Drum)
+        bool     sliding = false, slideDrum = false;
+        int32_t  slideFrom = 0;       ///< the residual L started from, in its own domain
+        int32_t  slideLeft = 0, slideTotal = 0;   ///< updates remaining, and the duration
+        int32_t  pitchNowFine = 0, pitchNowPeriod = 0;   ///< where the channel is, as of the last write
+        bool     pitchValid = false;  ///< something has sounded, so a slide has somewhere to come from
+        uint64_t pitchClock = 0;      ///< the 360 Hz clock's next update, in CPU cycles
+        bool     pitchClockOn = false;
+        uint8_t  pitchCount = 0;      ///< Tick mode: ticks since P and V last advanced
         uint32_t ticks = 0;
-        int32_t  vibPos = 0; uint8_t vibSpeed = 0, vibDepth = 0; bank::VibShape vibShape = bank::VibShape::Triangle; uint8_t vibDelay = 0;
-        uint8_t  tableSlot = 0, tableStep = 0; bool tableOn = false;
+        uint32_t vibPhase = 0;        ///< 1/65536 of a vibrato cycle
+        uint8_t  vibSpeed = 0, vibDepth = 0; bank::VibShape vibShape = bank::VibShape::Triangle;
+        bank::VibDir vibDir = bank::VibDir::Down; uint8_t vibDelay = 0;
+        uint8_t  tableSlot = 0, tableStep = 0, tableRow = 0; bool tableOn = false;
+        uint16_t tableWait = 0;                       ///< ticks left of the row in force
+        uint8_t  tableGroove = 0;                     ///< the groove a G inside the table asked for
         uint8_t  tableOverride = 0, tableParam = 0;   ///< in force (parameter or cell), and the parameter it came from
-        uint8_t  chord[3] = { 0, 0, 0 }; uint8_t chordN = 0, chordIdx = 0;
+        uint8_t  chord[3] = { 0, 0, 0 }; uint8_t chordN = 0, chordIdx = 0, chordCount = 0;
         uint8_t  dutyIdx = 0, duty = 2;
         uint8_t  envVol = 15, envRate = 0; bank::EnvDir envDir = bank::EnvDir::Down;
         uint8_t  waveLevel = 3;            ///< WAV/KIT running level, 0 mute .. 3 full
@@ -168,12 +206,16 @@ private:
         uint32_t kitLoopsStreamed = 0;
         // counters
         int16_t  delay = -1, kill = -1;
-        uint8_t  retrigEvery = 0, retrigCount = 0;
-        bool     pendingOn = false; uint8_t pendingNote = 0, pendingVel = 0;
+        uint8_t  retrigEvery = 0; uint16_t retrigCount = 0; bool retrigOnce = false;
+        bool     releasing = false;                   ///< Release note-off: WAV/KIT steps the level down
+        bool     pendingOn = false, pendingPlain = true; uint8_t pendingNote = 0, pendingVel = 0;
         // held notes for last-note priority
         std::array<uint8_t, 16> held{}; uint8_t heldCount = 0;
         uint8_t  ksInstrument = 0;
-        bank::Command lastCmd;                        ///< for Z inside a table step
+        int16_t  instParam = -1;                      ///< the Instrument parameter last seen (-1 = none yet)
+        uint32_t instKey = 0;                         ///< what resolveInstrument() picked, to compare against
+        bool     reportPlain = true; uint8_t reportInst = 0;   ///< the last note-on, for noteReport()
+        bank::Command lastCmd;                        ///< the last command fired, for Z to re-run
         bank::Command slot[2], slotParam[2];          ///< in force, and the parameter it came from
         int16_t  retrigStep = 0;                      ///< R: volume change per retrigger
         uint32_t rng = 1;
@@ -194,8 +236,14 @@ private:
     void handleEvent(const NoteEvent& e);
     void noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell);
     void noteOff(int ch, uint8_t note);
-    void startVoice(int ch, uint8_t note, uint8_t vel, bool legato);
+    /// A plain note loads the instrument and triggers; a bare note writes the
+    /// period and nothing else (section 8).
+    void startVoice(int ch, uint8_t note, uint8_t vel, bool plain);
     void stopVoice(int ch, bool kill);
+    void killDac(int ch);                     ///< the DAC-off writes, held notes left alone
+    void allNotesOff(int ch);                 ///< unconditional silence: CC120/123 and every flush
+    void beginRelease(int ch);                ///< the Release note-off mode
+    void stepRelease(int ch);                 ///< WAV/KIT: 100 -> 50 -> 25 -> mute, a tick apart
     void latch(int ch);
     void writePeriod(int ch, bool trigger);
     void writeEnvelope(int ch, bool trigger);
@@ -203,7 +251,12 @@ private:
     void writeNr50(uint8_t l, uint8_t r);
     void applyCommand(int ch, const bank::Command& c, bool fromTable);
     void revertCommand(int ch, bank::Cmd cmd);
+    /// Z re-runs a command with a random 0..x added to its x and 0..y to its
+    /// y: the other slot or column when that is set, else the last command
+    /// fired on the channel. Cmd::None when there is nothing to re-run.
+    bank::Command resolveRandom(int ch, const bank::Command& z, const bank::Command& other);
     void updateSlots(int ch);                 ///< a slot whose value changed fires at this tick
+    void adoptInstrumentParam(int ch);        ///< the Instrument parameter moving clears a keyswitch
     void syncSlots(int ch);                   ///< adopt the parameters' slots without firing them
     void fireSlots(int ch);                   ///< and again at every note-on
     bank::Command slotForNoteOn(int ch, int i);        ///< with Z's randomised argument
@@ -213,6 +266,16 @@ private:
     static bank::InstrumentType defaultType(int ch);
     static bool typeFits(int ch, bank::InstrumentType t);
     void stepTable(int ch);
+    uint16_t tableRowTicks(int ch, int row) const;    ///< the table's own groove, else one tick
+    /// One pitch update: the vibrato phase, a slide and a P bend advance, and
+    /// the period goes out without a trigger. The 360 Hz clock calls this in
+    /// Fast, Step and Drum; the tick calls it in Tick.
+    void pitchStep(int ch, bool onTick);
+    void restartPitchClock(int ch);
+    bank::PitchSpeed pitchSpeed(const Voice& v) const;
+    double  noteOfVoice(int ch) const;                ///< the note in semitones, vibrato apart
+    int     vibratoFine(const Voice& v) const;        ///< 1/32 semitones, from the phase
+    int32_t slideResidual(const Voice& v) const;      ///< what is left of the slide, in its domain
     void loadFrame(int ch, const bank::Frame& f, bool trigger);
     void updateWaveTimer(int ch, uint16_t freq, bool trigger);
     void scheduleStreams(uint64_t cycleStart, uint64_t cycleEnd);
@@ -221,6 +284,8 @@ private:
     uint8_t levelFromVelocity(uint8_t vel) const;
     void refreshView(int ch);
     const bank::Instrument* resolveInstrument(int ch, uint8_t vel);
+    int      resolveSlot(int ch, uint8_t vel) const;  ///< the bank slot a note-on would load, 0 none
+    uint32_t instrumentKey(int ch, uint8_t vel) const;///< identity of that instrument, local ones included
 
     const bank::Bank* bank_ = nullptr;
     const tracker::Song* song_ = nullptr;
@@ -243,6 +308,8 @@ private:
     /// Notes waiting for the next tick while notes-on-tick is on; they survive
     /// a block boundary, so the tick they wait for may be in the next block.
     std::array<NoteEvent, 256> pending_{}; size_t pendingCount_ = 0;
+    /// The row lengths a table's G asks for, per channel (setTableGroove).
+    std::array<std::array<uint8_t, 16>, 4> tableGroove_{};
     std::array<int8_t, 128> noiseShiftMap_{}, noiseDivMap_{};
 };
 

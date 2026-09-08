@@ -111,8 +111,8 @@ struct InstrumentPanel::Widgets {
     Stepper* kit = nullptr; Segmented* kitLoop = nullptr; TextLine* kitRate = nullptr;
     Segmented* lfsr = nullptr; Segmented* pitchMode = nullptr; Knob* shift = nullptr; Knob* divisor = nullptr; Knob* noiseSweep = nullptr;
     Knob* envVol = nullptr; Segmented* envDir = nullptr; Knob* envRate = nullptr; Field* envResult = nullptr; EnvPreview* envPreview = nullptr;
-    Segmented* vibShape = nullptr; Knob* vibSpeed = nullptr; Knob* vibDepth = nullptr; Knob* vibDelay = nullptr;
-    Stepper* table = nullptr; Segmented* transpose = nullptr; Segmented* noteOff = nullptr; Segmented* legato = nullptr; Stepper* length = nullptr; Segmented* pan = nullptr;
+    Segmented* vibShape = nullptr; Segmented* vibDir = nullptr; Knob* vibSpeed = nullptr; Knob* vibDepth = nullptr; Knob* vibDelay = nullptr;
+    Stepper* table = nullptr; Segmented* transpose = nullptr; Segmented* noteOff = nullptr; Segmented* overlap = nullptr; Stepper* length = nullptr; Segmented* pan = nullptr;
 };
 
 /* ------------------------------------------------------------ panel */
@@ -471,10 +471,13 @@ void InstrumentPanel::rebuildEditor()
 
     // --- modulation -------------------------------------------------------
     auto mod = std::make_unique<FlowGrid>();
-    w_->vibShape = seg(*mod, "Vibrato", "a signed period offset, recomputed each tick", { "Tri", "Sq", String(CharPointer_UTF8("Saw\xe2\x86\x91")), String(CharPointer_UTF8("Saw\xe2\x86\x93")) },
-                       [](bank::Instrument& i, int v) { i.vib.shape = bank::VibShape(std::clamp(v, 0, 3)); });
-    w_->vibSpeed = knob(*mod, "Speed", "ticks per step", 1, 15, 4, [](bank::Instrument& i, int v) { i.vib.speed = uint8_t(v); });
-    w_->vibDepth = knob(*mod, "Depth", "raw period units, not cents", 0, 15, 0, [](bank::Instrument& i, int v) { i.vib.depth = uint8_t(v); });
+    w_->vibShape = seg(*mod, "Vibrato", "the shape of V and of the instrument's own vibrato", { "Tri", "Saw", "Sq" },
+                       [](bank::Instrument& i, int v) { i.vib.shape = bank::VibShape(std::clamp(v, 0, 2)); });
+    w_->vibDir = seg(*mod, "Direction", "down swings to the note minus the depth, up to the note plus it",
+                     { String(CharPointer_UTF8("\xe2\x86\x93")), String(CharPointer_UTF8("\xe2\x86\x91")) },
+                     [](bank::Instrument& i, int v) { i.vib.dir = v == 1 ? bank::VibDir::Up : bank::VibDir::Down; });
+    w_->vibSpeed = knob(*mod, "Speed", "as V's x: one cycle every 720/x pitch updates", 1, 15, 8, [](bank::Instrument& i, int v) { i.vib.speed = uint8_t(v); });
+    w_->vibDepth = knob(*mod, "Depth", "as V's y: 0 is an eighth of a semitone, 15 is eight", 0, 15, 0, [](bank::Instrument& i, int v) { i.vib.depth = uint8_t(v); });
     w_->vibDelay = knob(*mod, "Delay", "ticks before it starts", 0, 255, 0, [](bank::Instrument& i, int v) { i.vib.delay = uint8_t(v); });
     cards.push_back(std::make_unique<Card>("Modulation", std::move(mod)));
 
@@ -485,7 +488,8 @@ void InstrumentPanel::rebuildEditor()
                         [](bank::Instrument& i, int v) { i.table = uint8_t(v); }, 0);
     w_->transpose = seg(*tab, "Transpose", "whether the table's transpose column applies", { "On", "Off" }, [](bank::Instrument& i, int v) { i.transpose = v == 0; });
     w_->noteOff = seg(*tab, "Note-off", "Kill clears the DAC; on this hardware that holds the level", { "Kill", "Release", "Ignore" }, [](bank::Instrument& i, int v) { i.noteOff = bank::NoteOff(std::clamp(v, 0, 2)); });
-    w_->legato = seg(*tab, "Retrigger", "Legato writes only the period: no envelope restart, no click", { "Retrigger", "Legato" }, [](bank::Instrument& i, int v) { i.legato = v == 1; });
+    w_->overlap = seg(*tab, "Overlap", "a note over a held one: legato writes only the period, retrig starts the instrument again",
+                      { "Legato", "Retrig" }, [](bank::Instrument& i, int v) { i.overlap = v == 1 ? bank::Overlap::Retrig : bank::Overlap::Legato; });
     const bool longLength = type == bank::InstrumentType::Wave || type == bank::InstrumentType::Kit;
     w_->length = stepper(*tab, "Length", longLength ? "NR31" + middot() + "off or 1-256" : "NRx1 5-0" + middot() + "off or 1-64", 0, longLength ? 256 : 64, 0,
                          [](int v) { return v == 0 ? String("off") : ValueFormat::number(v); }, [](bank::Instrument& i, int v) { i.length = uint16_t(v); }, 100);
@@ -537,8 +541,8 @@ void InstrumentPanel::syncValues()
     if (w.shift) w.shift->setEnabled(i.noiseManual);
     if (w.divisor) w.divisor->setEnabled(i.noiseManual);
     K(w.envVol, i.envVol); S(w.envDir, int(i.envDir)); K(w.envRate, i.envRate);
-    S(w.vibShape, int(i.vib.shape)); K(w.vibSpeed, i.vib.speed); K(w.vibDepth, i.vib.depth); K(w.vibDelay, i.vib.delay);
-    T(w.table, i.table); S(w.transpose, i.transpose ? 0 : 1); S(w.noteOff, int(i.noteOff)); S(w.legato, i.legato ? 1 : 0);
+    S(w.vibShape, int(i.vib.shape)); S(w.vibDir, int(i.vib.dir)); K(w.vibSpeed, i.vib.speed); K(w.vibDepth, i.vib.depth); K(w.vibDelay, i.vib.delay);
+    T(w.table, i.table); S(w.transpose, i.transpose ? 0 : 1); S(w.noteOff, int(i.noteOff)); S(w.overlap, i.overlap == bank::Overlap::Retrig ? 1 : 0);
     T(w.length, i.length); S(w.pan, panIndex(i.pan));
     refreshEnvPreview();
     updateUsedOn();

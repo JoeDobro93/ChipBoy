@@ -59,7 +59,10 @@ juce::StringArray commandChoices();
 bank::Cmd cmdFromChoice(int index);
 int       choiceFromCmd(bank::Cmd c);
 /// "vol 12 . down 3": what the two arguments mean for this letter, for the
-/// window and the tooltips.
+/// window and the tooltips. The letters whose speed the instrument owns (L, P
+/// and V, docs/COMMANDS_AND_TEMPO.md section 7) say the amount, not the unit:
+/// what a slide's duration or a bend's step is worth depends on the
+/// instrument's pitch speed.
 juce::String commandArgText(const bank::Command& c);
 
 /// What a letter's arguments are: how many, the range each one takes and

@@ -38,8 +38,9 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     o->setProperty("name", String(i.name));
     o->setProperty("type", int(i.type));
     o->setProperty("pan", int(i.pan)); o->setProperty("length", int(i.length)); o->setProperty("table", int(i.table));
-    o->setProperty("transpose", i.transpose); o->setProperty("noteOff", int(i.noteOff)); o->setProperty("legato", i.legato);
-    o->setProperty("vibShape", int(i.vib.shape)); o->setProperty("vibSpeed", int(i.vib.speed)); o->setProperty("vibDepth", int(i.vib.depth)); o->setProperty("vibDelay", int(i.vib.delay));
+    o->setProperty("transpose", i.transpose); o->setProperty("noteOff", int(i.noteOff)); o->setProperty("overlap", int(i.overlap));
+    o->setProperty("pitchSpeed", int(i.pitchSpeed)); o->setProperty("cmdRate", int(i.cmdRate)); o->setProperty("tableMode", int(i.tableMode));
+    o->setProperty("vibShape", int(i.vib.shape)); o->setProperty("vibDir", int(i.vib.dir)); o->setProperty("vibSpeed", int(i.vib.speed)); o->setProperty("vibDepth", int(i.vib.depth)); o->setProperty("vibDelay", int(i.vib.delay));
     o->setProperty("duty", int(i.duty));
     { Array<var> seq; for (int k = 0; k < i.dutySeqLen; ++k) seq.add(int(i.dutySeq[size_t(k)])); o->setProperty("dutySeq", seq); }
     o->setProperty("envVol", int(i.envVol)); o->setProperty("envDir", int(i.envDir)); o->setProperty("envRate", int(i.envRate));
@@ -56,8 +57,26 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.name = o->getProperty("name").toString().toStdString();
     i.type = InstrumentType(std::clamp(getOr(o, "type", 0), 0, 3));
     i.pan = Pan(std::clamp(getOr(o, "pan", 3), 0, 3)); i.length = uint16_t(std::clamp(getOr(o, "length", 0), 0, 256)); i.table = uint8_t(std::clamp(getOr(o, "table", 0), 0, 64));
-    i.transpose = bool(o->getProperty("transpose")); i.noteOff = NoteOff(std::clamp(getOr(o, "noteOff", 0), 0, 2)); i.legato = bool(o->getProperty("legato"));
-    i.vib.shape = VibShape(std::clamp(getOr(o, "vibShape", 0), 0, 3)); i.vib.speed = uint8_t(std::clamp(getOr(o, "vibSpeed", 4), 1, 15)); i.vib.depth = uint8_t(std::clamp(getOr(o, "vibDepth", 0), 0, 15)); i.vib.delay = uint8_t(std::clamp(getOr(o, "vibDelay", 0), 0, 255));
+    i.transpose = bool(o->getProperty("transpose")); i.noteOff = NoteOff(std::clamp(getOr(o, "noteOff", 0), 0, 2));
+    // Overlap replaced the legato flag: a file written before it carries only
+    // legato, and one with neither takes the type's own default.
+    if (o->hasProperty("overlap")) i.overlap = Overlap(std::clamp(getOr(o, "overlap", 0), 0, 1));
+    else if (o->hasProperty("legato")) i.overlap = bool(o->getProperty("legato")) ? Overlap::Legato : Overlap::Retrig;
+    else i.overlap = Instrument::defaults(i.type).overlap;
+    i.pitchSpeed = PitchSpeed(std::clamp(getOr(o, "pitchSpeed", 0), 0, 3));
+    i.cmdRate = uint8_t(std::clamp(getOr(o, "cmdRate", 0), 0, 15));
+    i.tableMode = TableMode(std::clamp(getOr(o, "tableMode", 0), 0, 1));
+    // The vibrato's shape used to carry its direction (Triangle, Square,
+    // SawUp, SawDown); it is a shape and a direction now.
+    if (o->hasProperty("vibDir")) {
+        i.vib.shape = VibShape(std::clamp(getOr(o, "vibShape", 0), 0, 2));
+        i.vib.dir = VibDir(std::clamp(getOr(o, "vibDir", 0), 0, 1));
+    } else {
+        const int shape = std::clamp(getOr(o, "vibShape", 0), 0, 3);
+        i.vib.shape = shape == 0 ? VibShape::Triangle : shape == 1 ? VibShape::Square : VibShape::Saw;
+        i.vib.dir = shape == 2 ? VibDir::Up : VibDir::Down;
+    }
+    i.vib.speed = uint8_t(std::clamp(getOr(o, "vibSpeed", 8), 1, 15)); i.vib.depth = uint8_t(std::clamp(getOr(o, "vibDepth", 0), 0, 15)); i.vib.delay = uint8_t(std::clamp(getOr(o, "vibDelay", 0), 0, 255));
     i.duty = uint8_t(std::clamp(getOr(o, "duty", 2), 0, 3));
     i.dutySeqLen = 0;
     if (auto* seq = o->getProperty("dutySeq").getArray()) for (const auto& s : *seq) if (i.dutySeqLen < 16) i.dutySeq[i.dutySeqLen++] = uint8_t(std::clamp(int(s), 0, 3));

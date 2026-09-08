@@ -28,6 +28,9 @@ Instrument Instrument::defaults(InstrumentType t, const char* name)
     i.name = name;
     i.type = t;
     if (t == InstrumentType::Kit) i.noteOff = NoteOff::Ignore;
+    // Drums retrigger: an overlapping note starts the sample again rather than
+    // bending the one that is playing (docs/COMMANDS_AND_TEMPO.md section 8).
+    if (t == InstrumentType::Kit || t == InstrumentType::Noise) i.overlap = Overlap::Retrig;
     return i;
 }
 
@@ -121,8 +124,12 @@ Bank Bank::factory()
     auto pulse = [&](int slot, const char* name, uint8_t duty, uint8_t vol, EnvDir dir, uint8_t rate) {
         auto& i = I[size_t(slot - 1)]; i = Instrument::defaults(InstrumentType::Pulse, name);
         i.duty = duty; i.envVol = vol; i.envDir = dir; i.envRate = rate; return &i; };
-    auto* lead = pulse(1, "Square lead", 2, 13, EnvDir::Down, 0);   lead->vib = { VibShape::Triangle, 3, 3, 10 };
-    auto* pluck = pulse(2, "Pluck", 1, 15, EnvDir::Down, 2);        (void)pluck;
+    // Vibrato is in V's units now: speed 10 is 5 Hz, depth 2 is 3/8 of a
+    // semitone -- a lead's vibrato, after a delay of ten ticks (section 7).
+    auto* lead = pulse(1, "Square lead", 2, 13, EnvDir::Down, 0);   lead->vib = { VibShape::Triangle, VibDir::Down, 10, 2, 10 };
+    // A pluck's slides and bends belong to the groove, so its pitch runs on
+    // the tick rather than at 360 Hz.
+    auto* pluck = pulse(2, "Pluck", 1, 15, EnvDir::Down, 2);        pluck->pitchSpeed = PitchSpeed::Tick;
     auto* bass = pulse(3, "Bass 25", 1, 14, EnvDir::Down, 0);       bass->length = 0;
     auto* sweep = pulse(4, "Sweep down", 2, 15, EnvDir::Down, 3);   sweep->sweepRate = 3; sweep->sweepDown = true; sweep->sweepShift = 2;
     auto* arp = pulse(5, "Chord arp", 0, 12, EnvDir::Down, 1);      arp->table = 1;
@@ -147,6 +154,11 @@ Bank Bank::factory()
 
     auto& kitInst = I[15]; kitInst = Instrument::defaults(InstrumentType::Kit, "Kit 1"); kitInst.kit = 1;
 
+    // A pulse drum: Drum pitch speed makes P fall in semitones, so table 7's
+    // bend is the exponential drop a kick wants (section 7).
+    auto* pulseKick = pulse(17, "Pulse kick", 2, 15, EnvDir::Down, 2);
+    pulseKick->pitchSpeed = PitchSpeed::Drum; pulseKick->overlap = Overlap::Retrig; pulseKick->table = 7;
+
     // Tables
     b.tables[0] = makeTable("Arp minor", { 0, 3, 7, 12, 0, 3, 7, 12, 0, 3, 7, 12, 0, 3, 7, 12 });
     b.tables[1] = makeTable("Arp major", { 0, 4, 7, 12, 0, 4, 7, 12, 0, 4, 7, 12, 0, 4, 7, 12 });
@@ -154,8 +166,19 @@ Bank Bank::factory()
     // The kick's pitch drop is the instrument's own noise sweep now that S is
     // PU1 only; the table shapes its level instead.
     { Table t; t.used = true; t.name = "Kick shape"; const int8_t v[] = { 15, 12, 8, 4 }; for (int i = 0; i < 4; ++i) t.steps[size_t(i)].vol = v[i]; t.end = TableEnd::Stop; b.tables[3] = t; }
-    { Table t; t.used = true; t.name = "Slide up"; t.steps[0].cmd1 = { Cmd::L, 6, 0, 0 }; t.steps[0].hasTranspose = true; t.steps[0].transpose = -12; t.end = TableEnd::Stop; b.tables[4] = t; }
+    // The note starts an octave below and the second row slides back up to it:
+    // L's argument is the duration now, 60 updates being a sixth of a second.
+    { Table t; t.used = true; t.name = "Slide up";
+      t.steps[0].hasTranspose = true; t.steps[0].transpose = -12;
+      t.steps[1].hasTranspose = true; t.steps[1].transpose = 0; t.steps[1].cmd1 = { Cmd::L, 60, 0, 0 };
+      t.end = TableEnd::Stop; b.tables[4] = t; }
     { Table t; t.used = true; t.name = "Octave hop"; t.steps[0].hasTranspose = true; t.steps[0].transpose = 12; t.steps[1].hasTranspose = true; t.steps[1].transpose = 0; t.end = TableEnd::Loop; b.tables[5] = t; }
+    { Table t; t.used = true; t.name = "Drum drop";
+      t.steps[0].vol = 15; t.steps[0].cmd1 = { Cmd::P, 112, 0, 0 };     // fall a semitone per pitch update
+      t.steps[1].vol = 12;
+      t.steps[2].vol = 8;  t.steps[2].cmd1 = { Cmd::P, 128, 0, 0 };     // P 128 stops the bend, keeping the offset
+      t.steps[3].vol = 4;
+      t.end = TableEnd::Stop; b.tables[6] = t; }
 
     // Waves
     auto W = [&](int slot, const char* name, std::vector<Frame> frames) { auto& w = b.waves[size_t(slot - 1)]; w.used = true; w.name = name; w.frames = std::move(frames); };
