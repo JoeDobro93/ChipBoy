@@ -156,6 +156,15 @@ if(CHIPBOY_BUILD_PLUGIN)
         target_link_libraries(${target}
             PRIVATE chipboy_core ${CHIPBOY_ASSET_TARGET} juce::juce_audio_utils juce::juce_audio_processors juce::juce_gui_extra
             PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+        # The console tools (juce_add_console_app makes an executable; a plugin's
+        # shared code is a library) hold ChipBoyProcessors, and one is about
+        # 450 KB. Windows reserves a megabyte of stack for an executable, which
+        # a couple of them overrun, so ask for the eight the other two platforms
+        # give a main thread anyway.
+        get_target_property(chipboy_target_type ${target} TYPE)
+        if(chipboy_target_type STREQUAL "EXECUTABLE")
+            target_link_options(${target} PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/STACK:8388608>)
+        endif()
     endfunction()
 
     # --- ChipBoy: the machine -------------------------------------------
