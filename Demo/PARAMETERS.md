@@ -35,7 +35,7 @@ and the plugin rounds to the nearest step when it reads it back.
 | 10 | `soften` | Soften Master Pops | 0-1 (off, on) | 0 | 1250532947 |
 | 11 | `tempo_source` | Tempo Source | 0-1 (Host, Song) | 0 (Host) | 311560639 |
 | 12 | `song_tempo` | Song Tempo | 40-255 (BPM; the Song source's base tempo) | 120 | 448506737 |
-| 13 | `notes_on_tick` | Quantise Notes To Ticks | 0-1 (off, on) | 0 | 53834879 |
+| 13 | `notes_on_tick` | Quantize Notes To Ticks | 0-1 (off, on) | 0 | 53834879 |
 | 14 | `link` | Link Mode | 0-1 (off, on) | 0 | 3321850 |
 | 15 | `hex` | Hex Display | 0-1 (off, on) | 0 | 103195 |
 | 16 | `ch1_source` | PU1 Source | 0-17 (Omni, MIDI 1, MIDI 2, MIDI 3, MIDI 4, MIDI 5, MIDI 6, MIDI 7, MIDI 8, MIDI 9, MIDI 10, MIDI 11, MIDI 12, MIDI 13, MIDI 14, MIDI 15, MIDI 16, Off) | 0 (Omni) | 38654798 |
@@ -144,7 +144,7 @@ instrument's alone, or arrives as a command.
 
 Ticks are 24 to the beat, from **Tempo Source** (`tempo_source`): the host's
 tempo, or the song's own **Song Tempo** (`song_tempo`, 40-255 BPM) with `T`
-commands over it. **Quantise Notes To Ticks** (`notes_on_tick`) holds incoming
+commands over it. **Quantize Notes To Ticks** (`notes_on_tick`) holds incoming
 note-ons and note-offs until the next tick; bends and controllers are never
 quantised, and tracker cells are always on ticks.
 

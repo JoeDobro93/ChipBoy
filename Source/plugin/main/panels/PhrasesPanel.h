@@ -1,7 +1,8 @@
 // ChipBoy -- the Phrases tab (UI_DESIGN section 7): a tracker that follows
 // the host transport. Transport line, record arm, steps per bar, groove, the
-// tempo group (docs/COMMANDS_AND_TEMPO.md section 4), the bar chain and the
-// four-channel lane.
+// song's own timeline (start and beats per bar, song data, live only in Song
+// mode), the bar chain and the four-channel lane. Which tempo is in force,
+// and whether notes wait for a tick, is the header bar's group.
 #pragma once
 
 #include "plugin/main/panels/PanelCommon.h"
@@ -25,7 +26,7 @@ public:
 private:
     void refreshViews();
     void syncGroove();
-    void syncTempo();
+    void syncSongTime();
     void applyGroove(int id);
     void editSong(const std::function<void(tracker::Song&)>& fn);
     static uint8_t ensurePhrase(tracker::Song& s, int ch, int bar);
@@ -35,12 +36,10 @@ private:
     juce::TextButton rec_, export_;
     ui::Segmented steps_;
     juce::ComboBox groove_;
-    // tempo: the source, the song's own tempo, where its tick 0 sits, how
-    // long its bar is, and whether MIDI notes wait for a tick
-    TextLine tempoLabel_, songTempoLabel_, startLabel_, beatsLabel_;
-    ui::Segmented tempoSource_;
-    ui::Stepper songTempo_, songStart_, beats_;
-    ui::Toggle quantise_;
+    // the song's own timeline: where its tick 0 sits and how long its bar
+    // is. Both are song data, and both only bite in Song mode.
+    TextLine startLabel_, beatsLabel_;
+    ui::Stepper songStart_, beats_;
     std::unique_ptr<ParamWatch> tempoWatch_;
     HelpText help_;
     ScrollBlock scroll_;

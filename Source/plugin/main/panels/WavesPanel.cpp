@@ -127,7 +127,7 @@ WavesPanel::WavesPanel(ChipBoyProcessor& p)
     };
     name_.onChange = [this](const String& n) { editWave([n](bank::Wave& w) { w.name = n.toStdString(); }, false); };
     shape_.setMini(true);
-    shape_.setTooltip("Generate a shape into the current frame, quantised to 4 bits");
+    shape_.setTooltip("Generate a shape into the current frame, quantized to 4 bits");
     shape_.onChange = [this](int i) { generate(i); };
     interp_.setTooltip("Interpolate: every frame between the first and the last becomes a linear blend of those two, so the wave morphs evenly from frame 1 to the last frame");
     interp_.onClick = [this] { interpolate(); };
@@ -158,7 +158,7 @@ WavesPanel::WavesPanel(ChipBoyProcessor& p)
     };
     stack->add(std::move(frames));
     RichText help;
-    help.plain("Draw with the mouse. Each frame is one load of wave RAM " + String(CharPointer_UTF8("\xe2\x80\x94")) + " 32 samples, 16 levels, quantised on creation so what you see is what plays. ")
+    help.plain("Draw with the mouse. Each frame is one load of wave RAM " + String(CharPointer_UTF8("\xe2\x80\x94")) + " 32 samples, 16 levels, quantized on creation so what you see is what plays. ")
         .bold("On a DMG a frame change costs a click").plain(" (DAC off, write, re-trigger); on a CGB it does not.");
     stack->add(std::make_unique<HelpText>(help));
     scroll_.setContent(std::move(stack));

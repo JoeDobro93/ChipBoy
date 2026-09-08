@@ -165,7 +165,7 @@ void addGlobalParameters(AudioProcessorValueTreeState::ParameterLayout& L)
     // beat; what a tick is worth is the only choice left.
     L.add(choiceParam(ids::tempoSource, "Tempo Source", { "Host", "Song" }, 0));
     L.add(intParam(ids::songTempo, "Song Tempo", 40, 255, 120, [](int v, int) { return String(v) + " BPM"; }));
-    L.add(boolParam(ids::notesOnTick, "Quantise Notes To Ticks", false));
+    L.add(boolParam(ids::notesOnTick, "Quantize Notes To Ticks", false));
     L.add(boolParam(ids::linkMode, "Link Mode", false));
     L.add(boolParam(ids::hexDisplay, "Hex Display", false));
 }

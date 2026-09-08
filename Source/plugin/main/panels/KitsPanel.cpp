@@ -29,7 +29,7 @@ public:
         if (rows_.empty()) {
             g.setColour(colours::textDim);
             g.setFont(Fonts::sans(12.0f));
-            g.drawText("No samples yet " + String(CharPointer_UTF8("\xe2\x80\x94")) + " Import" + String(CharPointer_UTF8("\xe2\x80\xa6")) + " adds audio files, quantised to 4 bits", getLocalBounds().reduced(8, 0), Justification::centredLeft, true);
+            g.drawText("No samples yet " + String(CharPointer_UTF8("\xe2\x80\x94")) + " Import" + String(CharPointer_UTF8("\xe2\x80\xa6")) + " adds audio files, quantized to 4 bits", getLocalBounds().reduced(8, 0), Justification::centredLeft, true);
             return;
         }
         for (int i = 0; i < int(rows_.size()); ++i) {
@@ -229,7 +229,7 @@ void KitsPanel::rebuildContent()
         auto s = std::make_unique<Stepper>();
         s->setRange(kMinPeriod, kMaxPeriod, 1865);
         s->setTextFunction([](int v) { return withThousands(int(std::lround(bank::sampleRateForPeriod(uint16_t(v))))) + " Hz"; });
-        s->setTooltip("The kit's playback rate, quantised to what the period register allows (NR33/34 = " + String(kit ? int(kit->period) : 1865) + ")");
+        s->setTooltip("The kit's playback rate, quantized to what the period register allows (NR33/34 = " + String(kit ? int(kit->period) : 1865) + ")");
         s->onChange = [this](int v) { editKit([v](bank::Kit& k) { k.period = uint16_t(std::clamp(v, 0, 2047)); }); };
         rate_ = grid->addField("Rate", "NR33/34" + middot() + "whole kit", std::move(s), Stepper::kHeight, 0);
     }

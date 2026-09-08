@@ -166,7 +166,7 @@ def parameter_table():
     # beat, and the only choice left is where the beat comes from.
     choice("tempo_source", "Tempo Source", ["Host", "Song"], 0)
     integer("song_tempo", "Song Tempo", 40, 255, 120, "BPM; the Song source's base tempo")
-    boolean("notes_on_tick", "Quantise Notes To Ticks", False)
+    boolean("notes_on_tick", "Quantize Notes To Ticks", False)
     boolean("link", "Link Mode", False)
     boolean("hex", "Hex Display", False)
 
@@ -851,7 +851,7 @@ def write_parameters_md(path, table, envelopes, song_tempo_envelopes):
     w("")
     w("Ticks are 24 to the beat, from **Tempo Source** (`tempo_source`): the host's")
     w("tempo, or the song's own **Song Tempo** (`song_tempo`, 40-255 BPM) with `T`")
-    w("commands over it. **Quantise Notes To Ticks** (`notes_on_tick`) holds incoming")
+    w("commands over it. **Quantize Notes To Ticks** (`notes_on_tick`) holds incoming")
     w("note-ons and note-offs until the next tick; bends and controllers are never")
     w("quantised, and tracker cells are always on ticks.")
     w("")

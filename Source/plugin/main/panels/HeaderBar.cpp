@@ -3,6 +3,7 @@
 #include "plugin/shared/BankFiles.h"
 #include "plugin/shared/BankJson.h"
 
+#include <algorithm>
 #include <cmath>
 #include <iterator>
 
@@ -15,6 +16,11 @@ namespace {
 const char* kStockTip = "STOCK: every audible setting is something a real unit does. MODIFIED: a departure in the Hardware tab is on.";
 const char* kVisualizerTip = "Open the visualizer window: the five scopes, no chrome, made for screen capture";
 const char* kHexTip = "Show values in hex, the LSDj habit. Display only.";
+const char* kQuantizeTip = "Quantize MIDI notes to ticks: notes wait for the next tick, the tracker feel. Off: sample-accurate.";
+/// The wordmark is a two-line lockup so the row has the width for four
+/// groups; the rest of the row is laid out to these.
+constexpr int kWordmark = 19, kWordmarkSmall = 13, kGroupGap = 16, kLabelGap = 8;
+constexpr int kSongTempoWidth = 92, kQuantizeWidth = 74, kBankNameMin = 80, kBankNameMax = 150;
 }
 
 HeaderBar::HeaderBar(ChipBoyProcessor& p)
@@ -22,16 +28,21 @@ HeaderBar::HeaderBar(ChipBoyProcessor& p)
       wordmark_("ChipBoy", Fonts::pixel(15.0f), colours::text),
       wordmarkSmall_("DMG APU " + String(CharPointer_UTF8("\xc2\xb7")) + " 4 voices", Fonts::caption(10.0f), colours::textDim),
       modelLabel_("Model", Fonts::caption(10.0f), colours::textDim),
+      tempoLabel_("Tempo", Fonts::caption(10.0f), colours::textDim),
       bankLabel_("Bank", Fonts::caption(10.0f), colours::textDim),
       model_({ "DMG", "CGB", "RAW" }),
+      tempoSource_({ "Host", "Song" }),
+      quantize_("Quantize"),
       bankPrev_(String(CharPointer_UTF8("\xe2\x80\xb9"))), bankNext_(String(CharPointer_UTF8("\xe2\x80\xba"))), bankMenu_(String(CharPointer_UTF8("\xe2\x96\xbe"))),
       stockBox_(stock_),
       visualizer_("Visualizer"), hex_("Hex"), settings_(String(CharPointer_UTF8("\xe2\x9a\x99")))
 {
     wordmarkSmall_.setUpperCase(true);
     modelLabel_.setUpperCase(true);
+    tempoLabel_.setUpperCase(true);
     bankLabel_.setUpperCase(true);
-    for (auto* c : std::initializer_list<Component*>{ &wordmark_, &wordmarkSmall_, &modelLabel_, &model_, &bankLabel_, &bankPrev_, &bankName_, &bankNext_, &bankMenu_, &stockBox_, &visualizer_, &hex_, &settings_ })
+    for (auto* c : std::initializer_list<Component*>{ &wordmark_, &wordmarkSmall_, &modelLabel_, &model_, &tempoLabel_, &tempoSource_, &songTempo_, &quantize_,
+                                                     &bankLabel_, &bankPrev_, &bankName_, &bankNext_, &bankMenu_, &stockBox_, &visualizer_, &hex_, &settings_ })
         addAndMakeVisible(c);
 
     model_.setOptionColour(0, colours::wav);
@@ -41,6 +52,19 @@ HeaderBar::HeaderBar(ChipBoyProcessor& p)
     model_.setOptionTooltip(1, "Game Boy Color: live wave RAM, coupling at 338 Hz, the louder LCD line");
     model_.setOptionTooltip(2, "The DMG chip with no analog stage: the clean digital mix a gaming emulator makes");
     model_.attach(param(processor_, ids::model));
+
+    // Tempo (docs/COMMANDS_AND_TEMPO.md section 4). Ticks are always 24 to
+    // the beat; this group says whose beat, and how notes meet it.
+    tempoSource_.setMini(true);
+    tempoSource_.setOptionTooltip(0, "Ticks follow the host's tempo and its beats. Scrubbing is exact; tempo automation is the host's own track.");
+    tempoSource_.setOptionTooltip(1, "The song owns its tempo: the Song BPM beside this plus the T commands in its cells. The host's bars become a ruler.");
+    tempoSource_.attach(param(processor_, ids::tempoSource));
+    songTempo_.setTooltip("The song's base tempo, 40-255 BPM. T commands in cells move it from there.");
+    songTempo_.attach(param(processor_, ids::songTempo));
+    quantize_.setTooltip(kQuantizeTip);
+    quantize_.setClickingTogglesState(true);
+    quantizeAtt_ = std::make_unique<ButtonParameterAttachment>(param(processor_, ids::notesOnTick), quantize_);
+    tempoWatch_ = std::make_unique<ParamWatch>(param(processor_, ids::tempoSource), [this](float v) { songTempo_.setEnabled(v > 0.5f); });
 
     bankPrev_.setTooltip("Previous bank");
     bankNext_.setTooltip("Next bank");
@@ -169,7 +193,7 @@ void HeaderBar::showSettingsMenu()
     scale.addItem(103, "150 %", true, std::abs(scale_ - 1.5f) < 0.01f);
     m.addSubMenu("Window scale", scale);
 
-    // Tempo lives on the Phrases tab now (docs/COMMANDS_AND_TEMPO.md section 6).
+    // Tempo lives in this bar now (docs/COMMANDS_AND_TEMPO.md section 4).
 
     if (processor_.wrapperType == AudioProcessor::wrapperType_Standalone) {
         m.addSeparator();
@@ -197,25 +221,41 @@ void HeaderBar::resized()
 {
     const int h = getHeight();
     auto centred = [h](Component& c, int x, int w, int ch) { c.setBounds(x, (h - ch) / 2, w, ch); };
-    int x = 14;
-    centred(wordmark_, x, wordmark_.preferredWidth(), 20); x += wordmark_.preferredWidth() + 8;
-    centred(wordmarkSmall_, x, wordmarkSmall_.preferredWidth(), 20); x += wordmarkSmall_.preferredWidth() + 18;
-    centred(modelLabel_, x, modelLabel_.preferredWidth(), 20); x += modelLabel_.preferredWidth() + 8;
-    const int modelW = std::max(model_.preferredWidth(), 120);
-    centred(model_, x, modelW, 26); x += modelW + 18;
-    centred(bankLabel_, x, bankLabel_.preferredWidth(), 20); x += bankLabel_.preferredWidth() + 8;
-    centred(bankPrev_, x, 24, 22); x += 28;
-    centred(bankName_, x, 150, 24); x += 154;
-    centred(bankNext_, x, 24, 22); x += 28;
-    centred(bankMenu_, x, 24, 22);
 
+    // the wordmark, its second line under it rather than beside it
+    const int markW = std::max(wordmark_.preferredWidth(), wordmarkSmall_.preferredWidth());
+    const int markY = (h - kWordmark - kWordmarkSmall) / 2;
+    wordmark_.setBounds(14, markY, markW, kWordmark);
+    wordmarkSmall_.setBounds(14, markY + kWordmark, markW, kWordmarkSmall);
+    int x = 14 + markW + kGroupGap;
+
+    centred(modelLabel_, x, modelLabel_.preferredWidth(), 20); x += modelLabel_.preferredWidth() + kLabelGap;
+    const int modelW = std::max(model_.preferredWidth(), 120);
+    centred(model_, x, modelW, 26); x += modelW + kGroupGap;
+
+    centred(tempoLabel_, x, tempoLabel_.preferredWidth(), 20); x += tempoLabel_.preferredWidth() + kLabelGap;
+    const int sourceW = tempoSource_.preferredWidth();
+    centred(tempoSource_, x, sourceW, tempoSource_.preferredHeight()); x += sourceW + kLabelGap;
+    centred(songTempo_, x, kSongTempoWidth, Stepper::kHeight); x += kSongTempoWidth + kLabelGap;
+    centred(quantize_, x, kQuantizeWidth, 24); x += kQuantizeWidth + kGroupGap;
+
+    // the right-hand cluster, laid out from the right edge inwards
     int r = getWidth() - 14;
     centred(settings_, r - 30, 30, 24); r -= 38;
     centred(hex_, r - 46, 46, 24); r -= 54;
     const int vw = visualizer_.getToggleState() ? 118 : 86;
     centred(visualizer_, r - vw, vw, 24); r -= vw + 12;
     const int pw = std::max(stock_.preferredWidth(), 60);
-    centred(stockBox_, r - pw, pw, 20);
+    centred(stockBox_, r - pw, pw, 20); r -= pw + kGroupGap;
+
+    // the bank fills what is left between the two; its name field is the
+    // part that gives way, down to kBankNameMin, so nothing ever overlaps
+    centred(bankLabel_, x, bankLabel_.preferredWidth(), 20); x += bankLabel_.preferredWidth() + kLabelGap;
+    centred(bankPrev_, x, 24, 22); x += 28;
+    const int nameW = std::clamp(r - x - 56, kBankNameMin, kBankNameMax);
+    centred(bankName_, x, nameW, 24); x += nameW + 4;
+    centred(bankNext_, x, 24, 22); x += 28;
+    centred(bankMenu_, x, 24, 22);
 }
 
 } // namespace chipboy::plugin
