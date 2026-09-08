@@ -33,7 +33,7 @@ const char* kOwnTransportTip = "The plugin is running the transport itself -- no
 /// The wordmark is a two-line lockup so the row has the width for four
 /// groups; the rest of the row is laid out to these.
 constexpr int kWordmark = 19, kWordmarkSmall = 13, kGroupGap = 16, kLabelGap = 8;
-constexpr int kSongTempoWidth = 92, kQuantizeWidth = 70, kBankNameMin = 64, kBankNameMax = 150;
+constexpr int kSongTempoWidth = 100, kQuantizeWidth = 70, kBankNameMin = 64, kBankNameMax = 150;
 /// Undo and redo, right of the bank: two arrow buttons, a shade narrower
 /// than the bank's own, so the row keeps its height (UI_DESIGN 2.1).
 constexpr int kHistoryButton = 22, kHistoryGap = 3;
@@ -42,6 +42,39 @@ constexpr int kHistoryButton = 22, kHistoryGap = 3;
 /// moves when it is toggled.
 constexpr int kVisualizerWidth = 80, kHexWidth = 40, kSettingsWidth = 28;
 }
+
+/* --------------------------------------------------- the tempo readout */
+
+/// The tempo in force, read only (docs/COMMANDS_AND_TEMPO.md section 19).
+/// It is drawn as a well with the number and a small tag -- host or song --
+/// so it reads as a display rather than as a control someone could drag.
+class TempoReadout : public Component, public SettableTooltipClient {
+public:
+    void set(double bpm, bool fromSong)
+    {
+        text_ = String(bpm, 1);
+        tag_ = fromSong ? "song" : "host";
+        setTooltip(fromSong
+                       ? "The tempo this song is running at: its master tempo, or the T command last passed. Type it in the Tracker tab, beside Start and Beats."
+                       : "The host's tempo, which the ticks follow in Host mode. The song keeps its own master tempo for when the switch says Song.");
+        repaint();
+    }
+    void paint(Graphics& g) override
+    {
+        auto b = getLocalBounds();
+        draw::panel(g, b, colours::well, colours::line, 4.0f);
+        // The tag takes what it needs and the number keeps the rest, so
+        // neither "host" nor "song" is ever cut short.
+        const int tagW = roundToInt(draw::textWidth(Fonts::caption(9.0f), tag_.toUpperCase())) + 12;
+        const auto tag = b.removeFromRight(tagW);
+        g.setFont(Fonts::mono(13.0f));
+        g.setColour(colours::text);
+        g.drawText(text_, b.reduced(8, 0), Justification::centredRight, false);
+        draw::caption(g, tag_, tag.withTrimmedRight(6), Justification::centredRight, colours::textDim, 9.0f);
+    }
+private:
+    String text_ = "120.0", tag_ = "host";
+};
 
 HeaderBar::HeaderBar(ChipBoyProcessor& p)
     : processor_(p),
@@ -62,7 +95,8 @@ HeaderBar::HeaderBar(ChipBoyProcessor& p)
     modelLabel_.setUpperCase(true);
     tempoLabel_.setUpperCase(true);
     bankLabel_.setUpperCase(true);
-    for (auto* c : std::initializer_list<Component*>{ &wordmark_, &wordmarkSmall_, &modelLabel_, &model_, &tempoLabel_, &tempoSource_, &songTempo_, &quantize_,
+    tempoRead_ = std::make_unique<TempoReadout>();
+    for (auto* c : std::initializer_list<Component*>{ &wordmark_, &wordmarkSmall_, &modelLabel_, &model_, &tempoLabel_, &tempoSource_, tempoRead_.get(), &quantize_,
                                                      &bankLabel_, &bankPrev_, &bankName_, &bankNext_, &bankMenu_, &undo_, &redo_, &stockBox_, &visualizer_, &hex_, &settings_ })
         addAndMakeVisible(c);
 
@@ -78,19 +112,19 @@ HeaderBar::HeaderBar(ChipBoyProcessor& p)
     // the beat; this group says whose beat, and how notes meet it.
     tempoSource_.setMini(true);
     tempoSource_.setOptionTooltip(0, "Ticks follow the host's tempo and its beats. Scrubbing is exact; tempo automation is the host's own track.");
-    tempoSource_.setOptionTooltip(1, "The song owns its tempo: the Song BPM beside this plus the T commands in its cells. The host's bars become a ruler.");
+    tempoSource_.setOptionTooltip(1, "The song owns its tempo: the master tempo typed in the Tracker tab plus the T commands in its cells. The host's bars become a ruler.");
     tempoSource_.attach(param(processor_, ids::tempoSource));
     tempoSource_.setTooltip("Whose beat the ticks follow (docs/COMMANDS_AND_TEMPO.md 4)");
-    songTempo_.setTooltip("The song's base tempo, 40-255 BPM. T commands in cells move it from there.");
-    songTempo_.attach(param(processor_, ids::songTempo));
     quantize_.setTooltip(kQuantizeTip);
     quantize_.setClickingTogglesState(true);
     quantizeAtt_ = std::make_unique<ToggleParam>(quantize_, param(processor_, ids::notesOnTick));
-    tempoWatch_ = std::make_unique<ParamWatch>(param(processor_, ids::tempoSource), [this](float v) { songTempo_.setEnabled(v > 0.5f || processor_.ownsTransport()); });
+    // The readout follows the source at once rather than waiting for the
+    // next timer tick, so the tag never lags the switch.
+    tempoWatch_ = std::make_unique<ParamWatch>(param(processor_, ids::tempoSource), [this](float) { tempoShown_ = -1.0; tick(); });
 
-    bankPrev_.setTooltip("Previous bank");
-    bankNext_.setTooltip("Next bank");
-    bankMenu_.setTooltip("Load, save or reset the bank");
+    bankPrev_.setTooltip("Previous bank: this replaces the active song's bank");
+    bankNext_.setTooltip("Next bank: this replaces the active song's bank");
+    bankMenu_.setTooltip("Load, save or reset the bank of the song in the active tab. Each song owns its sounds (docs/COMMANDS_AND_TEMPO.md 18).");
     bankPrev_.onClick = [this] { cycleBank(-1); };
     bankNext_.onClick = [this] { cycleBank(1); };
     bankMenu_.onClick = [this] { showBankMenu(); };
@@ -155,11 +189,18 @@ void HeaderBar::tick()
         }
         else {
             tempoSource_.setOptionTooltip(0, "Ticks follow the host's tempo and its beats. Scrubbing is exact; tempo automation is the host's own track.");
-            tempoSource_.setOptionTooltip(1, "The song owns its tempo: the Song BPM beside this plus the T commands in its cells. The host's bars become a ruler.");
+            tempoSource_.setOptionTooltip(1, "The song owns its tempo: the master tempo typed in the Tracker tab plus the T commands in its cells. The host's bars become a ruler.");
         }
-        songTempo_.setEnabled(owns != 0 || paramValue(processor_, ids::tempoSource) != 0);
     }
     if (owns != 0) tempoSource_.setSelected(1, dontSendNotification);   // automation cannot move it either
+    // The tempo in force, whichever source is running it (section 19).
+    const bool fromSong = processor_.songTempoSource();
+    const double bpm = processor_.effectiveTempo();
+    if (std::abs(bpm - tempoShown_) > 0.049 || int(fromSong) != tempoFromShown_) {
+        tempoShown_ = bpm;
+        tempoFromShown_ = int(fromSong);
+        if (tempoRead_) tempoRead_->set(bpm, fromSong);
+    }
     const String n = processor_.bankName();
     if (n != bankName_.text()) bankName_.setText(n);
 
@@ -218,10 +259,10 @@ void HeaderBar::applyBank(const bank::Bank& b, const String& name)
 void HeaderBar::showBankMenu()
 {
     PopupMenu m;
-    m.addItem(1, "Load" + String(CharPointer_UTF8("\xe2\x80\xa6")));
-    m.addItem(2, "Save as" + String(CharPointer_UTF8("\xe2\x80\xa6")));
+    m.addItem(1, "Load bank into this song" + String(CharPointer_UTF8("\xe2\x80\xa6")));
+    m.addItem(2, "Save this song's bank" + String(CharPointer_UTF8("\xe2\x80\xa6")));
     m.addSeparator();
-    m.addItem(3, "Reset to factory");
+    m.addItem(3, "Reset this song's bank to factory");
     m.addSeparator();
     m.addItem(4, "Bank folder: " + banksFolder().getFullPathName(), false);
     Component::SafePointer<HeaderBar> safe(this);
@@ -301,7 +342,8 @@ void HeaderBar::resized()
     centred(tempoLabel_, x, tempoLabel_.preferredWidth(), 20); x += tempoLabel_.preferredWidth() + kLabelGap;
     const int sourceW = tempoSource_.preferredWidth();
     centred(tempoSource_, x, sourceW, tempoSource_.preferredHeight()); x += sourceW + kLabelGap;
-    centred(songTempo_, x, kSongTempoWidth, Stepper::kHeight); x += kSongTempoWidth + kLabelGap;
+    if (tempoRead_) centred(*tempoRead_, x, kSongTempoWidth, Stepper::kHeight);
+    x += kSongTempoWidth + kLabelGap;
     centred(quantize_, x, kQuantizeWidth, 24); x += kQuantizeWidth + 12;
 
     // the right-hand cluster, laid out from the right edge inwards
