@@ -183,6 +183,8 @@ public:
     void setContent(std::unique_ptr<Block> b);
     Block* content() { return content_.get(); }
     void relayout();
+    /// Scroll the least that brings [y, y + height) of the content into view.
+    void scrollToKeepVisible(int y, int height);
     void resized() override;
 private:
     juce::Viewport viewport_; std::unique_ptr<Block> content_;
@@ -232,6 +234,21 @@ private:
     std::unique_ptr<juce::ParameterAttachment> att_;
 };
 
+/* --------------------------------------------------------- the tracker */
+
+/// Where the transport stands, as the tracker counts it: the tick, the bar
+/// it falls in and how far into that bar (docs/COMMANDS_AND_TEMPO.md 11).
+struct TrackerPosition {
+    int64_t tick = 0;
+    int barTicks = 96;
+    int bar = 0, inBar = 0;
+    bool playing = false;
+};
+TrackerPosition trackerPosition(const ChipBoyProcessor& p);
+/// The step a channel is really playing: its groove says how long each step
+/// lasts, so a swung phrase marks the row that is sounding. -1 for none.
+int playingStepOf(const ChipBoyProcessor& p, const tracker::Song& s, int ch, int bar, int inBar);
+
 /* ----------------------------------------------------------- lookups */
 
 /// The coupling corner of the current model: DMG 25 Hz, CGB 338 Hz over the
@@ -265,8 +282,11 @@ public:
     virtual void shown(bool) {}
     std::function<void()> onContextChanged;
     std::function<void(int)> onSelectChannel;
+    /// A line for the status bar: what a file did, what a preset went where.
+    std::function<void(const juce::String&)> onMessage;
 protected:
     void contextChanged() { if (onContextChanged) onContextChanged(); }
+    void message(const juce::String& text) { if (onMessage) onMessage(text); }
     ChipBoyProcessor& processor;
     int channel = 0;
 };

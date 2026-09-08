@@ -1,5 +1,7 @@
 #include "plugin/main/panels/InstrumentPanel.h"
 
+#include "plugin/shared/Presets.h"
+
 #include <cmath>
 
 namespace chipboy::plugin {
@@ -9,6 +11,25 @@ using namespace chipboy::ui;
 
 namespace {
 constexpr int kListWidth = 220, kGap = 14, kListHeader = 28, kListButtons = 26;
+constexpr int kOpenFlags = FileBrowserComponent::openMode | FileBrowserComponent::canSelectFiles;
+constexpr int kSaveFlags = FileBrowserComponent::saveMode | FileBrowserComponent::canSelectFiles | FileBrowserComponent::warnAboutOverwriting;
+String ellipsis() { return String(CharPointer_UTF8("\xe2\x80\xa6")); }
+String arrow() { return String(CharPointer_UTF8(" \xe2\x86\x92 ")); }
+
+/// What placing a preset did, in one line: "Pluck -> slot 3; table 5 -> 9
+/// (renumbered); wave 2 reused" (docs/COMMANDS_AND_TEMPO.md section 15).
+String placeText(const bank::PlaceReport& r, const String& name)
+{
+    if (!r.ok) return "Preset not placed: " + String(r.error != nullptr ? r.error : "something is full");
+    String s = name + arrow() + "slot " + ValueFormat::number(r.instrumentSlot);
+    for (const auto& m : r.moves) {
+        const char* kind = m.kind == bank::PlaceReport::Kind::Table ? "table" : m.kind == bank::PlaceReport::Kind::Wave ? "wave" : "kit";
+        s += "; " + String(kind) + " " + ValueFormat::number(m.from);
+        if (m.to != m.from) s += arrow() + ValueFormat::number(m.to) + (m.reused ? " (reused)" : " (renumbered)");
+        else if (m.reused) s += " reused";
+    }
+    return s;
+}
 /// The cards go two to a row. The right column is fixed at the width two
 /// 150 px field columns need with the card's padding; the left column takes
 /// the rest, which is three of them. Keeping the tab down to two card rows
@@ -193,13 +214,16 @@ struct InstrumentPanel::Widgets {
 InstrumentPanel::InstrumentPanel(ChipBoyProcessor& p)
     : EditorPanel(p),
       listTitle_("Instruments" + middot() + "128 slots", Fonts::sans(11.0f), colours::textMute),
-      newBtn_("New"), dupBtn_("Dup")
+      newBtn_("New"), dupBtn_("Dup"),
+      savePresetBtn_("Save preset" + ellipsis()), loadPresetBtn_("Load preset" + ellipsis())
 {
     addAndMakeVisible(list_);
     addAndMakeVisible(listTitle_);
     addAndMakeVisible(newBtn_);
     addAndMakeVisible(dupBtn_);
     addAndMakeVisible(assignBtn_);
+    addAndMakeVisible(savePresetBtn_);
+    addAndMakeVisible(loadPresetBtn_);
     addAndMakeVisible(scroll_);
     list_.setKindColours([](int kind) { return instrumentKindColour(kind); });
     // A click only picks what the editor shows; a double click hands the slot
@@ -224,6 +248,14 @@ InstrumentPanel::InstrumentPanel(ChipBoyProcessor& p)
     dupBtn_.setTooltip("Duplicate the selected instrument into the first empty slot");
     dupBtn_.onClick = [this] { duplicate(); };
     assignBtn_.onClick = [this] { assignSlot(slot_); };
+    // A preset is the instrument and everything it references, as a file
+    // (docs/COMMANDS_AND_TEMPO.md section 15).
+    savePresetBtn_.setTooltip("Write the selected instrument to a .cbi file with every table, wave and kit it uses " + String(CharPointer_UTF8("\xe2\x80\x94"))
+                              + " a table its A command starts comes too.");
+    savePresetBtn_.onClick = [this] { savePreset(); };
+    loadPresetBtn_.setTooltip("Read a .cbi into the selected slot. Its tables, waves and kit take the first free slots of their kind unless the bank already holds an identical one, "
+                              "and every reference is renumbered to match; the status line says what went where.");
+    loadPresetBtn_.onClick = [this] { loadPreset(); };
 
     const int v = paramValue(processor, channelParamId(channel, ids::instrument));
     slot_ = v >= 1 ? v : 1;
@@ -300,6 +332,11 @@ void InstrumentPanel::resized()
     dupBtn_.setBounds(buttons.removeFromRight(40).reduced(2, 0));
     newBtn_.setBounds(buttons.removeFromRight(44).reduced(2, 0));
     assignBtn_.setBounds(buttons);
+    // The preset pair takes the row under them: two 220 px buttons do not
+    // fit beside New and Dup (UI_DESIGN section 6).
+    auto presets = left.removeFromTop(kListButtons).reduced(0, 2);
+    savePresetBtn_.setBounds(presets.removeFromLeft(presets.getWidth() / 2).reduced(2, 0));
+    loadPresetBtn_.setBounds(presets.reduced(2, 0));
     list_.setBounds(left.withTrimmedTop(4));
     area.removeFromLeft(kGap);
     scroll_.setBounds(area);
@@ -414,6 +451,53 @@ void InstrumentPanel::duplicate()
     selfBank_ = processor.bank().get();
     rebuildList();
     showSlot(slot);
+}
+
+/* ---------------------------------------------------------- presets */
+
+void InstrumentPanel::savePreset()
+{
+    const auto b = processor.bank();
+    if (!b) return;
+    const bank::Instrument* inst = b->instrument(slot_);
+    if (inst == nullptr) { message("Slot " + ValueFormat::number(slot_) + " is empty: nothing to save."); return; }
+    const String name = File::createLegalFileName(String(inst->name).trim());
+    auto preset = std::make_shared<bank::Preset>(bank::collectPreset(*b, slot_));
+    chooser_ = std::make_unique<FileChooser>("Save instrument preset",
+                                             presetsFolder().getChildFile((name.isEmpty() ? String("Instrument") : name) + kPresetExtension),
+                                             String("*") + kPresetExtension, true, false, this);
+    chooser_->launchAsync(kSaveFlags, [safe = Component::SafePointer<InstrumentPanel>(this), preset](const FileChooser& fc) {
+        if (safe == nullptr) return;
+        File file = fc.getResult();
+        if (file == File()) return;
+        if (!file.hasFileExtension(kPresetExtension)) file = file.withFileExtension(kPresetExtension);
+        const bool ok = chipboy::plugin::savePreset(*preset, file);
+        safe->message(ok ? "Saved " + file.getFileName() + " to " + file.getParentDirectory().getFullPathName()
+                         : "Could not write " + file.getFileName());
+    });
+}
+
+void InstrumentPanel::loadPreset()
+{
+    chooser_ = std::make_unique<FileChooser>("Open instrument preset", presetsFolder(), String("*") + kPresetExtension, true, false, this);
+    chooser_->launchAsync(kOpenFlags, [safe = Component::SafePointer<InstrumentPanel>(this)](const FileChooser& fc) {
+        if (safe == nullptr) return;
+        const File file = fc.getResult();
+        if (!file.existsAsFile()) return;
+        auto preset = std::make_shared<bank::Preset>();
+        if (!chipboy::plugin::loadPreset(file, *preset)) { safe->message("Could not read " + file.getFileName()); return; }
+        InstrumentPanel& panel = *safe;
+        const int slot = panel.slot_;
+        bank::PlaceReport report;
+        panel.processor.mutateBank([&preset, slot, &report](bank::Bank& b) { bank::placePreset(b, *preset, slot, report); });
+        panel.selfBank_ = panel.processor.bank().get();
+        panel.rebuildList();
+        panel.rebuildEditor();
+        panel.refreshAssignButton();
+        panel.updateUsedOn();
+        panel.contextChanged();
+        panel.message(placeText(report, String(preset->instrument.name)));
+    });
 }
 
 /* ----------------------------------------------------------- editor */

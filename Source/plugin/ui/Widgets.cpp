@@ -342,8 +342,22 @@ struct Stepper::Impl {
     Binding bind;
     std::function<juce::String(int)> textFn;
     bool wraps = false;
+    bool typed = false;
     int hover = -1;   ///< 0 minus, 1 plus
     float wheelAcc = 0.0f;
+    /// Typed entry, as the grids read digits: a digit that would overflow
+    /// starts a new value, and the entry ends when the value is full.
+    int acc = 0;
+    void resetEntry() { acc = 0; }
+    /// The value after typing `d` into the entry.
+    int typeDigit(int d)
+    {
+        int v = acc * 10 + d;
+        if (v > bind.hi) v = juce::jmin(bind.hi, d);
+        acc = v;
+        if (v * 10 > bind.hi) resetEntry();     // no room for another digit
+        return juce::jmax(bind.lo, v);
+    }
 
     juce::String text() const
     {
@@ -393,6 +407,7 @@ void Stepper::setValue(int v, juce::NotificationType n)
 int Stepper::value() const { return impl_->value; }
 void Stepper::setTextFunction(std::function<juce::String(int)> fn) { impl_->textFn = std::move(fn); repaint(); }
 void Stepper::setWraps(bool wraps) { impl_->wraps = wraps; }
+void Stepper::setTyped(bool typed) { impl_->typed = typed; }
 int Stepper::preferredWidth() const { return 22 + 34 + 22 + 2; }
 void Stepper::resized() {}
 
@@ -428,6 +443,7 @@ void Stepper::mouseDown(const juce::MouseEvent& e)
 {
     if (!isEnabled()) return;
     grabKeyboardFocus();
+    impl_->resetEntry();
     if (e.x < 23) setValue(impl_->stepped(-1));
     else if (e.x >= getWidth() - 23) setValue(impl_->stepped(1));
 }
@@ -439,9 +455,15 @@ void Stepper::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDeta
 bool Stepper::keyPressed(const juce::KeyPress& k)
 {
     const int code = k.getKeyCode();
-    if (code == juce::KeyPress::upKey || code == juce::KeyPress::rightKey || k.getTextCharacter() == '+') { setValue(impl_->stepped(1)); return true; }
-    if (code == juce::KeyPress::downKey || code == juce::KeyPress::leftKey || k.getTextCharacter() == '-') { setValue(impl_->stepped(-1)); return true; }
-    return false;
+    auto& im = *impl_;
+    if (code == juce::KeyPress::upKey || code == juce::KeyPress::rightKey || k.getTextCharacter() == '+') { im.resetEntry(); setValue(im.stepped(1)); return true; }
+    if (code == juce::KeyPress::downKey || code == juce::KeyPress::leftKey || k.getTextCharacter() == '-') { im.resetEntry(); setValue(im.stepped(-1)); return true; }
+    if (!im.typed) return false;
+    if (code == juce::KeyPress::backspaceKey || code == juce::KeyPress::deleteKey || code == juce::KeyPress::escapeKey) { im.resetEntry(); return true; }
+    const auto ch = k.getTextCharacter();
+    if (ch < '0' || ch > '9') return false;
+    setValue(im.typeDigit(int(ch - '0')));
+    return true;
 }
 
 // ===========================================================================
@@ -671,6 +693,7 @@ struct SlotList::Impl {
     Content content;
     std::unique_ptr<juce::TextEditor> editor;
     int editingRow = -1;
+    bool renameable = true;
 
     explicit Impl(SlotList& o) : owner(o), content(*this)
     {
@@ -712,7 +735,7 @@ struct SlotList::Impl {
     }
     void beginRename(int r)
     {
-        if (r < 0 || r >= int(rows.size())) return;
+        if (!renameable || r < 0 || r >= int(rows.size())) return;
         selectRow(r, juce::sendNotification);
         if (editor == nullptr) {
             editor = std::make_unique<juce::TextEditor>();
@@ -808,6 +831,7 @@ void SlotList::setSelected(int slot, juce::NotificationType n)
     else { impl_->selectedSlot = slot; impl_->content.repaint(); }
 }
 int SlotList::selected() const { return impl_->selectedSlot; }
+void SlotList::setRenameable(bool on) { impl_->renameable = on; }
 void SlotList::setKindColours(std::function<juce::Colour(int)> fn) { impl_->kindColour = std::move(fn); impl_->content.repaint(); }
 void SlotList::beginRename() { impl_->beginRename(impl_->rowOfSlot(impl_->selectedSlot)); }
 

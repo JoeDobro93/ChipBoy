@@ -2,11 +2,12 @@
 // 10; UI_DESIGN section 7).
 //
 // A groove is sixteen tick counts, so the editor is sixteen cells in a
-// column beside the phrase grid, row for row with its steps: the value a
-// step lasts, a bar drawn to scale so the swing is visible, and the tick
-// that step starts on. The head carries the slot the editor is browsing,
-// the total against the bar's ticks and the swing the first pair makes,
-// with a nudge that trades one tick between the entries of every pair.
+// column: the value a step lasts, a bar drawn to scale so the swing is
+// visible, and the tick that step starts on. The head carries the slot the
+// editor is browsing, the total against the bar's ticks and the swing the
+// first pair makes, with a nudge that trades one tick between the entries of
+// every pair. It lives in the Grooves tab, beside the sixteen slots, where
+// it takes whatever width and row height the tab gives it.
 //
 // The song is the only copy: the editor reads the groove through the song
 // it was given and reports an edited one, exactly as the phrase grid
@@ -33,13 +34,20 @@ public:
     /// What the total is measured against: the bar's ticks, from the processor.
     void setBarTicks(int ticks);
     void setPlayingStep(int step);   ///< -1 none
+    /// Taller rows where there is room for them (the Grooves tab).
+    void setRowHeight(int px);
 
     /// An edited groove, for the panel to write into the song.
     std::function<void(int slot, const tracker::Groove&)> onChange;
+    /// The head's stepper browsed to another slot.
+    std::function<void(int slot)> onSlotChange;
 
     juce::String getTooltip() override;
+    /// kRowHeight is the smallest row (the lane's rhythm) and kWidth the
+    /// width the editor starts at; the Grooves tab gives it more of both.
     static constexpr int kRowHeight = 22, kHeaderHeight = 48, kWidth = 164;
-    static constexpr int preferredHeight() { return kHeaderHeight + tracker::kGrooveSteps * kRowHeight; }
+    static constexpr int heightForRows(int rowHeight) { return kHeaderHeight + tracker::kGrooveSteps * rowHeight; }
+    int preferredHeight() const;
 
     void resized() override; void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;

@@ -24,6 +24,10 @@ const char* kStockTip = "STOCK: every audible setting is something a real unit d
 const char* kVisualizerTip = "Open the visualizer window: the five scopes, no chrome, made for screen capture";
 const char* kHexTip = "Show values in hex, the LSDj habit. Display only.";
 const char* kQuantizeTip = "Quantize MIDI notes to ticks: notes wait for the next tick, the tracker feel. Off: sample-accurate.";
+/// The source cannot be Host when there is no host transport to follow
+/// (docs/COMMANDS_AND_TEMPO.md section 16).
+const char* kOwnTransportTip = "The plugin is running the transport itself -- no host offers one -- so the ticks are the song's and this is fixed on Song. "
+                               "The Tracker tab's Play, Stop and Loop drive it.";
 /// The wordmark is a two-line lockup so the row has the width for four
 /// groups; the rest of the row is laid out to these.
 constexpr int kWordmark = 19, kWordmarkSmall = 13, kGroupGap = 16, kLabelGap = 8;
@@ -66,12 +70,13 @@ HeaderBar::HeaderBar(ChipBoyProcessor& p)
     tempoSource_.setOptionTooltip(0, "Ticks follow the host's tempo and its beats. Scrubbing is exact; tempo automation is the host's own track.");
     tempoSource_.setOptionTooltip(1, "The song owns its tempo: the Song BPM beside this plus the T commands in its cells. The host's bars become a ruler.");
     tempoSource_.attach(param(processor_, ids::tempoSource));
+    tempoSource_.setTooltip("Whose beat the ticks follow (docs/COMMANDS_AND_TEMPO.md 4)");
     songTempo_.setTooltip("The song's base tempo, 40-255 BPM. T commands in cells move it from there.");
     songTempo_.attach(param(processor_, ids::songTempo));
     quantize_.setTooltip(kQuantizeTip);
     quantize_.setClickingTogglesState(true);
     quantizeAtt_ = std::make_unique<ButtonParameterAttachment>(param(processor_, ids::notesOnTick), quantize_);
-    tempoWatch_ = std::make_unique<ParamWatch>(param(processor_, ids::tempoSource), [this](float v) { songTempo_.setEnabled(v > 0.5f); });
+    tempoWatch_ = std::make_unique<ParamWatch>(param(processor_, ids::tempoSource), [this](float v) { songTempo_.setEnabled(v > 0.5f || processor_.ownsTransport()); });
 
     bankPrev_.setTooltip("Previous bank");
     bankNext_.setTooltip("Next bank");
@@ -114,6 +119,24 @@ void HeaderBar::tick()
         resized();
     }
     lastModel_ = modelIndex(processor_);
+    // While the plugin owns the transport there is no host beat to follow, so
+    // the source reads Song and is fixed there (section 16).
+    const int owns = processor_.ownsTransport() ? 1 : 0;
+    if (owns != lastOwns_) {
+        lastOwns_ = owns;
+        tempoSource_.setEnabled(owns == 0);
+        tempoSource_.setSelected(owns != 0 ? 1 : (paramValue(processor_, ids::tempoSource) != 0 ? 1 : 0), dontSendNotification);
+        if (owns != 0) {
+            tempoSource_.setOptionTooltip(0, kOwnTransportTip);
+            tempoSource_.setOptionTooltip(1, kOwnTransportTip);
+        }
+        else {
+            tempoSource_.setOptionTooltip(0, "Ticks follow the host's tempo and its beats. Scrubbing is exact; tempo automation is the host's own track.");
+            tempoSource_.setOptionTooltip(1, "The song owns its tempo: the Song BPM beside this plus the T commands in its cells. The host's bars become a ruler.");
+        }
+        songTempo_.setEnabled(owns != 0 || paramValue(processor_, ids::tempoSource) != 0);
+    }
+    if (owns != 0) tempoSource_.setSelected(1, dontSendNotification);   // automation cannot move it either
     const String n = processor_.bankName();
     if (n != bankName_.text()) bankName_.setText(n);
 }

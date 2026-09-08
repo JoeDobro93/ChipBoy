@@ -321,6 +321,14 @@ void ScrollBlock::setContent(std::unique_ptr<Block> b)
     relayout();
 }
 
+void ScrollBlock::scrollToKeepVisible(int y, int height)
+{
+    const auto view = viewport_.getViewArea();
+    if (view.getHeight() <= 0) return;
+    if (y < view.getY()) viewport_.setViewPosition(view.getX(), std::max(0, y));
+    else if (y + height > view.getBottom()) viewport_.setViewPosition(view.getX(), std::max(0, y + height - view.getHeight()));
+}
+
 void ScrollBlock::relayout()
 {
     if (!content_) return;
@@ -416,6 +424,37 @@ ParamWatch::ParamWatch(RangedAudioParameter& p, std::function<void(float)> fn)
 {
     att_ = std::make_unique<ParameterAttachment>(p, std::move(fn));
     att_->sendInitialUpdate();
+}
+
+/* --------------------------------------------------------- the tracker */
+
+TrackerPosition trackerPosition(const ChipBoyProcessor& p)
+{
+    TrackerPosition t;
+    t.playing = p.transportPlaying();
+    t.tick = std::max<int64_t>(0, p.trackerTick());
+    t.barTicks = std::max(1, p.barTicks());
+    const auto s = p.song();
+    // The bars are the song's own, laid end to end through its prefix table:
+    // a bar with its own step count moves the ones after it (section 11).
+    if (s) tracker::barAtTick(*s, t.tick, t.barTicks, t.bar, t.inBar);
+    else { t.bar = int(t.tick / t.barTicks); t.inBar = int(t.tick % t.barTicks); }
+    return t;
+}
+
+int playingStepOf(const ChipBoyProcessor& p, const tracker::Song& s, int ch, int bar, int inBar)
+{
+    const int barTicks = std::max(1, p.barTicks());
+    const int steps = s.stepsOfBar(bar);
+    int start[tracker::kMaxSteps + 1];
+    tracker::stepStartTicks(s, s.phrase(s.phraseAt(ch, bar)), p.player().groove(ch), start, barTicks, steps);
+    const int length = tracker::barLengthTicks(s, bar, barTicks);
+    int step = -1;
+    for (int i = 0; i < steps; ++i) {
+        if (start[i] >= length || start[i] > inBar) break;     // that step never fires, or has not come yet
+        step = i;
+    }
+    return step;
 }
 
 /* ----------------------------------------------------------- lookups */

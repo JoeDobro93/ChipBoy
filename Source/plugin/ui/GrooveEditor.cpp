@@ -7,9 +7,10 @@ namespace chipboy::ui {
 namespace {
 
 constexpr int kMaxTick = 48;          ///< a groove entry is 1-48, 0 unused (section 9.2)
-constexpr int kCellX = 4, kCellW = 38;
-constexpr int kBarX = 48, kBarRight = 118;
-constexpr int kStartX = 124, kStartW = 34;
+/// The row, left to right: the cell, the bar drawn to scale, and the tick
+/// the step starts on. Only the bar stretches, so a wider editor is a longer
+/// bar and the numbers stay where the eye expects them.
+constexpr int kCellX = 4, kCellW = 38, kBarX = 48, kBarPad = 46, kStartPad = 40, kStartW = 34;
 constexpr int kNudgeW = 20, kNudgeH = 18, kNudgeY = 28;
 constexpr int kHeadRow = 26;          ///< as the grid's header splits: name row, caption row
 constexpr float kPixelsPerTick = 6.0f;   ///< a value drag, as the knob's travel reads
@@ -58,6 +59,7 @@ struct GrooveEditor::Impl {
     std::shared_ptr<const tracker::Song> song;
     Stepper slotStepper;
     int slot = 0;                 ///< 0 straight (read-only), 1-16 the song's
+    int rowH = GrooveEditor::kRowHeight;
     int barTicks = driver::kTicksPerBeat * 4;
     int playing = -1;
     int cursor = 0, hover = -1, hoverNudge = -1;
@@ -70,7 +72,12 @@ struct GrooveEditor::Impl {
         slotStepper.setRange(0, 16, 0);
         slotStepper.setTooltip("Which groove the editor is showing: 0 is straight and cannot be edited, 1-16 are the song's. It follows the selected channel's phrase until you browse.");
         slotStepper.setTextFunction([](int v) { return v == 0 ? juce::String("0 str") : ValueFormat::number(v); });
-        slotStepper.onChange = [this](int v) { slot = juce::jlimit(0, 16, v); entry.reset(); owner.repaint(); };
+        slotStepper.onChange = [this](int v) {
+            slot = juce::jlimit(0, 16, v);
+            entry.reset();
+            owner.repaint();
+            if (owner.onSlotChange) owner.onSlotChange(slot);
+        };
         owner.addAndMakeVisible(slotStepper);
     }
 
@@ -102,12 +109,14 @@ struct GrooveEditor::Impl {
         return a + b > 0 ? 100 * a / (a + b) : -1;
     }
 
-    juce::Rectangle<int> cellRect(int row) const { return { kCellX, kHeaderHeight + row * kRowHeight, kCellW, kRowHeight }; }
+    juce::Rectangle<int> cellRect(int row) const { return { kCellX, kHeaderHeight + row * rowH, kCellW, rowH }; }
     juce::Rectangle<int> nudgeRect(int i) const { return { owner.getWidth() - 6 - (2 - i) * kNudgeW - (1 - i) * 2, kNudgeY, kNudgeW, kNudgeH }; }
+    int barRight() const { return juce::jmax(kBarX + 20, owner.getWidth() - kBarPad); }
+    int startX() const { return juce::jmax(barRight() + 6, owner.getWidth() - kStartPad); }
     int rowAt(juce::Point<int> p) const
     {
         if (p.y < kHeaderHeight) return -1;
-        const int row = (p.y - kHeaderHeight) / kRowHeight;
+        const int row = (p.y - kHeaderHeight) / rowH;
         return row >= 0 && row < tracker::kGrooveSteps ? row : -1;
     }
 
@@ -157,11 +166,11 @@ struct GrooveEditor::Impl {
         g.setFont(Fonts::mono(11.0f));
         g.setColour(t == bars ? ok : warn);
         const juce::String totalText = ValueFormat::number(t) + " / " + ValueFormat::number(bars);
-        g.drawFittedText(totalText, juce::Rectangle<int>(6, kHeadRow, 52, kRowHeight), juce::Justification::centredLeft, 1, 0.8f);
+        g.drawFittedText(totalText, juce::Rectangle<int>(6, kHeadRow, 52, GrooveEditor::kRowHeight), juce::Justification::centredLeft, 1, 0.8f);
         g.setColour(textMute);
         const int swing = swingPercent();
         g.drawFittedText(editable() ? (swing >= 0 ? juce::String(swing) + " %" : juce::String("--")) : juce::String("straight"),
-                         juce::Rectangle<int>(60, kHeadRow, 54, kRowHeight), juce::Justification::centredLeft, 1, 0.8f);
+                         juce::Rectangle<int>(60, kHeadRow, 54, GrooveEditor::kRowHeight), juce::Justification::centredLeft, 1, 0.8f);
 
         for (int i = 0; i < 2; ++i) {
             const auto r = nudgeRect(i);
@@ -186,10 +195,10 @@ struct GrooveEditor::Impl {
         const bool focused = owner.hasKeyboardFocus(false);
 
         for (int row = 0; row < tracker::kGrooveSteps; ++row) {
-            const int y = kHeaderHeight + row * kRowHeight;
-            if (row == playing) { g.setColour(playRow); g.fillRect(1, y, w - 2, kRowHeight); }
+            const int y = kHeaderHeight + row * rowH;
+            if (row == playing) { g.setColour(playRow); g.fillRect(1, y, w - 2, rowH); }
             g.setColour(lineSoft);
-            g.fillRect(1, y + kRowHeight - 1, w - 2, 1);
+            g.fillRect(1, y + rowH - 1, w - 2, 1);
 
             const bool inPattern = row < n;
             const bool plays = row < st && start[row] < barTicks;
@@ -205,7 +214,7 @@ struct GrooveEditor::Impl {
 
             if (row >= st) continue;                       // that step is not in the bar's grid
             const int ticks = gr.at(row) * sc;
-            const auto track = juce::Rectangle<int>(kBarX, y + kRowHeight / 2 - 4, kBarRight - kBarX, 7);
+            const auto track = juce::Rectangle<int>(kBarX, y + rowH / 2 - 4, barRight() - kBarX, 7);
             g.setColour(well);
             g.fillRoundedRectangle(track.toFloat(), 2.0f);
             if (plays) {
@@ -215,7 +224,7 @@ struct GrooveEditor::Impl {
             }
             g.setFont(Fonts::mono(10.0f));
             g.setColour(plays ? textDim : warn);
-            g.drawText(ValueFormat::number(start[row]), juce::Rectangle<int>(kStartX, y, kStartW, kRowHeight), juce::Justification::centredRight, false);
+            g.drawText(ValueFormat::number(start[row]), juce::Rectangle<int>(startX(), y, kStartW, rowH), juce::Justification::centredRight, false);
         }
     }
 };
@@ -223,7 +232,7 @@ struct GrooveEditor::Impl {
 GrooveEditor::GrooveEditor() : impl_(std::make_unique<Impl>(*this))
 {
     setWantsKeyboardFocus(true);
-    setSize(kWidth, preferredHeight());
+    setSize(kWidth, heightForRows(kRowHeight));
 }
 GrooveEditor::~GrooveEditor() = default;
 
@@ -247,6 +256,14 @@ void GrooveEditor::setBarTicks(int ticks)
     const int t = juce::jmax(1, ticks);
     if (t == impl_->barTicks) return;
     impl_->barTicks = t;
+    repaint();
+}
+int GrooveEditor::preferredHeight() const { return heightForRows(impl_->rowH); }
+void GrooveEditor::setRowHeight(int px)
+{
+    const int h = juce::jlimit(kRowHeight, 48, px);
+    if (h == impl_->rowH) return;
+    impl_->rowH = h;
     repaint();
 }
 void GrooveEditor::setPlayingStep(int step)

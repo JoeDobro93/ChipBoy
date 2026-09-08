@@ -1,5 +1,5 @@
 // ChipBoy -- the main window (UI_DESIGN section 2): header, mixer row,
-// tabs with their context line, the seven editor panels and the status
+// tabs with their context line, the eight editor panels and the status
 // line. 1180 wide at 100 %, scaled as a whole at 125 / 150 %; the height
 // stretches from kMainHeight up, and everything the extra height buys goes
 // to the editor pane.
@@ -28,7 +28,7 @@ public:
     explicit ChipBoyEditor(ChipBoyProcessor& p);
     ~ChipBoyEditor() override;
 
-    enum Tab { Instrument = 0, Tables, Waves, Kits, Phrases, Link, Hardware, kTabs };
+    enum Tab { Instrument = 0, Tables, Grooves, Waves, Kits, Tracker, Link, Hardware, kTabs };
 
     void selectChannel(int ch);      ///< the editing context: strip highlight, panels, context line
     void showTab(int tab);

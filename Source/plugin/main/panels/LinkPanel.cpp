@@ -255,7 +255,7 @@ void LinkPanel::tick()
         key += src + ";";
         RichText t;
         if (o) { const String n = src.fromFirstOccurrenceOf(": ", false, false); t.plain("Claimed by ").bold(n).plain(" (Voice plugin)"); claims.emplace_back(ch, n); }
-        else if (src == "Off") t.plain("Off " + emdash() + " Phrases lane and tables only");
+        else if (src == "Off") t.plain("Off " + emdash() + " the tracker lane and tables only");
         else t.bold(src).plain(" on this track");
         texts[size_t(ch)] = t;
     }

@@ -198,7 +198,7 @@ void ChannelStrip::showSourceMenu()
     PopupMenu midi;
     for (int i = 1; i <= 16; ++i) midi.addItem(1 + i, "MIDI " + String(i), true, sourceValue_ == i);
     m.addSubMenu("MIDI channel", midi, true, nullptr, sourceValue_ >= 1 && sourceValue_ <= 16);
-    m.addItem(18, "Off (Phrases lane and tables only)", true, sourceValue_ == 17);
+    m.addItem(18, "Off (the tracker lane and tables only)", true, sourceValue_ == 17);
     Component::SafePointer<ChannelStrip> safe(this);
     m.showMenuAsync(PopupMenu::Options().withTargetComponent(&sourceBox_), [safe](int r) {
         if (safe == nullptr || r < 1 || r > 18) return;

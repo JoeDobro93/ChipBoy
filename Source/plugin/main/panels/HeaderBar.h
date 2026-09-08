@@ -50,6 +50,9 @@ private:
     float scale_ = 1.0f;
     bool lastModified_ = false;
     int lastModel_ = -1;
+    /// Whether the plugin was running its own transport last tick: while it
+    /// does, the tempo source is fixed on Song (COMMANDS_AND_TEMPO 16).
+    int lastOwns_ = -1;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HeaderBar)
 };

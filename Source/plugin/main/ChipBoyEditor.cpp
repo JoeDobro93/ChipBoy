@@ -2,13 +2,15 @@
 
 #include "plugin/main/panels/HardwarePanel.h"
 #include "plugin/main/panels/InstrumentPanel.h"
+#include "plugin/main/panels/GroovesPanel.h"
 #include "plugin/main/panels/KitsPanel.h"
 #include "plugin/main/panels/LinkPanel.h"
-#include "plugin/main/panels/PhrasesPanel.h"
 #include "plugin/main/panels/TablesPanel.h"
+#include "plugin/main/panels/TrackerPanel.h"
 #include "plugin/main/panels/WavesPanel.h"
 
 #include <cmath>
+#include <iterator>
 
 namespace chipboy::plugin {
 
@@ -16,9 +18,10 @@ using namespace juce;
 using namespace chipboy::ui;
 
 namespace {
-constexpr int kTabsHeight = 34, kEditorPad = 12, kTabBarWidth = 640;
+constexpr int kTabsHeight = 34, kEditorPad = 12, kTabBarWidth = 660;
 const Identifier kScaleProp("ui_scale"), kHeightProp("ui_height");
-const char* kTabNames[] = { "Instrument", "Tables", "Waves", "Kits", "Phrases", "Link", "Hardware" };
+const char* kTabNames[] = { "Instrument", "Tables", "Grooves", "Waves", "Kits", "Tracker", "Link", "Hardware" };
+static_assert(int(std::size(kTabNames)) == int(ChipBoyEditor::kTabs), "a tab needs a name");
 }
 
 /// The tab strip with the context line at its right ("Editing PU2 · instrument 05 Bass 07").
@@ -67,9 +70,10 @@ ChipBoyEditor::ChipBoyEditor(ChipBoyProcessor& p)
 
     panels_[Instrument] = std::make_unique<InstrumentPanel>(processor_);
     panels_[Tables] = std::make_unique<TablesPanel>(processor_);
+    panels_[Grooves] = std::make_unique<GroovesPanel>(processor_);
     panels_[Waves] = std::make_unique<WavesPanel>(processor_);
     panels_[Kits] = std::make_unique<KitsPanel>(processor_);
-    panels_[Phrases] = std::make_unique<PhrasesPanel>(processor_);
+    panels_[Tracker] = std::make_unique<TrackerPanel>(processor_);
     panels_[Link] = std::make_unique<LinkPanel>(processor_);
     auto hardware = std::make_unique<HardwarePanel>(processor_);
     hardware->onDisplaySettings = [this](ScopeView::Trace t, int periods) { mixer_.setScopeSettings(t, periods); };
@@ -77,6 +81,7 @@ ChipBoyEditor::ChipBoyEditor(ChipBoyProcessor& p)
     for (auto& panel : panels_) {
         panel->onContextChanged = [this] { refreshContext(); };
         panel->onSelectChannel = [this](int ch) { selectChannel(ch); };
+        panel->onMessage = [this](const String& text) { status_.setMessage(text); };
         content_.addChildComponent(*panel);
     }
 

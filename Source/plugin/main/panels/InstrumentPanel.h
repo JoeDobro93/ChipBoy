@@ -6,6 +6,7 @@
 #include "plugin/main/panels/PanelCommon.h"
 
 #include <array>
+#include <memory>
 
 namespace chipboy::plugin {
 
@@ -38,12 +39,17 @@ private:
     void edit(const std::function<void(bank::Instrument&)>& fn);
     void newInstrument();
     void duplicate();
+    /// The instrument with every table, wave and kit it uses, as a .cbi file
+    /// (docs/COMMANDS_AND_TEMPO.md section 15).
+    void savePreset();
+    void loadPreset();
     static int firstEmptySlot(const bank::Bank& b);
     std::vector<int> computeUses(const bank::Bank& b, const tracker::Song* song) const;
 
     ui::SlotList list_;
     TextLine listTitle_;
-    juce::TextButton newBtn_, dupBtn_, assignBtn_;
+    juce::TextButton newBtn_, dupBtn_, assignBtn_, savePresetBtn_, loadPresetBtn_;
+    std::unique_ptr<juce::FileChooser> chooser_;
     ScrollBlock scroll_;
     std::unique_ptr<Widgets> w_;
     int slot_ = 1;

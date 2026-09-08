@@ -4,12 +4,20 @@
 // window. Every shot reports its scrolling panes, so a run says plainly
 // whether a tab fits the window. Needs a display (Xvfb will do).
 //
-//   chipboy_uishot <output folder>
+//   chipboy_uishot <output folder> [--desktop] [--song <file.cbsong>]
+//
+// --song loads a .cbsong before the editor opens and leaves the processor
+// without a play head, so the plugin owns the transport
+// (docs/COMMANDS_AND_TEMPO.md section 16): the Tracker tab's buttons are
+// live and the song plays on the plugin's own clock while the shots are
+// taken.
 #include "plugin/main/ChipBoyProcessor.h"
+#include "plugin/shared/SongFiles.h"
 #include "plugin/voice/VoiceProcessor.h"
 #include "plugin/ui/Widgets.h"
 
 #include <cstdio>
+#include <iterator>
 
 using namespace chipboy::plugin;
 
@@ -105,20 +113,38 @@ void play(ChipBoyProcessor& p, FakePlayHead& ph, int blocks)
 int main(int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
-    const juce::File outDir = juce::File::getCurrentWorkingDirectory().getChildFile(argc > 1 ? argv[1] : "shots");
+    juce::String out = "shots", songPath;
+    bool desktop = false;                       // a real window: the scopes' timers run
+    for (int i = 1; i < argc; ++i) {
+        const juce::String a(argv[i]);
+        if (a == "--desktop") desktop = true;
+        else if (a == "--song" && i + 1 < argc) songPath = argv[++i];
+        else if (!a.startsWith("--")) out = a;
+    }
+    const juce::File outDir = juce::File::getCurrentWorkingDirectory().getChildFile(out);
     outDir.createDirectory();
 
     chipboy::ui::ScopeView::setOffscreenRefresh(true);
     ChipBoyProcessor proc;
     FakePlayHead ph;
-    proc.setPlayHead(&ph);
+    // A song of its own means no host: the plugin runs the transport, which
+    // is what the Tracker tab's buttons show (section 16).
+    const bool ownTransport = songPath.isNotEmpty();
+    if (!ownTransport) proc.setPlayHead(&ph);
     proc.prepareToPlay(48000.0, 512);
+    if (ownTransport) {
+        const juce::File songFile = juce::File::getCurrentWorkingDirectory().getChildFile(songPath);
+        chipboy::plugin::SongReport report;
+        if (!proc.loadSongFile(songFile, report)) { std::printf("could not read %s\n", songFile.getFullPathName().toRawUTF8()); return 1; }
+        std::printf("loaded %s -- bank %s, %d instruments, %d differences\n", songFile.getFileName().toRawUTF8(),
+                    report.bankName.toRawUTF8(), report.instrumentsUsed, report.differences.size() + report.missing.size());
+        proc.transportPlay();
+    }
     setCommands(proc);
     play(proc, ph, 200);
 
     std::unique_ptr<juce::AudioProcessorEditor> ed(proc.createEditor());
     ed->setOpaque(true);
-    const bool desktop = argc > 2 && juce::String(argv[2]) == "--desktop";   // a real window: the scopes' timers run
     if (desktop) ed->addToDesktop(0);
     ed->setVisible(true);
     pump(600);
@@ -127,8 +153,8 @@ int main(int argc, char** argv)
     reportPanes(*ed, "instrument");
 
     if (auto* bar = findChild<juce::TabbedButtonBar>(ed.get())) {
-        const char* names[] = { "instrument", "tables", "waves", "kits", "phrases", "link", "hardware" };
-        for (int i = 1; i < bar->getNumTabs() && i < 7; ++i) {
+        const char* names[] = { "instrument", "tables", "grooves", "waves", "kits", "tracker", "link", "hardware" };
+        for (int i = 1; i < bar->getNumTabs() && i < int(std::size(names)); ++i) {
             bar->setCurrentTabIndex(i);
             pump(300);
             play(proc, ph, 20); pump(200);

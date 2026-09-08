@@ -81,6 +81,9 @@ public:
     int value() const;
     void setTextFunction(std::function<juce::String(int)> fn);
     void setWraps(bool wraps);
+    /// Typed entry, the grids' convention: digits build a value, Backspace
+    /// clears it. Off by default, so a stepper that only steps stays that way.
+    void setTyped(bool typed);
     std::function<void(int)> onChange;
     static constexpr int kHeight = 24;
     int preferredWidth() const;           ///< 80: two 22 px buttons and a 34 px readout
@@ -165,6 +168,8 @@ public:
     void setSelected(int slot, juce::NotificationType = juce::sendNotification);
     int selected() const;
     void setKindColours(std::function<juce::Colour(int kind)> fn);
+    /// Rows that have no name to edit (the grooves) turn renaming off.
+    void setRenameable(bool on);
     std::function<void(int slot)> onSelect;
     std::function<void(int slot)> onDoubleClick;   ///< a double click on a row (the panel decides what it means)
     std::function<void(int slot, const juce::String& name)> onRename;
@@ -213,29 +218,39 @@ private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
 
-/// The Phrases lane: four channels side by side, sixteen steps of note,
-/// velocity, instrument, table and two commands for one bar (UI_DESIGN
-/// section 7). Column headers carry the Roll / Trk source switch and the
-/// phrase's groove chip; the groove itself is edited in the GrooveEditor
-/// beside the lane.
+/// The tracker lane: four channels side by side, the bar's own step count
+/// of note, velocity, instrument, table and two commands (UI_DESIGN
+/// section 7). Each channel's head carries its record arm, the PLAYS switch
+/// (MIDI / Trkr) and the phrase's groove chip; the groove itself is edited
+/// in the Grooves tab.
 ///
-/// A phrase holds sixty-four cells now (docs/COMMANDS_AND_TEMPO.md section
-/// 11) and the lane still shows the first sixteen: the Tracker tab that shows
-/// a bar's own step count is the interface stage's.
+/// The rows are the bar's steps, one to sixty-four
+/// (docs/COMMANDS_AND_TEMPO.md section 11): the grid is as tall as they ask
+/// and scrolls inside its pane past sixteen.
 class PhraseGrid : public juce::Component, public juce::TooltipClient {
 public:
     PhraseGrid();
     ~PhraseGrid() override;
+    /// The song, the bar to show, and how many steps that bar holds.
     void setSong(std::shared_ptr<const tracker::Song> song, int bar);
     int bar() const;
+    int steps() const;                                         ///< rows on show, 1-64
     void setPlayingStep(int ch, int step);                     ///< -1 none
     void setRollNote(int ch, int midiNote);                    ///< the piano roll's current note, greyed; -1 none
     std::function<void(int ch, int step, const tracker::Cell&)> onCellChange;
     std::function<void(int ch, tracker::NoteSource)> onSourceChange;
     std::function<void(int ch, int groove)> onGrooveChange;    ///< per-phrase groove slot, 0 straight
+    std::function<void(int ch, bool armed)> onArmChange;       ///< the channel's record arm (section 14)
+    std::function<void(int row)> onCursorRow;                  ///< the cursor moved: keep this row in view
     juce::String getTooltip() override;   ///< the hovered cell: what the column is, and what the command says
     static constexpr int kRowHeight = 22, kHeaderHeight = 48, kVisibleSteps = 16;
-    static constexpr int preferredHeight() { return kHeaderHeight + kVisibleSteps * kRowHeight; }
+    /// How tall the grid is for a bar of `steps` steps; sixteen is what the
+    /// pane holds without scrolling.
+    static constexpr int heightForSteps(int steps)
+    {
+        return kHeaderHeight + (steps < 1 ? 1 : steps > tracker::kMaxSteps ? tracker::kMaxSteps : steps) * kRowHeight;
+    }
+    static constexpr int preferredHeight() { return heightForSteps(kVisibleSteps); }
     void resized() override; void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override; void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
@@ -244,17 +259,22 @@ private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
 
-/// The bar chain above the lane: one cell per bar per channel with the
-/// phrase slot; click selects the bar, drag moves through the song.
-class ChainStrip : public juce::Component {
+/// The chain, rotated (UI_DESIGN section 7): one row per bar, numbered
+/// 1, 2, 3 down the left with the lowest at the top, and five cells across
+/// -- the four channels' phrase slots and the bar's own step count (blank =
+/// the song's). It stands in the column right of the lane, row for row with
+/// the lane's steps, scrolls with the song and follows the playing bar.
+class ChainColumn : public juce::Component, public juce::TooltipClient {
 public:
-    ChainStrip();
-    ~ChainStrip() override;
+    ChainColumn();
+    ~ChainColumn() override;
     void setSong(std::shared_ptr<const tracker::Song> song, int selectedBar, int playingBar);
     std::function<void(int bar)> onSelectBar;
     std::function<void(int ch, int bar, int phraseSlot)> onChainChange;   ///< 0 clears
-    static constexpr int kRowHeight = 22, kHeaderHeight = 18;
-    static constexpr int preferredHeight() { return kHeaderHeight + 4 * kRowHeight + 3 * 2; }
+    std::function<void(int bar, int steps)> onBarStepsChange;             ///< 0 = the song's default
+    juce::String getTooltip() override;
+    /// 164 wide and the lane's rhythm: a 48 px head over 22 px rows.
+    static constexpr int kRowHeight = 22, kHeaderHeight = 48, kWidth = 164;
     void resized() override; void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
     void mouseDrag(const juce::MouseEvent&) override; void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;

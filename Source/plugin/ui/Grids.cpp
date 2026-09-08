@@ -1,5 +1,5 @@
-// ChipBoy -- the grids: the table editor, the phrases lane, the bar chain
-// and the wave editor (UI_DESIGN sections 6-7; the mockup's .tracker,
+// ChipBoy -- the grids: the table editor, the tracker lane, the chain
+// column and the wave editor (UI_DESIGN sections 6-7; the mockup's .tracker,
 // .chain and .wavegrid, with the keyboard of a tracker).
 //
 // Keyboard, in every grid: arrows / Tab move the cursor, digits type a value
@@ -554,34 +554,39 @@ void TableGrid::focusLost(FocusChangeType) { impl_->core.entry.reset(); repaint(
 struct PhraseGrid::Impl {
     static constexpr int kChannelCols = 6;   ///< note, vel, ins, tbl and the two commands
     static constexpr int kStepWidth = 34;
+    /// The head, per channel: the record arm, the name, the PLAYS switch and
+    /// the phrase's groove chip, all inside the 26 px name row.
+    static constexpr int kArm = 14, kHead1 = 26;
 
     PhraseGrid& owner;
     std::shared_ptr<const tracker::Song> song;
     int bar = 0;
-    // The lane shows the bar's first sixteen steps; a phrase holds sixty-four
-    // now (docs/COMMANDS_AND_TEMPO.md section 11), and the grid that shows a
-    // bar's own step count is the interface stage's.
-    static constexpr int kRows = PhraseGrid::kVisibleSteps;
-    std::array<std::array<tracker::Cell, kRows>, 4> cells{};
+    /// A phrase holds sixty-four cells and the bar says how many of them play
+    /// (docs/COMMANDS_AND_TEMPO.md section 11); the grid is that many rows.
+    static constexpr int kMax = tracker::kMaxSteps;
+    std::array<std::array<tracker::Cell, kMax>, 4> cells{};
     std::array<int, 4> playing { -1, -1, -1, -1 };
     std::array<int, 4> rollNote { -1, -1, -1, -1 };
-    std::array<std::array<int, kRows>, 4> shadow{};   ///< the roll's notes as the bar played, greyed
+    std::array<std::array<int, kMax>, 4> shadow{};   ///< the roll's notes as the bar played, greyed
     std::array<int, 4> groove{};
     std::array<bool, 4> trackerSource{};
-    std::array<juce::Rectangle<int>, 4> grooveRects{};
+    std::array<bool, 4> armed{ { true, true, true, true } };
+    std::array<juce::Rectangle<int>, 4> grooveRects{}, armRects{}, playsRects{};
     Segmented source[4];
     GridCore core;
     int octave = 4;
-    int hoverGroove = -1;
+    int hoverGroove = -1, hoverArm = -1;
 
     explicit Impl(PhraseGrid& o) : owner(o)
     {
-        core.rows = kRows; core.rowH = kRowHeight; core.headerH = kHeaderHeight;
+        core.rows = PhraseGrid::kVisibleSteps; core.rowH = kRowHeight; core.headerH = kHeaderHeight;
         for (int ch = 0; ch < 4; ++ch) {
-            source[ch].setOptions({ "Roll", "Trk" });
+            // The switch is the playback source now (section 14): the channel
+            // plays the incoming MIDI, or its own cells.
+            source[ch].setOptions({ "MIDI", "Trkr" });
             source[ch].setMini(true);
-            source[ch].setOptionTooltip(0, "The piano roll's notes, greyed. Commands sit next to the note they will hit.");
-            source[ch].setOptionTooltip(1, "The tracker's own notes; incoming MIDI is ignored on this channel.");
+            source[ch].setOptionTooltip(0, "MIDI: this channel plays the notes arriving from the host, and its cells are shown greyed beside them.");
+            source[ch].setOptionTooltip(1, "Trkr: this channel plays its own cells. Incoming MIDI is ignored unless the channel is armed and recording.");
             source[ch].onChange = [this, ch](int i) {
                 trackerSource[size_t(ch)] = i == 1;
                 buildColumns(owner.getWidth());
@@ -594,6 +599,8 @@ struct PhraseGrid::Impl {
 
     static const char* colTitle(int i) { static const char* t[kChannelCols] = { "note", "vel", "ins", "tbl", "cmd", "cmd" }; return t[i]; }
 
+    int steps() const { return core.rows; }
+
     void buildColumns(int width)
     {
         auto& cols = core.cols;
@@ -601,8 +608,8 @@ struct PhraseGrid::Impl {
         cols.push_back({ Kind::Step, 0, 0, kStepWidth, "Step" });
         // What each column has to show, in units of the widest: a note name
         // and a three-digit velocity, instrument and table slots, and a
-        // command with two arguments. The groove editor takes the rest of
-        // the pane (UI_DESIGN section 7).
+        // command with two arguments. The chain takes the rest of the pane
+        // (UI_DESIGN section 7).
         const float weights[kChannelCols] = { 1.12f, 0.88f, 0.88f, 0.82f, 1.50f, 1.50f };
         float total = 0.0f;
         for (float w : weights) total += w;
@@ -620,11 +627,21 @@ struct PhraseGrid::Impl {
         }
         core.ensureEditableCursor();
     }
+    /// The head row, left to right: the arm dot, the channel's name, the
+    /// PLAYS caption with its switch, and what is left goes to the groove
+    /// chip (UI_DESIGN section 7).
     void layoutHeader(int ch, int x, int w)
     {
-        const int nameW = juce::roundToInt(draw::textWidth(Fonts::pixel(10.0f), colours::channelName(ch))) + 6;
+        int cx = x + 6;
+        armRects[size_t(ch)] = { cx, (kHead1 - kArm) / 2, kArm, kArm };
+        cx += kArm + 5;
+        const int nameW = juce::roundToInt(draw::textWidth(Fonts::pixel(10.0f), colours::channelName(ch))) + 4;
+        cx += nameW + 6;
+        const int playsW = juce::roundToInt(draw::textWidth(Fonts::caption(9.0f), "PLAYS")) + 4;
+        playsRects[size_t(ch)] = { cx, 0, playsW, kHead1 };
+        cx += playsW + 4;
         auto& seg = source[ch];
-        seg.setBounds(x + 6 + nameW, 3, seg.preferredWidth(), 20);
+        seg.setBounds(cx, 3, seg.preferredWidth(), 20);
         const int gx = seg.getRight() + 6;
         grooveRects[size_t(ch)] = { gx, 3, juce::jmin(64, juce::jmax(0, x + w - gx - 4)), 20 };
     }
@@ -652,11 +669,14 @@ struct PhraseGrid::Impl {
 
     void refreshFromSong()
     {
+        core.rows = song != nullptr ? song->stepsOfBar(bar) : PhraseGrid::kVisibleSteps;
+        core.curRow = juce::jlimit(0, core.rows - 1, core.curRow);
         for (int ch = 0; ch < 4; ++ch) {
             const auto* p = song != nullptr ? song->phrase(song->phraseAt(ch, bar)) : nullptr;
-            for (int i = 0; i < kRows; ++i) cells[size_t(ch)][size_t(i)] = p != nullptr ? p->steps[size_t(i)] : tracker::Cell{};
+            for (int i = 0; i < kMax; ++i) cells[size_t(ch)][size_t(i)] = p != nullptr ? p->steps[size_t(i)] : tracker::Cell{};
             groove[size_t(ch)] = p != nullptr ? p->groove : 0;
             trackerSource[size_t(ch)] = song != nullptr && song->noteSource[size_t(ch)] == tracker::NoteSource::Tracker;
+            armed[size_t(ch)] = song == nullptr || song->recordArm[size_t(ch)];
             source[ch].setSelected(trackerSource[size_t(ch)] ? 1 : 0, juce::dontSendNotification);
         }
     }
@@ -731,13 +751,25 @@ struct PhraseGrid::Impl {
         });
     }
 
+    void toggleArm(int ch)
+    {
+        armed[size_t(ch)] = !armed[size_t(ch)];
+        owner.repaint();
+        if (owner.onArmChange) owner.onArmChange(ch, armed[size_t(ch)]);
+    }
+
     juce::String tooltip() const
     {
+        if (hoverArm >= 0)
+            return juce::String("Record arm for ") + colours::channelName(hoverArm)
+                 + ": with Rec on and the transport running, this channel's incoming MIDI is written into its cells, whatever it plays. An unarmed channel never records.";
+        if (hoverGroove >= 0)
+            return "The groove this phrase runs on: how many ticks each step lasts. 0 is straight, six ticks a step; 1-16 are the song's, edited in the Grooves tab.";
         const int row = core.hoverRow, col = core.hoverCol;
         if (row < 0 || row >= core.rows || col < 0 || col >= int(core.cols.size())) return {};
         const auto& c = core.cols[size_t(col)];
         const auto& cell = cells[size_t(c.ch)][size_t(row)];
-        if (c.kind == Kind::Ghost) return "The piano roll's note as this bar played. Set the channel to Trk to type notes here.";
+        if (c.kind == Kind::Ghost) return "The note the host sent as this bar played. Set the channel to Trkr to type notes here.";
         if (c.kind == Kind::Note) return "The note this step plays; minus enters a note off";
         if (c.kind == Kind::Vel) return "How hard this step's note is played, 1-127; blank is the default "
                                         + juce::String(int(tracker::kDefaultVelocity)) + ". A recorded note keeps the velocity it arrived with.";
@@ -767,7 +799,7 @@ struct PhraseGrid::Impl {
     void paintHeaders(juce::Graphics& g, int width)
     {
         using namespace colours;
-        const int h1 = 26, h2 = core.headerH - h1;
+        const int h1 = kHead1, h2 = core.headerH - h1;
         g.setColour(lineSoft);
         g.fillRect(0, core.headerH - 1, width, 1);
         for (int ch = 0; ch < 4; ++ch) {
@@ -775,9 +807,17 @@ struct PhraseGrid::Impl {
             const int x = core.cols[size_t(first)].x;
             g.setColour(lineSoft);
             g.fillRect(x, 0, 1, core.headerH);
+            // the arm: a red dot when this channel records (section 14)
+            const auto ar = armRects[size_t(ch)];
+            const bool on = armed[size_t(ch)];
+            g.setColour(on ? accent : ledOff);
+            g.fillEllipse(ar.toFloat().reduced(3.0f));
+            g.setColour(on ? accentHi : (hoverArm == ch ? textMute : line));
+            g.drawEllipse(ar.toFloat().reduced(2.5f), 1.0f);
             g.setFont(Fonts::pixel(10.0f));
             g.setColour(channel(ch));
-            g.drawText(channelName(ch), juce::Rectangle<int>(x + 6, 0, 40, h1), juce::Justification::centredLeft, false);
+            g.drawText(channelName(ch), juce::Rectangle<int>(ar.getRight() + 5, 0, 40, h1), juce::Justification::centredLeft, false);
+            draw::caption(g, "PLAYS", playsRects[size_t(ch)], juce::Justification::centredLeft, textDim, 9.0f);
             const auto gr = grooveRects[size_t(ch)];
             if (gr.getWidth() > 24) {
                 draw::panel(g, gr, hoverGroove == ch ? raisedHi : raised, line, 3.0f);
@@ -795,7 +835,7 @@ struct PhraseGrid::Impl {
 PhraseGrid::PhraseGrid() : impl_(std::make_unique<Impl>(*this))
 {
     setWantsKeyboardFocus(true);
-    setSize(1050, preferredHeight());
+    setSize(980, preferredHeight());
 }
 PhraseGrid::~PhraseGrid() = default;
 
@@ -812,13 +852,14 @@ void PhraseGrid::setSong(std::shared_ptr<const tracker::Song> song, int bar)
     repaint();
 }
 int PhraseGrid::bar() const { return impl_->bar; }
+int PhraseGrid::steps() const { return impl_->steps(); }
 void PhraseGrid::setPlayingStep(int ch, int step)
 {
     if (ch < 0 || ch > 3) return;
     auto& im = *impl_;
     if (im.playing[size_t(ch)] == step) return;
     im.playing[size_t(ch)] = step;
-    if (step >= 0 && step < Impl::kRows && im.rollNote[size_t(ch)] > 0) im.shadow[size_t(ch)][size_t(step)] = im.rollNote[size_t(ch)];
+    if (step >= 0 && step < im.core.rows && im.rollNote[size_t(ch)] > 0) im.shadow[size_t(ch)][size_t(step)] = im.rollNote[size_t(ch)];
     repaint();
 }
 void PhraseGrid::setRollNote(int ch, int midiNote)
@@ -827,7 +868,7 @@ void PhraseGrid::setRollNote(int ch, int midiNote)
     auto& im = *impl_;
     im.rollNote[size_t(ch)] = midiNote;
     const int step = im.playing[size_t(ch)];
-    if (midiNote > 0 && step >= 0 && step < Impl::kRows && im.shadow[size_t(ch)][size_t(step)] != midiNote) {
+    if (midiNote > 0 && step >= 0 && step < im.core.rows && im.shadow[size_t(ch)][size_t(step)] != midiNote) {
         im.shadow[size_t(ch)][size_t(step)] = midiNote;
         repaint(juce::Rectangle<int>(0, im.core.rowY(step), getWidth(), im.core.rowH));
     }
@@ -868,17 +909,25 @@ void PhraseGrid::mouseMove(const juce::MouseEvent& e)
     auto& core = im.core;
     int r = -1, c = -1;
     if (!core.cellAt(e.getPosition(), r, c)) { r = -1; c = -1; }
-    int hg = -1;
-    for (int ch = 0; ch < 4; ++ch) if (im.grooveRects[size_t(ch)].contains(e.getPosition())) hg = ch;
-    if (r != core.hoverRow || c != core.hoverCol || hg != im.hoverGroove) { core.hoverRow = r; core.hoverCol = c; im.hoverGroove = hg; repaint(); }
+    int hg = -1, ha = -1;
+    for (int ch = 0; ch < 4; ++ch) {
+        if (im.grooveRects[size_t(ch)].contains(e.getPosition())) hg = ch;
+        if (im.armRects[size_t(ch)].contains(e.getPosition())) ha = ch;
+    }
+    if (r != core.hoverRow || c != core.hoverCol || hg != im.hoverGroove || ha != im.hoverArm) {
+        core.hoverRow = r; core.hoverCol = c; im.hoverGroove = hg; im.hoverArm = ha;
+        repaint();
+    }
 }
-void PhraseGrid::mouseExit(const juce::MouseEvent&) { impl_->core.hoverRow = impl_->core.hoverCol = -1; impl_->hoverGroove = -1; repaint(); }
+void PhraseGrid::mouseExit(const juce::MouseEvent&) { impl_->core.hoverRow = impl_->core.hoverCol = -1; impl_->hoverGroove = impl_->hoverArm = -1; repaint(); }
 void PhraseGrid::mouseDown(const juce::MouseEvent& e)
 {
     auto& im = *impl_;
     grabKeyboardFocus();
-    for (int ch = 0; ch < 4; ++ch)
+    for (int ch = 0; ch < 4; ++ch) {
+        if (im.armRects[size_t(ch)].contains(e.getPosition())) { im.toggleArm(ch); return; }
         if (im.grooveRects[size_t(ch)].contains(e.getPosition())) { im.openGrooveMenu(ch); return; }
+    }
     int r = 0, c = 0;
     if (im.core.cellAt(e.getPosition(), r, c) && im.core.editable(c)) { im.core.setCursor(r, c); repaint(); }
     if (e.mods.isPopupMenu()) im.openPalette(r, c);
@@ -906,62 +955,75 @@ bool PhraseGrid::keyPressed(const juce::KeyPress& k)
     auto& core = impl_->core;
     if (k.getKeyCode() == juce::KeyPress::escapeKey) { core.entry.reset(); return true; }
     if (k.getKeyCode() == juce::KeyPress::returnKey) { impl_->openPalette(core.curRow, core.curCol); return true; }
-    if (core.navigate(k)) { repaint(); return true; }
+    if (core.navigate(k)) {
+        repaint();
+        // Past sixteen steps the grid is taller than its pane, so the tab
+        // scrolls to wherever the cursor went (section 11).
+        if (onCursorRow) onCursorRow(core.curRow);
+        return true;
+    }
     return impl_->edit(k);
 }
 void PhraseGrid::focusGained(FocusChangeType) { repaint(); }
 void PhraseGrid::focusLost(FocusChangeType) { impl_->core.entry.reset(); repaint(); }
 
 // ===========================================================================
-// ChainStrip
+// ChainColumn
 // ===========================================================================
-struct ChainStrip::Impl {
-    ChainStrip& owner;
+struct ChainColumn::Impl {
+    ChainColumn& owner;
     std::shared_ptr<const tracker::Song> song;
     int selectedBar = 0, playingBar = -1;
     int firstBar = 0;
-    int cursorCh = 0;
-    int hoverCh = -1, hoverBar = -1;
+    int cursorCol = 0;            ///< 0-3 a channel, 4 the bar's step count
+    int hoverCol = -1, hoverBar = -1;
     Entry entry;
     int dragStartFirst = 0;
     bool dragged = false;
     float wheelAcc = 0.0f;
 
-    static constexpr int kLabelW = 60, kGap = 2, kMinCell = 40;
+    /// 164 px across: five 25 px cells with 2 px between them, and what is
+    /// left is the gutter the bar number stands in.
+    static constexpr int kPad = 3, kMinGutter = 22, kGap = 2, kCols = 5, kSteps = 4;
 
-    explicit Impl(ChainStrip& o) : owner(o) {}
+    explicit Impl(ChainColumn& o) : owner(o) {}
 
-    int visibleBars() const { return juce::jmax(1, (owner.getWidth() - kLabelW) / (kMinCell + kGap)); }
-    int cellW() const { const int n = visibleBars(); return (owner.getWidth() - kLabelW - kGap * (n - 1)) / n; }
-    int songBars() const
-    {
-        size_t n = 0;
-        if (song != nullptr) for (const auto& c : song->chain) n = juce::jmax(n, c.size());
-        return int(n);
-    }
+    int cellW() const { return juce::jmax(14, (owner.getWidth() - 2 * kPad - kMinGutter - kGap * (kCols - 1)) / kCols); }
+    int gutter() const { return juce::jmax(kMinGutter, owner.getWidth() - 2 * kPad - kCols * cellW() - kGap * (kCols - 1)); }
+    int visibleBars() const { return juce::jmax(1, (owner.getHeight() - kHeaderHeight) / kRowHeight); }
+    int songBars() const { return song != nullptr ? song->bars() : 0; }
+    /// One row past the song, so typing there grows it (UI_DESIGN section 7).
     int barCount() const { return juce::jmax(songBars(), juce::jmax(selectedBar, playingBar) + 1) + 1; }
     int slotAt(int ch, int bar) const { return song != nullptr ? song->phraseAt(ch, bar) : 0; }
+    int stepsAt(int bar) const
+    {
+        if (song == nullptr || bar < 0 || size_t(bar) >= song->barSteps.size()) return 0;
+        return song->barSteps[size_t(bar)];
+    }
+    int valueAt(int col, int bar) const { return col == kSteps ? stepsAt(bar) : slotAt(col, bar); }
 
-    juce::Rectangle<int> cellRect(int ch, int bar) const
+    juce::Rectangle<int> cellRect(int col, int bar) const
     {
-        const int i = bar - firstBar;
-        return { kLabelW + i * (cellW() + kGap), kHeaderHeight + ch * (kRowHeight + kGap), cellW(), kRowHeight };
+        const int w = cellW();
+        return { kPad + gutter() + col * (w + kGap), kHeaderHeight + (bar - firstBar) * kRowHeight, w, kRowHeight - 1 };
     }
-    bool cellAt(juce::Point<int> p, int& ch, int& bar) const
+    juce::Rectangle<int> rowRect(int bar) const
     {
-        if (p.x < kLabelW) return false;
-        const int i = (p.x - kLabelW) / (cellW() + kGap);
-        if (i < 0 || i >= visibleBars()) return false;
-        bar = firstBar + i;
+        return { 1, kHeaderHeight + (bar - firstBar) * kRowHeight, owner.getWidth() - 2, kRowHeight };
+    }
+    bool cellAt(juce::Point<int> p, int& col, int& bar) const
+    {
+        if (p.y < kHeaderHeight) return false;
+        const int row = (p.y - kHeaderHeight) / kRowHeight;
+        if (row < 0 || row >= visibleBars()) return false;
+        bar = firstBar + row;
         if (bar >= barCount()) return false;
-        if (p.y < kHeaderHeight) { ch = -1; return true; }
-        ch = (p.y - kHeaderHeight) / (kRowHeight + kGap);
-        return ch >= 0 && ch < 4;
+        const int w = cellW(), g = gutter();
+        const int i = (p.x - kPad - g) / (w + kGap);
+        col = p.x < kPad + g ? -1 : (i >= 0 && i < kCols ? i : -1);
+        return true;
     }
-    void clampScroll()
-    {
-        firstBar = juce::jlimit(0, juce::jmax(0, barCount() - visibleBars()), firstBar);
-    }
+    void clampScroll() { firstBar = juce::jlimit(0, juce::jmax(0, barCount() - visibleBars()), firstBar); }
     void scrollToSelected()
     {
         if (selectedBar < firstBar) firstBar = selectedBar;
@@ -970,7 +1032,7 @@ struct ChainStrip::Impl {
     }
     void selectBar(int bar)
     {
-        bar = juce::jmax(0, bar);
+        bar = juce::jlimit(0, juce::jmax(0, barCount() - 1), bar);
         const bool changed = bar != selectedBar;
         selectedBar = bar;
         entry.reset();
@@ -978,23 +1040,87 @@ struct ChainStrip::Impl {
         owner.repaint();
         if (changed && owner.onSelectBar) owner.onSelectBar(bar);
     }
-    void setSlot(int ch, int bar, int slot)
+    /// Writes one cell: a phrase slot, or the bar's own step count.
+    void setValue(int col, int bar, int value)
     {
-        slot = juce::jlimit(0, tracker::kPhraseSlots, slot);
-        if (slot == slotAt(ch, bar)) return;
-        if (owner.onChainChange) owner.onChainChange(ch, bar, slot);
+        if (col < 0 || col > kSteps || bar < 0) return;
+        const int v = juce::jlimit(0, col == kSteps ? tracker::kMaxSteps : tracker::kPhraseSlots, value);
+        if (v == valueAt(col, bar)) return;
+        if (col == kSteps) { if (owner.onBarStepsChange) owner.onBarStepsChange(bar, v); }
+        else if (owner.onChainChange) owner.onChainChange(col, bar, v);
         owner.repaint();
+    }
+
+    static const char* colName(int col) { return col == kSteps ? "STP" : colours::channelName(col); }
+
+    void paintHead(juce::Graphics& g)
+    {
+        using namespace colours;
+        const int w = owner.getWidth();
+        g.setColour(lineSoft);
+        g.fillRect(1, kHeaderHeight - 1, w - 2, 1);
+        draw::caption(g, "Chain", { 6, 0, w - 12, 26 }, juce::Justification::centredLeft, textDim, 10.0f);
+        const int bars = songBars();
+        g.setFont(Fonts::mono(10.0f));
+        g.setColour(textDim);
+        g.drawText(juce::String(bars) + (bars == 1 ? " bar" : " bars"), juce::Rectangle<int>(w - 66, 0, 60, 26), juce::Justification::centredRight, false);
+        draw::caption(g, "Bar", { kPad, 26, gutter(), kHeaderHeight - 26 }, juce::Justification::centredLeft, textDim, 8.0f);
+        for (int col = 0; col < kCols; ++col) {
+            const auto r = cellRect(col, firstBar).withY(26).withHeight(kHeaderHeight - 26);
+            g.setFont(Fonts::pixel(9.0f));
+            g.setColour(col == kSteps ? textDim : channel(col));
+            g.drawText(colName(col), r, juce::Justification::centred, false);
+        }
+    }
+
+    void paintRows(juce::Graphics& g)
+    {
+        using namespace colours;
+        const int n = visibleBars(), bars = barCount();
+        const bool focused = owner.hasKeyboardFocus(false);
+        for (int i = 0; i < n; ++i) {
+            const int bar = firstBar + i;
+            if (bar >= bars) break;
+            const bool cur = bar == selectedBar;
+            if (bar == playingBar) { g.setColour(playRow); g.fillRect(rowRect(bar)); }
+            g.setFont(Fonts::mono(10.0f));
+            g.setColour(bar == playingBar ? accentHi : cur ? text : textDim);
+            g.drawText(juce::String(bar + 1), juce::Rectangle<int>(kPad, rowRect(bar).getY(), gutter() - 4, kRowHeight), juce::Justification::centredRight, false);
+            for (int col = 0; col < kCols; ++col) {
+                const auto r = cellRect(col, bar);
+                const int v = valueAt(col, bar);
+                const bool empty = v == 0, hover = col == hoverCol && bar == hoverBar;
+                const bool hasCursor = cur && col == cursorCol;
+                g.setColour(cur ? accentSoft : hover ? raised : panel2);
+                g.fillRoundedRectangle(r.toFloat(), 3.0f);
+                g.setColour(cur ? accent : lineSoft);
+                if (empty && !cur) {
+                    const float dashes[2] = { 3.0f, 2.0f };
+                    const auto fr = r.toFloat().reduced(0.5f);
+                    g.drawDashedLine({ fr.getTopLeft(), fr.getTopRight() }, dashes, 2);
+                    g.drawDashedLine({ fr.getTopRight(), fr.getBottomRight() }, dashes, 2);
+                    g.drawDashedLine({ fr.getBottomRight(), fr.getBottomLeft() }, dashes, 2);
+                    g.drawDashedLine({ fr.getBottomLeft(), fr.getTopLeft() }, dashes, 2);
+                }
+                else g.drawRoundedRectangle(r.toFloat().reduced(0.5f), 3.0f, 1.0f);
+                if (hasCursor) { g.setColour(accentHi.withAlpha(focused ? 0.95f : 0.45f)); g.drawRoundedRectangle(r.toFloat().reduced(1.5f), 2.0f, focused ? 2.0f : 1.0f); }
+                g.setFont(Fonts::mono(11.0f));
+                g.setColour(empty ? textDim : col == kSteps ? textMute : cur ? text : textMute);
+                g.drawText(empty ? juce::String::charToString(0x00b7) : col == kSteps ? juce::String(v) : ValueFormat::number(v),
+                           r, juce::Justification::centred, false);
+            }
+        }
     }
 };
 
-ChainStrip::ChainStrip() : impl_(std::make_unique<Impl>(*this))
+ChainColumn::ChainColumn() : impl_(std::make_unique<Impl>(*this))
 {
     setWantsKeyboardFocus(true);
-    setSize(600, preferredHeight());
+    setSize(kWidth, kHeaderHeight + 16 * kRowHeight);
 }
-ChainStrip::~ChainStrip() = default;
+ChainColumn::~ChainColumn() = default;
 
-void ChainStrip::setSong(std::shared_ptr<const tracker::Song> song, int selectedBar, int playingBar)
+void ChainColumn::setSong(std::shared_ptr<const tracker::Song> song, int selectedBar, int playingBar)
 {
     auto& im = *impl_;
     im.song = std::move(song);
@@ -1003,118 +1129,100 @@ void ChainStrip::setSong(std::shared_ptr<const tracker::Song> song, int selected
     im.scrollToSelected();
     repaint();
 }
-void ChainStrip::resized() { impl_->clampScroll(); }
+void ChainColumn::resized() { impl_->clampScroll(); }
 
-void ChainStrip::paint(juce::Graphics& g)
-{
-    using namespace colours;
-    auto& im = *impl_;
-    const int n = im.visibleBars(), bars = im.barCount();
-    const bool focused = hasKeyboardFocus(false);
-    g.setFont(Fonts::mono(11.0f));
-    for (int i = 0; i < n; ++i) {
-        const int bar = im.firstBar + i;
-        if (bar >= bars) break;
-        const auto hr = im.cellRect(-1, bar).withY(0).withHeight(kHeaderHeight);
-        g.setColour(bar == im.playingBar ? accentHi : textDim);
-        g.setFont(Fonts::mono(11.0f));
-        g.drawText("bar " + ValueFormat::number(bar + 1), hr, juce::Justification::centred, false);
-    }
-    for (int ch = 0; ch < 4; ++ch) {
-        const auto lr = juce::Rectangle<int>(0, kHeaderHeight + ch * (kRowHeight + Impl::kGap), Impl::kLabelW, kRowHeight);
-        g.setFont(Fonts::pixel(10.0f));
-        g.setColour(channel(ch));
-        g.drawText(channelName(ch), lr, juce::Justification::centredLeft, false);
-        for (int i = 0; i < n; ++i) {
-            const int bar = im.firstBar + i;
-            if (bar >= bars) break;
-            const auto r = im.cellRect(ch, bar);
-            const int slot = im.slotAt(ch, bar);
-            const bool cur = bar == im.selectedBar, empty = slot == 0, hover = ch == im.hoverCh && bar == im.hoverBar;
-            const bool hasCursor = cur && ch == im.cursorCh;
-            g.setColour(cur ? accentSoft : hover ? raised : panel2);
-            g.fillRoundedRectangle(r.toFloat(), 3.0f);
-            if (bar == im.playingBar && !cur) { g.setColour(playRow); g.fillRoundedRectangle(r.toFloat(), 3.0f); }
-            g.setColour(cur ? accent : lineSoft);
-            if (empty && !cur) {
-                const float dashes[2] = { 3.0f, 2.0f };
-                const auto fr = r.toFloat().reduced(0.5f);
-                g.drawDashedLine({ fr.getTopLeft(), fr.getTopRight() }, dashes, 2);
-                g.drawDashedLine({ fr.getTopRight(), fr.getBottomRight() }, dashes, 2);
-                g.drawDashedLine({ fr.getBottomRight(), fr.getBottomLeft() }, dashes, 2);
-                g.drawDashedLine({ fr.getBottomLeft(), fr.getTopLeft() }, dashes, 2);
-            }
-            else g.drawRoundedRectangle(r.toFloat().reduced(0.5f), 3.0f, 1.0f);
-            if (hasCursor) { g.setColour(accentHi.withAlpha(focused ? 0.95f : 0.45f)); g.drawRoundedRectangle(r.toFloat().reduced(1.5f), 2.0f, focused ? 2.0f : 1.0f); }
-            g.setFont(Fonts::mono(11.0f));
-            g.setColour(empty ? textDim : cur ? text : textMute);
-            g.drawText(empty ? juce::String::charToString(0x00b7) : ValueFormat::number(slot), r, juce::Justification::centred, false);
-        }
-    }
-}
-
-void ChainStrip::mouseMove(const juce::MouseEvent& e)
+juce::String ChainColumn::getTooltip()
 {
     auto& im = *impl_;
-    int ch = -1, bar = -1;
-    if (!im.cellAt(e.getPosition(), ch, bar) || ch < 0) { ch = -1; bar = -1; }
-    if (ch != im.hoverCh || bar != im.hoverBar) { im.hoverCh = ch; im.hoverBar = bar; repaint(); }
+    if (im.hoverBar < 0) return "The chain: one row per bar, the four channels' phrases across it. Type a slot, blank it with Backspace, or step it with + and -.";
+    const juce::String at = " Bar " + juce::String(im.hoverBar + 1) + ".";
+    if (im.hoverCol == Impl::kSteps) {
+        const int v = im.stepsAt(im.hoverBar);
+        return v == 0 ? "This bar's own step count, 1-64. Blank: it takes the song's Steps / bar." + at
+                      : "This bar runs " + juce::String(v) + " steps; Backspace puts it back on the song's." + at;
+    }
+    if (im.hoverCol < 0) return "Bar " + juce::String(im.hoverBar + 1) + ". Click a cell to edit that bar; the lane shows whichever bar is selected.";
+    const int slot = im.slotAt(im.hoverCol, im.hoverBar);
+    return juce::String(colours::channelName(im.hoverCol)) + (slot == 0 ? " has no phrase this bar -- it just plays its notes." : " plays phrase " + ValueFormat::number(slot) + ".") + at;
 }
-void ChainStrip::mouseExit(const juce::MouseEvent&) { impl_->hoverCh = impl_->hoverBar = -1; repaint(); }
-void ChainStrip::mouseDown(const juce::MouseEvent& e)
+
+void ChainColumn::paint(juce::Graphics& g)
+{
+    draw::panel(g, getLocalBounds(), colours::panel2, colours::line, 4.0f);
+    impl_->paintHead(g);
+    impl_->paintRows(g);
+}
+
+void ChainColumn::mouseMove(const juce::MouseEvent& e)
+{
+    auto& im = *impl_;
+    int col = -1, bar = -1;
+    if (!im.cellAt(e.getPosition(), col, bar)) { col = -1; bar = -1; }
+    if (col != im.hoverCol || bar != im.hoverBar) { im.hoverCol = col; im.hoverBar = bar; repaint(); }
+}
+void ChainColumn::mouseExit(const juce::MouseEvent&) { impl_->hoverCol = impl_->hoverBar = -1; repaint(); }
+void ChainColumn::mouseDown(const juce::MouseEvent& e)
 {
     auto& im = *impl_;
     grabKeyboardFocus();
     im.dragStartFirst = im.firstBar;
     im.dragged = false;
-    int ch = -1, bar = -1;
-    if (im.cellAt(e.getPosition(), ch, bar)) {
-        if (ch >= 0) im.cursorCh = ch;
+    int col = -1, bar = -1;
+    if (im.cellAt(e.getPosition(), col, bar)) {
+        if (col >= 0) { im.cursorCol = col; im.entry.reset(); }
         im.selectBar(bar);
     }
 }
-void ChainStrip::mouseDrag(const juce::MouseEvent& e)
+void ChainColumn::mouseDrag(const juce::MouseEvent& e)
 {
     auto& im = *impl_;
-    const int dx = e.getDistanceFromDragStartX();
-    if (std::abs(dx) < 6 && !im.dragged) return;
+    const int dy = e.getDistanceFromDragStartY();
+    if (std::abs(dy) < 6 && !im.dragged) return;
     im.dragged = true;
-    const int first = im.dragStartFirst - dx / (im.cellW() + Impl::kGap);
+    const int first = im.dragStartFirst - dy / kRowHeight;
     if (first != im.firstBar) { im.firstBar = first; im.clampScroll(); repaint(); }
 }
-void ChainStrip::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& w)
+void ChainColumn::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& w)
 {
     auto& im = *impl_;
-    const float d = std::abs(w.deltaX) > 1.0e-6f ? -w.deltaX : w.deltaY;
-    im.wheelAcc += d;
-    const int steps = w.isSmooth ? int(im.wheelAcc / 0.1f) : (d > 0.0f ? 1 : d < 0.0f ? -1 : 0);
+    im.wheelAcc += w.deltaY;
+    const int steps = w.isSmooth ? int(im.wheelAcc / 0.1f) : (w.deltaY > 0.0f ? 1 : w.deltaY < 0.0f ? -1 : 0);
     if (w.isSmooth) im.wheelAcc -= float(steps) * 0.1f; else im.wheelAcc = 0.0f;
     if (steps == 0) return;
     im.firstBar -= steps;
     im.clampScroll();
     repaint();
 }
-bool ChainStrip::keyPressed(const juce::KeyPress& k)
+bool ChainColumn::keyPressed(const juce::KeyPress& k)
 {
     auto& im = *impl_;
     const int code = k.getKeyCode();
-    if (code == juce::KeyPress::leftKey) { im.selectBar(im.selectedBar - 1); return true; }
-    if (code == juce::KeyPress::rightKey) { im.selectBar(im.selectedBar + 1); return true; }
+    if (code == juce::KeyPress::upKey) { im.selectBar(im.selectedBar - 1); return true; }
+    if (code == juce::KeyPress::downKey) { im.selectBar(im.selectedBar + 1); return true; }
+    if (code == juce::KeyPress::pageUpKey) { im.selectBar(im.selectedBar - im.visibleBars()); return true; }
+    if (code == juce::KeyPress::pageDownKey) { im.selectBar(im.selectedBar + im.visibleBars()); return true; }
     if (code == juce::KeyPress::homeKey) { im.selectBar(0); return true; }
     if (code == juce::KeyPress::endKey) { im.selectBar(juce::jmax(0, im.songBars() - 1)); return true; }
-    if (code == juce::KeyPress::upKey) { im.cursorCh = juce::jmax(0, im.cursorCh - 1); im.entry.reset(); repaint(); return true; }
-    if (code == juce::KeyPress::downKey) { im.cursorCh = juce::jmin(3, im.cursorCh + 1); im.entry.reset(); repaint(); return true; }
+    if (code == juce::KeyPress::leftKey || code == juce::KeyPress::rightKey || code == juce::KeyPress::tabKey) {
+        const int d = code == juce::KeyPress::leftKey || (code == juce::KeyPress::tabKey && k.getModifiers().isShiftDown()) ? -1 : 1;
+        im.cursorCol = juce::jlimit(0, Impl::kCols - 1, im.cursorCol + d);
+        im.entry.reset(); repaint(); return true;
+    }
     if (code == juce::KeyPress::escapeKey) { im.entry.reset(); return true; }
-    const int cur = im.slotAt(im.cursorCh, im.selectedBar);
-    if (isBlankKey(k)) { im.setSlot(im.cursorCh, im.selectedBar, 0); return true; }
-    if (isPlus(k)) { im.setSlot(im.cursorCh, im.selectedBar, cur + 1); return true; }
-    if (isMinus(k)) { im.setSlot(im.cursorCh, im.selectedBar, cur - 1); return true; }
+    const int col = im.cursorCol, bar = im.selectedBar;
+    const int cur = im.valueAt(col, bar);
+    if (isBlankKey(k)) { im.entry.reset(); im.setValue(col, bar, 0); return true; }
+    if (isPlus(k)) { im.entry.reset(); im.setValue(col, bar, cur + 1); return true; }
+    if (isMinus(k)) { im.entry.reset(); im.setValue(col, bar, cur - 1); return true; }
+    // The step count is a plain number 1-64, as Steps / bar is; a phrase slot
+    // follows the display's base like every other slot.
+    const int hi = col == Impl::kSteps ? tracker::kMaxSteps : tracker::kPhraseSlots;
     int mag = 0;
-    if (typeDigit(im.entry, k.getTextCharacter(), ValueFormat::hex(), tracker::kPhraseSlots, mag)) { im.setSlot(im.cursorCh, im.selectedBar, mag); return true; }
+    if (typeDigit(im.entry, k.getTextCharacter(), col != Impl::kSteps && ValueFormat::hex(), hi, mag)) { im.setValue(col, bar, mag); return true; }
     return false;
 }
-void ChainStrip::focusGained(FocusChangeType) { repaint(); }
-void ChainStrip::focusLost(FocusChangeType) { impl_->entry.reset(); repaint(); }
+void ChainColumn::focusGained(FocusChangeType) { repaint(); }
+void ChainColumn::focusLost(FocusChangeType) { impl_->entry.reset(); repaint(); }
 
 // ===========================================================================
 // WaveGrid
