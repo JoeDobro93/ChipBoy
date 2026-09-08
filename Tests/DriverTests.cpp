@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <vector>
 
 using namespace chipboy;
@@ -18,8 +19,13 @@ using namespace chipboy::bank;
 namespace {
 
 struct Rig {
-    Bank bank = Bank::factory();
-    tracker::Song song;
+    // A bank is 41 KB and a song 300 KB now that a phrase holds sixty-four
+    // cells: both on the heap, so a Windows main thread's megabyte of stack
+    // is never the limit (CLAUDE.md). `new T(prvalue)` builds in place.
+    std::unique_ptr<Bank> bankOwned { new Bank(Bank::factory()) };
+    std::unique_ptr<tracker::Song> songOwned { new tracker::Song() };
+    Bank& bank = *bankOwned;
+    tracker::Song& song = *songOwned;
     Driver drv;
     Clock clock;
     render::Renderer ren;
@@ -438,13 +444,12 @@ TEST_CASE("a slot fires when it changes, again at each note-on, and reverts", "[
     CHECK(r.drv.slot(0, 1).cmd == Cmd::None);
 }
 
-TEST_CASE("a cell's revert form puts the letter back and leaves nothing in force", "[driver][commands]")
+TEST_CASE("a cell's command is applied once and never occupies a slot", "[driver][commands]")
 {
-    // Command::c = kRevert is the letter going back to where the instrument
-    // left it -- the slot going to none, said in a cell (section 3). It is
-    // applied once and leaves the slot empty, which is what makes it exact:
-    // a concrete E would stay in force and set the start volume of every note
-    // after it, so the velocity accents could never come back.
+    // Section 12: a cell's two commands are applied at their step. A
+    // persistent letter changes the running state, which holds until the next
+    // plain note reloads the instrument -- LSDj's rule -- and nothing is left
+    // in force to fire again at the notes after it.
     Rig r;
     r.tickHz = 100.0;
     r.song.noteSource[0] = tracker::NoteSource::Tracker;
@@ -452,42 +457,136 @@ TEST_CASE("a cell's revert form puts the letter back and leaves nothing in force
     NoteEvent e = cellOn(0, 69, 1, 127);
     e.cmd1 = { Cmd::E, 5, 0, 0 };
     auto w = r.block({ e }, 480);
-    CHECK(last(w, 0xFF12)->value == 0x50);                         // E's volume, not the velocity's
+    CHECK(last(w, 0xFF12)->value == 0x50);                         // E's volume at this note
+    CHECK(r.drv.slot(0, 0).cmd == Cmd::None);                      // the slot is the lane's alone
     w = r.block({ cellOn(0, 67, 1, 127) }, 480);
-    CHECK(last(w, 0xFF12)->value == 0x50);                         // in force: it fires at every note-on
+    CHECK(last(w, 0xFF12)->value == 0xF0);                         // the next plain note is the instrument's
+    w = r.block({ cellOn(0, 64, 1, 64) }, 480);
+    CHECK(last(w, 0xFF12)->value == 0x80);                         // and velocity 64 gets through
 
+    // The revert form still says "put the letter back", once.
+    e = cellOn(0, 69, 1, 127); e.cmd1 = { Cmd::E, 5, 0, 0 };
+    r.block({ e }, 480);
     w = r.block({ cellCmd(0, bank::revertOf(Cmd::E)) }, 480);
     REQUIRE(last(w, 0xFF12) != nullptr);
     CHECK(last(w, 0xFF12)->value == 0xD0);                         // the instrument's own vol 13
-    CHECK(r.drv.slot(0, 0).cmd == Cmd::None);                      // and nothing is left in force
-    w = r.block({ cellOn(0, 65, 1, 127) }, 480);
-    CHECK(last(w, 0xFF12)->value == 0xF0);                         // velocity 127 gets through again
-    w = r.block({ cellOn(0, 64, 1, 64) }, 480);
-    CHECK(last(w, 0xFF12)->value == 0x80);                         // and so does velocity 64
 }
 
-TEST_CASE("a V revert brings back the instrument's vibrato, delay and all", "[driver][commands][pitch]")
+TEST_CASE("a V on a bare note holds until the next plain note", "[driver][commands][pitch]")
 {
-    // A V command has no delay argument, so the value a concrete V could
-    // carry is lossy: it would start the lead's vibrato at once at every
-    // note-on. The revert form leaves the slot empty, so the instrument's own
-    // ten-tick delay is what the notes that follow get (section 9.4).
+    // Section 12's own example: a V written on a bare note stays through the
+    // bare notes that follow and ends at the next note that carries an
+    // instrument -- and looping back to that note plays it clean, because the
+    // cell never occupied a slot.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);   // the lead: vib 10, depth 2
+    r.block({ cellOn(0, 69, 1) }, 480);
+    CHECK(r.drv.view(0).vibSpeed == 10);
+    NoteEvent bare = cellOn(0, 71, 0);
+    bare.cmd1 = { Cmd::V, 15, 12, 0 };
+    r.block({ bare }, 480);
+    CHECK(r.drv.view(0).vibSpeed == 15);
+    CHECK(r.drv.view(0).vibDepth == 12);
+    r.block({ cellOn(0, 72, 0) }, 480);                            // another bare note
+    CHECK(r.drv.view(0).vibSpeed == 15);                           // it holds
+    r.block({ cellOn(0, 69, 1) }, 480);                            // a plain note: the instrument again
+    CHECK(r.drv.view(0).vibSpeed == 10);
+    CHECK(r.drv.view(0).vibDepth == 2);
+
+    // The loop wrap the Player sends, and then bar 1's plain note.
+    r.block({ cellOn(0, 72, 0) }, 480);
+    NoteEvent v2 = cellOn(0, 74, 0); v2.cmd1 = { Cmd::V, 15, 12, 0 };
+    r.block({ v2 }, 480);
+    CHECK(r.drv.view(0).vibSpeed == 15);
+    r.block({ allOff(0) }, 480);
+    r.block({ cellOn(0, 69, 1) }, 480);
+    CHECK(r.drv.view(0).vibSpeed == 10);                           // clean, as if the V had never played
+}
+
+TEST_CASE("a K cell kills its own note and no other", "[driver][commands]")
+{
+    // K is a per-note letter (section 12): it shapes the cell it is on.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    ChannelParams p; p.instrument = 1; r.drv.setParams(0, p);
+    NoteEvent e = cellOn(0, 69, 1);
+    e.cmd1 = { Cmd::K, 2, 0, 0 };                                  // two ticks and it is gone
+    r.block({ e }, 480);                                           // 480 frames is one tick at 100 Hz
+    CHECK(r.drv.view(0).active);
+    for (int i = 0; i < 3; ++i) r.block({}, 480);
+    CHECK_FALSE(r.drv.view(0).active);
+    r.block({ cellOn(0, 67, 1) }, 480);
+    CHECK(r.drv.view(0).active);
+    r.block({}, 2400);
+    CHECK(r.drv.view(0).active);                                   // the K did not follow the note
+}
+
+TEST_CASE("the command octave fires the slots without sounding", "[driver][commands]")
+{
+    // Section 13: MIDI notes 0-11 never sound and never join the held stack.
+    // They fire CMD1 then CMD2 on whatever the channel is playing, so a held
+    // note can be shaped after its attack.
+    Rig r;
+    r.tickHz = 100.0;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2;
+    p.cmd[0] = { Cmd::V, 15, 12, 0 };
+    r.drv.setParams(0, p);
+    r.block({}, 480);
+    r.block({ Rig::on(0, 69, 100) }, 480);
+    CHECK(r.drv.view(0).vibSpeed == 15);                           // the slot fires at the note-on
+    // A cell's revert puts the instrument's vibrato back, once; the slot is
+    // untouched, because a cell never writes one (section 12).
+    r.block({ cellCmd(0, bank::revertOf(Cmd::V)) }, 480);
+    CHECK(r.drv.view(0).vibSpeed == 10);
+    CHECK(r.drv.slot(0, 0).cmd == Cmd::V);
+    // Note 0: the slots fire again, on the note already sounding.
+    auto w = r.block({ Rig::on(0, 0, 100) }, 480);
+    CHECK(r.drv.view(0).vibSpeed == 15);
+    CHECK(r.drv.view(0).vibDepth == 12);
+    CHECK(r.drv.view(0).note == 69);                               // the same note, still held
+    CHECK(r.drv.view(0).active);
+    bool trigger = false;
+    for (const auto& x : w) if (x.addr == 0xFF14 && (x.value & 0x80)) trigger = true;
+    CHECK_FALSE(trigger);                                          // and it was not retriggered
+    r.block({ Rig::off(0, 0) }, 480);
+    CHECK(r.drv.view(0).active);                                   // its note-off means nothing
+    // With nothing sounding the persistent letters still land in the state.
+    r.block({ Rig::off(0, 69) }, 480);
+    r.block({ cellCmd(0, bank::revertOf(Cmd::V)) }, 480);
+    CHECK(r.drv.view(0).vibSpeed == 10);
+    r.block({ Rig::on(0, 11, 100) }, 480);
+    CHECK(r.drv.view(0).vibSpeed == 15);
+    CHECK_FALSE(r.drv.view(0).active);
+}
+
+TEST_CASE("a V revert in a slot brings back the instrument's vibrato, delay and all", "[driver][commands][pitch]")
+{
+    // A V command has no delay argument, so the value the old recorder wrote
+    // into a slot is lossy: in force, it starts the lead's vibrato at once at
+    // every note-on. The revert form empties the slot instead, so the
+    // instrument's own ten-tick delay is what the notes that follow get
+    // (section 9.4). Slots are where this still matters: a cell's V is a
+    // one-shot now (section 12).
     auto rig = [](bool useRevert) {
         auto r = std::make_unique<Rig>();
         r->tickHz = 100.0;
-        r->song.noteSource[0] = tracker::NoteSource::Tracker;
-        ChannelParams p; p.instrument = 1; p.velocityMode = 2; r->drv.setParams(0, p);
-        NoteEvent e = cellOn(0, 69, 1);
-        e.cmd1 = { Cmd::V, 15, 12, 0 };                            // fast and deep, no delay
-        r->block({ e }, 480);
+        ChannelParams p; p.instrument = 1; p.velocityMode = 2;
+        p.cmd[0] = { Cmd::V, 15, 12, 0 };                          // fast and deep, no delay
+        r->drv.setParams(0, p);
+        r->block({ Rig::on(0, 69, 100) }, 480);
         CHECK(r->drv.view(0).vibSpeed == 15);
         CHECK(r->drv.view(0).vibDepth == 12);
-        // Back to the instrument's: the revert form, or the value the old
-        // recorder wrote -- the instrument's speed and depth, its delay lost.
-        r->block({ cellCmd(0, useRevert ? bank::revertOf(Cmd::V) : Command{ Cmd::V, 10, 2, 0 }) }, 480);
+        // Back to the instrument's: the slot going to none, or the value the
+        // old recorder wrote -- the speed and depth, its delay lost.
+        if (useRevert) p.cmd[0] = {}; else p.cmd[0] = { Cmd::V, 10, 2, 0 };
+        r->drv.setParams(0, p);
+        r->block({ Rig::off(0, 69) }, 480);
         CHECK(r->drv.view(0).vibSpeed == 10);                      // the lead's speed
         CHECK(r->drv.view(0).vibDepth == 2);                       // and its depth, either way
-        r->block({ cellOn(0, 69, 1) }, 480);                       // a fresh note, five ticks in
+        r->block({ Rig::on(0, 69, 100) }, 480);                    // a fresh note, five ticks in
         r->block({}, 2400);
         return int(r->drv.view(0).period);
     };
@@ -515,21 +614,29 @@ TEST_CASE("a W revert gives the instrument a keyswitch brought in its own wave",
         ChannelParams p; p.instrument = 9; r.drv.setParams(2, p);
         return ram(r.block({ cellOn(2, 48, 9) }, 512));
     };
-    auto afterW = [&](Command back) {
+    // The same through a slot, which is where a value does stay in force.
+    auto afterW = [&](Command back, bool inSlot) {
         Rig r;
         r.song.noteSource[2] = tracker::NoteSource::Tracker;
-        ChannelParams p; p.instrument = 7; p.keyswitch = true; r.drv.setParams(2, p);   // Triangle bass
+        ChannelParams p; p.instrument = 7; p.keyswitch = true;
+        if (inSlot) p.cmd[0] = { Cmd::W, 2, 0, 0 };                // wave 2, the saw, in force
+        r.drv.setParams(2, p);                                     // Triangle bass
         NoteEvent e = cellOn(2, 48, 7);
-        e.cmd1 = { Cmd::W, 2, 0, 0 };                              // wave 2, the saw
+        if (!inSlot) e.cmd1 = { Cmd::W, 2, 0, 0 };
         r.block({ e }, 512);
         r.block({ Rig::on(2, 20, 100) }, 512);                     // keyswitch: 12 + 9 - 1 selects slot 9
-        r.block({ cellCmd(2, back) }, 512);
+        if (inSlot) { p.cmd[0] = back.cmd == Cmd::None || bank::isRevert(back) ? Command{} : back; r.drv.setParams(2, p); r.block({}, 512); }
+        else r.block({ cellCmd(2, back) }, 512);
         return ram(r.block({ cellOn(2, 48, 9) }, 512));
     };
     const auto organ = plain();
     REQUIRE(organ.size() == 16);
-    CHECK(afterW(bank::revertOf(Cmd::W)) == organ);                // the Organ's own wave
-    CHECK(afterW(Command{ Cmd::W, 1, 0, 0 }) != organ);            // a value stays in force: the triangle
+    CHECK(afterW(bank::revertOf(Cmd::W), true) == organ);          // the slot went to none: the Organ's own wave
+    CHECK(afterW(Command{ Cmd::W, 1, 0, 0 }, true) != organ);      // a value stays in force: the triangle
+    // A cell's W is a one-shot either way (section 12), so the plain note
+    // that follows plays the instrument the keyswitch brought in.
+    CHECK(afterW(bank::revertOf(Cmd::W), false) == organ);
+    CHECK(afterW(Command{ Cmd::W, 1, 0, 0 }, false) == organ);
 }
 
 TEST_CASE("two note-ons in one block are each reported as what they were", "[driver][notes]")
@@ -1204,10 +1311,13 @@ TEST_CASE("an OFF cell's command columns still apply", "[driver][notes]")
     auto w = r.block({ cellOn(0, 69, 1) }, 480);
     CHECK(last(w, 0xFF11)->value == 0x80);                         // 50 %
     NoteEvent e; e.channel = 0; e.kind = NoteEvent::NoteOff; e.source = NoteEvent::Tracker; e.a = 69;
-    e.cmd1 = { Cmd::W, 0, 0, 0 };                                  // 12.5 % from here on
+    e.cmd1 = { Cmd::W, 0, 0, 0 };                                  // 12.5 % from here
     r.block({ e }, 480);
-    w = r.block({ cellOn(0, 69, 1) }, 480);
-    CHECK(last(w, 0xFF11)->value == 0x00);
+    CHECK(r.drv.view(0).duty == 0);                                // applied at the OFF's own step
+    w = r.block({ cellOn(0, 69, 0) }, 480);                        // a bare note keeps it
+    CHECK(r.drv.view(0).duty == 0);
+    w = r.block({ cellOn(0, 69, 1) }, 480);                        // a plain one reloads the instrument
+    CHECK(last(w, 0xFF11)->value == 0x80);
 }
 
 TEST_CASE("a cell's instrument column is exact under the velocity bank", "[driver][notes]")
@@ -1217,7 +1327,7 @@ TEST_CASE("a cell's instrument column is exact under the velocity bank", "[drive
     // back must not move it again.
     Rig r;
     r.song.noteSource[3] = tracker::NoteSource::Tracker;
-    r.drv.setRecording(true);                                      // MIDI plays through onto a Trk lane
+    r.drv.setRecordMask(0xF);                                      // MIDI plays through onto a Trk lane
     ChannelParams p; p.instrument = 11; p.velocityMode = 1; r.drv.setParams(3, p);
     auto w = r.block({ Rig::on(3, 60, 20) }, 512);                 // 11 + 20/8 = 13, Hat closed
     CHECK(last(w, 0xFF21)->value == 0x91);

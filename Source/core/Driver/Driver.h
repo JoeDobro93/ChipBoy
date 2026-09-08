@@ -97,9 +97,10 @@ public:
     /// An instrument used instead of the bank slot on one channel (a Voice's
     /// local instrument, spec section 12.5). Null restores the bank.
     void setLocalInstrument(int ch, const bank::Instrument* inst) { local_[size_t(ch & 3)] = inst; }
-    /// While recording, incoming MIDI plays on tracker channels too (the
-    /// lane is muted by the player meanwhile).
-    void setRecording(bool on) { recording_ = on; }
+    /// The channels recording right now, a bit each (section 14): an armed
+    /// channel playing from the tracker lets incoming MIDI through, so an
+    /// overdub is audible, and the Player mutes its lane meanwhile.
+    void setRecordMask(uint32_t mask) { recordMask_ = mask & 15u; }
     /// Mute / solo as NR51 gates (bit per channel, 1 = audible). Takes effect
     /// on the next tick, and pops like the hardware does.
     void setGateMask(uint32_t enabledMask) { const uint8_t m = uint8_t(enabledMask & 15); if (m != gateMask_) { gateMask_ = m; gateDirty_ = true; } }
@@ -111,8 +112,9 @@ public:
     static constexpr uint16_t kAlignToQuietEdge = 0xFFFF;
     void setParams(int ch, const ChannelParams& p) { params_[size_t(ch & 3)] = p; }
     const ChannelParams& params(int ch) const { return params_[size_t(ch & 3)]; }
-    /// The command in force in a slot: the parameter, or the last tracker cell
-    /// that wrote it. This is what the recorder writes (section 5).
+    /// The command in force in a slot: the automation lane's, which is the
+    /// only thing a slot holds -- a cell's commands fire once and never
+    /// occupy one (section 12). This is what the recorder writes (section 5).
     const bank::Command& slot(int ch, int i) const { return v_[size_t(ch & 3)].slot[size_t(i & 1)]; }
     /// Quantise MIDI notes to ticks (section 4). Bends and controllers never
     /// wait; tracker cells are always on ticks anyway.
@@ -218,7 +220,9 @@ private:
         uint32_t instKey = 0;                         ///< what resolveInstrument() picked, to compare against
         bool     notePlain = true; uint8_t noteInst = 0;       ///< what the last note-on did, stamped on its event
         bank::Command lastCmd;                        ///< the last command fired, for Z to re-run
-        bank::Command slot[2], slotParam[2];          ///< in force, and the parameter it came from
+        bank::Command slot[2], slotParam[2];          ///< the automation lane's, in force and as the parameter left it
+        bank::Command noteCmd[2];                     ///< the cell's two columns, applied once when the note starts
+        bank::Command pendingCmd[2];                  ///< and where they wait while a D holds the note back
         int16_t  retrigStep = 0;                      ///< R: volume change per retrigger
         uint32_t rng = 1;
         // model of the wave channel timer, for streaming
@@ -259,10 +263,15 @@ private:
     /// to none does, and what a cell's revert form (Command::c = kRevert)
     /// does. One function, so the two can never disagree (section 3).
     void revertCommand(int ch, bank::Cmd cmd);
-    /// A cell's command column, applied as the slot changing to it at this
-    /// step. A revert form reverts and leaves the slot empty, exactly as the
-    /// slot going to none does -- so it never fires again at the next note.
-    void setSlotFromCell(int ch, int i, const bank::Command& c);
+    /// A cell's two command columns, applied once at their step and never
+    /// stored in a slot (section 12): a persistent letter changes the running
+    /// state, which then holds until a plain note reloads the instrument or a
+    /// later command moves it; a per-note letter shapes that note only; the
+    /// revert form puts the letter back. Z re-runs the other column.
+    void applyCellCommands(int ch, const bank::Command& c1, const bank::Command& c2);
+    /// The D in force for a note about to start: the cell's own column, else
+    /// a slot. -1 when there is none.
+    int  delayFor(int ch, const bank::Command* c1, const bank::Command* c2) const;
     /// Z re-runs a command with a random 0..x added to its x and 0..y to its
     /// y: the other slot or column when that is set, else the last command
     /// fired on the channel. Cmd::None when there is nothing to re-run.
@@ -270,7 +279,10 @@ private:
     void updateSlots(int ch);                 ///< a slot whose value changed fires at this tick
     void adoptInstrumentParam(int ch);        ///< the Instrument parameter moving clears a keyswitch
     void syncSlots(int ch);                   ///< adopt the parameters' slots without firing them
-    void fireSlots(int ch);                   ///< and again at every note-on
+    /// The slots again at every note-on. `live` writes the registers as it
+    /// goes, for the command octave, which fires them without a note
+    /// (section 13); inside a note-on the note's own writes carry them.
+    void fireSlots(int ch, bool live = false);
     bank::Command slotForNoteOn(int ch, int i);        ///< with Z's randomised argument
     int16_t randomArg(int ch, int max);
     void applyLevelParam(int ch);
@@ -304,7 +316,7 @@ private:
     const bank::Bank* bank_ = nullptr;
     const tracker::Song* song_ = nullptr;
     std::array<const bank::Instrument*, 4> local_{};
-    bool recording_ = false;
+    uint32_t recordMask_ = 0;
     uint8_t gateMask_ = 15;
     bool gateDirty_ = false;
     Console model_ = Console::DMG;

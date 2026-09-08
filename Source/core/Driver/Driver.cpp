@@ -244,6 +244,16 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
 {
     Voice& v = v_[size_t(ch)];
     const auto& p = params_[size_t(ch)];
+    // The command octave (section 13): notes 0-11 never sound and never join
+    // the held stack. They fire the channel's slots on whatever it is playing,
+    // without a trigger, so a held note can be shaped after its attack; with
+    // nothing sounding the persistent letters still land in the running state.
+    if (note < 12) {
+        syncSlots(ch);
+        fireSlots(ch, /*live*/ true);
+        if (cell) applyCellCommands(ch, cell->cmd1, cell->cmd2);
+        return;
+    }
     // Keyswitch octave: selects an instrument, never sounds.
     const Instrument* cur = local_[size_t(ch)] ? local_[size_t(ch)] : bank_ ? bank_->instrument(p.instrument) : nullptr;
     const InstrumentType t = cur ? cur->type : (ch == 2 ? InstrumentType::Wave : ch == 3 ? InstrumentType::Noise : InstrumentType::Pulse);
@@ -255,15 +265,14 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
     // instrument's Overlap, if the new note is plain or bare (section 8).
     const bool over = v.active && v.haveInst && v.heldCount > 0;
     if (v.heldCount < v.held.size()) v.held[v.heldCount++] = note;
-    // The parameters' slots are in force from here; a cell's columns then
-    // write over them, and fireSlots() applies the result in order.
+    // The parameters' slots are in force from here; the cell's own commands
+    // fire once, after them, when the note starts (section 12).
     syncSlots(ch);
+    v.noteCmd[0] = {}; v.noteCmd[1] = {};
     if (cell) {
         if (cell->inst) { v.ksInstrument = cell->inst; v.ksFromCell = true; }   // a cell's instrument column names it exactly
         if (cell->table) v.tableOverride = cell->table;      // the channel's table override, from this step on
-        // A cell's commands are the slots from this step on (section 3).
-        setSlotFromCell(ch, 0, cell->cmd1);
-        setSlotFromCell(ch, 1, cell->cmd2);
+        v.noteCmd[0] = cell->cmd1; v.noteCmd[1] = cell->cmd2;
     }
     // A tracker cell is plain when its instrument column is filled and bare
     // when it is blank; a MIDI note is bare only when it lands over a held
@@ -278,14 +287,31 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
     // the note under it loaded, which is the one still sounding.
     v.notePlain = plain;
     if (plain) v.noteInst = uint8_t(std::clamp(resolveSlot(ch, vel), 0, kInstrumentSlots));
-    // D postpones the start, whether it came from a cell or a slot.
-    for (int i = 0; i < 2; ++i)
-        if (v.slot[size_t(i)].cmd == Cmd::D) {
-            v.pendingOn = true; v.pendingNote = note; v.pendingVel = vel; v.pendingPlain = plain;
-            v.delay = int16_t(std::clamp<int>(v.slot[size_t(i)].a, 0, 255));
-            return;
-        }
+    // D postpones the start, whether it came from a cell or a slot. The
+    // cell's commands wait with it and fire when the note does.
+    const int delay = delayFor(ch, cell ? &cell->cmd1 : nullptr, cell ? &cell->cmd2 : nullptr);
+    if (delay >= 0) {
+        v.pendingOn = true; v.pendingNote = note; v.pendingVel = vel; v.pendingPlain = plain;
+        v.delay = int16_t(delay);
+        // The cell's commands wait with the note rather than in the slot the
+        // next note would read (section 12).
+        v.pendingCmd[0] = v.noteCmd[0]; v.pendingCmd[1] = v.noteCmd[1];
+        v.noteCmd[0] = {}; v.noteCmd[1] = {};
+        return;
+    }
     startVoice(ch, note, vel, plain);
+}
+
+/// The delay a note about to start takes: its cell's own D column first --
+/// a cell's commands are that step's, not the lane's -- then a slot's.
+int Driver::delayFor(int ch, const Command* c1, const Command* c2) const
+{
+    for (const Command* c : { c1, c2 })
+        if (c && c->cmd == Cmd::D && !isRevert(*c)) return std::clamp<int>(c->a, 0, 255);
+    const Voice& v = v_[size_t(ch)];
+    for (int i = 0; i < 2; ++i)
+        if (v.slot[size_t(i)].cmd == Cmd::D) return std::clamp<int>(v.slot[size_t(i)].a, 0, 255);
+    return -1;
 }
 
 void Driver::noteOff(int ch, uint8_t note)
@@ -355,6 +381,11 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
             const Command c = slotForNoteOn(ch, i);
             if (perNoteCmd(c.cmd) && c.cmd != Cmd::D) applyCommand(ch, c, false);
         }
+        // The cell's own commands, once, at this step: a persistent letter
+        // written on a bare note changes the running state and stays until a
+        // plain note reloads the instrument (section 12).
+        applyCellCommands(ch, v.noteCmd[0], v.noteCmd[1]);
+        v.noteCmd[0] = {}; v.noteCmd[1] = {};
         inNoteOn_ = was;
         writePeriod(ch, false);
         writeNr51();
@@ -401,6 +432,14 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // to every note in their span (section 3). Their registers go out with the
     // note's own writes below rather than twice.
     fireSlots(ch);
+    // Then the cell's own two commands, once (section 12): they are this
+    // step's, not the lane's, so they are not left in force behind the note.
+    {
+        const bool was = inNoteOn_; inNoteOn_ = true;
+        applyCellCommands(ch, v.noteCmd[0], v.noteCmd[1]);
+        v.noteCmd[0] = {}; v.noteCmd[1] = {};
+        inNoteOn_ = was;
+    }
 
     const int base = computePeriod(ch);
     if (base < 0 && core.type != InstrumentType::Noise && core.type != InstrumentType::Kit) {
@@ -1008,15 +1047,22 @@ void Driver::revertCommand(int ch, Cmd cmd)
     }
 }
 
-/// A cell's command column (section 3). The letter's revert form puts the
-/// letter back and leaves the slot empty -- what "the slot went to none"
-/// means -- so it never fires again at the notes that follow.
-void Driver::setSlotFromCell(int ch, int i, const Command& c)
+/// A cell's two command columns (section 12). They are applied once, at
+/// their step, and never stored in a slot: a persistent letter changes the
+/// running state, which holds until a plain note reloads the instrument or a
+/// later command moves it, and a per-note letter shapes that note alone. The
+/// revert form puts the letter back where the instrument left it. D is read
+/// at the note-on, before the note starts, so it is skipped here.
+void Driver::applyCellCommands(int ch, const Command& c1, const Command& c2)
 {
-    if (c.cmd == Cmd::None) return;
-    Voice& v = v_[size_t(ch)];
-    if (isRevert(c)) { v.slot[size_t(i)] = {}; revertCommand(ch, c.cmd); return; }
-    v.slot[size_t(i)] = c;
+    const Command* in[2] = { &c1, &c2 };
+    for (int i = 0; i < 2; ++i) {
+        Command c = *in[i];
+        if (c.cmd == Cmd::None || c.cmd == Cmd::D) continue;
+        // Z re-runs the other column, as a slot's Z re-runs the other slot.
+        if (c.cmd == Cmd::Z) c = resolveRandom(ch, c, *in[i ^ 1]);
+        applyCommand(ch, c, false);
+    }
 }
 
 int16_t Driver::randomArg(int ch, int max)
@@ -1049,10 +1095,10 @@ Command Driver::slotForNoteOn(int ch, int i)
     return resolveRandom(ch, c, v.slot[size_t(i ^ 1)]);
 }
 
-void Driver::fireSlots(int ch)
+void Driver::fireSlots(int ch, bool live)
 {
     const bool was = inNoteOn_;
-    inNoteOn_ = true;
+    if (!live) inNoteOn_ = true;
     for (int i = 0; i < 2; ++i) {
         const Command c = slotForNoteOn(ch, i);
         if (c.cmd == Cmd::None || c.cmd == Cmd::D) continue;   // D was read before the note started
@@ -1177,7 +1223,12 @@ void Driver::tick(int ch)
     // pending delayed start
     if (v.pendingOn) {
         if (v.delay > 0) { --v.delay; }
-        else { v.pendingOn = false; startVoice(ch, v.pendingNote, v.pendingVel, v.pendingPlain); }
+        else {
+            v.pendingOn = false;
+            v.noteCmd[0] = v.pendingCmd[0]; v.noteCmd[1] = v.pendingCmd[1];
+            v.pendingCmd[0] = {}; v.pendingCmd[1] = {};
+            startVoice(ch, v.pendingNote, v.pendingVel, v.pendingPlain);
+        }
     }
     // A released WAV or KIT walks its level down whether it is active or not.
     if (v.releasing) stepRelease(ch);
@@ -1260,7 +1311,7 @@ void Driver::handleEvent(NoteEvent& e)
         const bool trackerCh = song_->noteSource[size_t(ch)] == tracker::NoteSource::Tracker;
         const bool note = e.kind == NoteEvent::NoteOn || e.kind == NoteEvent::NoteOff;
         if (note && e.source == NoteEvent::Tracker && !trackerCh) return;
-        if (note && e.source == NoteEvent::Midi && trackerCh && !recording_) return;
+        if (note && e.source == NoteEvent::Midi && trackerCh && !(recordMask_ & (1u << ch))) return;
     }
     switch (e.kind) {
         case NoteEvent::NoteOn:
@@ -1292,20 +1343,20 @@ void Driver::handleEvent(NoteEvent& e)
     }
 }
 
-/// The columns of a cell that does not start a note: the table override, the
-/// two commands as the slots in force from this step, and an instrument
-/// column, which reloads and fires the slots itself (section 3).
+/// The columns of a cell that does not start a note: the table override, an
+/// instrument column, which reloads and fires the slots itself, and the two
+/// commands, applied once at this step (sections 3 and 12).
 void Driver::applyCellColumns(int ch, const NoteEvent& e)
 {
     Voice& v = v_[size_t(ch)];
     if (e.table) { v.tableOverride = e.table; if (v.active) { v.tableSlot = e.table; v.tableStep = 0; v.tableRow = 0; v.tableWait = 0; v.tableOn = bank_ && bank_->table(e.table); } }
-    setSlotFromCell(ch, 0, e.cmd1);
-    setSlotFromCell(ch, 1, e.cmd2);
-    if (e.inst && e.inst != v.ksInstrument) { v.ksInstrument = e.inst; v.ksFromCell = true; if (v.haveInst) { reloadInstrument(ch); return; } }
-    // A revert form has already been applied, and left its slot empty; the
-    // rest fire here, as the slot changing at this step would.
-    if (e.cmd1.cmd != Cmd::None && !isRevert(e.cmd1)) applyCommand(ch, e.cmd1, false);
-    if (e.cmd2.cmd != Cmd::None && !isRevert(e.cmd2)) applyCommand(ch, e.cmd2, false);
+    if (e.inst && e.inst != v.ksInstrument) {
+        v.ksInstrument = e.inst; v.ksFromCell = true;
+        // The instrument reloads and fires the slots; the cell's commands
+        // follow it, as they would at a note (section 3's order).
+        if (v.haveInst) { reloadInstrument(ch); applyCellCommands(ch, e.cmd1, e.cmd2); return; }
+    }
+    applyCellCommands(ch, e.cmd1, e.cmd2);
 }
 
 /* ------------------------------------------------------------ process */
