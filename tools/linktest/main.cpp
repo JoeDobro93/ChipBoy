@@ -8,6 +8,7 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 
 using namespace chipboy::plugin;
 
@@ -53,6 +54,13 @@ struct FakePlayHead : juce::AudioPlayHead {
 
 void pump(int ms) { juce::MessageManager::getInstance()->runDispatchLoopUntil(ms); }
 
+/// Every ChipBoyProcessor here is built on the heap. One is close to half a
+/// megabyte -- the four scope rings and the link region are most of it -- and
+/// the six this test needs asked main() for more stack than a Windows
+/// executable is given (1 MB by default), so the frame faulted in the
+/// prologue, before the first line of the test had run.
+std::unique_ptr<ChipBoyProcessor> machine() { return std::make_unique<ChipBoyProcessor>(); }
+
 float peak(const juce::AudioBuffer<float>& b)
 {
     float p = 0.0f;
@@ -70,7 +78,8 @@ int main()
     stage("juce init");
     juce::ScopedJuceInitialiser_GUI init;
     stage("main processor");
-    ChipBoyProcessor main;
+    const auto mainOwned = machine();
+    auto& main = *mainOwned;
     stage("voice processor");
     VoiceProcessor voice;
     main.apvts.getParameter(ids::linkMode)->setValueNotifyingHost(1.0f);
@@ -179,7 +188,8 @@ int main()
     /* ---- the song file carries the grooves, the VEL column and the steps
        (docs/COMMANDS_AND_TEMPO.md sections 9.1 and 9.2) ---------------- */
     {
-        ChipBoyProcessor a;
+        const auto aOwned = machine();
+        auto& a = *aOwned;
         a.mutateSong([](chipboy::tracker::Song& s) {
             s.grooves[2].ticks = { 4, 5, 6, 7 };
             s.phrases[0].used = true;
@@ -193,7 +203,8 @@ int main()
         });
         juce::MemoryBlock state;
         a.getStateInformation(state);
-        ChipBoyProcessor b;
+        const auto bOwned = machine();
+        auto& b = *bOwned;
         b.setStateInformation(state.getData(), int(state.getSize()));
         const auto s = b.song();
         check(s && s->grooves[2].length() == 4 && s->grooves[2].at(3) == 7, "a groove's sixteen ticks round-trip through the song");
@@ -248,7 +259,8 @@ int main()
 
     /* ---- a channel whose feed changes hands is flushed (section 9.1) -- */
     {
-        ChipBoyProcessor p;
+        const auto pOwned = machine();
+        auto& p = *pOwned;
         p.prepareToPlay(48000.0, 512);
         FakePlayHead head;
         p.setPlayHead(&head);
@@ -280,7 +292,8 @@ int main()
 
     /* ---- the position stands still while the transport does (9.1) ---- */
     {
-        ChipBoyProcessor p;
+        const auto pOwned = machine();
+        auto& p = *pOwned;
         p.prepareToPlay(48000.0, 512);
         FakePlayHead head;
         p.setPlayHead(&head);
@@ -295,7 +308,8 @@ int main()
 
     /* ---- recording: keyswitches are not cells, disarming flushes ------ */
     {
-        ChipBoyProcessor p;
+        const auto pOwned = machine();
+        auto& p = *pOwned;
         p.prepareToPlay(48000.0, 512);
         FakePlayHead head;
         p.setPlayHead(&head);
