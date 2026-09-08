@@ -93,7 +93,11 @@ struct Snapshot {
     std::atomic<uint32_t> seq{ 0 };
     T value{};
 
-    void write(const T& v)
+    /// By value on purpose: a caller passing a class derived from T (an
+    /// Instrument for an InstrumentCore) slices it into a whole object here,
+    /// so the copy below cannot read past a base subobject whose tail padding
+    /// the derived class has taken for a member of its own.
+    void write(T v)
     {
         const uint32_t s = seq.load(std::memory_order_relaxed);
         seq.store(s + 1, std::memory_order_release);          // odd: writing
