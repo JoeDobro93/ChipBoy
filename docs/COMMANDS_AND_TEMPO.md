@@ -507,3 +507,105 @@ the factory bank.
 - **Instrument tab**: Save preset… / Load preset…. *As built:* on the row under New and
   Dup; the status bar summarises what `bank::placePreset` did — "Pluck → slot 3; table
   5 → 9 (renumbered); wave 2 reused".
+
+---
+
+# Addendum, 2026-09-08 (third): songs own their sounds, hybrid playback, the head
+
+Agreed after playing the third round. Binding.
+
+## 18. Song tabs, and a song owns its sounds
+
+- The Tracker tab's summary row becomes a **tab strip**: one tab per loaded song, a
+  **+** tab that opens a new empty song, an × on each tab (asks before dropping unsaved
+  work). A tab is `{Song, Bank, file, name}`.
+- **Only the active tab is live.** It is what plays and records; it is what the
+  Instrument, Tables, Grooves, Waves and Kits tabs show and edit; the header's Bank group
+  shows *its* bank (Load bank… replaces this song's bank, Save bank… writes it; the STOCK
+  badge is per tab); the Voice plugin's link sees its bank. Switching tabs sends
+  all-notes-off, publishes the tab's song and bank, and gives the Song tempo parameter
+  the tab's master tempo. The plugin state saves every tab and which one is active.
+- A new tab starts with the factory bank. **Song file format 5 embeds the bank**
+  (instruments, tables, waves, kits with their samples), so a song file is complete:
+  loading one opens a tab with its own sounds. A format-4 file (song only) opens a tab
+  with a copy of the active bank and the name-difference report as now. Saving writes
+  format 5. Presets carry sounds between tabs.
+- Global, not per song: model, hardware options, master volume, noise and whine, link,
+  tempo source, quantize, the channel Source/Level/Pan/Transpose/Velocity/Keyswitch lanes.
+- Undo steps record the tab they belong to and re-activate it.
+
+## 19. Tempo
+
+- The header's tempo is a **readout**: the host's BPM in Host mode, the active song's
+  tempo in force (its master tempo, or the T last passed) in Song mode. The Host/Song
+  switch stays in the header.
+- Each song has a **master tempo** (`Song::tempoBpm`), edited in the Tracker tab beside
+  Start and Beats (typed), mirrored into the automatable Song tempo parameter for the
+  active tab; T commands override it from their tick, as before.
+
+## 20. Hybrid playback
+
+PLAYS gains a third choice: **MIDI / Trkr / Hybrid**.
+
+- In **Hybrid**, notes come from MIDI — pitch, gate and velocity (through the channel's
+  Velocity mode; the VEL column is ignored) — and *everything else* comes from the
+  song's cells at their steps: an instrument column selects the instrument the next MIDI
+  note-on loads (a note already sounding is not reloaded, exactly as a cell's instrument
+  column is exact under the velocity bank); a table column selects the table the next
+  note starts; commands fire once at their step (§12) on whatever sounds — the per-note
+  letters act on the sounding note (K kills it, R retriggers it, C arpeggiates it, D delays
+  the cell's commands) and **L** sets a portamento for the next note-on. Cell notes and
+  OFFs are ignored.
+- **Order at a step**: the cell's columns apply first; a plain MIDI note-on arriving in
+  the same tick loads the instrument the cell selected and *then* takes the cell's
+  commands, so a note on the step gets exactly what a recorded slot would have given it;
+  if no note-on arrives in that tick, the commands land on the sounding note at the
+  tick's end.
+- On a Hybrid channel the strip's Instrument, Table, CMD1 and CMD2 lanes, the keyswitch
+  octave and the command octave are inert; Level, Pan, Transpose and Velocity mode still
+  apply. Recording on an armed Hybrid channel writes cells as usual.
+- **Demo**: `Demo/ChipBoy Demo (hybrid).rpp` — the MIDI item, only the model and
+  De-click automation, and the plugin state embedded with the demo song loaded and all
+  four channels in Hybrid. The state comes from `chipboy_recordtest --write-state`
+  (committed under Demo/, checked by CTest like the song file), and a fourth record-test
+  pass proves that MIDI plus the song in Hybrid reproduces pass 1's register stream.
+
+## 21. The master section
+
+- **Headphone Noise** is the hiss and the frame hum; **LCD Whine** is the display line,
+  an independent switch; **De-click** stays. All three live in the master strip.
+- One **VOL** control sets both NR50 sides; the two parameters remain (the M command
+  and existing automation address left and right), the control shows the left value
+  and writes both. The Hardware tab keeps its measured facts, reworded to the split.
+
+## 22. The channel scopes
+
+Two cycles of the channel's own frequency, phase-locked on a rising edge, still for a
+steady tone and moving smoothly under vibrato. The code intends this already and the
+picture flashes; find why (a window that rescales with the period every frame, a
+trigger that fails when the ring holds less than two periods, a stale period) and make
+it hold. Noise and kits keep a fixed window.
+
+## 23. The Tracker head
+
+Two rows with captions, grouped: TRANSPORT (Play Stop Loop, the readout) · RECORD (Rec)
+· SONG (master tempo, start, beats, steps/bar) · FILE (Save song…, Load song…, Export
+.gb); the song tab strip under them, above the lane. No new height.
+
+## 24. More demo songs
+
+`tools/demo/make_songs.py` (standard-library Python, byte-reproducible) writes
+`Demo/songs/*.cbsong` in format 5, each with its own bank — original compositions,
+never copies:
+
+1. a **groove** study (7/5 swing, a 4 4 4 triplet section, a G change mid-song);
+2. a **time-signature** study (3/4 at 12 steps, a 7/8 bar by override, a 5/4 stretch);
+3. a bright **early-handheld RPG** route theme (pulse melody, C arpeggio chords, wave bass,
+   noise hats);
+4. a bouncy **pink-puffball platformer** tune (duty changes, vibrato, staccato bass);
+5. a **modern** track with punchy wave-channel kick and snare from tables and Drum-mode
+   bends, a pulse lead;
+6. a **wave-manipulation** track, half-time, F/W frame sweeps and P wobbles.
+
+Each is 16–32 bars, described in Demo/README.md, and a CTest `demo_songs_load` loads
+every file and plays eight bars, checking it sounds and never hangs.
