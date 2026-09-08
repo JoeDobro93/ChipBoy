@@ -522,39 +522,77 @@ Agreed after playing the third round. Binding.
 
 - The Tracker tab's summary row becomes a **tab strip**: one tab per loaded song, a
   **+** tab that opens a new empty song, an × on each tab (asks before dropping unsaved
-  work). A tab is `{Song, Bank, file, name}`.
+  work). A tab is `{Song, Bank, file, name}`. *As built:* `plugin::SongTab` is `{song,
+  bank, file, name, bankName, dirty, id}`; `ui::SongTabStrip` stands where the summary
+  line was, rebuilt from `tabCount` / `tabName` / `tabFile` / `tabDirty` on the panel's
+  timer, at the cost of a comparison when nothing moved.
 - **Only the active tab is live.** It is what plays and records; it is what the
   Instrument, Tables, Grooves, Waves and Kits tabs show and edit; the header's Bank group
   shows *its* bank (Load bank… replaces this song's bank, Save bank… writes it; the STOCK
   badge is per tab); the Voice plugin's link sees its bank. Switching tabs sends
   all-notes-off, publishes the tab's song and bank, and gives the Song tempo parameter
   the tab's master tempo. The plugin state saves every tab and which one is active.
+  *As built:* the STOCK badge stayed the **window's**, not per tab — it reads the
+  de-click and soften-pops departures, which are global and not per song, so a badge
+  that could never differ between tabs would only imply that it could. `setActiveTab`
+  sends all-notes-off through an atomic the audio thread drains ahead of the block's
+  events, then swaps the two published pointers with nothing rebuilt — the tempo map and
+  the bar table were already built for that song. `chipboy_uishot --tab-switch` marks
+  one tab's bank and song and shoots the Instrument, Tables, Grooves, Waves and Kits
+  panes on both sides of a switch, failing if any of them drew the same picture twice.
 - A new tab starts with the factory bank. **Song file format 5 embeds the bank**
   (instruments, tables, waves, kits with their samples), so a song file is complete:
   loading one opens a tab with its own sounds. A format-4 file (song only) opens a tab
   with a copy of the active bank and the name-difference report as now. Saving writes
-  format 5. Presets carry sounds between tabs.
+  format 5. Presets carry sounds between tabs. *As built:* `songFileText` writes the
+  whole bank (`bankData`, through the bank writer, so kits carry their samples) beside
+  the bank's name and every instrument name it already recorded; `loadSong` takes a
+  `bank::Bank*` and fills it when the file carries one (`SongReport::hasBank`), against
+  which the name-difference report then has nothing to differ. `Demo/ChipBoy
+  Demo.cbsong` grew from 104 KB to 147 KB carrying the factory bank, and
+  `demo_song_matches` still compares it byte for byte.
 - Global, not per song: model, hardware options, master volume, noise and whine, link,
   tempo source, quantize, the channel Source/Level/Pan/Transpose/Velocity/Keyswitch lanes.
-- Undo steps record the tab they belong to and re-activate it.
+  *As built:* all of these are plugin parameters, and a parameter is not per tab by
+  construction — nothing extra had to be written to keep them global.
+- Undo steps record the tab they belong to and re-activate it. *As built:* `BankAction`
+  and `SongAction` carry a **tab id** — stable across closes, unlike an index — and
+  `restoreBank` / `restoreSong` activate that tab before restoring; a step whose tab has
+  since closed does nothing rather than landing in the wrong song.
+  `Source/plugin/ui/EditHistory.*` did not change at all: the actions live in the
+  processor, which is where the tab is known.
 
 ## 19. Tempo, and the host's signature stays out
 
 - The host contributes the **tempo** only: in Host mode ticks follow the host's beat
   position, continuously, whatever its time signature does. Bar ticks always come from
   the song's beats per bar (§11, amended), so the Beats field works in both modes and a
-  DAW signature change never moves the song's bars.
+  DAW signature change never moves the song's bars. *As built:*
+  `driver::Transport::beatsPerBar` is gone; `Clock::beatsPerBar()` reads
+  `ClockConfig::beatsPerBar` — the song's — in both tempo sources, and the processor no
+  longer calls `getTimeSignature()` at all. Considered keeping the host's signature in
+  Host mode; rejected — it silently re-cut every song's step grid at the signature
+  change, which is the bug this fixes.
 
 - The header's tempo is a **readout**: the host's BPM in Host mode, the active song's
   tempo in force (its master tempo, or the T last passed) in Song mode. The Host/Song
-  switch stays in the header.
+  switch stays in the header. *As built:* a small well replaces the stepper, reading
+  `effectiveTempo()` to one decimal with a *host* or *song* tag beside it, sized to the
+  tag so neither word is ever cut short.
 - Each song has a **master tempo** (`Song::tempoBpm`), edited in the Tracker tab beside
   Start and Beats (typed), mirrored into the automatable Song tempo parameter for the
-  active tab; T commands override it from their tick, as before.
+  active tab; T commands override it from their tick, as before. *As built:*
+  `setMasterTempo(bpm)` writes the song and the Song tempo parameter as one undo step,
+  and a song snapshot restores both; a host moving the parameter instead writes back into
+  the active song's `tempoBpm` on the timer, with no undo step, which is also where the
+  tempo map is rebuilt. Activating a tab pushes its tempo into the parameter;
+  `tempoInForce()` is now named `effectiveTempo()`.
 
 ## 20. Hybrid playback
 
-PLAYS gains a third choice: **MIDI / Trkr / Hybrid**.
+PLAYS gains a third choice: **MIDI / Trkr / Hybrid**. *As built:* on screen the third
+option reads **Hyb** (`tracker::NoteSource::Hybrid = 2`), each option with a sentence of
+tooltip, and a Hybrid channel's strip carries a **HYBRID** tag beside its name.
 
 - In **Hybrid**, notes come from MIDI — pitch, gate and velocity (through the channel's
   Velocity mode; the VEL column is ignored) — and *everything else* comes from the
@@ -564,28 +602,62 @@ PLAYS gains a third choice: **MIDI / Trkr / Hybrid**.
   note starts; commands fire once at their step (§12) on whatever sounds — the per-note
   letters act on the sounding note (K kills it, R retriggers it, C arpeggiates it, D delays
   the cell's commands) and **L** sets a portamento for the next note-on. Cell notes and
-  OFFs are ignored.
+  OFFs are ignored. *As built:* the Player sends a Hybrid cell's non-note columns as a
+  `Command` event marked `NoteEvent::hybrid`, dropping a cell that holds nothing but a
+  note entirely; a missing phrase, a stop or a timeline jump no longer flushes a Hybrid
+  channel — only the player's own note does that. In the driver, a Hybrid channel's
+  `ChannelParams` are read through `effective(ch)`, which zeroes Instrument, Table and
+  both command slots; a cell's instrument and table columns select through `ksFromCell`,
+  so the velocity bank is not layered on top of what the cell chose.
 - **Order at a step**: the cell's columns apply first; a plain MIDI note-on arriving in
   the same tick loads the instrument the cell selected and *then* takes the cell's
   commands, so a note on the step gets exactly what a recorded slot would have given it;
   if no note-on arrives in that tick, the commands land on the sounding note at the
-  tick's end.
+  tick's end. *As built:* the processor sorts a block's events by (offset, kind) — a
+  flush, then the song's cells, then MIDI — so a cell is always ahead of the note-on it
+  shapes.
 - On a Hybrid channel the strip's Instrument, Table, CMD1 and CMD2 lanes, the keyswitch
   octave and the command octave are inert; Level, Pan, Transpose and Velocity mode still
-  apply. Recording on an armed Hybrid channel writes cells as usual.
+  apply. Recording on an armed Hybrid channel writes cells as usual. *As built:* the
+  greyed Instrument, Table and both command slots read **from the cells** where the
+  resolved value would be, all four sharing one tooltip — *the tracker's cells drive
+  this channel*. Recording writes only what the channel really read: no commands from
+  the inert slots, no cell for a note in the inert keyswitch or command octaves.
 - **Demo**: `Demo/ChipBoy Demo (hybrid).rpp` — the MIDI item, only the model and
   De-click automation, and the plugin state embedded with the demo song loaded and all
   four channels in Hybrid. The state comes from `chipboy_recordtest --write-state`
   (committed under Demo/, checked by CTest like the song file), and a fourth record-test
   pass proves that MIDI plus the song in Hybrid reproduces pass 1's register stream.
+  *As built:* the fourth `chipboy_recordtest` pass keeps only the two parameters not
+  inert under Hybrid (`ch1_source`, `ch4_velocity`), and its register stream equals pass
+  1's exactly; `--write-state` / `--check-state` build the same project and write
+  `Demo/chipboy_demo_hybrid.state`, checked by the new CTest `demo_state_matches`, and
+  the file is deterministic — a pinned instance UUID and name, the tab built from the
+  song file's own contents rather than opened from a path, nothing timestamped.
+  `vst_chunk_lines()` in `make_demo.py` carries the state bytes as base64 lines of 128
+  characters, a multiple of four, with the header's size field holding their length;
+  with no state the size is zero and the two older projects come out byte for byte as
+  before.
 
 ## 21. The master section
 
 - **Headphone Noise** is the hiss and the frame hum; **LCD Whine** is the display line,
   an independent switch; **De-click** stays. All three live in the master strip.
+  *As built:* `Options::noise` is the hiss and frame hum, `Options::lcd` the display
+  line and its harmonic; both phases advance whenever either switch is on, so flipping
+  one never moves the other's. The `lcd` parameter's display name changed to **LCD
+  Whine** (its id and range did not); the test harness's single `noise` flag still means
+  the whole floor, so every existing render test measures what it always did.
 - One **VOL** control sets both NR50 sides; the two parameters remain (the M command
   and existing automation address left and right), the control shows the left value
   and writes both. The Hardware tab keeps its measured facts, reworded to the split.
+  *As built:* the stepper writes `master_l` and `master_r` as one undo step through an
+  explicit `beginGesture` / `endGesture` pair; the readout shows the left value and,
+  when something has moved them apart, both as `7·5` with the tooltip naming which is
+  which. VOL L and VOL R are gone, and the three switches plus the one stepper take
+  exactly the height the old two steppers and two switches did, so the master scope
+  stayed the same size. The Hardware tab's whine row no longer greys when the hiss is
+  off — the two are independent now.
 
 ## 22. The channel scopes
 
@@ -595,11 +667,32 @@ picture flashes; find why (a window that rescales with the period every frame, a
 trigger that fails when the ring holds less than two periods, a stale period) and make
 it hold. Noise and kits keep a fixed window.
 
+*As built:* measured, not guessed — two frames of a steady tone through the old code
+differed by 3832 pixels on the wave scope and by 0 on both pulse scopes. The edge is now
+the rise that goes **furthest**, ties broken by the level held **longest** before it,
+then the **lowest** level it rises from — three keys that are properties of the shape,
+so they name the same phase every frame and re-lock in one frame when the shape
+changes. `paint()` stopped reading the `latestCycle` atomic live; the timer captures it
+with the samples, so one snapshot draws one picture however often it repaints. A kit now
+keeps a fixed window too (`setFixedWindow`, set from the instrument the driver is
+actually playing) — a sample has no period to lock to. `chipboy_uishot --scope-check`
+holds a note on each channel and compares two renderings a fifth of a second apart; all
+four are pixel-identical now.
+
 ## 23. The Tracker head
 
 Two rows with captions, grouped: TRANSPORT (Play Stop Loop, the readout) · RECORD (Rec)
 · SONG (master tempo, start, beats, steps/bar) · FILE (Save song…, Load song…, Export
 .gb); the song tab strip under them, above the lane. No new height.
+
+*As built:* row one is TRANSPORT (*Play* 62, *Stop* 62, *Loop* 52, the LED, *playing*,
+the position readout — 328 px) and RECORD (*Rec* 62); row two is SONG (*Tempo* 84,
+*Start* 84, *Beats* 62, *Steps / bar* 80 — 562 px) and FILE (*Save song…* 104, *Load
+song…* 104, *Export .gb* 96), each pair separated by a 16 px gap with a hairline down
+the middle. The budget is unchanged and asserted in the source: 12 px caption + 26 px
+controls, 4, the same again, 6, and the 26 px tab strip — 112 exactly — so the lane
+keeps its 400 px and the tab still asks for no scrolling at 1180 × 1020. What a file did
+still goes to the status bar; the head has no line of its own any more.
 
 ## 24. More demo songs
 
@@ -616,5 +709,21 @@ never copies:
    bends, a pulse lead;
 6. a **wave-manipulation** track, half-time, F/W frame sweeps and P wobbles.
 
+*As built:* `groove-study` (24 bars, 132 BPM) — its triplet section is groove **8 8 8**
+at twelve steps, not `4 4 4`, since a groove only fills the bar if its ticks average
+six; `meter-study` (20 bars, 126 BPM) — the 7/8 bar is fourteen steps by override and
+bars 15–16 are **two** twenty-step 5/4 bars; `route-theme` (24 bars, 132 BPM);
+`puffball-bounce` (24 bars, 150 BPM), with a six-bar bridge and PU1's own S sweep on the
+way out; `neon-grid` (24 bars, 140 BPM); `wave-study` (24 bars, 100 BPM, half time).
+
 Each is 16–32 bars, described in Demo/README.md, and a CTest `demo_songs_load` loads
-every file and plays eight bars, checking it sounds and never hangs.
+every file and plays eight bars, checking it sounds and never hangs. *As built:* the
+compiler (`tools/demo/make_songs.py`) is Python data with names instead of slot numbers
+— `pulse()`, `wave()`, `noise()`, `table()`, `wav()` — and music as sections of bars,
+each a groove and one bar of text per channel; it refuses at generation time a letter
+that means nothing on its channel, an argument out of range, an instrument of the wrong
+kind, a bank entry nothing plays, a bar under two channels, and a groove that would put
+a written step past the bar's end. `chipboy_recordtest --play-song FILE [bars]` prints
+the RMS of every bar of every channel, mix and solo, which is what caught a note below
+the channel's lowest period going silently absent and a bar with no phrase leaving a
+stacked note sounding instead of stopping the channel.
