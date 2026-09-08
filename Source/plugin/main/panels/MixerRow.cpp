@@ -29,18 +29,19 @@ juce::String keyswitchTip(int ch)
 const String kDot = String(CharPointer_UTF8(" \xc2\xb7 "));
 
 /// "6/6": the groove in force on this channel, resolved through the song --
-/// a G slot, else the phrase's own, else straight.
+/// a G slot, else the phrase's own, else straight. A groove is a list of tick
+/// counts (section 9.2), so the line prints the ones it uses.
 String grooveText(const tracker::Song* s, int ch, int bar, uint8_t slot)
 {
     if (slot == tracker::kGrooveNone) {
         const tracker::Phrase* p = s != nullptr ? s->phrase(s->phraseAt(ch, bar)) : nullptr;
         slot = p != nullptr ? p->groove : 0;
     }
-    if (s != nullptr && slot >= 1 && slot <= 16) {
-        const auto g = s->grooves[size_t(slot - 1)];
-        return String(int(g.a)) + "/" + String(int(g.b));
-    }
-    return "6/6";
+    if (s == nullptr || slot < 1 || slot > 16) return "6/6";
+    const auto& g = s->grooves[size_t(slot - 1)];
+    String t;
+    for (int i = 0; i < g.length(); ++i) t += (i ? "/" : "") + String(g.at(i));
+    return t;
 }
 
 /// The line under the two slots: what the driver has in force, in the

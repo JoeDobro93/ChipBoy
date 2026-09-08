@@ -15,14 +15,6 @@ constexpr int kToolRow = 26, kToolGap = 6, kChainWidth = 340;
 constexpr int kHeadHeight = ui::ChainStrip::preferredHeight();
 /// Song start is held in tenths of a second so a stepper can reach it.
 constexpr int kStartSteps = 10, kStartMax = 600 * kStartSteps;
-struct GroovePreset { int id; uint8_t a, b; const char* text; };
-const GroovePreset kPresets[] = {
-    { 1, 6, 6, "6 / 6 \xe2\x80\x94 straight" },
-    { 2, 7, 5, "7 / 5 \xe2\x80\x94 light swing" },
-    { 3, 8, 4, "8 / 4 \xe2\x80\x94 heavy swing" },
-    { 4, 5, 7, "5 / 7 \xe2\x80\x94 reverse" },
-};
-constexpr int kCustomBase = 10;
 String middot() { return String(CharPointer_UTF8(" \xc2\xb7 ")); }
 }
 
@@ -31,16 +23,15 @@ PhrasesPanel::PhrasesPanel(ChipBoyProcessor& p)
       playText_("stopped", Fonts::sans(12.0f), colours::textMute),
       pos_("1.1.1", Fonts::mono(12.0f), colours::text),
       stepsLabel_("Steps / bar", Fonts::caption(10.0f), colours::textDim),
-      grooveLabel_("Groove", Fonts::caption(10.0f), colours::textDim),
       rec_(String(CharPointer_UTF8("\xe2\x97\x8f Rec"))), export_("Export .gb" + String(CharPointer_UTF8("\xe2\x80\xa6"))),
-      steps_({ "8", "16", "32" }),
+      steps_({ "8", "16" }),
       startLabel_("Start", Fonts::caption(10.0f), colours::textDim),
       beatsLabel_("Beats", Fonts::caption(10.0f), colours::textDim)
 {
-    for (auto* l : { &stepsLabel_, &grooveLabel_, &startLabel_, &beatsLabel_ }) l->setUpperCase(true);
+    for (auto* l : { &stepsLabel_, &startLabel_, &beatsLabel_ }) l->setUpperCase(true);
     playLed_.setColour(colours::ok);
     playLed_.setInterceptsMouseClicks(false, false);
-    for (auto* c : std::initializer_list<Component*>{ &playLed_, &playText_, &pos_, &rec_, &stepsLabel_, &steps_, &grooveLabel_, &groove_, &export_,
+    for (auto* c : std::initializer_list<Component*>{ &playLed_, &playText_, &pos_, &rec_, &stepsLabel_, &steps_, &export_,
                                                      &startLabel_, &songStart_, &beatsLabel_, &beats_, &help_, &scroll_ }) addAndMakeVisible(c);
 
     rec_.setTooltip("Record arm: while the transport runs, incoming MIDI notes and the parameter values in force are written into the cells of channels set to Trk.");
@@ -50,12 +41,8 @@ PhrasesPanel::PhrasesPanel(ChipBoyProcessor& p)
     rec_.onClick = [this] { processor.setRecordArm(rec_.getToggleState()); };
 
     steps_.setMini(true);
-    steps_.setTooltip("Steps per bar: a phrase's 16 steps are sixteenths at 16");
-    steps_.onChange = [this](int i) { const uint8_t v = i == 0 ? 8 : i == 2 ? 32 : 16; editSong([v](tracker::Song& s) { s.stepsPerBar = v; }); };
-
-    groove_.setTooltip("Groove, ticks per step, alternating: swing for the selected channel's phrase in this bar");
-    for (const auto& g : kPresets) groove_.addItem(String(CharPointer_UTF8(g.text)), g.id);
-    groove_.onChange = [this] { if (!grooveSyncing_) applyGroove(groove_.getSelectedId()); };
+    steps_.setTooltip("Steps per bar: a phrase's 16 steps are sixteenths at 16, eighths at 8");
+    steps_.onChange = [this](int i) { const uint8_t v = i == 0 ? 8 : 16; editSong([v](tracker::Song& s) { s.stepsPerBar = v; }); };
 
     export_.setEnabled(false);
     export_.setTooltip("Later: compile this song " + String(CharPointer_UTF8("\xe2\x80\x94")) + " tracker, bank, waves, kits " + String(CharPointer_UTF8("\xe2\x80\x94")) + " into a playback ROM for real hardware. The tracker is kept self-contained for it.");
@@ -133,12 +120,6 @@ uint8_t PhrasesPanel::ensurePhrase(tracker::Song& s, int ch, int bar)
     return slot;
 }
 
-void PhrasesPanel::setChannel(int ch)
-{
-    EditorPanel::setChannel(ch);
-    syncGroove();
-}
-
 RichText PhrasesPanel::contextLine() const
 {
     RichText r;
@@ -156,8 +137,7 @@ void PhrasesPanel::refreshViews()
     chain_.setSong(s, bar_, playingBar_);
     grid_.setSong(s, bar_);
     const int spb = s ? int(s->stepsPerBar) : 16;
-    steps_.setSelected(spb == 8 ? 0 : spb == 32 ? 2 : 1, dontSendNotification);
-    syncGroove();
+    steps_.setSelected(spb <= 8 ? 0 : 1, dontSendNotification);
     syncSongTime();
 }
 
@@ -169,46 +149,6 @@ void PhrasesPanel::syncSongTime()
     if (!s) return;
     songStart_.setValue(std::clamp(int(std::lround(s->songStartSeconds * kStartSteps)), 0, kStartMax), dontSendNotification);
     beats_.setValue(std::clamp(int(std::lround(s->beatsPerBar)), 1, 16), dontSendNotification);
-}
-
-void PhrasesPanel::syncGroove()
-{
-    const auto s = processor.song();
-    int id = 1;
-    String custom;
-    if (s) {
-        const int slot = s->phraseAt(channel, bar_);
-        const tracker::Phrase* ph = s->phrase(slot);
-        const int g = ph ? int(ph->groove) : 0;
-        if (g >= 1 && g <= 16) {
-            const auto gr = s->grooves[size_t(g - 1)];
-            id = 0;
-            for (const auto& pr : kPresets) if (pr.a == gr.a && pr.b == gr.b) { id = pr.id; break; }
-            if (id == 0) { id = kCustomBase + g; custom = "slot " + String(g) + ": " + String(int(gr.a)) + " / " + String(int(gr.b)); }
-        }
-    }
-    grooveSyncing_ = true;
-    if (custom.isNotEmpty() && groove_.indexOfItemId(id) < 0) {
-        groove_.clear(dontSendNotification);
-        for (const auto& g : kPresets) groove_.addItem(String(CharPointer_UTF8(g.text)), g.id);
-        groove_.addItem(custom, id);
-    }
-    if (groove_.getSelectedId() != id) groove_.setSelectedId(id, dontSendNotification);
-    grooveSyncing_ = false;
-}
-
-void PhrasesPanel::applyGroove(int id)
-{
-    const int ch = channel, bar = bar_;
-    editSong([ch, bar, id](tracker::Song& s) {
-        const uint8_t slot = ensurePhrase(s, ch, bar);
-        if (slot == 0) return;
-        auto& ph = s.phrases[size_t(slot - 1)];
-        if (id == 1) { ph.groove = 0; return; }
-        for (const auto& pr : kPresets)
-            if (pr.id == id) { const int g = pr.id - 1; s.grooves[size_t(g - 1)] = tracker::Groove{ pr.a, pr.b }; ph.groove = uint8_t(g); return; }
-        if (id >= kCustomBase + 1 && id <= kCustomBase + 16) ph.groove = uint8_t(id - kCustomBase);
-    });
 }
 
 void PhrasesPanel::editSong(const std::function<void(tracker::Song&)>& fn)
@@ -290,9 +230,6 @@ void PhrasesPanel::resized()
     label(top, stepsLabel_);
     place(top, steps_, steps_.preferredWidth(), steps_.preferredHeight());
     top.removeFromLeft(14);
-    label(top, grooveLabel_);
-    place(top, groove_, std::min(160, std::max(0, top.getWidth() - 104)), 24);
-    top.removeFromLeft(12);
     place(top, export_, std::min(92, top.getWidth()), 24);
 
     // the song's own timeline (docs/COMMANDS_AND_TEMPO.md section 4)
