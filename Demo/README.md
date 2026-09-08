@@ -11,6 +11,7 @@ two runs give byte-identical files).
 | `ChipBoy Demo (song tempo).rpp` | The same track on the song's own clock — *Tempo source* = **Song**, *Song tempo* = **150** — with a `T` command that drops it to 100 for bars 9–12. |
 | `chipboy_demo.mid` | The same tune as a Standard MIDI File, one track per hardware channel on MIDI channels 1–4. For any host. |
 | `chipboy_demo_automation.json` | The same automation as data: the static parameters and the per-lane `(beat, value)` points, in plugin units. What a tool reads when it cannot read an `.rpp`. |
+| `ChipBoy Demo.cbsong` | The tune recorded onto the tracker: a `.cbsong` written by `chipboy_recordtest --write-song`, not by the Python script. Plays with no MIDI and no DAW at all (see below). |
 | `PARAMETERS.md` | ChipBoy's host-visible parameters in index order, with the normalised values Reaper stores, the VST3 parameter ids, and the command letters. |
 
 ## The idea
@@ -172,6 +173,29 @@ envelope. The full letter set, with what `x` and `y` mean for each, is in
 second slot for bars 9–12. An `.flp` is not generated: the format is binary and
 undocumented.
 
+## Playing it with no MIDI at all
+
+`ChipBoy Demo.cbsong` *is* the recorded demo: `chipboy_recordtest`'s first pass plays
+`chipboy_demo.mid` and the automation JSON into the processor once, every channel armed
+and set to Trkr, and writes what it recorded through the song's own JSON writer
+(`../docs/COMMANDS_AND_TEMPO.md` §16). Loading it plays the tune back with no MIDI file,
+no automation lanes and no DAW required:
+
+- **Standalone** (or the plugin, wherever nothing offers it a play head): load the
+  **Factory** bank, open the **Tracker** tab, **Load song…** the file, and press
+  **Play** — the plugin runs its own transport from the song start, at the Song tempo.
+  This is the same path `chipboy_recordtest`'s third pass checks against, and it is how
+  `../docs/screenshots/main-tracker.png` was captured.
+- **In a DAW**, load the file the same way, but set **Tempo source** to **Song** in the
+  header first: the host owns the transport there, so the Tracker tab's own
+  Play/Stop/Loop mirror it and are disabled, and pressing play in the host drives the
+  song on its own tempo map rather than the host's bars.
+
+What "sounds the same" depends on the bank. The file was written against **Factory** and
+carries its name and the name of every instrument slot it uses, so `Load song…` always
+reports where the loaded bank differs — "slot 7 was Triangle bass; this bank has Organ"
+— or says the bank has every slot it names.
+
 ## Regenerating
 
 ```
@@ -179,11 +203,23 @@ python3 tools/demo/make_demo.py
 python3 tools/demo/make_demo.py --paramdump build-plugin/chipboy_paramdump_artefacts/Release/chipboy_paramdump   # cross-check the parameter table
 ```
 
-Everything under `Demo/` except this file comes out of that one script, so change the
-tune or the lanes there and regenerate. The record test reads `chipboy_demo.mid` and
-`chipboy_demo_automation.json` straight from this directory, so it checks the files that
-ship:
+Everything under `Demo/` except this file and `ChipBoy Demo.cbsong` comes out of that one
+script, so change the tune or the lanes there and regenerate. The record test reads
+`chipboy_demo.mid` and `chipboy_demo_automation.json` straight from this directory, so it
+checks the files that ship:
 
 ```
 ctest --test-dir build-plugin -C Release -R recordtest --output-on-failure
 ```
+
+`ChipBoy Demo.cbsong` comes from the record test instead, not the generator — it is
+pass 1's own recording, written out and stopped there:
+
+```
+build-plugin/chipboy_recordtest_artefacts/Release/chipboy_recordtest --write-song "Demo/ChipBoy Demo.cbsong"
+```
+
+so it always changes together with the tune, and `demo_song_matches`
+(`ctest --test-dir build-plugin -C Release -R demo_song_matches`) fails the moment it
+doesn't: it re-records the demo and compares the result against the committed file byte
+for byte.
