@@ -174,6 +174,10 @@ breathing rather than as the trace sliding.
   CGB, and DAC-on clicks show as the steps they are. Both can be shown together.
 - **Zoom:** 1, 2, 4 or 8 periods. Noise uses a fixed time window, and so does a kit —
   a kit is a sample, not a repeating wave, so there is no period to lock to.
+- **The master scope** shows the actual output, with the clicks and the droop.
+- **Visualizer window.** A separate, resizable, clean window — the four scopes stacked
+  or tiled, plus the master, no chrome, adjustable line weight, black or LCD ground,
+  and the analog, digital or both traces (analog by default) — made for screen capture. Same data, so it costs nothing extra to render.
 
 **How the picture is held still.** A channel's staircase repeats *exactly* every
 `32 × (2048 − f)` cycles (`64 ×` on the wave channel), so two windows of the same length
@@ -200,10 +204,6 @@ window keeps its length, so the picture is aligned and simply runs out on the ri
 `chipboy_uishot --scope-check` holds a note on every channel and renders each scope
 twice, a fifth of a second apart, comparing the two pixel for pixel
 ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §22).
-- **The master scope** shows the actual output, with the clicks and the droop.
-- **Visualizer window.** A separate, resizable, clean window — the four scopes stacked
-  or tiled, plus the master, no chrome, adjustable line weight, black or LCD ground,
-  and the analog, digital or both traces (analog by default) — made for screen capture. Same data, so it costs nothing extra to render.
 
 ---
 
