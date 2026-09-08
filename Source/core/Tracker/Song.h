@@ -25,11 +25,11 @@ constexpr int kMaxSteps = 64;
 /// A groove is sixteen tick counts, whatever the step count (section 9.2).
 constexpr int kGrooveSteps = 16;
 constexpr uint8_t kNoteOff = 255;
-constexpr uint8_t kDefaultVelocity = 100;   ///< what an empty VEL column means
+constexpr uint8_t kDefaultVelocity = 100;   ///< the velocity a blank VEL carries; the driver keeps the instrument's volume for it
 
 struct Cell {
     uint8_t note = 0;            ///< 0 empty, 1-127 MIDI note, 255 note off
-    uint8_t vel = 0;             ///< 1-127, 0 = the default velocity
+    uint8_t vel = 0;             ///< 1-127 a start volume whatever the Velocity mode; 0 = the instrument's own volume
     uint8_t inst = 0;            ///< 0 blank (a bare note), else instrument slot
     uint8_t table = 0;           ///< 0 keep, else table slot
     bank::Command cmd1, cmd2;

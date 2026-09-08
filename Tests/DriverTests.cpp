@@ -86,7 +86,7 @@ struct Rig {
 /// column, which is what makes a cell's note bare.
 NoteEvent cellOn(int ch, uint8_t note, uint8_t inst, uint8_t vel = 100, uint32_t off = 0)
 {
-    NoteEvent e; e.channel = uint8_t(ch); e.kind = NoteEvent::NoteOn; e.source = NoteEvent::Tracker;
+    NoteEvent e; e.channel = uint8_t(ch); e.kind = NoteEvent::NoteOn; e.source = NoteEvent::Tracker; e.velSet = true;
     e.a = note; e.b = vel; e.inst = inst; e.offset = off; return e;
 }
 /// A cell with no note: its columns are the slots from that step on.
@@ -186,6 +186,24 @@ TEST_CASE("velocity quantises to sixteen levels and the pulse floor is silent", 
     w = r.block({ Rig::on(1, 30, 100) }, 256); // below C2
     CHECK(r.drv.view(1).outOfRange);
     CHECK_FALSE(has(w, 0xFF19, 0x80 | 0));     // no trigger at a fake period
+}
+
+TEST_CASE("a cell's VEL is a start volume in any instance and a blank VEL is the instrument's", "[driver]")
+{
+    // Section 9.1: a song file must sound the same whatever the channel's
+    // Velocity mode -- the demo's drums are picked by velocity under the bank
+    // mode and must not turn quiet in an instance set to start volume.
+    Rig r;
+    r.song.noteSource[1] = tracker::NoteSource::Tracker;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 1; r.drv.setParams(1, p);   // instrument bank
+    auto w = r.block({ cellOn(1, 60, 1, 64) }, 256);
+    CHECK(last(w, 0xFF17)->value == 0x80);     // VEL 64 -> level 8, the mode notwithstanding
+    r.block({ Rig::off(1, 60) }, 256);
+    p.velocityMode = 0; r.drv.setParams(1, p);  // start volume
+    NoteEvent blank = cellOn(1, 60, 1, 100); blank.velSet = false;
+    w = r.block({ blank }, 256);
+    CHECK((last(w, 0xFF17)->value >> 4) == r.drv.view(1).envVol);   // blank VEL: the Square lead's own volume
+    CHECK((last(w, 0xFF17)->value >> 4) != 12);                       // not what velocity 100 would give
 }
 
 TEST_CASE("tables step once per tick and stop at the end when told", "[driver]")
@@ -1332,7 +1350,8 @@ TEST_CASE("a cell's instrument column is exact under the velocity bank", "[drive
     auto w = r.block({ Rig::on(3, 60, 20) }, 512);                 // 11 + 20/8 = 13, Hat closed
     CHECK(last(w, 0xFF21)->value == 0x91);
     r.block({ Rig::off(3, 60) }, 512);
-    w = r.block({ cellOn(3, 60, 13, 20) }, 512);                   // the cell names 13, and stays there
+    NoteEvent c = cellOn(3, 60, 13, 100); c.velSet = false;        // as recorded under the bank: the slot, no VEL
+    w = r.block({ c }, 512);                                       // the cell names 13, and stays there
     CHECK(last(w, 0xFF21)->value == 0x91);
 }
 

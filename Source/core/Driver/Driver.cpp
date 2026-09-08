@@ -290,8 +290,9 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
     // D postpones the start, whether it came from a cell or a slot. The
     // cell's commands wait with it and fire when the note does.
     const int delay = delayFor(ch, cell ? &cell->cmd1 : nullptr, cell ? &cell->cmd2 : nullptr);
+    const uint8_t velRule = cell ? (cell->velSet ? 2 : 1) : 0;
     if (delay >= 0) {
-        v.pendingOn = true; v.pendingNote = note; v.pendingVel = vel; v.pendingPlain = plain;
+        v.pendingOn = true; v.pendingNote = note; v.pendingVel = vel; v.pendingPlain = plain; v.pendingVelRule = velRule;
         v.delay = int16_t(delay);
         // The cell's commands wait with the note rather than in the slot the
         // next note would read (section 12).
@@ -299,6 +300,7 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
         v.noteCmd[0] = {}; v.noteCmd[1] = {};
         return;
     }
+    v.velRule = velRule;
     startVoice(ch, note, vel, plain);
 }
 
@@ -411,8 +413,10 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     v.dutyIdx = 0; v.kill = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOnce = false; v.lastCmd = {}; v.frameIdx = 0;
     v.rng = v.rng * 1664525u + 1013904223u + note;
     restartPitchClock(ch);
-    // volume from velocity
-    if (v.p.velocityMode == 0 && (core.type == InstrumentType::Pulse || core.type == InstrumentType::Noise)) v.envVol = levelFromVelocity(vel);
+    // volume from velocity: a MIDI note asks the Velocity mode, a cell's VEL is
+    // a start volume in any instance and a blank VEL is the instrument's own
+    const bool velToVolume = v.velRule == 2 || (v.velRule == 0 && v.p.velocityMode == 0);
+    if (velToVolume && (core.type == InstrumentType::Pulse || core.type == InstrumentType::Noise)) v.envVol = levelFromVelocity(vel);
     applyLevelParam(ch);
     // table
     const uint8_t tbl = v.tableOverride ? v.tableOverride : core.table;
@@ -1227,6 +1231,7 @@ void Driver::tick(int ch)
             v.pendingOn = false;
             v.noteCmd[0] = v.pendingCmd[0]; v.noteCmd[1] = v.pendingCmd[1];
             v.pendingCmd[0] = {}; v.pendingCmd[1] = {};
+            v.velRule = v.pendingVelRule;
             startVoice(ch, v.pendingNote, v.pendingVel, v.pendingPlain);
         }
     }

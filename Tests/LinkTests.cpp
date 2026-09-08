@@ -87,7 +87,7 @@ TEST_CASE("the running state survives the second word", "[link]")
 {
     // docs/COMMANDS_AND_TEMPO.md section 3: what the slots did, next to the
     // registers. A layout change here is what the version bump is for.
-    CHECK(kVersion == 3);
+    CHECK(kVersion == 4);
     driver::VoiceView v;
     v.envVol = 11; v.envRate = 5; v.envDir = 1;
     v.vibSpeed = 3; v.vibDepth = 7;

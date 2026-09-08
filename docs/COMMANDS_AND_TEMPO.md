@@ -232,8 +232,11 @@ both the tracker and MIDI.
   the per-note letters (C, D, K, L, R, Z) fire again; E, F, O, P, S, V, W, A are already
   in force and are left alone.
 - **Tracker**: a cell with a note and an instrument is plain; a cell with a note and a
-  blank instrument column is bare; OFF is a note-off. Velocity comes from the cell's
-  VEL column (default 100).
+  blank instrument column is bare; OFF is a note-off. A filled VEL column is a start
+  volume whatever the channel's Velocity mode; a blank one keeps the instrument's own
+  volume — so a song file sounds the same in any instance. The recorder fills VEL only
+  when the velocity shaped the volume (Velocity mode = start volume); under the bank
+  mode the instrument column already carries what the velocity chose.
 - **MIDI**: a note-on is bare when another note is still held on the channel *and* it
   would load the instrument already sounding *and* the instrument's **Overlap** field
   says *legato*. Anything else is plain: no note held, a different instrument (a

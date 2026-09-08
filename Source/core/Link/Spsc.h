@@ -23,6 +23,14 @@ struct Spsc {
     std::atomic<uint32_t> tail{ 0 };   ///< written by the consumer
     T items[Capacity];
 
+    // GCC 13 cannot see that the masked index stays inside `items` when the
+    // ring lives in a mapped region and reports "writing N bytes into a region
+    // of size 0"; the mask makes the write in range, so the warning is off for
+    // this one assignment.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
     bool push(const T& v)
     {
         const uint32_t h = head.load(std::memory_order_relaxed);
@@ -32,6 +40,9 @@ struct Spsc {
         head.store(h + 1, std::memory_order_release);
         return true;
     }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
     bool pop(T& v)
     {
         const uint32_t t = tail.load(std::memory_order_relaxed);

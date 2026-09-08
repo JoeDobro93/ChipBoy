@@ -196,7 +196,7 @@ void Player::fireStep(int ch, int bar, int step, uint8_t slot, uint32_t offset, 
     e.offset = offset; e.channel = uint8_t(ch); e.source = NoteEvent::Tracker;
     e.inst = c.inst; e.table = c.table; e.cmd1 = c.cmd1; e.cmd2 = c.cmd2;
     if (c.note == kNoteOff) { e.kind = NoteEvent::NoteOff; e.a = lastNote_[ch]; lastNote_[ch] = 0; }
-    else if (c.note) { e.kind = NoteEvent::NoteOn; e.a = c.note; e.b = velocityOf(c); lastNote_[ch] = c.note; }
+    else if (c.note) { e.kind = NoteEvent::NoteOn; e.a = c.note; e.b = velocityOf(c); e.velSet = c.vel != 0; lastNote_[ch] = c.note; }
     else e.kind = NoteEvent::Command;
     out.push_back(e);
 }

@@ -280,7 +280,11 @@ void ChipBoyProcessor::recordNote(const driver::NoteEvent& e, double tickAtEvent
     tracker::RecordMessage m;
     // The driver stamped this event with what the note did: the instrument it
     // loaded and whether it was plain (section 9.4).
-    if (player_.recordNote(ch, tickAtEvent, e.a, e.b, off, e.plain, e.loaded, p.table, p.cmd[0], p.cmd[1], m))
+    // VEL is written only when the velocity set the volume: under the bank or
+    // ignored modes it did not, and a blank VEL replays the instrument's volume
+    // in any instance, whatever that instance's Velocity mode (section 9.1).
+    const uint8_t velCol = p.velocityMode == 0 ? e.b : uint8_t(0);
+    if (player_.recordNote(ch, tickAtEvent, e.a, velCol, off, e.plain, e.loaded, p.table, p.cmd[0], p.cmd[1], m))
         recordFifo_.push(m);
 }
 

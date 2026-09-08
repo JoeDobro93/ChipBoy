@@ -61,6 +61,10 @@ struct NoteEvent {
     // (docs/COMMANDS_AND_TEMPO.md section 9.4).
     bool     plain = true;       ///< it loaded the instrument; false = a bare note
     uint8_t  loaded = 0;         ///< the slot it loaded, or the one sounding under a bare note
+    /// Tracker cells: the VEL column was filled, so `b` is a start volume
+    /// whatever the channel's Velocity mode; blank keeps the instrument's own
+    /// volume. A song file must sound the same in any instance (section 9.1).
+    bool     velSet = false;
 };
 
 struct RegWrite { uint64_t cycle; uint16_t addr; uint8_t value; };
@@ -212,6 +216,9 @@ private:
         uint8_t  retrigEvery = 0; uint16_t retrigCount = 0; bool retrigOnce = false;
         bool     releasing = false;                   ///< Release note-off: WAV/KIT steps the level down
         bool     pendingOn = false, pendingPlain = true; uint8_t pendingNote = 0, pendingVel = 0;
+        /// Where the note's volume comes from: 0 MIDI (the Velocity mode decides),
+        /// 1 a cell with a blank VEL (the instrument's volume), 2 a cell's VEL.
+        uint8_t  velRule = 0, pendingVelRule = 0;
         // held notes for last-note priority
         std::array<uint8_t, 16> held{}; uint8_t heldCount = 0;
         uint8_t  ksInstrument = 0;
