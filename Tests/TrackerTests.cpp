@@ -298,15 +298,22 @@ TEST_CASE("all notes off when the lane goes", "[tracker]")
 TEST_CASE("T cells become the song's tempo map", "[tracker]")
 {
     Song s = demoSong();
-    s.tempoBpm = 140.0;
     s.phrases[0].steps[8].cmd2 = { bank::Cmd::T, 90, 0, 0 };
-    buildTempoMap(s);
-    REQUIRE(s.tempoMap.size() == 3);          // the base, then the T in each of the two bars
-    CHECK(s.tempoMap[0].tick == 0);
-    CHECK(s.tempoMap[0].bpm == 140.0);
-    CHECK(s.tempoMap[1].tick == 48);          // step 8 of bar 1: half a bar of 96 ticks
-    CHECK(s.tempoMap[1].bpm == 90.0);
-    CHECK(s.tempoMap[2].tick == 144);
+    buildTempoMap(s, 140.0);
+    // Only the T cells are in the map: the base is the Song tempo parameter,
+    // which the clock holds live (section 4).
+    REQUIRE(s.tempoMap.size() == 2);          // the T in each of the two bars
+    CHECK(s.tempoMap[0].tick == 48);          // step 8 of bar 1: half a bar of 96 ticks
+    CHECK(s.tempoMap[0].bpm == 90.0);
+    CHECK(s.tempoMap[1].tick == 144);
+    // A T reverting is the base again from its tick.
+    s.phrases[0].steps[12].cmd2 = bank::revertOf(bank::Cmd::T);
+    buildTempoMap(s, 140.0);
+    REQUIRE(s.tempoMap.size() == 4);
+    CHECK(s.tempoMap[1].tick == 72);
+    CHECK(s.tempoMap[1].bpm == 140.0);
+    buildTempoMap(s, 96.0);                   // the parameter moved: so does the revert
+    CHECK(s.tempoMap[1].bpm == 96.0);
 }
 
 TEST_CASE("a T cell fires on the tick its tempo map says, in the song's bars", "[tracker]")
@@ -314,10 +321,10 @@ TEST_CASE("a T cell fires on the tick its tempo map says, in the song's bars", "
     Song s = demoSong();
     s.beatsPerBar = 3.0;                      // a 72-tick bar
     s.phrases[0].steps[8].cmd2 = { bank::Cmd::T, 90, 0, 0 };
-    buildTempoMap(s);
-    REQUIRE(s.tempoMap.size() >= 2);
+    buildTempoMap(s, 120.0);
+    REQUIRE(!s.tempoMap.empty());
     CHECK(s.barTicks() == 72);
-    CHECK(s.tempoMap[1].tick == 48);
+    CHECK(s.tempoMap[0].tick == 48);
     // The Player counts in the song's bar ticks, so the cell lands there too.
     Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
     std::vector<int64_t> at;
@@ -325,7 +332,7 @@ TEST_CASE("a T cell fires on the tick its tempo map says, in the song's bars", "
         for (const auto& e : ticks(p, t, 1))
             if (e.cmd2.cmd == bank::Cmd::T) at.push_back(t);
     REQUIRE(at.size() == 1);
-    CHECK(at[0] == s.tempoMap[1].tick);
+    CHECK(at[0] == s.tempoMap[0].tick);
     // The bar is twelve steps long: the last four never play.
     int starts[17];
     p.stepTicks(&s.phrases[0], starts);
@@ -382,19 +389,6 @@ Song recordSong()
     return s;
 }
 
-SlotRevert instrumentRevert()
-{
-    SlotRevert r;
-    r.e[0] = 9; r.e[1] = 3;
-    r.f = 1; r.o = 1;
-    r.s[0] = 2; r.s[1] = 4;
-    r.v[0] = 5; r.v[1] = 6;
-    r.w = 3;
-    r.m[0] = 6; r.m[1] = 5;
-    r.t = 150;
-    return r;
-}
-
 } // namespace
 
 TEST_CASE("a plain note records its instrument, a bare note leaves the column blank", "[tracker][record]")
@@ -402,11 +396,10 @@ TEST_CASE("a plain note records its instrument, a bare note leaves the column bl
     Song s = recordSong();
     Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
     p.resetRecord();
-    const SlotRevert rev = instrumentRevert();
     const bank::Command e { bank::Cmd::E, 12, 3, 0 };
     const bank::Command w { bank::Cmd::W, 1, 0, 0 };
     RecordMessage m;
-    REQUIRE(p.recordNote(0, 0.0, 60, 100, false, true, 5, 2, e, w, rev, m));
+    REQUIRE(p.recordNote(0, 0.0, 60, 100, false, true, 5, 2, e, w, m));
     CHECK(m.bar == 0); CHECK(m.step == 0);
     CHECK(m.cell.note == 60);
     CHECK(m.cell.vel == 100);
@@ -415,13 +408,13 @@ TEST_CASE("a plain note records its instrument, a bare note leaves the column bl
     CHECK(m.cell.cmd1.cmd == bank::Cmd::E); CHECK(m.cell.cmd1.a == 12); CHECK(m.cell.cmd1.b == 3);
     CHECK(m.cell.cmd2.cmd == bank::Cmd::W);
     // The same instrument again is written again: a blank column plays bare.
-    REQUIRE(p.recordNote(0, 6.0, 62, 80, false, true, 5, 2, e, w, rev, m));
+    REQUIRE(p.recordNote(0, 6.0, 62, 80, false, true, 5, 2, e, w, m));
     CHECK(m.step == 1);
     CHECK(m.cell.inst == 5);
     CHECK(m.cell.vel == 80);
     CHECK(m.cell.cmd1.cmd == bank::Cmd::E);      // a plain note carries the slots in force
     // A bare note (an overlap) records with the column blank and no slots.
-    REQUIRE(p.recordNote(0, 12.0, 64, 70, false, false, 5, 0, e, w, rev, m));
+    REQUIRE(p.recordNote(0, 12.0, 64, 70, false, false, 5, 0, e, w, m));
     CHECK(m.step == 2);
     CHECK(m.cell.note == 64);
     CHECK(m.cell.inst == 0);
@@ -434,35 +427,34 @@ TEST_CASE("a note-off goes to its step, or the one after its note's", "[tracker]
     Song s = recordSong();
     Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
     p.resetRecord();
-    const SlotRevert rev;
     const bank::Command none;
     RecordMessage m;
     SECTION("a later step takes the OFF") {
-        REQUIRE(p.recordNote(0, 0.0, 60, 100, false, true, 1, 0, none, none, rev, m));
-        REQUIRE(p.recordNote(0, 12.0, 60, 0, true, false, 1, 0, none, none, rev, m));
+        REQUIRE(p.recordNote(0, 0.0, 60, 100, false, true, 1, 0, none, none, m));
+        REQUIRE(p.recordNote(0, 12.0, 60, 0, true, false, 1, 0, none, none, m));
         CHECK(m.step == 2);
         CHECK(m.cell.note == kNoteOff);
     }
     SECTION("the note's own step pushes it to the next") {
-        REQUIRE(p.recordNote(0, 0.0, 60, 100, false, true, 1, 0, none, none, rev, m));
-        REQUIRE(p.recordNote(0, 1.0, 60, 0, true, false, 1, 0, none, none, rev, m));
+        REQUIRE(p.recordNote(0, 0.0, 60, 100, false, true, 1, 0, none, none, m));
+        REQUIRE(p.recordNote(0, 1.0, 60, 0, true, false, 1, 0, none, none, m));
         CHECK(m.step == 1);                       // a note shorter than a step lasts one step
         CHECK(m.cell.note == kNoteOff);
     }
     SECTION("the last step of a bar pushes it into the next bar") {
-        REQUIRE(p.recordNote(0, 90.0, 60, 100, false, true, 1, 0, none, none, rev, m));
-        REQUIRE(p.recordNote(0, 90.0, 60, 0, true, false, 1, 0, none, none, rev, m));
+        REQUIRE(p.recordNote(0, 90.0, 60, 100, false, true, 1, 0, none, none, m));
+        REQUIRE(p.recordNote(0, 90.0, 60, 0, true, false, 1, 0, none, none, m));
         CHECK(m.bar == 1);
         CHECK(m.step == 0);
     }
     SECTION("a step that already holds a note keeps it") {
         s.phrases[0].steps[2].note = 64;          // from an earlier take
-        REQUIRE(p.recordNote(0, 0.0, 60, 100, false, true, 1, 0, none, none, rev, m));
-        CHECK_FALSE(p.recordNote(0, 12.0, 60, 0, true, false, 1, 0, none, none, rev, m));
+        REQUIRE(p.recordNote(0, 0.0, 60, 100, false, true, 1, 0, none, none, m));
+        CHECK_FALSE(p.recordNote(0, 12.0, 60, 0, true, false, 1, 0, none, none, m));
     }
     SECTION("a newer note on the same step ends the older one") {
-        REQUIRE(p.recordNote(0, 12.0, 60, 100, false, true, 1, 0, none, none, rev, m));
-        CHECK_FALSE(p.recordNote(0, 12.0, 55, 0, true, false, 1, 0, none, none, rev, m));
+        REQUIRE(p.recordNote(0, 12.0, 60, 100, false, true, 1, 0, none, none, m));
+        CHECK_FALSE(p.recordNote(0, 12.0, 55, 0, true, false, 1, 0, none, none, m));
     }
 }
 
@@ -471,49 +463,43 @@ TEST_CASE("a slot is written at the step whose tick it changed on", "[tracker][r
     Song s = recordSong();
     Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
     p.resetRecord();
-    const SlotRevert rev = instrumentRevert();
     const bank::Command none;
     const bank::Command e { bank::Cmd::E, 12, 3, 0 };
     const bank::Command v { bank::Cmd::V, 4, 6, 0 };
     RecordMessage m;
-    CHECK_FALSE(p.recordSlots(0, 0.0, none, none, rev, m));       // nothing in force, nothing written
-    REQUIRE(p.recordSlots(0, 6.0, e, none, rev, m));
+    CHECK_FALSE(p.recordSlots(0, 0.0, none, none, m));       // nothing in force, nothing written
+    REQUIRE(p.recordSlots(0, 6.0, e, none, m));
     CHECK(m.slotsOnly);
     CHECK(m.step == 1);
     CHECK(m.cell.note == 0);
     CHECK(m.cell.cmd1.cmd == bank::Cmd::E);
     CHECK(m.cell.cmd1.a == 12);
     CHECK(m.cell.cmd2.cmd == bank::Cmd::None);
-    CHECK_FALSE(p.recordSlots(0, 12.0, e, none, rev, m));         // unchanged: written once
-    REQUIRE(p.recordSlots(0, 18.0, e, v, rev, m));                // the other slot moves
+    CHECK_FALSE(p.recordSlots(0, 12.0, e, none, m));         // unchanged: written once
+    REQUIRE(p.recordSlots(0, 18.0, e, v, m));                // the other slot moves
     CHECK(m.step == 3);
     CHECK(m.cell.cmd1.cmd == bank::Cmd::None);
     CHECK(m.cell.cmd2.cmd == bank::Cmd::V);
     // A note at a step carries the slots in force even when they have not moved.
-    REQUIRE(p.recordNote(0, 24.0, 60, 100, false, true, 1, 0, e, v, rev, m));
+    REQUIRE(p.recordNote(0, 24.0, 60, 100, false, true, 1, 0, e, v, m));
     CHECK(m.cell.cmd1.cmd == bank::Cmd::E);
     CHECK(m.cell.cmd2.cmd == bank::Cmd::V);
 }
 
-TEST_CASE("a slot going to none records what it reverts to", "[tracker][record]")
+TEST_CASE("a slot going to none records the letter's revert form", "[tracker][record]")
 {
-    const SlotRevert rev = instrumentRevert();
-    CHECK(revertCommand(bank::Cmd::E, rev).a == 9);
-    CHECK(revertCommand(bank::Cmd::E, rev).b == 3);
-    CHECK(revertCommand(bank::Cmd::F, rev).a == 1);
-    CHECK(revertCommand(bank::Cmd::O, rev).a == 1);
-    CHECK(revertCommand(bank::Cmd::S, rev).a == 2);
-    CHECK(revertCommand(bank::Cmd::V, rev).b == 6);
-    CHECK(revertCommand(bank::Cmd::W, rev).a == 3);
-    CHECK(revertCommand(bank::Cmd::M, rev).a == 6);
-    CHECK(revertCommand(bank::Cmd::M, rev).b == 5);
-    CHECK(revertCommand(bank::Cmd::T, rev).a == 150);
-    CHECK(revertCommand(bank::Cmd::P, rev).a == 128);
-    CHECK(revertCommand(bank::Cmd::A, rev).a == 0);
-    CHECK(revertCommand(bank::Cmd::G, rev).a == 0);
-    CHECK(revertCommand(bank::Cmd::C, rev).cmd == bank::Cmd::None);   // per-note letters leave nothing
-    CHECK(revertCommand(bank::Cmd::L, rev).cmd == bank::Cmd::None);
-    CHECK(revertCommand(bank::Cmd::R, rev).cmd == bank::Cmd::None);
+    // The letters that leave something behind revert; the per-note ones have
+    // nothing to put back (docs/COMMANDS_AND_TEMPO.md section 3).
+    for (auto letter : { bank::Cmd::A, bank::Cmd::E, bank::Cmd::F, bank::Cmd::G, bank::Cmd::M,
+                         bank::Cmd::O, bank::Cmd::P, bank::Cmd::S, bank::Cmd::T, bank::Cmd::V, bank::Cmd::W }) {
+        const bank::Command r = bank::revertOf(letter);
+        CHECK(r.cmd == letter);
+        CHECK(bank::isRevert(r));
+        CHECK(r.a == 0); CHECK(r.b == 0);       // the revert form carries no value
+    }
+    for (auto letter : { bank::Cmd::C, bank::Cmd::D, bank::Cmd::H, bank::Cmd::K,
+                         bank::Cmd::L, bank::Cmd::R, bank::Cmd::Z })
+        CHECK(bank::revertOf(letter).cmd == bank::Cmd::None);
 
     Song s = recordSong();
     Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
@@ -522,20 +508,60 @@ TEST_CASE("a slot going to none records what it reverts to", "[tracker][record]"
     const bank::Command e { bank::Cmd::E, 12, 3, 0 };
     const bank::Command pitch { bank::Cmd::P, 200, 0, 0 };
     RecordMessage m;
-    REQUIRE(p.recordSlots(0, 0.0, e, pitch, rev, m));
-    REQUIRE(p.recordSlots(0, 6.0, none, none, rev, m));
-    CHECK(m.cell.cmd1.cmd == bank::Cmd::E);       // the instrument's own envelope
-    CHECK(m.cell.cmd1.a == 9);
-    CHECK(m.cell.cmd1.b == 3);
-    CHECK(m.cell.cmd2.cmd == bank::Cmd::P);       // P 128 keeps the offset and stops the bend
-    CHECK(m.cell.cmd2.a == 128);
+    REQUIRE(p.recordSlots(0, 0.0, e, pitch, m));
+    REQUIRE(p.recordSlots(0, 6.0, none, none, m));
+    CHECK(m.cell.cmd1.cmd == bank::Cmd::E);       // "put the envelope back", not a value
+    CHECK(bank::isRevert(m.cell.cmd1));
+    CHECK(m.cell.cmd2.cmd == bank::Cmd::P);       // the offset and the bend go
+    CHECK(bank::isRevert(m.cell.cmd2));
     // The same letter coming back is a change again.
-    REQUIRE(p.recordSlots(0, 12.0, e, none, rev, m));
+    REQUIRE(p.recordSlots(0, 12.0, e, none, m));
     CHECK(m.cell.cmd1.a == 12);
     // A per-note letter going to none writes nothing.
     const bank::Command k { bank::Cmd::K, 4, 0, 0 };
-    REQUIRE(p.recordSlots(0, 18.0, k, none, rev, m));
-    CHECK_FALSE(p.recordSlots(0, 24.0, none, none, rev, m));
+    REQUIRE(p.recordSlots(0, 18.0, k, none, m));
+    CHECK_FALSE(p.recordSlots(0, 24.0, none, none, m));
+}
+
+TEST_CASE("a cell's revert form reaches the driver as it was written", "[tracker][record]")
+{
+    // The Player passes a cell's commands through untouched, so what the
+    // recorder wrote as a revert arrives at the driver as a revert
+    // (docs/COMMANDS_AND_TEMPO.md section 3).
+    Song s;
+    s.noteSource[0] = NoteSource::Tracker;
+    auto& ph = s.phrases[0]; ph.used = true;
+    ph.steps[0].note = 60; ph.steps[0].inst = 1;
+    ph.steps[4].cmd1 = bank::revertOf(bank::Cmd::E);
+    ph.steps[4].cmd2 = bank::revertOf(bank::Cmd::V);
+    s.chain[0] = { 1 };
+    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
+    const auto out = ticks(p, 0, 96);
+    const NoteEvent* cmd = nullptr;
+    for (const auto& e : out) if (e.kind == NoteEvent::Command) cmd = &e;
+    REQUIRE(cmd != nullptr);
+    CHECK(cmd->cmd1.cmd == bank::Cmd::E);
+    CHECK(bank::isRevert(cmd->cmd1));
+    CHECK(cmd->cmd2.cmd == bank::Cmd::V);
+    CHECK(bank::isRevert(cmd->cmd2));
+}
+
+TEST_CASE("a G cell reverting puts the phrase's own groove back", "[tracker][groove]")
+{
+    Song s;
+    s.noteSource[0] = NoteSource::Tracker;
+    s.grooves[1].ticks = { 12, 12 };            // slot 2: twelve ticks a step
+    auto& ph = s.phrases[0]; ph.used = true;
+    ph.groove = 0;                              // the phrase's own is straight
+    ph.steps[0].cmd1 = { bank::Cmd::G, 2, 0, 0 };
+    s.chain[0] = { 1, 1 };
+    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
+    ticks(p, 0, 1);
+    CHECK(p.groove(0) == 2);
+    auto& ph2 = s.phrases[0];
+    ph2.steps[1].cmd1 = bank::revertOf(bank::Cmd::G);
+    ticks(p, 1, 20);
+    CHECK(p.groove(0) == kGrooveNone);          // the phrase's own again
 }
 
 TEST_CASE("the SPSC ring survives a corrupted head", "[link]")

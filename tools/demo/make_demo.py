@@ -520,10 +520,11 @@ def build_envelopes(song, song_tempo=False):
         cmd2_x += [(pre(9), SONG_TEMPO_DROP), (pre(13, 3), 0)]
         cmd2_y += [(pre(9), 0)]
     else:
-        # V 0 0 rather than none: a slot going to none is recorded as the
-        # letter with the instrument's own speed and depth (section 9.4), and
-        # a V command has no delay argument, so the lead's ten-tick vibrato
-        # delay could not come back. Switching the vibrato off records exactly.
+        # The letter goes back to none at bar 9 and the lead's own vibrato --
+        # speed, depth and its ten-tick delay -- is what the notes get. The
+        # recorder writes that as V's revert form, which is the same thing
+        # said in a cell (section 9.4).
+        cmd2_type += [(pre(9), CMD["none"])]
         cmd2_x += [(pre(9), 0)]
         cmd2_y += [(pre(9), 0)]
     add("ch1_cmd2_type", cmd2_type)
@@ -537,28 +538,22 @@ def build_envelopes(song, song_tempo=False):
 
     # PU2 CMD1 = E: the envelope, alternating pluck and long by the bar. While
     # E is in force it sets the start volume, so the bass's velocity accents
-    # step aside for four bars.
-    # From bar 13 the slot holds the Pluck's own envelope (vol 15, decay 2)
-    # rather than going to none: a slot going to none is recorded as that same
-    # letter with the instrument's value (section 9.4), and an E in force sets
-    # the start volume, so a recorded revert cannot hand the velocity accents
-    # back. Holding the instrument's own values records exactly.
-    add("ch2_cmd1_type", [(0, CMD["none"]), (pre(9), CMD["E"])])
-    add("ch2_cmd1_x", [(0, 0), (pre(9), 15), (pre(10), 11), (pre(11), 15), (pre(12), 12), (pre(13), 15)])
-    add("ch2_cmd1_y", [(0, 0), (pre(9), env_y(3)), (pre(10), env_y(0)), (pre(11), env_y(2)), (pre(12), env_y(0)), (pre(13), env_y(2))])
+    # step aside for four bars; the letter goes back to none at bar 13 and
+    # they come back. The recorder writes that as E's revert form, which puts
+    # the envelope back and leaves nothing in force (section 9.4).
+    add("ch2_cmd1_type", [(0, CMD["none"]), (pre(9), CMD["E"]), (pre(13), CMD["none"])])
+    add("ch2_cmd1_x", [(0, 0), (pre(9), 15), (pre(10), 11), (pre(11), 15), (pre(12), 12), (pre(13), 0)])
+    add("ch2_cmd1_y", [(0, 0), (pre(9), env_y(3)), (pre(10), env_y(0)), (pre(11), env_y(2)), (pre(12), env_y(0)), (pre(13), 0)])
 
     # WAV CMD1 = W (the wave slot) and CMD2 = F (the frame): saw for bar 9, then
     # the six-frame Tri-to-saw walked from its triangle end to its saw end.
-    # At bar 13 the keyswitch hands WAV the Organ frames, and the two slots
-    # follow it -- its own wave and its first frame -- instead of going to
-    # none. A recorded revert is the letter with the instrument's value at
-    # that step (section 9.4), and it stays in force, so it would override the
-    # instrument the keyswitch is about to bring in. PU1's W does the
-    # revert-to-none the demo shows off; it keeps its instrument throughout.
-    add("ch3_cmd1_type", [(0, CMD["none"]), (pre(9), CMD["W"])])
-    add("ch3_cmd1_x", [(0, 0), (pre(9), WAVE_SAW), (pre(10), WAVE_TRI_TO_SAW), (pre(13), WAVE_ORGAN)])
-    add("ch3_cmd2_type", [(0, CMD["none"]), (pre(10), CMD["F"])])
-    add("ch3_cmd2_x", [(0, 0), (pre(10), 1), (pre(11), 3), (pre(12), 6), (pre(13), 1)])
+    # Both letters go back to none at bar 13, where a keyswitch hands WAV the
+    # Organ frames: nothing is left in force, so the new instrument plays its
+    # own wave from its own first frame (section 3).
+    add("ch3_cmd1_type", [(0, CMD["none"]), (pre(9), CMD["W"]), (pre(13), CMD["none"])])
+    add("ch3_cmd1_x", [(0, 0), (pre(9), WAVE_SAW), (pre(10), WAVE_TRI_TO_SAW), (pre(13), 0)])
+    add("ch3_cmd2_type", [(0, CMD["none"]), (pre(10), CMD["F"]), (pre(13), CMD["none"])])
+    add("ch3_cmd2_x", [(0, 0), (pre(10), 1), (pre(11), 3), (pre(12), 6), (pre(13), 0)])
 
     # NOI CMD1 = M: the master volume dips over the last two beats of bar 8 and
     # comes back before bar 9 -- a command in a cell, not the master parameters.
@@ -931,8 +926,10 @@ def write_parameters_md(path, table, envelopes, song_tempo_envelopes):
     w("changes, and again at every note-on, after the instrument and its table, so a")
     w("letter drawn across a bar shapes every note in that bar. Put the letter back")
     w("to `none` and what it changed reverts to the instrument's own value (`E` `F`")
-    w("`O` `S` `V` `W`), to zero (`P`), to the parameter (`M`), or stops (`A`, `G`).")
-    w("CMD1 is applied before CMD2.")
+    w("`O` `S` `V` `W`), to zero (`P`), to the parameter (`M`, `T`), or stops (`A`, `G`).")
+    w("The recorder writes that as the letter's *revert cell* -- the same letter saying")
+    w("\"put this back\" rather than a value -- so a recorded song reverts exactly where")
+    w("the lane did. CMD1 is applied before CMD2.")
     w("")
     w("| Letter | Meaning | x | y |")
     w("|---|---|---|---|")
@@ -983,7 +980,7 @@ def write_parameters_md(path, table, envelopes, song_tempo_envelopes):
     w("")
     for line in textwrap.wrap("`ChipBoy Demo (song tempo).rpp` draws the same lanes plus "
                               + ids(extra) + ", and PU1's second slot carries `T` for bars"
-                              " 9-12 instead of going back to none at bar 9.", 78):
+                              " 9-12 instead of going back to `none` at bar 9.", 78):
         w(line)
     w("")
     w("VST3 class id of ChipBoy: `%s`; Reaper's number for it: `%d`." % (VST3_CID, reaper_vst3_number(VST3_CID)))

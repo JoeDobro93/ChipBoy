@@ -6,11 +6,13 @@
 // (multi-digit entry, decimal or hex with the display), Backspace and
 // Delete blank the cell, + and - step it. Command columns: a letter picks
 // the command with its default argument, digits then edit the argument,
-// comma moves to the next argument, Enter or a double-click opens the
-// palette. The note column is a piano: z s x d c v g b h n j m are C..B,
-// comma l period continue into the next octave, q 2 w 3 e r 5 t 6 y 7 u are
-// the octave above and i 9 o 0 p the one above that; minus enters note off;
-// Ctrl/Alt with + or - changes the octave.
+// comma moves to the next argument, "=" makes the letter its revert form
+// ("E =": put the envelope back where the instrument left it, which is what
+// the slot going to none does) and typing a value again clears that, Enter
+// or a double-click opens the palette. The note column is a piano: z s x d
+// c v g b h n j m are C..B, comma l period continue into the next octave,
+// q 2 w 3 e r 5 t 6 y 7 u are the octave above and i 9 o 0 p the one above
+// that; minus enters note off; Ctrl/Alt with + or - changes the octave.
 #include "plugin/shared/Parameters.h"
 #include "plugin/ui/Widgets.h"
 
@@ -33,7 +35,12 @@ void setCmdArg(bank::Command& c, int i, int v)
 {
     const auto v16 = int16_t(v);
     if (i == 0) c.a = v16; else c.b = v16;
+    c.c = 0;                            // naming a value leaves the revert form
 }
+/// The revert form's marker, after the letter: "E =". One glyph wide, it
+/// cannot be read as an argument, and it is the key that enters it
+/// (UI_DESIGN section 7).
+const char* kRevertMark = "=";
 
 /// "V 4,6", "O L", "P -12". Command arguments are base 10 by definition
 /// (spec 9.6), so they stay decimal in hex display.
@@ -42,6 +49,8 @@ juce::String cmdText(const bank::Command& c)
     const auto* info = commandInfo(c.cmd);
     if (info == nullptr) return {};
     juce::String s = juce::String::charToString(juce::juce_wchar(info->letter)) + " ";
+    // The revert form has no arguments: it says "back to the instrument's".
+    if (bank::isRevert(c)) return s + kRevertMark;
     for (int i = 0; i < info->nargs; ++i) {
         const int v = cmdArg(c, i);
         if (i > 0) s += ",";
@@ -62,6 +71,8 @@ juce::String cmdTooltip(const bank::Command& c)
                    + juce::String(juce::CharPointer_UTF8(" \xe2\x80\x94 ")) + info->args;
     const juce::String meaning = plugin::commandArgText(c);
     if (meaning.isNotEmpty()) s += juce::String(juce::CharPointer_UTF8("\n\xe2\x86\x92 ")) + meaning;
+    if (bank::cmdPersists(c.cmd))
+        s += juce::String("\n\"=\" puts the letter back where the instrument left it (") + juce::String::charToString(juce::juce_wchar(info->letter)) + " " + kRevertMark + "), as the slot going to none does";
     return s;
 }
 
@@ -176,6 +187,10 @@ bool editCmd(bank::Command& c, const juce::KeyPress& k, Entry& e)
 {
     if (isBlankKey(k)) { c = {}; e.reset(); return true; }
     const auto ch = k.getTextCharacter();
+    // "=" is the letter's revert form, for the letters that leave something
+    // behind; a value typed afterwards clears it (docs/COMMANDS_AND_TEMPO.md
+    // section 3). It costs the "=" alias of "+" in a command column.
+    if (ch == '=' && bank::cmdPersists(c.cmd)) { c.a = 0; c.b = 0; c.c = bank::kRevert; e.reset(); return true; }
     const auto upper = juce::juce_wchar(ch >= 'a' && ch <= 'z' ? ch - 'a' + 'A' : ch);
     if (upper >= 'A' && upper <= 'Z') {
         const auto cmd = bank::cmdFromLetter(char(upper));

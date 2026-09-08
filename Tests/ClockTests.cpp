@@ -111,6 +111,72 @@ TEST_CASE("a jump lands on the tick playing through would have reached", "[clock
     CHECK(jumped.tickAtBlockStart() < 0);
 }
 
+TEST_CASE("the Song tempo parameter is the base a T cell modifies", "[clock]")
+{
+    // Section 4: the parameter is the song's base tempo, and T cells move it
+    // from their tick. A published song with no T cells therefore runs at the
+    // parameter's tempo -- the song does not carry a base of its own into the
+    // map.
+    Clock c; c.prepare(48000.0);
+    ClockConfig cfg; cfg.source = TempoSource::Song; cfg.songTempo = 150.0; c.setConfig(cfg);
+    c.setTempoMap(nullptr, 0);
+    CHECK(std::fabs(c.ticksAtSeconds(1.0) - 60.0) < 1e-9);        // 150 BPM: 60 ticks a second
+    const auto none = run(c, 2.0, 512, 120.0, true);
+    REQUIRE(none.size() == 120);
+    CHECK(none[60].frame == 60 * 800);
+
+    // A T at bar 9 (tick 768 at four beats a bar) changes it from there.
+    Clock d; d.prepare(48000.0); d.setConfig(cfg);
+    const TempoPoint bar9[] = { { 768, 100.0 } };
+    d.setTempoMap(bar9, 1);
+    CHECK(d.bpmAtTick(767) == 150.0);                             // the parameter's, until the cell
+    CHECK(d.bpmAtTick(768) == 100.0);
+    CHECK(std::fabs(d.secondsAtTicks(768.0) - 768.0 / 60.0) < 1e-9);
+    CHECK(std::fabs(d.ticksAtSeconds(768.0 / 60.0 + 1.0) - 808.0) < 1e-9);   // 100 BPM: 40 a second
+
+    // Moving the parameter moves the base and everything after it, and a T
+    // cell at tick 0 is a cell, so it keeps the base it names.
+    cfg.songTempo = 75.0;
+    d.setConfig(cfg);
+    d.setTempoMap(bar9, 1);
+    CHECK(d.bpmAtTick(0) == 75.0);
+    CHECK(d.bpmAtTick(768) == 100.0);
+    const TempoPoint atZero[] = { { 0, 200.0 }, { 768, 100.0 } };
+    d.setTempoMap(atZero, 2);
+    CHECK(d.bpmAtTick(0) == 200.0);
+}
+
+TEST_CASE("the Song tempo parameter moving re-integrates from where it is", "[clock]")
+{
+    // Section 4: automate the parameter and the plugin integrates on from the
+    // position it is at, rather than jumping to what the new tempo says the
+    // whole song so far would have taken.
+    Clock c; c.prepare(48000.0);
+    ClockConfig cfg; cfg.source = TempoSource::Song; cfg.songTempo = 120.0; c.setConfig(cfg);
+    c.setTempoMap(nullptr, 0);
+    Transport t; t.valid = true; t.playing = true; t.bpm = 120.0; t.timeValid = true;
+    uint64_t f = 0;
+    auto block = [&] {
+        t.seconds = double(f) / 48000.0; t.ppq = t.seconds * 2.0;
+        c.process(t, 512, f);
+        f += 512;
+    };
+    for (int i = 0; i < 94; ++i) block();                          // just short of a second
+    const int64_t before = c.tickAtBlockStart();
+    CHECK(before > 40);                                            // 48 ticks a second at 120
+    cfg.songTempo = 240.0;
+    c.setConfig(cfg);
+    c.setTempoMap(nullptr, 0);
+    block();
+    // Continuous: the position carries on from where it was, it does not jump
+    // to twice the elapsed time.
+    CHECK(c.tickAtBlockStart() >= before);
+    CHECK(c.tickAtBlockStart() < before + 4);
+    const int64_t at = c.tickAtBlockStart();
+    for (int i = 0; i < 94; ++i) block();                          // another second, at 240 BPM
+    CHECK(c.tickAtBlockStart() - at > 90);                         // 96 ticks a second now, not 48
+}
+
 TEST_CASE("a stopped transport still ticks, so live playing has tables", "[clock]")
 {
     Clock c; c.prepare(48000.0);

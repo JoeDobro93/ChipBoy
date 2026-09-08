@@ -29,26 +29,6 @@ struct RecordMessage {
     Cell cell;
 };
 
-/// What a command slot going to none reverts to (section 9.4). The recorder
-/// writes the letter with that value, so the recorded song plays back into the
-/// state the parameter left behind. The caller fills it from the instrument
-/// the channel has loaded and from the master and tempo parameters.
-struct SlotRevert {
-    uint8_t e[2] = { 15, 0 };   ///< E: volume and rate/direction (wave: level, 0)
-    uint8_t f = 1;              ///< F: the instrument's first frame
-    uint8_t o = 3;              ///< O: the instrument's pan
-    uint8_t s[2] = { 0, 0 };    ///< S: the instrument's sweep rate and shift
-    uint8_t v[2] = { 1, 0 };    ///< V: the instrument's vibrato speed and depth
-    uint8_t w = 0;              ///< W: the instrument's duty, or its wave slot
-    uint8_t m[2] = { 7, 7 };    ///< M: the master volume parameters
-    uint8_t t = 120;            ///< T: the song tempo
-};
-
-/// The command a slot going to none records as: the instrument's own value for
-/// E F O S V W, P 128, A 0, G 0, M and T from the parameters, and nothing for
-/// the per-note letters, which leave nothing behind.
-bank::Command revertCommand(bank::Cmd letter, const SlotRevert& rev);
-
 class Player {
 public:
     void prepare(double sampleRate);
@@ -82,11 +62,10 @@ public:
     /// writes OFF at its step, or at the next one when that is the note's own.
     bool recordNote(int ch, double tick, uint8_t note, uint8_t velocity, bool noteOff, bool plain,
                     uint8_t instrument, uint8_t table, const bank::Command& c1, const bank::Command& c2,
-                    const SlotRevert& rev, RecordMessage& out);
+                    RecordMessage& out);
     /// A step whose slots differ from the last written on this channel, with
     /// no note of its own.
-    bool recordSlots(int ch, double tick, const bank::Command& c1, const bank::Command& c2,
-                     const SlotRevert& rev, RecordMessage& out);
+    bool recordSlots(int ch, double tick, const bank::Command& c1, const bank::Command& c2, RecordMessage& out);
     void resetRecord();
 
     struct Position { int bar = -1; int step = -1; uint8_t phrase = 0; };
@@ -103,7 +82,7 @@ private:
     void allNotesOff(int ch, uint32_t offset, std::vector<driver::NoteEvent>& out);
     /// What the two command columns at a step hold, and what that leaves as
     /// the last written on the channel.
-    void slotCells(int ch, const bank::Command& c1, const bank::Command& c2, const SlotRevert& rev,
+    void slotCells(int ch, const bank::Command& c1, const bank::Command& c2,
                    bool plainNote, bank::Command& o1, bank::Command& o2);
     bool stepHasNote(int ch, int bar, int step) const;
     /// The step after this one, wrapping into the next bar.

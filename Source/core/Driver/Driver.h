@@ -56,6 +56,11 @@ struct NoteEvent {
     int16_t  value = 0;          ///< pitch bend -8192..8191
     bank::Command cmd1, cmd2;    ///< tracker cells carry their commands
     uint8_t  inst = 0, table = 0;///< tracker cells: 0 keep
+    // What the driver made of this note-on, stamped as it plays it, so the
+    // recorder describes this event and not the channel's latest one
+    // (docs/COMMANDS_AND_TEMPO.md section 9.4).
+    bool     plain = true;       ///< it loaded the instrument; false = a bare note
+    uint8_t  loaded = 0;         ///< the slot it loaded, or the one sounding under a bare note
 };
 
 struct RegWrite { uint64_t cycle; uint16_t addr; uint8_t value; };
@@ -76,15 +81,6 @@ struct VoiceView {
     uint8_t  pan = 0;                                ///< bank::Pan
     uint8_t  groove = kNoGroove;                     ///< the Player's, published here for the strip
     static constexpr uint8_t kNoGroove = 255;        ///< the phrase's own
-};
-
-/// What the last note-on on a channel did, for the recorder (section 9.4): a
-/// plain note loaded the instrument and records its slot in the cell's
-/// instrument column; a bare note only changed the pitch and records a blank
-/// column, so playing the song back overlaps the same way.
-struct NoteReport {
-    bool    plain = true;        ///< the note loaded the instrument
-    uint8_t instrument = 0;      ///< the slot it loaded, or the one sounding (1-128, 0 none)
 };
 
 class Driver {
@@ -128,15 +124,14 @@ public:
     /// boundaries from the Clock; `cycleAt(absoluteFrame)` maps a frame to the
     /// APU cycle exactly as the renderer does. Writes are appended to `out` in
     /// cycle order.
-    void process(const NoteEvent* events, size_t n, uint32_t numSamples, uint64_t frameAbs,
+    /// The events are written back to: a note-on is stamped with what it did
+    /// (NoteEvent::plain and ::loaded), which is what the recorder reads.
+    void process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t frameAbs,
                  const TickPoint* ticks, size_t nTicks,
                  const std::function<uint64_t(uint64_t)>& cycleAt,
                  std::vector<RegWrite>& out);
 
     const VoiceView& view(int ch) const { return view_[size_t(ch & 3)]; }
-    /// The last note-on on this channel: plain or bare, and the instrument
-    /// slot involved. Updated at every note-on, keyswitches excepted.
-    NoteReport noteReport(int ch) const;
 
     /// A G inside a running table sets that table run's row lengths from the
     /// song's groove. The driver does not know the song, so the Player reads
@@ -221,7 +216,7 @@ private:
         bool     ksFromCell = false;                  ///< a cell's column named it, so it is exact
         int16_t  instParam = -1;                      ///< the Instrument parameter last seen (-1 = none yet)
         uint32_t instKey = 0;                         ///< what resolveInstrument() picked, to compare against
-        bool     reportPlain = true; uint8_t reportInst = 0;   ///< the last note-on, for noteReport()
+        bool     notePlain = true; uint8_t noteInst = 0;       ///< what the last note-on did, stamped on its event
         bank::Command lastCmd;                        ///< the last command fired, for Z to re-run
         bank::Command slot[2], slotParam[2];          ///< in force, and the parameter it came from
         int16_t  retrigStep = 0;                      ///< R: volume change per retrigger
@@ -240,7 +235,7 @@ private:
     void emitAt(uint64_t cycle, uint16_t addr, uint8_t v);
     void tick(int ch);
     void tickAll();
-    void handleEvent(const NoteEvent& e);
+    void handleEvent(NoteEvent& e);
     /// A cell's instrument, table and command columns, for the cells that do
     /// not start a note: a Command cell and an OFF (section 3).
     void applyCellColumns(int ch, const NoteEvent& e);
@@ -260,7 +255,14 @@ private:
     void writeNr51();
     void writeNr50(uint8_t l, uint8_t r);
     void applyCommand(int ch, const bank::Command& c, bool fromTable);
+    /// A letter going back to where the instrument left it: what a slot going
+    /// to none does, and what a cell's revert form (Command::c = kRevert)
+    /// does. One function, so the two can never disagree (section 3).
     void revertCommand(int ch, bank::Cmd cmd);
+    /// A cell's command column, applied as the slot changing to it at this
+    /// step. A revert form reverts and leaves the slot empty, exactly as the
+    /// slot going to none does -- so it never fires again at the next note.
+    void setSlotFromCell(int ch, int i, const bank::Command& c);
     /// Z re-runs a command with a random 0..x added to its x and 0..y to its
     /// y: the other slot or column when that is set, else the last command
     /// fired on the channel. Cmd::None when there is nothing to re-run.
@@ -320,6 +322,9 @@ private:
     /// Notes waiting for the next tick while notes-on-tick is on; they survive
     /// a block boundary, so the tick they wait for may be in the next block.
     std::array<NoteEvent, 256> pending_{}; size_t pendingCount_ = 0;
+    /// Where each waiting note came from, so the note's report reaches the
+    /// caller's event. Only valid inside process(); cleared when it returns.
+    std::array<NoteEvent*, 256> pendingFrom_{};
     /// The row lengths a table's G asks for, per channel (setTableGroove).
     std::array<std::array<uint8_t, 16>, 4> tableGroove_{};
     std::array<int8_t, 128> noiseShiftMap_{}, noiseDivMap_{};

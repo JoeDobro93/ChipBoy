@@ -32,13 +32,17 @@ void stepStartTicks(const Song& s, const Phrase* p, uint8_t groove, int* start)
     for (int i = std::min(steps, kSteps); i <= kSteps; ++i) start[i] = acc;
 }
 
-void buildTempoMap(Song& s)
+void buildTempoMap(Song& s, double baseBpm)
 {
     // Every T cell, at the tick its step starts on: the song's own bar ticks
     // and the phrase's own groove (section 9.3). The chains are short and this
     // runs on the message thread when a song is published.
+    //
+    // The base is not in the map: it is the Song tempo parameter, which the
+    // clock holds and a host can automate (section 4). Only T cells are here,
+    // and a T reverting is the base again from its tick.
     s.tempoMap.clear();
-    s.tempoMap.push_back({ 0, std::clamp(s.tempoBpm, 40.0, 255.0) });
+    const double base = std::clamp(baseBpm, 40.0, 255.0);
     int bars = 0;
     for (const auto& c : s.chain) bars = std::max(bars, int(c.size()));
     const int barTicks = s.barTicks();
@@ -54,9 +58,8 @@ void buildTempoMap(Song& s)
                 stepStartTicks(s, p, kGrooveNone, starts);
                 if (starts[step] >= barTicks) break;                          // that step never plays
                 const int64_t tick = int64_t(bar) * barTicks + starts[step];
-                if (s.tempoMap.back().tick == tick && tick != 0) break;   // one T per tick: the first channel wins
-                if (tick == 0) s.tempoMap[0].bpm = std::clamp(double(t->a), 40.0, 255.0);
-                else s.tempoMap.push_back({ tick, std::clamp(double(t->a), 40.0, 255.0) });
+                if (!s.tempoMap.empty() && s.tempoMap.back().tick == tick) break;   // one T per tick: the first channel wins
+                s.tempoMap.push_back({ tick, bank::isRevert(*t) ? base : std::clamp(double(t->a), 40.0, 255.0) });
                 break;
             }
 }
@@ -115,7 +118,9 @@ void Player::fireStep(int ch, int bar, int step, uint8_t slot, uint32_t offset, 
     // G and T belong to the timeline, not to the channel: G is this channel's
     // groove from here on, T is already in the song's tempo map.
     for (const bank::Command* cmd : { &c.cmd1, &c.cmd2 })
-        if (cmd->cmd == bank::Cmd::G) grooveCell_[size_t(ch)] = uint8_t(std::clamp<int>(cmd->a, 0, 16));
+        if (cmd->cmd == bank::Cmd::G)
+            // G reverting is the phrase's own groove back (section 3).
+            grooveCell_[size_t(ch)] = bank::isRevert(*cmd) ? kGrooveNone : uint8_t(std::clamp<int>(cmd->a, 0, 16));
     if (c.note == 0 && c.inst == 0 && c.table == 0 && c.cmd1.cmd == bank::Cmd::None && c.cmd2.cmd == bank::Cmd::None) return;
     NoteEvent e;
     e.offset = offset; e.channel = uint8_t(ch); e.source = NoteEvent::Tracker;
@@ -265,26 +270,7 @@ bool Player::stepHasNote(int ch, int bar, int step) const
     return n >= 1 && n <= 127;
 }
 
-bank::Command revertCommand(bank::Cmd letter, const SlotRevert& r)
-{
-    using bank::Cmd;
-    switch (letter) {
-        case Cmd::A: return { Cmd::A, 0, 0, 0 };
-        case Cmd::E: return { Cmd::E, r.e[0], r.e[1], 0 };
-        case Cmd::F: return { Cmd::F, r.f, 0, 0 };
-        case Cmd::G: return { Cmd::G, 0, 0, 0 };
-        case Cmd::M: return { Cmd::M, r.m[0], r.m[1], 0 };
-        case Cmd::O: return { Cmd::O, r.o, 0, 0 };
-        case Cmd::P: return { Cmd::P, 128, 0, 0 };
-        case Cmd::S: return { Cmd::S, r.s[0], r.s[1], 0 };
-        case Cmd::T: return { Cmd::T, r.t, 0, 0 };
-        case Cmd::V: return { Cmd::V, r.v[0], r.v[1], 0 };
-        case Cmd::W: return { Cmd::W, r.w, 0, 0 };
-        default: return {};                     // C D H K L R Z leave nothing behind
-    }
-}
-
-void Player::slotCells(int ch, const bank::Command& c1, const bank::Command& c2, const SlotRevert& rev,
+void Player::slotCells(int ch, const bank::Command& c1, const bank::Command& c2,
                        bool plainNote, bank::Command& o1, bank::Command& o2)
 {
     const size_t c = size_t(ch & 3);
@@ -299,8 +285,10 @@ void Player::slotCells(int ch, const bank::Command& c1, const bank::Command& c2,
             if (plainNote && in[i]->cmd != bank::Cmd::None) *out[i] = *in[i];
             continue;
         }
-        // A slot going to none is written as the letter it reverts to.
-        *out[i] = in[i]->cmd != bank::Cmd::None ? *in[i] : revertCommand(last.cmd, rev);
+        // A slot going to none is written as the letter's revert form, which
+        // says "put this letter back" rather than naming a value that would
+        // then stay in force (section 9.4).
+        *out[i] = in[i]->cmd != bank::Cmd::None ? *in[i] : bank::revertOf(last.cmd);
         last = *in[i];
     }
 }
@@ -315,7 +303,7 @@ void Player::resetRecord()
 
 bool Player::recordNote(int ch, double tick, uint8_t note, uint8_t velocity, bool noteOff, bool plain,
                         uint8_t instrument, uint8_t table, const bank::Command& c1, const bank::Command& c2,
-                        const SlotRevert& rev, RecordMessage& out)
+                        RecordMessage& out)
 {
     const size_t c = size_t(ch & 3);
     int bar = 0, step = 0; int64_t at = 0;
@@ -343,20 +331,19 @@ bool Player::recordNote(int ch, double tick, uint8_t note, uint8_t velocity, boo
     // was bare -- so an overlap records as a bare cell and plays back bare.
     out.cell.inst = plain ? instrument : 0;
     out.cell.table = table;
-    slotCells(int(c), c1, c2, rev, plain, out.cell.cmd1, out.cell.cmd2);
+    slotCells(int(c), c1, c2, plain, out.cell.cmd1, out.cell.cmd2);
     recNoteStep_[c] = at;
     recNote_[c] = note;
     return true;
 }
 
-bool Player::recordSlots(int ch, double tick, const bank::Command& c1, const bank::Command& c2,
-                         const SlotRevert& rev, RecordMessage& out)
+bool Player::recordSlots(int ch, double tick, const bank::Command& c1, const bank::Command& c2, RecordMessage& out)
 {
     const size_t c = size_t(ch & 3);
     int bar = 0, step = 0; int64_t at = 0;
     if (!quantise(ch, tick, bar, step, at)) return false;
     bank::Command o1, o2;
-    slotCells(int(c), c1, c2, rev, false, o1, o2);
+    slotCells(int(c), c1, c2, false, o1, o2);
     if (o1.cmd == bank::Cmd::None && o2.cmd == bank::Cmd::None) return false;
     out = RecordMessage{};
     out.channel = uint8_t(c);

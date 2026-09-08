@@ -167,6 +167,9 @@ int main()
             s.phrases[0].groove = 16;
             s.phrases[0].steps[0].note = 60;
             s.phrases[0].steps[0].vel = 42;
+            // A cell command's revert form is its `c` field (section 3).
+            s.phrases[0].steps[0].cmd1 = chipboy::bank::revertOf(chipboy::bank::Cmd::E);
+            s.phrases[0].steps[0].cmd2 = { chipboy::bank::Cmd::V, 4, 6, 0 };
             s.stepsPerBar = 8;
         });
         juce::MemoryBlock state;
@@ -178,9 +181,50 @@ int main()
         check(s && s->phrases[0].groove == 16, "a phrase's groove slot 16 round-trips");
         check(s && s->phrases[0].steps[0].vel == 42, "the VEL column round-trips");
         check(s && s->stepsPerBar == 8, "steps per bar round-trips");
+        check(s && s->phrases[0].steps[0].cmd1.cmd == chipboy::bank::Cmd::E && chipboy::bank::isRevert(s->phrases[0].steps[0].cmd1),
+              "a cell command's revert form round-trips");
+        check(s && !chipboy::bank::isRevert(s->phrases[0].steps[0].cmd2) && s->phrases[0].steps[0].cmd2.a == 4,
+              "a cell command with a value does not come back as a revert");
         chipboy::tracker::Song old;
         const bool read = songFromJson("{\"format\":\"chipboy-song\",\"grooves\":[[7,5]]}", old);
         check(read && old.grooves[0].length() == 2 && old.grooves[0].at(0) == 7 && old.grooves[0].at(1) == 5, "the old two-entry groove form still reads");
+        // A file written before the field existed reads as a plain command.
+        chipboy::tracker::Song noC;
+        const bool readOld = songFromJson("{\"format\":\"chipboy-song\",\"phrases\":[{\"slot\":1,\"steps\":[{\"c1\":{\"c\":\"E\",\"a\":9,\"b\":3}}]}]}", noC);
+        check(readOld && noC.phrases[0].steps[0].cmd1.c == 0 && noC.phrases[0].steps[0].cmd1.a == 9,
+              "a cell command written before the revert field reads as a value");
+    }
+
+    /* ---- the Song tempo parameter is the song's base tempo (section 4) - */
+    {
+        ChipBoyProcessor p;
+        p.prepareToPlay(48000.0, 512);
+        FakePlayHead head;
+        p.setPlayHead(&head);
+        // A published song with no T cells: the tracker runs at the parameter.
+        p.mutateSong([](chipboy::tracker::Song& s) { s.noteSource[0] = chipboy::tracker::NoteSource::Tracker; });
+        p.apvts.getParameter(ids::tempoSource)->setValueNotifyingHost(1.0f);              // Song
+        auto* tempo = p.apvts.getParameter(ids::songTempo);
+        tempo->setValueNotifyingHost(tempo->getNormalisableRange().convertTo0to1(150.0f));
+        juce::AudioBuffer<float> ab(2, 512);
+        juce::MidiBuffer empty;
+        for (int b = 0; b < 94; ++b) { head.frame = int64_t(b) * 512; p.processBlock(ab, empty); }
+        const int64_t at1s = p.trackerTick();
+        check(std::abs(double(p.tempoInForce()) - 150.0) < 0.5, "a published song runs at the Song tempo parameter");
+        check(at1s > 56 && at1s < 62, "150 BPM is 60 ticks a second, not the song's stored 120");
+        // A song saved from here carries that tempo, and one loaded brings its own back.
+        juce::MemoryBlock state;
+        p.getStateInformation(state);
+        chipboy::tracker::Song written;
+        const auto tree = juce::ValueTree::readFromData(state.getData(), state.getSize());
+        check(tree.isValid() && songFromJson(tree["song"].toString(), written) && std::abs(written.tempoBpm - 150.0) < 1e-6,
+              "the saved song carries the Song tempo parameter's value");
+        ChipBoyProcessor q;
+        q.setStateInformation(state.getData(), int(state.getSize()));
+        const auto reopened = q.song();
+        check(reopened && std::abs(reopened->tempoBpm - 150.0) < 1e-6, "a saved song opens at its own tempo");
+        check(std::abs(double(paramInt(q.apvts.getRawParameterValue(ids::songTempo))) - 150.0) < 0.5,
+              "and its tempo is the Song tempo parameter's value");
     }
 
     /* ---- a channel whose feed changes hands is flushed (section 9.1) -- */

@@ -44,9 +44,10 @@ void Clock::setTempoMap(const TempoPoint* pts, size_t n)
     for (size_t i = 0; i < take; ++i) raw_[i] = pts[i];
     map_[0] = { 0, clampBpm(cfg_.songTempo) };
     mapCount_ = 1;
+    baseIsCell_ = false;
     for (size_t i = 0; i < take; ++i) {
         const TempoPoint p { raw_[i].tick, clampBpm(raw_[i].bpm) };
-        if (p.tick <= 0) { map_[0].bpm = p.bpm; continue; }              // a T at tick 0 is the base
+        if (p.tick <= 0) { map_[0].bpm = p.bpm; baseIsCell_ = true; continue; }   // a T cell at tick 0 owns the base
         if (p.tick <= map_[mapCount_ - 1].tick) continue;                 // unsorted or repeated: the first wins
         map_[mapCount_++] = p;
     }
@@ -119,7 +120,7 @@ void Clock::freeRun(double framesPerTick, uint32_t numSamples, uint64_t frameAbs
 void Clock::process(const Transport& t, uint32_t numSamples, uint64_t frameAbs)
 {
     tickCount_ = 0;
-    if (mapDirty_) { map_[0].bpm = clampBpm(cfg_.songTempo); rebuild(); }
+    if (mapDirty_) { if (!baseIsCell_) map_[0].bpm = clampBpm(cfg_.songTempo); rebuild(); }
 
     const bool song = cfg_.source == TempoSource::Song;
     barBeats_ = song ? std::max(0.25, cfg_.beatsPerBar) : (t.valid ? std::max(0.25, t.beatsPerBar) : 4.0);

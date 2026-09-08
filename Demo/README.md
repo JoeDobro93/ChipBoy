@@ -45,13 +45,14 @@ Two rules keep it recordable, and the generator asserts both:
   slot fires at the tick, and a note-on at that same tick runs first, so the note would be
   heard with the old command and recorded with the new one.
 
-Not everything reverts exactly, either. A slot going back to `none` is recorded as its
-letter carrying the instrument's own value (§9.4), and that letter then stays in force,
-so the demo lets a slot go to `none` only where that is faithful: PU1's **W**, whose
-instrument never changes under it. Where it would not be — **E** against the velocity
-accents, **V** against the lead's vibrato delay, **W** and **F** on WAV across the
-keyswitch that brings in another instrument — the lane moves to the instrument's own
-value instead, which sounds the same and records exactly.
+A lane going back to `none` records as the letter's **revert cell** — the same letter
+saying "put this back where the instrument left it" rather than naming a value (§9.4).
+It is applied once and leaves nothing in force, which is what a lane going to `none`
+does, so every one of the demo's letters can go back to `none` and record exactly: PU2's
+**E** hands the velocity accents back at bar 13, PU1's **V** gives the lead its own
+vibrato — ten-tick delay included — at bar 9, and WAV's **W** and **F** step aside at bar
+13 for the instrument the keyswitch brings in. In the lane a revert cell is drawn as the
+letter and an equals sign, `E =`.
 
 ## What it plays
 
@@ -59,8 +60,8 @@ value instead, which sounds the same and records exactly.
 |---|---|---|---|---|
 | 1–4 | Square lead, the theme. Both slots empty: the instrument is the whole sound | Pluck bass (`ch2_instrument` = 2), velocity as the start volume | Triangle bass (keyswitch → slot 7) | Kick, snare, hats (keyswitch → slot 11; velocity picks the drum) |
 | 5–8 | CMD2 = **V**: vibrato speed 3, then 6 from bar 7, and the **depth rides a notch a beat** through the slot's `y` — 1 up to 8 and back down again — every point on a step | Bass, half-time | Tri-to-saw (keyswitch → slot 10); its frames advance on the tick | Beat with a crash on bar 5; CMD1 = **M**, the master volume dipping 7 → 5 → 3 → 7 over the last two beats of bar 8 |
-| 9–12 | CMD1 = **W**: duty 12.5 % → 25 % → 50 % → 75 %, one per bar, under eighth notes. CMD2 goes to `V 0 0`, so the vibrato is off for the run | CMD1 = **E**: pluck (vol 15, decay 3), long (vol 11, no decay), pluck (vol 15, decay 2), long (vol 12, no decay) — one per bar. While E is in force it sets the start volume, so the velocity accents stand down | Keyswitch → slot 7; CMD1 = **W** wave 2 (Saw) for bar 9, then wave 6 (Tri to saw) with CMD2 = **F** walking the frame 1 → 3 → 6 | Beat with a crash |
-| 13–14 | W goes to `none` — the duty is the lead's own again — and CMD1 becomes **L 30**: every note slides in from the one before it. The lead's pitch speed is Fast, so 30 units is 30/360 s, about 83 ms | Bass; E holds the Pluck's own envelope (vol 15, decay 2) | Organ frames (keyswitch → slot 9); W and F follow it: wave 5, frame 1 | Fill; **De-click** on for bar 14 |
+| 9–12 | CMD1 = **W**: duty 12.5 % → 25 % → 50 % → 75 %, one per bar, under eighth notes. CMD2 goes to `none`, so the lead's own vibrato — speed 10, depth 2, after ten ticks — plays for the run | CMD1 = **E**: pluck (vol 15, decay 3), long (vol 11, no decay), pluck (vol 15, decay 2), long (vol 12, no decay) — one per bar. While E is in force it sets the start volume, so the velocity accents stand down | Keyswitch → slot 7; CMD1 = **W** wave 2 (Saw) for bar 9, then wave 6 (Tri to saw) with CMD2 = **F** walking the frame 1 → 3 → 6 | Beat with a crash |
+| 13–14 | W goes to `none` — the duty is the lead's own again — and CMD1 becomes **L 30**: every note slides in from the one before it. The lead's pitch speed is Fast, so 30 units is 30/360 s, about 83 ms | Bass; E goes to `none`, so the Pluck's own envelope is back and the velocity accents with it | Organ frames (keyswitch → slot 9); W and F go to `none`, so the new instrument plays its own wave from its own first frame | Fill; **De-click** on for bar 14 |
 | 15–16 | CMD1 becomes **P 126**: a Fast bend of −2 period units every 1/360 s, so every note leans downwards out of its attack and the last one dives out | `ch2_instrument` hands PU2 factory slot 17 **Pulse kick** — Drum pitch speed, and its table 7 does the drop — for a kick pattern, then gives the Pluck back for the closing bass note | Organ frames | Fill; the model switches DMG → CGB (bar 15) → RAW (bar 16) |
 
 The chords are A minor, F, C, G. Watch the strip's running-state line while it plays: an
@@ -102,8 +103,8 @@ default by the record test.
 
 `ChipBoy Demo (song tempo).rpp` is the same track with two global lanes added —
 *Tempo source* = **Song** and *Song tempo* = **150** — and PU1's second slot carrying
-**T 100** for bars 9–12 instead of switching the vibrato off there. One slot, two
-letters, never at the same time: V for bars 5–8, T for bars 9–12.
+**T 100** for bars 9–12 instead of going back to `none` there. One slot, two letters,
+never at the same time: V for bars 5–8, T for bars 9–12.
 
 Ticks are always 24 to the beat; what changes is what a beat is worth. The host still
 runs at 120 BPM and the MIDI item is untouched, so **the notes land in exactly the same
@@ -157,11 +158,11 @@ already in force when that bar's first note starts:
 | Lane | Letter | What to draw |
 |---|---|---|
 | `ch1_cmd1_*` | **W**, then **L**, then **P** | duty x = 0, 1, 2, 3, one per bar over bars 9–12; `none` late in bar 12; **L** x = 30 for bars 13–14; **P** x = 126 for bars 15–16 |
-| `ch1_cmd2_*` | **V** — vibrato | x = speed 3, and 6 from bar 7; y = the depth, a notch a beat from 1 up to 8 over bars 5–6 and back down over 7–8; x = y = 0 from bar 9 |
+| `ch1_cmd2_*` | **V** — vibrato | x = speed 3, and 6 from bar 7; y = the depth, a notch a beat from 1 up to 8 over bars 5–6 and back down over 7–8; `none` from bar 9 |
 | `ch2_instrument` | – | 2 (Pluck), 17 (Pulse kick) for bars 15–16, 2 again for the last bass note |
-| `ch2_cmd1_*` | **E** — envelope | x = start volume 0–15, y = 0–7 for a decay and 8–15 for an attack (the rate is y & 7) |
-| `ch3_cmd1_*` | **W** — wave slot on WAV | x = the wave slot: 2 (Saw), 6 (Tri to saw), then 5 (Organ) |
-| `ch3_cmd2_*` | **F** — frame on WAV | x = the frame: 1, 3, 6, then 1 |
+| `ch2_cmd1_*` | **E** — envelope | x = start volume 0–15, y = 0–7 for a decay and 8–15 for an attack (the rate is y & 7); `none` from bar 13 |
+| `ch3_cmd1_*` | **W** — wave slot on WAV | x = the wave slot: 2 (Saw), then 6 (Tri to saw); `none` from bar 13 |
+| `ch3_cmd2_*` | **F** — frame on WAV | x = the frame: 1, 3, 6; `none` from bar 13 |
 | `ch4_cmd1_*` | **M** — master volume | x = y = 5, then 3, then 7, over the last two beats of bar 8 |
 
 **A** is the table (x = a table slot, 0 stops it) — the letter that used to mean the

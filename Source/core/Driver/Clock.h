@@ -41,8 +41,10 @@ struct Transport {
     double beatsPerBar = 4.0;    ///< from the host's time signature
 };
 
-/// The tempo from an absolute tick on: the song's base at tick 0, then one
-/// per T cell (docs/COMMANDS_AND_TEMPO.md section 2).
+/// The tempo from an absolute tick on: one per T cell, the base being the
+/// Song tempo parameter until the first of them (docs/COMMANDS_AND_TEMPO.md
+/// sections 2 and 4). A point at tick 0 is a T cell there, and does override
+/// the parameter from the song's start.
 struct TempoPoint { int64_t tick = 0; double bpm = 120.0; };
 
 /// A tick inside a block: where it lands and which tick it is.
@@ -50,7 +52,7 @@ struct TickPoint { uint32_t offset = 0; int64_t tick = 0; };
 
 struct ClockConfig {
     TempoSource source = TempoSource::Host;
-    double songTempo = 120.0;        ///< Song source: the base tempo (the T-less tempo)
+    double songTempo = 120.0;        ///< Song source: the base tempo, the Song tempo parameter
     double songStartSeconds = 0.0;   ///< host time where song tick 0 sits
     double beatsPerBar = 4.0;        ///< Song source; Host takes the host's signature
 };
@@ -62,8 +64,9 @@ public:
 
     void setConfig(const ClockConfig& c);
     const ClockConfig& config() const { return cfg_; }
-    /// The song's tempo map, sorted by tick. Copied into a fixed buffer, so
-    /// the caller's list may go away and this stays allocation-free.
+    /// The song's T cells, sorted by tick. Copied into a fixed buffer, so
+    /// the caller's list may go away and this stays allocation-free. The base
+    /// tempo is ClockConfig::songTempo, not part of this list.
     void setTempoMap(const TempoPoint* pts, size_t n);
 
     /// One block. Fills the tick list; nothing else about the block is kept.
@@ -102,6 +105,7 @@ private:
     std::array<TempoPoint, kMaxTempoPoints> raw_{};   ///< the caller's list, to spot a real change
     size_t mapCount_ = 1, rawCount_ = 0;
     bool   mapDirty_ = true;
+    bool   baseIsCell_ = false;   ///< a T cell sits at tick 0, so it owns the base, not the parameter
 
     std::array<TickPoint, kMaxTicksPerBlock> ticks_{};
     size_t  tickCount_ = 0;
