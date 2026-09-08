@@ -324,12 +324,15 @@ void HardwarePanel::refreshFacts()
     lastNoise_ = noiseOn;
     const bool raw = model == 2, cgb = model == 1;
     if (noise_) {
-        noise_->setFact(raw ? String("no analog stage in RAW") : "measured: floor " + minus() + "58 dB, 9198 Hz line +" + String(cgb ? 43 : 26) + " dB");
+        noise_->setFact(raw ? String("no analog stage in RAW") : "measured: floor " + minus() + "58 dB, frame hum at 59.7 Hz");
         noise_->setDimmed(raw);
     }
     if (lcd_) {
-        lcd_->setFact(cgb ? "this CGB unit kept its line with the display off (+41 dB) " + emdash() + " modelled as measured" : String("DMG: line drops 24 dB with LCDC bit 7 clear"));
-        lcd_->setDimmed(raw || noiseOn == 0);
+        lcd_->setFact(cgb ? "measured +43 dB over the floor; this CGB unit kept its line with the display off (+41 dB) " + emdash() + " modelled as measured"
+                          : "measured +26 dB over the floor; DMG: the line drops 24 dB with LCDC bit 7 clear");
+        // The whine is its own switch now (section 21): it does not follow
+        // the hiss, so only RAW -- which has no analog stage -- dims it.
+        lcd_->setDimmed(raw);
     }
     if (bassMod_) bassMod_->setDimmed(!cgb);
     if (tame_) { tame_->setFact(raw ? String("RAW has no DC steps to tame") : String()); tame_->setDimmed(raw); }

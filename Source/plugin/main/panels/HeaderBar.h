@@ -1,12 +1,23 @@
 // ChipBoy -- the header bar (UI_DESIGN section 2, item 1): wordmark, the
-// model switch, the tempo group (source, song tempo, quantize), the bank
-// with previous / next and its menu, undo and redo, the STOCK / MODIFIED
-// badge, the visualizer and hex buttons and the settings menu.
+// model switch, the tempo group (source, the tempo readout, quantize), the
+// bank with previous / next and its menu, undo and redo, the STOCK /
+// MODIFIED badge, the visualizer and hex buttons and the settings menu.
+//
+// The tempo here is a readout, not a control (docs/COMMANDS_AND_TEMPO.md
+// section 19): the host's BPM in Host mode, the active song's tempo in force
+// in Song mode. A song's own tempo is typed in the Tracker tab, beside Start
+// and Beats, because it belongs to the song and the window can hold several.
 #pragma once
 
 #include "plugin/main/panels/PanelCommon.h"
 
+#include <memory>
+
 namespace chipboy::plugin {
+
+/// The tempo in force and where it comes from: "120.0" with a "host" or
+/// "song" tag beside it, drawn as a readout so nothing invites a drag.
+class TempoReadout;
 
 class HeaderBar : public juce::Component {
 public:
@@ -39,7 +50,7 @@ private:
     // tempo (docs/COMMANDS_AND_TEMPO.md section 4): whose beat the ticks
     // follow, the song's own tempo, and whether notes wait for a tick
     ui::Segmented tempoSource_;
-    ui::Stepper songTempo_;
+    std::unique_ptr<TempoReadout> tempoRead_;
     juce::TextButton quantize_;
     juce::TextButton bankPrev_, bankNext_, bankMenu_;
     /// Undo and redo, right of the bank: what they would take back is in
@@ -58,6 +69,10 @@ private:
     /// does, the tempo source is fixed on Song (COMMANDS_AND_TEMPO 16).
     int lastOwns_ = -1;
     juce::String undoShown_, redoShown_;
+    /// What the readout last showed, so the header only repaints when the
+    /// tempo really moved.
+    double tempoShown_ = -1.0;
+    int tempoFromShown_ = -1;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HeaderBar)
 };

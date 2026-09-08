@@ -11,6 +11,29 @@
 // the capacitor's voltage decays exponentially, at a step it jumps by the
 // step, so it costs one exp() per sample and one per sub-pixel, no
 // sub-stepping through the staircase.
+//
+// How the picture is held still (docs/COMMANDS_AND_TEMPO.md section 22).
+// A channel's staircase repeats exactly every cyclesPerPeriod() cycles, so
+// two windows of the same length that start on the same *phase* of it draw
+// the same trace whichever period they fall in. Starting on "the last rising
+// edge before the window" is not that phase: a pulse has one rising edge in
+// a period and picks the same one every frame, but a wave has up to sixteen,
+// and which of them was last before a window whose end moves with the audio
+// thread is effectively random -- the trace jumped by a fraction of a period
+// every frame, which is the flashing. So the edge is chosen by what the
+// waveform *is*, not by where the search began: every rising edge of one
+// whole period is a candidate, and the one that rises furthest wins -- ties
+// go to the one whose level was held longest before it, then to the one that
+// rises from the lowest level, then to the earliest.
+// Those are properties of the shape, so they name the same phase every frame,
+// it survives the window sliding, and when the shape changes -- a new note,
+// a new wave -- the next frame simply picks the new shape's edge and the
+// picture re-locks at once. Under vibrato the period moves and the window
+// with it, and the edge stays the same one, so the shape breathes rather
+// than sliding. Nothing is remembered between frames: paint() is a pure
+// function of the snapshot the timer took, so two paints of one snapshot are
+// the same picture. Noise has no period, and a kit is a sample rather than a
+// repeating wave, so both keep a fixed time window (section 22).
 #include "plugin/ui/Widgets.h"
 
 #include "core/Apu/Apu.h"
@@ -44,6 +67,57 @@ int lastAtOrBefore(const link::ScopeSample* s, uint32_t n, double c)
     return int(it - s) - 1;
 }
 
+/// Where the picture starts and how long it is, in APU cycles.
+struct Window { double start = 0.0, len = 0.0; };
+
+/// The window for one frame: `periods` whole periods of the channel's own
+/// frequency, beginning on the rising edge the waveform itself names (the
+/// note at the top of this file). Pure: the same samples and the same `end`
+/// always give the same window, and a steady tone gives windows that differ
+/// only by whole periods -- which draw the same trace.
+Window periodLockedWindow(const link::ScopeSample* s, uint32_t n, double cpp, int periods, double end)
+{
+    Window w;
+    w.len = double(periods) * cpp;
+    w.start = end - w.len;
+    if (n < 2 || cpp <= 0.0) return w;
+
+    // The latest start that leaves the whole window in front of it, with one
+    // period of choice behind it. With less history than that in the ring --
+    // a low note that has only just started -- the search moves up to what
+    // there is: the window keeps its length and simply runs out on the right,
+    // which is a picture that holds rather than one that slides.
+    const double oldest = double(s[0].cycle);
+    double hi = end - w.len;
+    double lo = hi - cpp;
+    if (lo < oldest) {
+        lo = oldest;
+        hi = std::max(lo, std::min(oldest + cpp, end));
+    }
+
+    // The edge the shape names: the furthest rise, then the one whose level
+    // was held longest before it (an apex or a trough repeats a sample, and
+    // the ring only carries changes, so the trough's rise is held longest),
+    // then the one that rises from the lowest level -- three keys that are
+    // properties of the waveform and not of where the search began. A shape
+    // that ties on all three has two identical halves, and starting on
+    // either draws the same picture.
+    int best = -1, bestRise = 0, bestFrom = 0;
+    uint64_t bestHeld = 0;
+    for (int i = std::max(1, lastAtOrBefore(s, n, lo)); i < int(n) && double(s[i].cycle) <= hi; ++i) {
+        if (double(s[i].cycle) < lo) continue;
+        if (s[i - 1].level < 0 || s[i].level <= s[i - 1].level) continue;   // not a rising edge
+        const int rise = s[i].level - s[i - 1].level, from = s[i - 1].level;
+        const uint64_t held = s[i].cycle - s[i - 1].cycle;   // whole cycles, so == is exact
+        const bool better = best < 0 || rise > bestRise
+                            || (rise == bestRise && (held > bestHeld || (held == bestHeld && from < bestFrom)));
+        if (better) { best = i; bestRise = rise; bestHeld = held; bestFrom = from; }
+    }
+    if (best >= 0) w.start = double(s[best].cycle);
+    else w.start = hi;                       // nothing rises: show the newest window there is
+    return w;
+}
+
 void strokeWithGlow(juce::Graphics& g, const juce::Path& p, juce::Colour c, float width)
 {
     if (p.isEmpty()) return;
@@ -74,6 +148,9 @@ struct ScopeView::Impl : juce::Timer {
     int periods = 2;
     double cornerHz = 25.0;
     bool chrome = true, frozen = false, idleDim = true, chromeShown = false;
+    /// A kit is a sample, not a repeating wave, so it keeps noise's fixed
+    /// time window (docs/COMMANDS_AND_TEMPO.md section 22).
+    bool fixedWindow = false;
     juce::Colour ground = colours::lcd, grid = colours::lcdGrid, border = colours::scopeBorder;
     float lineWidth = 1.0f;
 
@@ -83,6 +160,9 @@ struct ScopeView::Impl : juce::Timer {
     std::vector<std::pair<int, int>> offSpans;
     uint32_t n = 0;
     uint64_t packed = 0, latest = 0;
+    /// The cycle the window ends at, taken with the samples: paint() reads
+    /// no live atomic, so one snapshot always draws one picture.
+    double endCycle = 0.0;
     bool active = false;
     int period = 0;
     juce::Path digital, analog;
@@ -121,7 +201,7 @@ struct ScopeView::Impl : juce::Timer {
         const bool raw = cornerHz <= 0.0;
         traceSeg.setOptionEnabled(1, !raw);
         traceSeg.setOptionEnabled(2, !raw);
-        zoomSeg.setEnabled(ch != 3);
+        zoomSeg.setEnabled(ch != 3 && !fixedWindow);
     }
     void showChrome(bool on)
     {
@@ -154,6 +234,7 @@ struct ScopeView::Impl : juce::Timer {
         n = count;
         packed = newPacked;
         latest = ch == 3 ? newLatest : newestCycle;
+        endCycle = double(std::max(newLatest, newestCycle));
         driver::VoiceView v;
         link::unpackState(packed, v);
         active = v.active;
@@ -190,17 +271,18 @@ struct ScopeView::Impl : juce::Timer {
         const int W = area.getWidth();
         const float x0 = float(area.getX());
         const link::ScopeSample* s = buf.data();
-        const bool noise = ch == 3;
-        const double cpp = cyclesPerPeriod(ch, period);
+        const bool fixed = ch == 3 || fixedWindow;
         const double newest = double(s[n - 1].cycle);
-        double end = src.latestCycle != nullptr ? double(src.latestCycle->load(std::memory_order_relaxed)) : newest;
-        if (end < newest) end = newest;
-        const double len = noise ? kNoiseWindowSeconds * double(kCpuHz) : double(periods) * cpp;
-        double start = end - len;
-
-        if (!noise && n >= 2) {   // a still picture: start on the last rising edge before end - len, up to one period back
-            for (int i = lastAtOrBefore(s, n, start); i >= 1 && double(s[i].cycle) >= start - cpp; --i)
-                if (s[i].level > s[i - 1].level && s[i - 1].level >= 0) { start = double(s[i].cycle); end = start + len; break; }
+        double end = std::max(endCycle, newest);
+        double start = 0.0, len = 0.0;
+        if (fixed) {                       // no period to lock to: the last few milliseconds
+            len = kNoiseWindowSeconds * double(kCpuHz);
+            start = end - len;
+        }
+        else {
+            const Window w = periodLockedWindow(s, n, cyclesPerPeriod(ch, period), periods, end);
+            start = w.start;
+            len = w.len;
         }
 
         // --- digital: per pixel column, the level at its start and the span of levels inside it
@@ -296,6 +378,13 @@ void ScopeView::setSource(Source s) { impl_->src = s; impl_->n = 0; impl_->resta
 void ScopeView::setChannel(int ch) { impl_->ch = juce::jlimit(0, 3, ch); impl_->syncChrome(); repaint(); }
 void ScopeView::setTrace(Trace t) { impl_->trace = t; impl_->syncChrome(); repaint(); }
 void ScopeView::setPeriods(int p) { impl_->periods = p >= 8 ? 8 : p >= 4 ? 4 : p >= 2 ? 2 : 1; impl_->syncChrome(); repaint(); }
+void ScopeView::setFixedWindow(bool on)
+{
+    if (on == impl_->fixedWindow) return;
+    impl_->fixedWindow = on;
+    impl_->syncChrome();
+    repaint();
+}
 void ScopeView::setAnalogCornerHz(double hz)
 {
     if (std::abs(hz - impl_->cornerHz) < 1e-9) return;

@@ -24,6 +24,11 @@ public:
     void attach(juce::RangedAudioParameter& type, juce::RangedAudioParameter& x, juce::RangedAudioParameter& y);
     /// Re-grey the letters when the Voice plugin moves to another channel.
     void setChannelKind(plugin::ChannelKind kind);
+    /// The slot is not read at all -- a Hybrid channel takes its commands
+    /// from the song's cells (docs/COMMANDS_AND_TEMPO.md section 20). The
+    /// letter and its arguments grey out and say why, and the parameters
+    /// keep their values for when the channel plays MIDI again.
+    void setInert(bool inert, const juce::String& why = {});
 
     static constexpr int kCaption = 12, kControls = 22;
     static constexpr int kHeight = kCaption + kControls;

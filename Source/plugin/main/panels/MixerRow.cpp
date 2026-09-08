@@ -18,6 +18,10 @@ const char* kTableTip = "Table override for this channel; inst = the instrument'
 const char* kInstTip = "The instrument this channel's notes latch at note-on; automate it to switch per note";
 const char* kTransposeTip = "Semitones added to every note on this channel, before the period is worked out";
 const char* kStateTip = "What the driver is doing right now: the instrument, its table and the two command slots, resolved. The vibrato reads speed / depth, the depth in semitones.";
+/// Why Instrument, Table and the two slots are greyed on a Hybrid channel
+/// (docs/COMMANDS_AND_TEMPO.md section 20).
+const char* kHybridTip = "The tracker's cells drive this channel: it is on Hybrid, so its notes come from MIDI and its instrument, table and commands come "
+                         "from the song's cells at their steps. Level, Pan, Transpose and the Velocity mode still apply.";
 /// The reserved octave is one below the channel's playable floor.
 juce::String keyswitchTip(int ch)
 {
@@ -82,7 +86,7 @@ String stateText(int ch, const driver::VoiceView& v, const tracker::Song* song, 
 ChannelStrip::ChannelStrip(ChipBoyProcessor& p, int ch)
     : processor_(p), ch_(ch),
       name_(colours::channelName(ch), Fonts::pixel(12.0f), colours::channel(ch)),
-      sourceBox_(source_),
+      hybridBox_(hybrid_), sourceBox_(source_),
       instrumentName_({}, Fonts::sans(12.0f), colours::textMute),
       tableLabel_("Table", Fonts::caption(10.0f), colours::textDim),
       transposeLabel_("Transpose", Fonts::caption(10.0f), colours::textDim),
@@ -99,6 +103,10 @@ ChannelStrip::ChannelStrip(ChipBoyProcessor& p, int ch)
                                                      &tableLabel_, &table_, &transposeLabel_, &transpose_, &pan_,
                                                      &mute_, &solo_, &keyswitch_, &cmd1_, &cmd2_, &stateBox_ })
         addAndMakeVisible(c);
+    // Only while the song has this channel on Hybrid (section 20).
+    addChildComponent(hybridBox_);
+    hybrid_.set("HYBRID", Pill::Tone::Accent);
+    hybridBox_.setTooltip(kHybridTip);
 
     // source badge: a menu bound to the channel's source parameter
     sourceBox_.onClick = [this] { showSourceMenu(); };
@@ -168,6 +176,7 @@ ChannelStrip::ChannelStrip(ChipBoyProcessor& p, int ch)
 
     refreshInstrumentName();
     refreshState();
+    refreshHybrid();
 }
 
 ChannelStrip::~ChannelStrip() = default;
@@ -217,7 +226,11 @@ void ChannelStrip::refreshInstrumentName()
     const bank::Instrument* inst = b ? b->instrument(slot) : nullptr;
     if (!inst) { instrumentName_.setText(String(CharPointer_UTF8("\xe2\x80\x94 empty \xe2\x80\x94"))); instrumentName_.setColour(colours::textDim); return; }
     instrumentName_.setText(String(inst->name));
-    instrumentName_.setColour(instrumentFitsChannel(inst->type, ch_) ? instrumentKindColour(int(inst->type)) : colours::warn);
+    // A Hybrid channel never loads this one: the cells say which instrument
+    // the next note takes (section 20), so the name greys out with its
+    // stepper rather than claiming to be what is playing.
+    const Colour c = instrumentFitsChannel(inst->type, ch_) ? instrumentKindColour(int(inst->type)) : colours::warn;
+    instrumentName_.setColour(hybridShown_ == 1 ? c.withMultipliedAlpha(0.45f) : c);
 }
 
 /// The running state the driver publishes next to the registers: rebuilt
@@ -266,6 +279,38 @@ void ChannelStrip::tick()
     if (mute != mute_.getToggleState()) mute_.setToggleState(mute, dontSendNotification);
     if (solo != solo_.getToggleState()) solo_.setToggleState(solo, dontSendNotification);
     refreshInstrumentName();
+    refreshHybrid();
+    // A kit is a sample, not a repeating wave, so the wave channel's scope
+    // keeps a fixed window while one plays (section 22).
+    if (ch_ == 2) {
+        driver::VoiceView v;
+        link::unpackState(processor_.scopes().state[2].load(std::memory_order_relaxed), v);
+        const auto b = processor_.bank();
+        const bank::Instrument* inst = b ? b->instrument(v.instrument) : nullptr;
+        scope_.setFixedWindow(inst != nullptr && inst->type == bank::InstrumentType::Kit);
+    }
+}
+
+/// A Hybrid channel reads none of the strip's Instrument, Table or command
+/// slots (section 20), so they grey out, the head carries a HYBRID tag and
+/// every one of them says why.
+void ChannelStrip::refreshHybrid()
+{
+    const auto song = processor_.song();
+    const int on = song && song->noteSource[size_t(ch_)] == tracker::NoteSource::Hybrid ? 1 : 0;
+    if (on == hybridShown_) return;
+    hybridShown_ = on;
+    namesFor_ = nullptr;                 // the instrument name greys with the stepper
+    refreshInstrumentName();
+    hybridBox_.setVisible(on != 0);
+    instrument_.setEnabled(on == 0);
+    table_.setEnabled(on == 0);
+    instrument_.setTooltip(on != 0 ? String(kHybridTip) : String(kInstTip));
+    table_.setTooltip(on != 0 ? String(kHybridTip) : String(kTableTip));
+    cmd1_.setInert(on != 0, "from the cells");
+    cmd2_.setInert(on != 0, "from the cells");
+    resized();
+    repaint();
 }
 
 void ChannelStrip::bankChanged() { refreshInstrumentName(); }
@@ -303,6 +348,10 @@ void ChannelStrip::resized()
     name_.setBounds(x + 13, y, 44, kHead);
     const int pw = std::min(source_.preferredWidth(), w - 60);
     sourceBox_.setBounds(x + w - pw, y + 1, pw, 18);
+    if (hybridBox_.isVisible()) {
+        const int hw = std::min(hybrid_.preferredWidth(), std::max(0, sourceBox_.getX() - (x + 46) - 6));
+        hybridBox_.setBounds(x + 46, y + 1, hw, 18);
+    }
     y += kHead + kGap;
     scope_.setBounds(x, y, w, kScope);
     y += kScope + kGap;
@@ -353,32 +402,63 @@ MasterStrip::MasterStrip(ChipBoyProcessor& p)
     : processor_(p),
       name_("MASTER", Fonts::pixel(12.0f), colours::lcdTrace),
       modelBox_(model_),
-      volLLabel_("Vol L", Fonts::caption(10.0f), colours::textDim), volRLabel_("Vol R", Fonts::caption(10.0f), colours::textDim),
+      volLabel_("Vol", Fonts::caption(10.0f), colours::textDim),
       trimLabel_("Trim", Fonts::caption(10.0f), colours::textDim, Justification::centred),
       mix_({}, Fonts::mono(10.5f), colours::textMute), mixBox_(mix_),
-      noise_("Headphone Noise"), declick_("De-click")
+      noise_("Headphone Noise"), lcd_("LCD Whine"), declick_("De-click")
 {
-    volLLabel_.setUpperCase(true); volRLabel_.setUpperCase(true); trimLabel_.setUpperCase(true);
-    for (auto* c : std::initializer_list<Component*>{ &name_, &modelBox_, &scope_, &mixBox_, &volLLabel_, &volRLabel_, &trimLabel_, &volL_, &volR_, &noise_, &declick_, &trim_ })
+    volLabel_.setUpperCase(true); trimLabel_.setUpperCase(true);
+    for (auto* c : std::initializer_list<Component*>{ &name_, &modelBox_, &scope_, &mixBox_, &volLabel_, &trimLabel_, &vol_, &noise_, &lcd_, &declick_, &trim_ })
         addAndMakeVisible(c);
     mixBox_.setTooltip("The two mixer registers: NR50 is the master volume per side, NR51 the four gates. Mute and solo write NR51.");
     modelBox_.setTooltip("Which real machine is emulated. RAW is the clean digital mix of a gaming emulator.");
     scope_.setSource(&processor_.scopes().master);
     scope_.setWindowMs(12.0);
     scope_.setLcdGround(true);
-    volL_.setTooltip("NR50 bits 6-4: left master volume, 0 = 1/8, not mute");
-    volR_.setTooltip("NR50 bits 2-0: right master volume, 0 = 1/8, not mute");
-    volL_.attach(param(processor_, ids::masterL));
-    volR_.attach(param(processor_, ids::masterR));
-    noise_.setTooltip("The hiss and the frame hum, as measured. The display's 9198 Hz line is LCD Whine, its own switch.");
+
+    // One VOL for both NR50 sides (section 21). The two parameters remain --
+    // the M command and existing automation address left and right -- so the
+    // control writes both as one undo step, shows the left value, and shows
+    // both when something has moved them apart.
+    vol_.setRange(0, 7, 7);
+    vol_.setTyped(true);
+    vol_.setTextFunction([this](int v) { return volR_ == v ? String(v) : String(v) + String(CharPointer_UTF8("\xc2\xb7")) + String(volR_); });
+    vol_.onChange = [this](int v) {
+        auto* history = ui::historyFor(*this);
+        if (history != nullptr) history->beginGesture("Master volume " + String(v));
+        setParam(*this, param(processor_, ids::masterL), float(v));
+        setParam(*this, param(processor_, ids::masterR), float(v));
+        if (history != nullptr) history->endGesture();
+    };
+    volLAtt_ = std::make_unique<ParameterAttachment>(param(processor_, ids::masterL), [this](float v) { volL_ = roundToInt(v); refreshVol(); });
+    volRAtt_ = std::make_unique<ParameterAttachment>(param(processor_, ids::masterR), [this](float v) { volR_ = roundToInt(v); refreshVol(); });
+    volLAtt_->sendInitialUpdate();
+    volRAtt_->sendInitialUpdate();
+
+    noise_.setTooltip("The hiss and the frame hum, as measured. The display's 9198 Hz line is LCD Whine, the switch under this one.");
     noise_.attach(param(processor_, ids::noise));
+    lcd_.setTooltip("The 9198 Hz line the display puts into the headphones, and its harmonic. Independent of Headphone Noise: off removes it the way switching the display off does.");
+    lcd_.attach(param(processor_, ids::lcd));
     declick_.setTooltip("Crossfades each DAC-on step over a few milliseconds. Not what a Game Boy does: the header reads MODIFIED while it is on. Also in the Hardware tab.");
     declick_.attach(param(processor_, ids::declick));
     trim_.setTooltip("The one continuous control in the product: a fader after the analog stage, outside the chip");
     trim_.attach(param(processor_, ids::trim));
+    refreshVol();
 }
 
 MasterStrip::~MasterStrip() = default;
+
+/// The readout is the left side; when the two are apart -- automation, or an
+/// M command -- it shows both, left before right, and the tooltip says so.
+void MasterStrip::refreshVol()
+{
+    vol_.setValue(volL_, dontSendNotification);
+    vol_.setTooltip(volL_ == volR_
+                        ? String("NR50: the master volume both sides, 0 = 1/8, not mute. One step here writes bits 6-4 and 2-0 together.")
+                        : "NR50: left " + String(volL_) + ", right " + String(volR_) + " " + String(CharPointer_UTF8("\xe2\x80\x94"))
+                              + " something has moved them apart (an M command, or automation). A step here sets both to the same value.");
+    vol_.repaint();
+}
 
 void MasterStrip::tick()
 {
@@ -417,24 +497,24 @@ void MasterStrip::resized()
     y += kHead + kGap;
     // The output's picture takes whatever the controls under it leave: the
     // master strip is as tall as a channel strip and this is what it is for.
-    const int controls = kRegs + kGap + 2 * (kRow + kGap) + 2 * (Toggle::kHeight + kGap) - kGap;
+    // One VOL row and three switches, where two volumes and two switches
+    // stood: the same height, so the scope keeps its picture (section 21).
+    const int controls = kRegs + kGap + (kRow + kGap) + 3 * (Toggle::kHeight + kGap) - kGap;
     scope_.setBounds(x, y, w, std::max(kScope, bottom - y - kGap - controls));
     y = scope_.getBottom() + kGap;
     mixBox_.setBounds(x, y, w, kRegs);
     y += kRegs + kGap;
     const int faderW = 54;
     const int leftW = w - faderW - 6;
-    // left column: master volumes and the two switches
+    // left column: the one master volume and the three switches
     const int fy = y;
-    volLLabel_.setBounds(x, y, 40, kRow);
-    volL_.setBounds(x + 42, y, volL_.preferredWidth(), kRow);
+    volLabel_.setBounds(x, y, 32, kRow);
+    vol_.setBounds(x + 34, y, vol_.preferredWidth(), kRow);
     y += kRow + kGap;
-    volRLabel_.setBounds(x, y, 40, kRow);
-    volR_.setBounds(x + 42, y, volR_.preferredWidth(), kRow);
-    y += kRow + kGap;
-    noise_.setBounds(x, y, leftW, Toggle::kHeight);
-    y += Toggle::kHeight + kGap;
-    declick_.setBounds(x, y, leftW, Toggle::kHeight);
+    for (auto* sw : { &noise_, &lcd_, &declick_ }) {
+        sw->setBounds(x, y, leftW, Toggle::kHeight);
+        y += Toggle::kHeight + kGap;
+    }
     // right column: the trim fader, beside them
     trimLabel_.setBounds(x + leftW + 6, fy, faderW, 12);
     trim_.setBounds(x + leftW + 6, fy + 14, faderW, bottom - fy - 14);

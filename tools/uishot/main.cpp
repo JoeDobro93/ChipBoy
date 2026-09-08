@@ -5,12 +5,29 @@
 // whether a tab fits the window. Needs a display (Xvfb will do).
 //
 //   chipboy_uishot <output folder> [--desktop] [--song <file.cbsong>]
+//                  [--hybrid] [--scope-check] [--tab-switch]
 //
-// --song loads a .cbsong before the editor opens and leaves the processor
-// without a play head, so the plugin owns the transport
+// --song opens a .cbsong in a tab of its own before the editor opens and
+// leaves the processor without a play head, so the plugin owns the transport
 // (docs/COMMANDS_AND_TEMPO.md section 16): the Tracker tab's buttons are
-// live and the song plays on the plugin's own clock while the shots are
-// taken.
+// live, the song plays on the plugin's own clock while the shots are taken,
+// and the strip shows the two tabs -- the empty song the plugin starts with
+// and the one that was opened (section 18).
+//
+// --hybrid puts two of the song's channels on Hybrid, so a shot shows the
+// three-way PLAYS switch and the strip controls a Hybrid channel does not
+// read (section 20).
+//
+// --tab-switch checks that the other tabs follow the active song tab
+// (section 18): with two songs open it shots the Grooves, Instrument,
+// Tables and Waves panes on one tab, switches, and shots them again --
+// every one of them has to have redrawn.
+//
+// --scope-check holds one note per channel and renders each channel scope
+// twice, a fifth of a second apart, comparing the two pictures pixel for
+// pixel: a period-locked scope on a steady tone must draw the same picture
+// every frame (section 22). It prints a line per channel and returns 1 if a
+// period-locked one moved.
 #include "plugin/main/ChipBoyProcessor.h"
 #include "plugin/shared/SongFiles.h"
 #include "plugin/voice/VoiceProcessor.h"
@@ -18,6 +35,7 @@
 
 #include <cstdio>
 #include <iterator>
+#include <vector>
 
 using namespace chipboy::plugin;
 
@@ -54,6 +72,26 @@ T* findChild(juce::Component* c)
     for (int i = 0; i < c->getNumChildComponents(); ++i)
         if (auto* t = findChild<T>(c->getChildComponent(i))) return t;
     return nullptr;
+}
+
+/// Every component of a kind, in the order they were added -- the four
+/// channel scopes, left to right.
+template <typename T>
+void collect(juce::Component* c, std::vector<T*>& out)
+{
+    if (auto* t = dynamic_cast<T*>(c)) out.push_back(t);
+    for (int i = 0; i < c->getNumChildComponents(); ++i) collect<T>(c->getChildComponent(i), out);
+}
+
+/// How many pixels of two snapshots of one component differ.
+int pixelsDiffering(const juce::Image& a, const juce::Image& b)
+{
+    if (a.getWidth() != b.getWidth() || a.getHeight() != b.getHeight()) return -1;
+    int n = 0;
+    for (int y = 0; y < a.getHeight(); ++y)
+        for (int x = 0; x < a.getWidth(); ++x)
+            if (a.getPixelAt(x, y) != b.getPixelAt(x, y)) ++n;
+    return n;
 }
 
 void set(juce::AudioProcessorValueTreeState& state, const juce::String& id, float value)
@@ -108,6 +146,22 @@ void play(ChipBoyProcessor& p, FakePlayHead& ph, int blocks)
     }
 }
 
+/// One note per channel, held: the steady tone the scopes must hold still on.
+void playSteady(ChipBoyProcessor& p, FakePlayHead& ph, int blocks, int64_t& frame)
+{
+    juce::AudioBuffer<float> buf(2, 512);
+    juce::MidiBuffer midi;
+    for (int b = 0; b < blocks; ++b) {
+        midi.clear();
+        if (b == 0)
+            for (int ch = 1; ch <= 4; ++ch)
+                midi.addEvent(juce::MidiMessage::noteOn(ch, ch == 4 ? 48 : 52 + 5 * ch, (juce::uint8) 100), 1);
+        ph.frame = frame;
+        frame += 512;
+        p.processBlock(buf, midi);
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -115,9 +169,13 @@ int main(int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI init;
     juce::String out = "shots", songPath;
     bool desktop = false;                       // a real window: the scopes' timers run
+    bool hybrid = false, scopeCheck = false, tabSwitch = false;
     for (int i = 1; i < argc; ++i) {
         const juce::String a(argv[i]);
         if (a == "--desktop") desktop = true;
+        else if (a == "--hybrid") hybrid = true;
+        else if (a == "--scope-check") scopeCheck = true;
+        else if (a == "--tab-switch") tabSwitch = true;
         else if (a == "--song" && i + 1 < argc) songPath = argv[++i];
         else if (!a.startsWith("--")) out = a;
     }
@@ -133,13 +191,104 @@ int main(int argc, char** argv)
     if (!ownTransport) proc.setPlayHead(&ph);
     proc.prepareToPlay(48000.0, 512);
     if (ownTransport) {
+        // A song opens in a tab of its own (section 18), so the strip shows
+        // the empty song the plugin starts with beside the one that was
+        // opened, and the opened one is the live tab.
         const juce::File songFile = juce::File::getCurrentWorkingDirectory().getChildFile(songPath);
         chipboy::plugin::SongReport report;
-        if (!proc.loadSongFile(songFile, report)) { std::printf("could not read %s\n", songFile.getFullPathName().toRawUTF8()); return 1; }
-        std::printf("loaded %s -- bank %s, %d instruments, %d differences\n", songFile.getFileName().toRawUTF8(),
-                    report.bankName.toRawUTF8(), report.instrumentsUsed, report.differences.size() + report.missing.size());
+        if (!proc.openSongFileInTab(songFile, report)) { std::printf("could not read %s\n", songFile.getFullPathName().toRawUTF8()); return 1; }
+        std::printf("opened %s in tab %d of %d -- bank %s%s, %d instruments, %d differences\n", songFile.getFileName().toRawUTF8(),
+                    proc.activeTab() + 1, proc.tabCount(), report.bankName.toRawUTF8(), report.hasBank ? " (its own)" : "",
+                    report.instrumentsUsed, report.differences.size() + report.missing.size());
+        // Two of the four on Hybrid: MIDI notes, the song's cells for
+        // everything else (section 20).
+        if (hybrid)
+            proc.editSong("Hybrid channels", [](chipboy::tracker::Song& s) {
+                s.noteSource[1] = chipboy::tracker::NoteSource::Hybrid;
+                s.noteSource[3] = chipboy::tracker::NoteSource::Hybrid;
+            });
         proc.transportPlay();
     }
+    // --scope-check: two frames of a steady tone, compared (section 22).
+    if (scopeCheck) {
+        chipboy::ui::ScopeView::setOffscreenRefresh(true);
+        std::unique_ptr<juce::AudioProcessorEditor> ced(proc.createEditor());
+        ced->setOpaque(true);
+        ced->setVisible(true);
+        pump(400);
+        int64_t frame = 0;
+        playSteady(proc, ph, 120, frame);        // a second and a bit of one held note each
+        pump(300);
+        std::vector<chipboy::ui::ScopeView*> scopes;
+        collect<chipboy::ui::ScopeView>(ced.get(), scopes);
+        std::vector<juce::Image> first;
+        for (auto* s : scopes) first.push_back(s->createComponentSnapshot(s->getLocalBounds(), false, 1.0f));
+        playSteady(proc, ph, 20, frame);         // a fifth of a second on
+        pump(300);
+        int bad = 0;
+        static const char* kNames[] = { "PU1", "PU2", "WAV", "NOI" };
+        for (size_t i = 0; i < scopes.size(); ++i) {
+            const juce::Image now = scopes[i]->createComponentSnapshot(scopes[i]->getLocalBounds(), false, 1.0f);
+            const int diff = pixelsDiffering(first[i], now);
+            const bool locked = i < 3;           // noise keeps a fixed window
+            const char* name = i < 4 ? kNames[i] : "extra";
+            std::printf("  scope %s (%s): %d pixels differ%s\n", name, locked ? "period-locked" : "fixed window", diff,
+                        locked && diff != 0 ? "   <-- it moved" : "");
+            if (locked && diff != 0) ++bad;
+        }
+        ced.reset();
+        std::printf("scope-check: %s\n", bad == 0 ? "every period-locked scope drew the same picture twice" : "a period-locked scope moved");
+        return bad == 0 ? 0 : 1;
+    }
+
+
+    // --tab-switch: every other tab reads the active song and bank through
+    // song() and bank(), so switching tabs has to redraw all of them.
+    if (tabSwitch) {
+        chipboy::ui::ScopeView::setOffscreenRefresh(true);
+        std::unique_ptr<juce::AudioProcessorEditor> ted(proc.createEditor());
+        ted->setOpaque(true);
+        ted->setVisible(true);
+        pump(400);
+        auto* bar = findChild<juce::TabbedButtonBar>(ted.get());
+        if (bar == nullptr || proc.tabCount() < 2) { std::printf("tab-switch needs a tab bar and two songs\n"); return 1; }
+        // The two tabs start on copies of the same factory bank, and a new
+        // song's grooves are the factory ones, so they would draw the same
+        // whether the panels followed or not. Mark the other tab's own bank
+        // and song first -- which is itself a check that an edit lands in
+        // the tab it was made in (section 18).
+        const int demoTab = proc.activeTab();
+        proc.setActiveTab(demoTab == 0 ? 1 : 0);
+        proc.editBank("mark", [](chipboy::bank::Bank& b) {
+            b.instruments[0].name = "Marked";
+            b.tables[0].used = true; b.tables[0].name = "Marked"; b.tables[0].steps[0].vol = 9;
+            b.waves[0].used = true; b.waves[0].name = "Marked";
+            if (!b.waves[0].frames.empty()) b.waves[0].frames[0].s[0] = 15;
+            b.kits[0].used = true; b.kits[0].name = "Marked";
+        });
+        proc.editSong("mark", [](chipboy::tracker::Song& s) { s.grooves[0].ticks = { 9, 3 }; });
+        proc.setActiveTab(demoTab);
+        pump(400);
+        const int panes[] = { 0, 1, 2, 3, 4 };    // Instrument, Tables, Grooves, Waves, Kits
+        static const char* kPaneNames[] = { "Instrument", "Tables", "Grooves", "Waves", "Kits" };
+        std::vector<juce::Image> before;
+        for (int i : panes) { bar->setCurrentTabIndex(i); pump(250); before.push_back(ted->createComponentSnapshot(ted->getLocalBounds(), false, 1.0f)); }
+        proc.setActiveTab(proc.activeTab() == 0 ? 1 : 0);
+        pump(400);                                 // the editor's timer notices the new song and bank
+        int stuck = 0;
+        for (size_t k = 0; k < before.size(); ++k) {
+            bar->setCurrentTabIndex(panes[k]);
+            pump(250);
+            const juce::Image now = ted->createComponentSnapshot(ted->getLocalBounds(), false, 1.0f);
+            const int diff = pixelsDiffering(before[k], now);
+            std::printf("  %s: %d pixels differ after the tab switch%s\n", kPaneNames[k], diff, diff == 0 ? "   <-- it did not follow" : "");
+            if (diff == 0) ++stuck;
+        }
+        ted.reset();
+        std::printf("tab-switch: %s\n", stuck == 0 ? "every tab followed the active song" : "a tab did not follow");
+        return stuck == 0 ? 0 : 1;
+    }
+
     setCommands(proc);
     play(proc, ph, 200);
 

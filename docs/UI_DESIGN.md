@@ -61,9 +61,18 @@ chosen height is remembered with the project, as the scale is. Reading order is 
 bottom: *what am I emulating → what is each voice doing → edit the thing I selected.*
 
 1. **Header.** Wordmark; the **model switch** (DMG / CGB / RAW); the **tempo group** —
-   source (Host / Song), the song's own BPM, and the *Quantize* toggle (§4); the bank
-   name with previous/next; a **STOCK / MODIFIED** badge (§5); the visualizer window
-   button; settings.
+   source (Host / Song), the **tempo in force** as a readout, and the *Quantize* toggle
+   (§4); the bank name with previous/next; a **STOCK / MODIFIED** badge (§5); the
+   visualizer window button; settings. The tempo is read only here — "120.0" with a
+   small *host* or *song* tag, drawn as a well so nothing invites a drag: the host's BPM
+   in Host mode, the active song's tempo in force in Song mode
+   ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §19). A song's own master tempo is
+   typed in the Tracker tab beside its *Start* and *Beats*, because it belongs to the
+   song and the window holds several. The **Bank group is the active song's bank**: its
+   name, the arrows and the menu — *Load bank into this song…*, *Save this song's
+   bank…*, *Reset this song's bank to factory* — all act on the song in the active tab
+   (§18). The badge beside it stays the window's: it reads the hardware departures,
+   which §18 keeps global.
 2. **The mixer row.** Four channel strips and a master strip. Every strip has its scope on
    top, mixer-bridge style, so the row reads at a glance while playing.
 3. **Editor tabs.** Instrument · Tables · Grooves · Waves · Kits · Tracker · Link ·
@@ -84,10 +93,19 @@ and solo, which are NR51 gates and therefore pop like the hardware.
 
 ### The master strip
 
-The stereo mix scope in LCD green; **master volume L and R** as 0–7 steppers where 0
-reads "1/8", not "mute"; **Headphone Noise**; the **output trim**, the one continuous
-control in the product, drawn as a fader with a dB readout so nobody mistakes it for
-part of the chip.
+The stereo mix scope in LCD green; the live **NR50 / NR51** line; one **VOL** stepper,
+0–7, where 0 reads "1/8" and not "mute"; the three switches — **Headphone Noise**,
+**LCD Whine**, **De-click**; and the **output trim**, the one continuous control in the
+product, drawn as a fader with a dB readout so nobody mistakes it for part of the chip.
+
+One VOL writes both NR50 sides ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §21).
+The two parameters stay — the `M` command and existing automation address left and
+right — so the control writes them together as **one undo step**, shows the left value,
+and, when something has moved them apart, shows both (`7·5`) with the tooltip saying
+which is which. Headphone Noise is the hiss and the frame hum; **LCD Whine** is the
+display's 9198 Hz line, an independent switch, so a unit with a quiet display is a
+switch rather than a compromise. De-click is a departure and lights the header's
+MODIFIED badge; the Hardware tab keeps the same three rows with the measured facts.
 
 ### 2.1 Editing conventions
 
@@ -154,11 +172,38 @@ breathing rather than as the trace sliding.
   DAC, on a 16-level grid; *Analog* is what leaves the machine after the coupling
   capacitor, so a low wave-channel note visibly sags on a DMG and turns into spikes on a
   CGB, and DAC-on clicks show as the steps they are. Both can be shown together.
-- **Zoom:** 1, 2, 4 or 8 periods. Noise uses a fixed time window.
+- **Zoom:** 1, 2, 4 or 8 periods. Noise uses a fixed time window, and so does a kit —
+  a kit is a sample, not a repeating wave, so there is no period to lock to.
 - **The master scope** shows the actual output, with the clicks and the droop.
 - **Visualizer window.** A separate, resizable, clean window — the four scopes stacked
   or tiled, plus the master, no chrome, adjustable line weight, black or LCD ground,
   and the analog, digital or both traces (analog by default) — made for screen capture. Same data, so it costs nothing extra to render.
+
+**How the picture is held still.** A channel's staircase repeats *exactly* every
+`32 × (2048 − f)` cycles (`64 ×` on the wave channel), so two windows of the same length
+that start on the same **phase** of it draw the same trace whichever period they fall
+in. "Start on the last rising edge before the window" is not that phase: a pulse has one
+rising edge in a period and so picks the same one every frame, but a wave has up to
+sixteen, and which of them was last before a window whose end moves with the audio
+thread is effectively random — the trace jumped by a fraction of a period every frame,
+which is what the flashing was. So the edge is chosen by what the waveform **is**, not
+by where the search began: every rising edge of one whole period is a candidate, and the
+one that **rises furthest** wins — ties go to the one whose level was held longest
+before it (an apex and a trough repeat a sample, and the trace carries only changes, so
+a trough's rise is held longest), then to the one that rises from the lowest level.
+Those are properties of the shape, so they name the same phase every frame and survive
+the window sliding; when the shape changes — a new note, a new wave — the next frame
+picks the new shape's edge and the picture re-locks at once, and under vibrato the
+period moves and the window with it while the edge stays the same one, so the shape
+breathes rather than sliding. A waveform that ties on all three keys has two identical
+halves, and starting on either draws the same picture. Nothing is remembered between
+frames: the paint is a pure function of the samples the timer snapshotted, so two paints
+of one snapshot are one picture. With less history in the ring than the window asks for
+— a low note that has only just started — the search moves up to what there is and the
+window keeps its length, so the picture is aligned and simply runs out on the right.
+`chipboy_uishot --scope-check` holds a note on every channel and renders each scope
+twice, a fifth of a second apart, comparing the two pixel for pixel
+([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §22).
 
 ---
 
@@ -394,10 +439,24 @@ down a column is how a tracker reads.
 **Per channel, in the lane's head**: a **record arm** — a red dot, on for a new song,
 saved with it — then the channel's name, the caption **PLAYS** and the switch that says
 what the channel plays: **MIDI**, the notes arriving from the host, shown greyed in the
-note column as the bar plays; or **Trkr**, its own cells, with incoming MIDI ignored
-([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §14). A song can mix the two — lead
-from the piano roll, drums from the tracker. The phrase's **groove chip** closes the
-row; the groove itself is edited in the Grooves tab (§7.1).
+note column as the bar plays; **Trkr**, its own cells, with incoming MIDI ignored
+([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §14); or **Hyb**, both at once — the
+notes come from MIDI and everything else from the cells at their steps, the instrument
+and table they select and their commands, fired once on whatever is sounding (§20). A
+song can mix all three — lead from the piano roll, drums from the tracker, a bass whose
+piano-roll notes take the song's commands. A Hybrid channel shows the roll's note greyed
+in the note column, as a MIDI channel does, since its cells' notes and OFFs are ignored;
+its **strip** carries a **HYBRID** tag beside the channel name and greys its Instrument,
+Table and both command slots, which the driver does not read there — the slots say *from
+the cells* where the resolved command reads, and every one of the four says the same
+thing in its tooltip: *the tracker's cells drive this channel*. Level, Pan, Transpose and
+the Velocity mode still apply.
+
+The phrase's **groove chip** closes the row; the groove itself is edited in the Grooves
+tab (§7.1). The third choice in PLAYS costs the chip about 30 px of a 236 px channel
+group, so it says as much as fits — the slot and its ticks (`2·7/5`) where there is room,
+the ticks alone at the demo's width, the slot number when a narrower window leaves only
+a chip — and the whole of it is in the tooltip and in the menu the chip opens.
 
 **The transport.** *Play*, *Stop* and *Loop* run the song when the plugin owns the
 transport — the Standalone, or a host that offers no play head — from the song start on
@@ -415,20 +474,42 @@ automation included, becomes a self-contained tracker song — the form a playba
 will need (§10). Recording captures what the driver actually did, so nothing is lost in
 translation.
 
-**Songs are files.** *Save song…* and *Load song…* write and read a `.cbsong` — chains,
-phrases, grooves, the steps and the bar overrides, tempo, song start, beats per bar,
-playback sources and arms — in `Documents/ChipBoy/Songs`, beside the banks folder. The
-file also records the bank's name and the name of every instrument slot the song uses,
-so a load can say where this bank differs: the line under the tool rows reads *"Loaded
-ChipBoy Demo — written with bank Factory, 11 instruments used. slot 7 was Triangle bass;
-this bank has Organ"*, and the same line goes to the status bar. With no file open that
-line is the song itself: its bars, its steps and how many phrases it uses.
+**Songs are tabs.** The strip under the head is one tab per loaded song
+([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §18): its name, a dot while it has
+unsaved work, an **×** that closes it — asking first when that dot is there — and a **+**
+that starts an empty song on the factory bank. Clicking a tab makes it the **active**
+one, and only the active tab is live: it is what plays and records, what the Instrument,
+Tables, Grooves, Waves and Kits tabs show and edit, and whose bank the header's Bank
+group names. Every one of those tabs reads the song and the bank through the same two
+accessors, so a switch redraws all of them; `chipboy_uishot --tab-switch` checks exactly
+that, by marking one tab's bank and song and shooting the five panes on either side of a
+switch. The window keeps at least one song open.
+
+**Songs are files.** *Save song…* writes the active tab — chains, phrases, grooves, the
+steps and the bar overrides, its master tempo, song start, beats per bar, playback
+sources and arms, **and the bank it plays through** — as a `.cbsong` in
+`Documents/ChipBoy/Songs`, beside the banks folder; a tab that came from a file writes
+back to it, and one that has none opens a chooser and takes its name. *Load song…* opens
+a file in a **tab of its own**, unless the active tab is a fresh untitled song with
+nothing to lose, in which case the song lands there. A file that carries its own bank
+(format 5) is complete and brings its sounds with it; an older one takes a copy of the
+active tab's bank and the status line says where that bank differs — *"Opened ChipBoy
+Demo — written with bank Factory, 11 instruments used. slot 7 was Triangle bass; this
+bank has Organ"*. What a file did goes to the status bar, where every other file message
+goes; the tab strip stands where that line used to.
 
 **Numbers.** At the minimum window height the tab has 1156 × 512 and asks for no
 scrolling: a 112 px head over 400 px of lane, which is a 48 px head and sixteen 22 px
-rows. The head is two 26 px tool rows 6 px apart — transport, the playing readout, *Rec*
-and *Steps / bar* on the first; *Start*, *Beats*, *Save song…*, *Load song…* and *Export
-.gb* on the second — over the 48 px line that says what the song is. Across, the chain
+rows. The head is **two rows of grouped tools under their captions, then the tab strip**
+([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §23): a 12 px caption line over a 26 px
+control row, 4 px, the same again, 6 px, and the 26 px strip where the summary line
+stood — 112 exactly, the same budget as before. Row one is **TRANSPORT** (*Play* 62,
+*Stop* 62, *Loop* 52, then the LED, *playing* and the bar . beat . sixteenth readout,
+328 in all) and **RECORD** (*Rec*, 62); row two is **SONG** (*Tempo* 84 — the song's
+master tempo, typed — *Start* 84, *Beats* 62, *Steps / bar* 80, each behind its own small
+caption, 562 in all) and **FILE** (*Save song…* 104, *Load song…* 104, *Export .gb* 96).
+A 16 px gap with a hairline down the middle of it stands between the two groups of a row,
+so the head reads as four things and not as eleven controls. Across, the chain
 takes 164 px off the right with a 12 px gap, leaving 980 for the lane: a 34 px step
 column and four channel groups of 236, each a 39 px note, 31 vel, 31 ins, 29 tbl and two
 53 px commands. The chain's own 164 is a 25 px gutter for the bar number and five 25 px
@@ -441,15 +522,20 @@ of the bar, so a swung phrase marks the row that is sounding; the position reado
 the transport stays bar . beat . sixteenth, which is the clock and not the groove.
 
 ![The Tracker tab with the demo song in it](screenshots/main-tracker.png)
-*The demo song loaded from `Demo/ChipBoy Demo.cbsong`, playing on the plugin's own
-transport: four channels of cells with their velocities, the arms lit beside each name,
-and the chain on the right with the playing bar marked.*
+*The demo song opened from `Demo/ChipBoy Demo.cbsong` into a tab of its own — the strip
+under the head holds it beside the empty song the plugin starts with — playing on the
+plugin's own transport: four channels of cells with their velocities, the arms lit beside
+each name, the three-way PLAYS switch in each head, and the chain on the right with the
+playing bar marked.*
 
 **The clock is 24 ticks to the beat** and a straight step is six of them, as LSDj. Which
-tempo is in force — *Tempo source*, *Song BPM* and *Quantize* — is the header's group,
-so it is one thing wherever you are working; this tab keeps what belongs to the song:
-its *Start* on the host's timeline and its *Beats* per bar, both greyed in Host mode and
-live whenever the plugin owns the transport, where the source is Song by definition.
+tempo is in force — *Tempo source*, the tempo readout and *Quantize* — is the header's
+group, so it is one thing wherever you are working; this tab keeps what belongs to the
+song: its master *Tempo*, its *Start* on the host's timeline and its *Beats* per bar.
+*Start* is greyed in Host mode and live whenever the plugin owns the transport, where the
+source is Song by definition; *Beats* is live in **both** modes, because the host
+contributes the tempo and never its time signature, so the song's bar is this many beats
+either way ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §11 as amended, §19).
 The status bar says which tempo is in force — "tempo host 120" or "tempo song 150".
 In Song mode the position at any host time is the integral of the song's own tempo map — the base tempo plus its `T` cells at known ticks —
 so a jump to bar 9 lands on the step playing through would have reached, and a playback
