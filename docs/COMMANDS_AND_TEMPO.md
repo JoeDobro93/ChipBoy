@@ -137,9 +137,9 @@ written as commands too, so a recorded song carries its own tempo and groove.
   region `kVersion` bumps. The Voice plugin carries the same channel set.
 - Interface: the strip shows instrument, table, CMD1, CMD2 (type + x + y as steppers
   with per-letter labels), level, pan, transpose, the running-state line, M/S/KS. The
-  Phrases tab gets Tempo source, Song tempo, song start and the quantise toggle; the
-  Hardware tab loses the tick controls; the status bar shows "tempo host 120" or
-  "tempo song 150".
+  header bar gets Tempo source, Song tempo and the quantize toggle, and the Phrases tab
+  the song's start and beats per bar; the Hardware tab loses the tick controls; the
+  status bar shows "tempo host 120" or "tempo song 150".
 - Demo: regenerated with the new parameter table (W for duty, E for envelope, T in the
   Song-tempo variant).
 - Old projects and banks are not migrated (agreed).

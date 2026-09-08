@@ -133,13 +133,13 @@ checks the whole path (`ctest --test-dir build -C Release -R linktest`).
 4. Velocity sets the envelope's start volume — or selects an instrument, or is ignored,
    per channel — the mod wheel sets vibrato depth, and pitch bend moves the period.
 5. **Tempo.** Ticks, which tables, vibrato, wave frames and tracker steps all run on, are
-   always 24 to the beat. *Tempo source* (in the Phrases tab) chooses whose beat:
+   always 24 to the beat. *Tempo source* (in the header bar) chooses whose beat:
    **Host**, the default, where a tick sits at every multiple of 1/24 of the host's beat
    and scrubbing is exact; or **Song**, where the plugin keeps its own *Song tempo*
    (40–255 BPM, automatable) with `T` commands over it, and the host's bars are only a
-   ruler. *Quantise MIDI notes to ticks* (default off) holds note-ons and note-offs until
-   the next tick, for the tracker's feel; bends and controllers are never quantised, and
-   tracker cells are always on ticks.
+   ruler. *Quantize* (default off) holds note-ons and note-offs until the next tick, for
+   the tracker's feel; bends and controllers are never quantised, and tracker cells are
+   always on ticks.
 6. For one track per voice: put a **ChipBoy Voice** on another track, turn **Link mode**
    on in ChipBoy's Link tab (the host re-compensates for one block of latency), and
    pick the instance and channel in the Voice. The Voice's track stays silent; the audio

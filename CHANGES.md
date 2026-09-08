@@ -26,6 +26,37 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-08 — the window stretches, and tempo moves to the header (UI_DESIGN §2, §7)
+
+The main window was 1180 x 760 and fixed, which the Instrument tab never fitted: a
+Pulse instrument with all four cards is 802 px of editor, so the tab always opened
+scrolled.
+
+**Changed:**
+
+- **The window is 1180 x 1318 at 100 %, and 1318 is now its minimum.** The number is
+  the Instrument tab's own: header 54 + mixer row 378 + tab bar 34 + 826 for the
+  editor pane (802 of content and its 2 x 12 padding) + status line 26. The Instrument
+  tab shows no scrollbar at the default size.
+- **The height stretches, the width does not.** The constrainer pins the width to the
+  scaled 1180 and the minimum height to the scaled 1318, so the corner resizer only
+  moves vertically. Header, mixer row and tab bar keep their heights at the top and
+  the status line stays at the bottom: every extra pixel is the editor pane's. The
+  chosen height is remembered in `apvts.state` as `ui_height`, unscaled, the way
+  `ui_scale` already was, and the 100 / 125 / 150 % menu multiplies both.
+- **Tempo moved from the Phrases tab to the header bar** (COMMANDS_AND_TEMPO §4):
+  the source (Host / Song), the song's BPM — greyed in Host mode — and the *Quantize*
+  toggle, so what the ticks follow is in force wherever you are working. The Phrases
+  tab keeps *Start* and *Beats*, which are song data. Room came from stacking the
+  wordmark's second line under it and letting the bank name field take what is left
+  (87 px at 1180); nothing overflows.
+- **"Quantize", not "quantise", in every user-visible string** — the parameter's own
+  name included. Code identifiers and the prose in these documents keep the British
+  spelling.
+
+**Not changed:** the width, the scale steps, the panel layouts, and the status line's
+"tempo host 120 / song 150".
+
 ### 2026-09-07 — the demo and the documents follow the new model (§8.1, §8.2, §12.3, §12.4)
 
 Stage 3 of the revision above: nothing in the code changed, the demo project and every

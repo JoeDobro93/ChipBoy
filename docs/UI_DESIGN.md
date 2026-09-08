@@ -49,12 +49,19 @@ This is the design you described, made concrete. The alternatives were weighed:
 
 ## 2. The main window
 
-Fixed-size like a hardware unit — 1180 × 760 at 100%, with 125% and 150% scaling.
-Reading order is top to bottom: *what am I emulating → what is each voice doing → edit
-the thing I selected.*
+1180 wide like a hardware unit, 1318 tall at minimum, at 100% — with 125% and 150%
+scaling, which multiplies both. The width never changes; the height stretches, so the
+corner resizer only moves vertically and every pixel it adds goes to the editor pane
+(the Phrases lane and the bank lists get the room). 1318 is the height the Instrument
+tab needs: header 54 + mixer row 378 + tab bar 34 + the tallest instrument editor,
+826 with its padding + status line 26. The chosen height is remembered with the
+project, as the scale is. Reading order is top to bottom: *what am I emulating → what
+is each voice doing → edit the thing I selected.*
 
-1. **Header.** Wordmark; the **model switch** (DMG / CGB / RAW); the bank name with
-   previous/next; a **STOCK / MODIFIED** badge (§5); the visualizer window button; settings.
+1. **Header.** Wordmark; the **model switch** (DMG / CGB / RAW); the **tempo group** —
+   source (Host / Song), the song's own BPM, and the *Quantize* toggle (§4); the bank
+   name with previous/next; a **STOCK / MODIFIED** badge (§5); the visualizer window
+   button; settings.
 2. **The mixer row.** Four channel strips and a master strip. Every strip has its scope on
    top, mixer-bridge style, so the row reads at a glance while playing.
 3. **Editor tabs.** Instrument · Tables · Waves · Kits · Phrases · Link · Hardware. The
@@ -148,12 +155,12 @@ no lanes for duty, envelope, sweep, wave, frame, vibrato, arpeggio, detune or LF
 any more: those were the lanes that silently overrode the instrument, and their absence is
 the point.
 
-**Tempo** (§4 of the same document). Ticks are always 24 to the beat. *Tempo source* is
-**Host** — ticks on multiples of 1/24 of the host's beat, exact under scrubbing — or
-**Song**, where the plugin keeps its own *Song tempo* (40–255 BPM) with `T` commands over
-it and the host's bars are only a ruler. *Quantise MIDI notes to ticks*, off by default,
-holds note-ons and note-offs until the next tick; bends and controllers are never
-quantised.
+**Tempo** (§4 of the same document), in the header bar so it is in force wherever you
+are. Ticks are always 24 to the beat. *Tempo source* is **Host** — ticks on multiples of
+1/24 of the host's beat, exact under scrubbing — or **Song**, where the plugin keeps its
+own *Song tempo* (40–255 BPM) with `T` commands over it and the host's bars are only a
+ruler; the BPM stepper is greyed in Host mode. *Quantize*, off by default, holds note-ons
+and note-offs until the next tick; bends and controllers are never quantized.
 
 ---
 
@@ -241,11 +248,12 @@ fire at their step's tick and latch for the notes that follow — exactly the tr
 behaviour. A cell's two commands are the channel's two command slots written from that
 step on, so the lane and the automation lane are one mechanism, not two.
 
-**The clock lives here.** Ticks are 24 to the beat and a straight step is six of them, as
-LSDj. The tab holds *Tempo source* (Host or Song), *Song tempo*, the song start and the
-*Quantise MIDI notes to ticks* toggle; the status bar says which is in force —
-"tempo host 120" or "tempo song 150". In Song mode the position at any host time is the
-integral of the song's own tempo map — the base tempo plus its `T` cells at known ticks —
+**The clock is 24 ticks to the beat** and a straight step is six of them, as LSDj. Which
+tempo is in force — *Tempo source*, *Song BPM* and *Quantize* — is the header's group,
+so it is one thing wherever you are working; this tab keeps what belongs to the song:
+its *Start* on the host's timeline and its *Beats* per bar, both greyed in Host mode.
+The status bar says which tempo is in force — "tempo host 120" or "tempo song 150".
+In Song mode the position at any host time is the integral of the song's own tempo map — the base tempo plus its `T` cells at known ticks —
 so a jump to bar 9 lands on the step playing through would have reached, and a playback
 ROM could reproduce it. Automating the *Song tempo* parameter (or holding a `T` in an
 automation slot) is the approximate form: the plugin integrates while playing and
