@@ -125,10 +125,10 @@ private:
     int     firedStep_[4] = { -1, -1, -1, -1 };
     uint8_t grooveParam_[4] = { kGrooveNone, kGrooveNone, kGrooveNone, kGrooveNone };  ///< from a G slot
     uint8_t grooveCell_[4] = { kGrooveNone, kGrooveNone, kGrooveNone, kGrooveNone };   ///< from the last G cell
-    // what the recorder last wrote on each channel
+    // what the recorder last wrote on each channel: the slots in force, and
+    // the note-on it last placed, which is where a note-off may not go.
     bank::Command recSlots_[4][2]{};
-    int64_t recStep_[4] = { -1, -1, -1, -1 };        ///< the last cell it wrote
-    int64_t recNoteStep_[4] = { -1, -1, -1, -1 };    ///< and the last note-on it wrote
+    int64_t recNoteStep_[4] = { -1, -1, -1, -1 };
     uint8_t recNote_[4] = { 0, 0, 0, 0 };
 };
 

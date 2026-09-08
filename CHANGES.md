@@ -79,9 +79,23 @@ chip, and the groove preset combo — which quietly overwrote song grooves 1–3
   per-note letters. Quantising uses the recording channel's own phrase and groove, not
   channel 0's.
 
+**Why:** the audit found the code and the model disagreeing where the ear would notice:
+a groove that could only swing in pairs, a G slot latched into a copy the cells could not
+see, notes left ringing whenever a lane changed hands, and a recorder that sampled the
+command slots once a block from values a block old.
+
+**Considered:** keeping a groove a share of the bar, so that any groove always fills it.
+LSDj's grooves are tick counts and the bar is whatever they add up to; scaling them would
+make one groove mean different lengths in 3/4 and 4/4, and the total-against-the-bar the
+editor is to show would have nothing to say. Also considered letting a mid-bar G re-lay
+the bar with no guard: the grid is counted from the bar's start so that a locate is
+exact, and without the guard a step whose new start falls after the tick it already
+played on would play twice.
+
 **Not done here, on purpose:** the groove editor, the VEL column in the phrase grid and
 the instrument's pitch fields (the interface and driver stages). A G inside a table
-still runs at one tick per row; the Player marks where the driver's setter goes.
+still runs at one tick per row; the processor marks where the driver's setter
+for it goes.
 
 ### 2026-09-08 — the window fits a screen and stretches, tempo moves to the header (UI_DESIGN §2, §6, §7)
 

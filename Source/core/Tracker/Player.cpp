@@ -309,7 +309,7 @@ void Player::resetRecord()
 {
     for (int ch = 0; ch < 4; ++ch) {
         recSlots_[ch][0] = {}; recSlots_[ch][1] = {};
-        recStep_[ch] = -1; recNoteStep_[ch] = -1; recNote_[ch] = 0;
+        recNoteStep_[ch] = -1; recNote_[ch] = 0;
     }
 }
 
@@ -333,7 +333,6 @@ bool Player::recordNote(int ch, double tick, uint8_t note, uint8_t velocity, boo
         out.bar = uint16_t(std::clamp(bar, 0, 65535));
         out.step = uint8_t(std::clamp(step, 0, kSteps - 1));
         out.cell.note = kNoteOff;
-        recStep_[c] = at;
         return true;
     }
     out.bar = uint16_t(std::clamp(bar, 0, 65535));
@@ -345,7 +344,6 @@ bool Player::recordNote(int ch, double tick, uint8_t note, uint8_t velocity, boo
     out.cell.inst = plain ? instrument : 0;
     out.cell.table = table;
     slotCells(int(c), c1, c2, rev, plain, out.cell.cmd1, out.cell.cmd2);
-    recStep_[c] = at;
     recNoteStep_[c] = at;
     recNote_[c] = note;
     return true;
@@ -366,7 +364,6 @@ bool Player::recordSlots(int ch, double tick, const bank::Command& c1, const ban
     out.step = uint8_t(std::clamp(step, 0, kSteps - 1));
     out.slotsOnly = true;
     out.cell.cmd1 = o1; out.cell.cmd2 = o2;
-    recStep_[c] = at;
     return true;
 }
 
