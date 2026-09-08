@@ -19,12 +19,88 @@ intended product rather than a progress report.
 | M4 — bank + driver | **done** 2026-09-07 — the bank with a factory set, the driver on its own tick, 11 driver tests. **2026-09-08**: the instrument carries the pitch (Pitch speed, vibrato shape/direction, Command rate, Table mode, Overlap); a note without an instrument only changes pitch (bare notes); four note-hang paths closed (all-notes-off, kill, event ordering, keyswitch-clear) |
 | M5 — Voice plugin + link | **done** 2026-09-07 — region files, claims, one-block timing, push/pull; `chipboy_linktest` passes 16 checks |
 | M6 — tracker, waves, frames, kits | **done** 2026-09-07 — tracker player on the host transport, record arm, kit import (resample + 4-bit dither), bank/song files. **2026-09-08**: grooves are sixteen tick counts, cells carry velocity, the Player flushes a channel with All notes off on stop/locate/source change, and the recorder follows §9.4; `chipboy_recordtest` (record/replay parity) and the tracker-shaped demo are in progress, next to the link test |
-| M7 — interface | **done** 2026-09-07 — the window from the mockup: header, mixer with period-locked scopes, seven tabs, status bar, visualizer window, Voice window. **2026-09-08**: the Phrases tab gained a groove editor and a VEL column, the Instrument tab gained the pitch fields, and the window was resized to fit a 1080p screen with tempo moved to the header |
+| M7 — interface | **done** 2026-09-07 — the window from the mockup: header, mixer with period-locked scopes, seven tabs, status bar, visualizer window, Voice window. **2026-09-08**: the Phrases tab gained a groove editor and a VEL column, the Instrument tab gained the pitch fields, and the window was resized to fit a 1080p screen with tempo moved to the header; then the Phrases tab became the **Tracker** tab with the transport, the song files and the chain rotated beside the lane, a **Grooves** tab took the groove editor, and the Instrument tab gained preset files |
 | M8 — CGB / RAW / hardware options | **done** 2026-09-07 — CGB chip variant, RAW bypass, headphone noise, LCD line, bass mod, quiet-edge volume writes, de-click, soften master pops; 61 core tests |
 
 ---
 
 ## Spec revisions
+
+### 2026-09-08 — the Tracker tab, the Grooves tab and presets (interface)
+
+The window side of the second addendum ([`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md)
+§17), on top of the engine stage above. Every API it uses was there already; nothing in
+`Source/core` or `Source/plugin/shared` moved.
+
+**Changed:**
+
+- **The Phrases tab is the Tracker tab** (`Source/plugin/main/panels/TrackerPanel.*`,
+  renamed from `PhrasesPanel.*`). The explanatory paragraph is gone; the 112 px head is
+  now two 26 px tool rows — **Play / Stop / Loop**, the playing readout, **Rec**,
+  **Steps / bar**; then *Start*, *Beats*, **Save song…**, **Load song…** and *Export
+  .gb* — over a 48 px line that says what the song is and what the last file did. The
+  transport buttons are live only while `ownsTransport()`; in a host they mirror it and
+  are disabled, and *Loop* is `setLoopBars(0, -1)` plus `setLoop`, the whole song.
+- **The chain is rotated into the column right of the lane**, 164 px where the groove
+  editor sat: one row per bar, numbered 1, 2, 3… with the lowest at the top, the four
+  channels' phrase cells and a fifth **STP** cell for `Song::barSteps` — blank is the
+  song's *Steps / bar*, typed and blanked exactly as a phrase cell is. Its 22 px rows
+  keep the lane's rhythm, it follows the playing bar, and typing in the empty row under
+  the last bar grows the song. `ui::ChainStrip` became `ui::ChainColumn`.
+- **The lane shows the bar's own steps**, `Song::stepsOfBar(bar)`, one to sixty-four:
+  the grid is as tall as they ask and scrolls inside the tab's pane past sixteen —
+  following the typing cursor and the row the selected channel is playing — which is the
+  tab's only scrollbar. Sixteen steps still fit the 1180 × 1020 window exactly.
+- **Each lane head carries its channel's record arm** — a red dot, `setChannelArm` /
+  `channelArm`, saved in the song — and a **PLAYS** caption over the switch, whose
+  options read **MIDI** and **Trkr** where they read Roll and Trk (the enum is
+  unchanged). The tooltips are §14's wording: an armed channel records whatever it
+  plays; an unarmed one never does.
+- **A Grooves tab, after Tables.** The sixteen slots on the left as a bank list — the
+  number, the ticks (*7 5*, *4 4 4*) and the swing the first pair makes, with a
+  seventeenth row for groove 0 — and the existing `GrooveEditor` on the right, which now
+  takes whatever width and row height the tab gives it: 520 px wide and 29 px rows
+  against 164 and 22 in the lane's corner, so the bars that show the swing are 426 px
+  instead of 70. The list and the editor's own stepper are one selection, and the editor
+  still follows the groove in force for the selected channel until one of them browses
+  elsewhere. The lane keeps the per-phrase groove chip.
+- **Save preset… / Load preset…** join New and Dup in the Instrument tab, on the row
+  under them: `bank::collectPreset` → `savePreset` to a `.cbi`, and `loadPreset` →
+  `bank::placePreset` into the selected slot through the panel's own bank-edit path. The
+  `PlaceReport` is summarised in the status bar — "Pluck → slot 3; table 5 → 9
+  (renumbered); wave 2 reused".
+- **The header's Tempo source is fixed on Song while the plugin owns the transport**
+  (§16), disabled, with a tooltip saying why; automation cannot move it either. The
+  **status bar** gained *transport own* / *transport host* beside the tempo, drawn only
+  when the groups before it leave room, and a message line on the right — what a song
+  load or a preset did — which replaces the tagline for twenty seconds. Panels post to
+  it through `EditorPanel::onMessage`.
+- **`chipboy_uishot --song <file>`** loads a `.cbsong` before the editor opens and
+  leaves the processor without a play head, so the plugin owns the transport and the
+  Tracker tab's buttons render live. `docs/screenshots/main-tracker.png` is
+  `Demo/ChipBoy Demo.cbsong` with the factory bank, playing; `main-grooves.png` is the
+  new tab. They replace `main-phrases.png` and `main-phrases-groove.png`.
+
+**Why:** §17, and the step count is what forced the chain to turn: a bar is now a row
+with a length of its own, and lengths are read down a column. Turning it also frees the
+340 px the chain strip took across the head, which is where the transport and the file
+buttons went.
+
+**Considered:** keeping the groove editor beside the lane as well as in its own tab.
+Rejected — two copies of one editor disagree the moment the window is narrow, and the
+column it stood in is the only place the rotated chain can go without shrinking the
+lane's four channel groups below the 236 px their six columns need. Also considered
+letting the chain scroll with the lane inside the same pane: it must not, because the
+lane scrolls in *steps* and the chain counts *bars*.
+
+**Skipped / uncertain:** the Grooves tab opens on the lowest slot that is not straight,
+because slot 1 of a fresh song is 6 6 and an editor full of equal bars teaches nothing;
+after that it follows the groove in force for the selected channel, as it did beside the
+lane. The Tracker tab shows the song's file name only when the file was opened from this
+tab — the processor does not remember where a song came from, so a song
+restored with the plugin state reads "17 bars · 16 steps a bar · 68 phrases" with no
+name. `Stepper` grew opt-in typed entry (`setTyped`) for *Steps / bar*; every other
+stepper still only steps, so nothing else changed under the keyboard.
 
 ### 2026-09-08 — bars, one-shot cells, arms, song files, presets, transport (engine)
 
