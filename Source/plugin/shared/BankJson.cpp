@@ -1,5 +1,7 @@
 #include "plugin/shared/BankJson.h"
 
+#include <memory>
+
 namespace chipboy::plugin {
 
 using namespace juce;
@@ -208,7 +210,10 @@ bool bankFromVar(const var& v, Bank& out)
 {
     auto* o = v.getDynamicObject(); if (!o) return false;
     if (o->getProperty("format").toString() != "chipboy-bank") return false;
-    out = Bank::empty();
+    // A blank bank is 41 KB and a blank song 83 KB. These read files on the
+    // message thread, which a Windows host gives a megabyte of stack, so the
+    // blank is built on the heap and moved in rather than made a temporary.
+    { const auto blank = std::make_unique<Bank>(); out = std::move(*blank); }
     auto each = [](const var& arr, int maxSlot, auto fn) { if (auto* a = arr.getArray()) for (const auto& e : *a) { const int slot = e.getDynamicObject() ? int(e.getDynamicObject()->getProperty("slot")) : 0; if (slot >= 1 && slot <= maxSlot) fn(e, slot); } };
     each(o->getProperty("instruments"), kInstrumentSlots, [&](const var& e, int slot) { instrumentFromVarImpl(e, out.instruments[size_t(slot - 1)]); });
     each(o->getProperty("tables"), kTableSlots, [&](const var& e, int slot) { tableFromVar(e, out.tables[size_t(slot - 1)]); });
@@ -256,7 +261,7 @@ bool songFromVar(const var& v, tracker::Song& out)
 {
     auto* o = v.getDynamicObject(); if (!o) return false;
     if (o->getProperty("format").toString() != "chipboy-song") return false;
-    out = tracker::Song{};
+    { const auto blank = std::make_unique<tracker::Song>(); out = std::move(*blank); }
     out.stepsPerBar = getOr(o, "stepsPerBar", 16) <= 8 ? 8 : 16;      // 8 or 16 (section 9.1)
     out.tempoBpm = std::clamp(o->hasProperty("tempoBpm") ? double(o->getProperty("tempoBpm")) : 120.0, 40.0, 255.0);
     out.songStartSeconds = std::max(0.0, o->hasProperty("songStartSeconds") ? double(o->getProperty("songStartSeconds")) : 0.0);

@@ -40,7 +40,9 @@ ChipBoyProcessor::ChipBoyProcessor()
     pendingLink_.reserve(kMaxPendingLink); pendingScratch_.reserve(kMaxPendingLink);
     cycleAt_ = [this](uint64_t f) { return renderer_.cycleForFrame(f); };
 
-    publishBank(std::make_shared<const bank::Bank>(bank::Bank::factory()));
+    // `new T(prvalue)` builds the bank in its heap block; make_shared would
+    // bind the prvalue to a reference first and leave 41 KB on the stack.
+    publishBank(std::shared_ptr<const bank::Bank>(new bank::Bank(bank::Bank::factory())));
     publishSong(std::make_shared<tracker::Song>());
     startTimer(kTimerMs);
 }
@@ -84,14 +86,19 @@ void ChipBoyProcessor::publishSong(std::shared_ptr<tracker::Song> s, bool fromFi
 
 void ChipBoyProcessor::mutateBank(const std::function<void(bank::Bank&)>& fn)
 {
-    auto copy = std::make_shared<bank::Bank>(bankShared_ ? *bankShared_ : bank::Bank::empty());
+    // Built empty in its heap block and then assigned: the conditional form
+    // materialises a whole Bank on the caller's stack, and this runs on the
+    // message thread, which a Windows host gives a megabyte.
+    auto copy = std::make_shared<bank::Bank>();
+    if (bankShared_) *copy = *bankShared_;
     fn(*copy);
     publishBank(std::move(copy));
 }
 
 void ChipBoyProcessor::mutateSong(const std::function<void(tracker::Song&)>& fn)
 {
-    auto copy = std::make_shared<tracker::Song>(songShared_ ? *songShared_ : tracker::Song{});
+    auto copy = std::make_shared<tracker::Song>();          // on the heap, as mutateBank's is
+    if (songShared_) *copy = *songShared_;
     fn(*copy);
     publishSong(std::move(copy));
 }
@@ -280,7 +287,7 @@ void ChipBoyProcessor::applyRecordMessages()
     tracker::RecordMessage m;
     std::shared_ptr<tracker::Song> copy;
     while (recordFifo_.pop(m)) {
-        if (!copy) copy = std::make_shared<tracker::Song>(songShared_ ? *songShared_ : tracker::Song{});
+        if (!copy) { copy = std::make_shared<tracker::Song>(); if (songShared_) *copy = *songShared_; }
         auto& chain = copy->chain[size_t(m.channel & 3)];
         if (chain.size() <= m.bar) chain.resize(size_t(m.bar) + 1, 0);
         uint8_t slot = chain[m.bar];
@@ -680,9 +687,10 @@ void ChipBoyProcessor::getStateInformation(MemoryBlock& dest)
         // The song carries the tempo it was played at: the Song tempo
         // parameter, which may have moved since the song was published
         // (docs/COMMANDS_AND_TEMPO.md section 4).
-        tracker::Song saved = *songShared_;
-        saved.tempoBpm = songTempoParam();
-        root.setProperty("song", songToJson(saved), nullptr);
+        const auto saved = std::make_unique<tracker::Song>();   // 83 KB: not on the message thread's stack
+        *saved = *songShared_;
+        saved->tempoBpm = songTempoParam();
+        root.setProperty("song", songToJson(*saved), nullptr);
     }
     MemoryOutputStream mo(dest, false);
     root.writeToStream(mo);

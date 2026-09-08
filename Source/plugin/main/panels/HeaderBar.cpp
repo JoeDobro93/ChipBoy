@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <memory>
 
 namespace chipboy::plugin {
 
@@ -13,6 +14,12 @@ using namespace juce;
 using namespace chipboy::ui;
 
 namespace {
+/// The factory bank, on the heap: a Bank is 41 KB, and this runs on the
+/// message thread, which a Windows host gives a megabyte of stack. `new`
+/// builds the prvalue in place; make_unique would bind it to a reference and
+/// leave the whole bank on the stack first.
+std::unique_ptr<bank::Bank> factoryBank() { return std::unique_ptr<bank::Bank>(new bank::Bank(bank::Bank::factory())); }
+
 const char* kStockTip = "STOCK: every audible setting is something a real unit does. MODIFIED: a departure in the Hardware tab is on.";
 const char* kVisualizerTip = "Open the visualizer window: the five scopes, no chrome, made for screen capture";
 const char* kHexTip = "Show values in hex, the LSDj habit. Display only.";
@@ -135,7 +142,7 @@ void HeaderBar::cycleBank(int direction)
 
 void HeaderBar::loadBankByName(const String& name)
 {
-    if (name == "Factory") { applyBank(bank::Bank::factory(), "Factory"); return; }
+    if (name == "Factory") { applyBank(*factoryBank(), "Factory"); return; }
     const File f = banksFolder().getChildFile(name + ".chipboy");
     auto b = std::make_unique<bank::Bank>();
     if (f.existsAsFile() && bankFromJson(f.loadFileAsString(), *b)) { applyBank(*b, name); return; }
@@ -177,7 +184,7 @@ void HeaderBar::showBankMenu()
                 safe->bankName_.setText(f.getFileNameWithoutExtension());
             });
         } else if (r == 3) {
-            h.applyBank(bank::Bank::factory(), "Factory");
+            h.applyBank(*factoryBank(), "Factory");
         }
     });
 }
