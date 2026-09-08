@@ -332,4 +332,6 @@ build-plugin/chipboy_recordtest_artefacts/Release/chipboy_recordtest --write-son
 so it always changes together with the tune, and `demo_song_matches`
 (`ctest --test-dir build-plugin -C Release -R demo_song_matches`) fails the moment it
 doesn't: it re-records the demo and compares the result against the committed file byte
-for byte.
+for byte. `demo_state_matches` does the same for `chipboy_demo_hybrid.state` (built by
+`--write-state`, compared by `--check-state`), so the hybrid project's embedded state
+can never drift from the song either.
