@@ -89,6 +89,57 @@ reads "1/8", not "mute"; **Headphone Noise**; the **output trim**, the one conti
 control in the product, drawn as a fader with a dB readout so nobody mistakes it for
 part of the chip.
 
+### 2.1 Editing conventions
+
+Every control in both windows obeys the same three rules, so nothing has to be learned
+twice.
+
+**Every number is typeable.** A stepper's readout is a text field: click it (or press
+Enter on it) and type. A knob or the trim fader opens the same small box on a double
+click. **Enter** commits, **Escape** cancels, and moving the focus away commits, as a
+name field does. What is accepted is digits, a leading minus where the range goes below
+zero, and hex digits while *Hex* is on — anything else is **refused**, and the field
+keeps what it had rather than guessing. A number inside the range is taken as typed; one
+outside it is clamped to the range, because the range is the hardware's and there is
+nothing else to do with 300 in a 0–15 field. Steppers also take digits typed straight
+at them, the grids' convention, and a knob with Alt on the double click goes back to its
+default. Segmented rows and switches stay click-only: they are a choice, not a number.
+Command arguments are the exception to the base: they are base 10 by definition
+(spec §9.6) and stay decimal in hex display.
+
+**The wheel never edits.** It scrolls whatever is under it — a tab's pane, a bank list,
+the chain's bars — and nothing else. A wheel that changed values meant that scrolling
+past a knob silently retuned an instrument, and a trackpad made it worse; the gestures
+that remain are the drag, the arrows, the +/− buttons and typing. This holds for
+steppers, knobs, the fader, the combo boxes, every grid cell and both windows.
+
+**Undo and redo cover every hand edit.** ↶ and ↷ in the header, **Ctrl+Z**,
+**Ctrl+Shift+Z** and **Ctrl+Y** (Command on macOS) — except while a text box has the
+keys, where Ctrl+Z belongs to the text. The buttons' tooltips name what they would take
+back ("Undo: PU1 Instrument 3 → 5", "Undo: Tracker: PU2 bar 3 step 5") and the status
+line says what happened. What is on the history: parameters moved from the interface,
+bank edits, song edits (cells, chain, grooves, arms, step counts), preset and song-file
+loads, the bank's name. What is not, and never opens a transaction: host automation, a
+state restore — loading a project clears the history — a Voice plugin's edits, which
+belong to the Voice's own history, and anything the audio thread does. One gesture is
+one undo: a knob drag, a stepper held down and the digits of one typed value each
+collapse into a single step.
+
+**Command cells are two parts.** The letter is chosen, the values are typed. Clicking
+the **letter** (the first glyph of the cell, drawn against its own hairline) opens a
+palette of the letters this channel can carry, each with its name and what its arguments
+mean, plus *none* and the letter's revert form; typing a letter key does the same. The
+**values** are typed as numbers and validated against that letter's ranges: a digit the
+letter cannot take is refused and the cell shows what it had. Changing the letter keeps
+the values, clamped into the new letter's ranges — an empty cell instead takes the
+letter's own defaults, so one keystroke still writes a command that does something.
+
+**Right-click lists.** A right click on an **INS** cell lists the bank's instruments by
+slot and name — only the slots in use, the ones this channel plays first and the rest
+marked with their type — and picks one into the cell. The same on a **TBL** cell for
+tables, and on a chain cell for the phrases the song uses, with how many bars play each.
+The left click still selects the cell for typing.
+
 ---
 
 ## 3. The scopes
@@ -310,8 +361,14 @@ step…) per phrase for swing. Cells fire at their step's tick; a cell's two com
 applied once, there, and the persistent letters then hold until the next plain note
 reloads the instrument (§12) — the lane and the automation lanes are one mechanism, not
 two. **Vel** is the note's velocity, 1–127, blank meaning the default 100; a recorded
-note keeps the velocity it arrived with, and every column takes the same gestures — the
-wheel, typed digits, + and −, Backspace to blank.
+note keeps the velocity it arrived with, and every column takes the same gestures —
+typed digits, + and −, Backspace to blank (§2.1: the wheel scrolls the pane, it never
+edits). A right click on **ins** or **tbl** lists the bank's slots by name.
+
+A command cell is drawn as the two things it is (§2.1): the **letter**, in the accent
+colour against a hairline, then its **values**. The letter is picked from the palette a
+click on it opens — filtered to the letters this channel can carry — or by typing it;
+the values are typed and refused when they fall outside what that letter takes.
 
 A command cell can also hold a letter's **revert form**, which is what the recorder
 writes when an automation slot goes back to *none*: it puts that letter back where the
@@ -430,9 +487,9 @@ it. The head carries the slot being browsed, the **total** against the bar's tic
 green when they match, warn when the groove over- or under-fills the bar — the **swing**
 the first pair makes (61 % for 8/5, 50 % for 6/6), and a **◀ ▶ nudge** that moves one
 tick between the entries of every pair, keeping each pair's total: 6 6 → 7 5 → 8 4, and
-back. A cell takes the lane's gestures and a value drag as well: the wheel, a vertical
-drag, + and −, two typed digits, Backspace to end the groove there; ← and → are the
-nudge. While the transport runs, the row the selected channel is really playing is
+back. A cell takes the lane's gestures and a value drag as well: a vertical drag, + and
+−, two typed digits, Backspace to end the groove there; ← and → are the nudge. The
+wheel scrolls the tab (§2.1). One drag, or one typed value, is one undo. While the transport runs, the row the selected channel is really playing is
 marked — but only while the editor is showing the groove that channel is running on.
 
 **Numbers.** The pane's 1156 × 512: the list 220 wide with a 14 px gap, the editor 520,

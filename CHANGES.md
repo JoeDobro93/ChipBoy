@@ -19,12 +19,95 @@ intended product rather than a progress report.
 | M4 — bank + driver | **done** 2026-09-07 — the bank with a factory set, the driver on its own tick, 11 driver tests. **2026-09-08**: the instrument carries the pitch (Pitch speed, vibrato shape/direction, Command rate, Table mode, Overlap); a note without an instrument only changes pitch (bare notes); four note-hang paths closed (all-notes-off, kill, event ordering, keyswitch-clear). Then: an instrument saves and loads on its own as a `.cbi` **preset** (`bank::collectPreset` / `bank::placePreset`), its tables, waves and kit carried along and renumbered into place |
 | M5 — Voice plugin + link | **done** 2026-09-07 — region files, claims, one-block timing, push/pull; `chipboy_linktest` passes 16 checks |
 | M6 — tracker, waves, frames, kits | **done** 2026-09-07 — tracker player on the host transport, record arm, kit import (resample + 4-bit dither), bank/song files. **2026-09-08**: grooves are sixteen tick counts, cells carry velocity, the Player flushes a channel with All notes off on stop/locate/source change, and the recorder follows §9.4; `chipboy_recordtest` (record/replay parity) and the tracker-shaped demo are done, next to the link test. Then: **steps per bar** is a number, 1–64, with a per-bar override (`Song::barSteps`) for any bar, tracked through a prefix table (`Song::barStartSteps`) so a locate lands on the right step; a cell's two commands fire **once**, at their step, instead of occupying a slot; per-channel **record arms** gate an armed channel's recording whatever its playback source; **song files** (`.cbsong`) and the plugin's **own transport** (`transportPlay`/`transportStop`/`setLoop`) round out the Standalone; `Demo/ChipBoy Demo.cbsong` is the recorded demo, checked byte for byte by `demo_song_matches` |
-| M7 — interface | **done** 2026-09-07 — the window from the mockup: header, mixer with period-locked scopes, seven tabs, status bar, visualizer window, Voice window. **2026-09-08**: the Phrases tab gained a groove editor and a VEL column, the Instrument tab gained the pitch fields, and the window was resized to fit a 1080p screen with tempo moved to the header; then the Phrases tab became the **Tracker** tab with the transport, the song files and the chain rotated beside the lane, a **Grooves** tab took the groove editor, and the Instrument tab gained preset files |
+| M7 — interface | **done** 2026-09-07 — the window from the mockup: header, mixer with period-locked scopes, seven tabs, status bar, visualizer window, Voice window. **2026-09-08**: the Phrases tab gained a groove editor and a VEL column, the Instrument tab gained the pitch fields, and the window was resized to fit a 1080p screen with tempo moved to the header; then the Phrases tab became the **Tracker** tab with the transport, the song files and the chain rotated beside the lane, a **Grooves** tab took the groove editor, and the Instrument tab gained preset files. Then a quality-of-life round: every number typeable, the wheel scrolling only, command cells split into letter and values with right-click slot lists, and undo / redo over every hand edit |
 | M8 — CGB / RAW / hardware options | **done** 2026-09-07 — CGB chip variant, RAW bypass, headphone noise, LCD line, bass mod, quiet-edge volume writes, de-click, soften master pops; 61 core tests |
 
 ---
 
 ## Spec revisions
+
+### 2026-09-08 — typed fields, no wheel edits, command cells, undo (interface)
+
+A quality-of-life round on both windows. Nothing in `Source/core` or
+`Source/plugin/shared` changed; the spec's ranges and the command table
+(`plugin::commandInfo`) are what the new validation checks against.
+[`docs/UI_DESIGN.md`](docs/UI_DESIGN.md) §2.1 is the new "Editing conventions"
+subsection these rules live in.
+
+**Changed:**
+
+- **Every number is typeable.** `ui::Stepper` opens an inline text box on a click (or
+  Enter) in its readout; `ui::Knob` and `ui::Fader` open one on a double click. Enter
+  commits, Escape cancels, focus loss commits. Digits, a leading minus where the range
+  allows and hex while *Hex* is on are taken; anything else is refused and the field
+  keeps what it had; a number outside the range is clamped to it. `Stepper::setTyped`
+  is on by default now — the Song tempo, the strips' slots, the master volumes, the
+  tracker's *Steps / bar* and the groove editor's slot all take typed values — and
+  `setEntryFormat` lets a field whose readout is not a plain number (the song start, in
+  tenths of a second) say how a typed value reads and parses. Segmented rows and
+  switches stay click-only: a choice is not a number.
+- **The wheel never edits.** The `mouseWheelMove` overrides are gone from `Knob`,
+  `Stepper`, `TableGrid`, `PhraseGrid` and `GrooveEditor`, so JUCE's default forwards
+  the event to whatever scrolls; `setScrollWheelEnabled(false)` covers the trim fader's
+  slider, the command slots' letter box and the Voice's four combo boxes. `ChainColumn`
+  keeps its wheel, which scrolls its bars rather than editing a cell. Considered:
+  keeping the wheel with a modifier. Rejected — a modifier is not discoverable and the
+  accident it prevents (scrolling a tab and retuning an instrument on the way past) is
+  silent.
+- **A command cell is two parts.** The letter is drawn in the accent colour against a
+  hairline, then its values; a click on the letter opens a palette of the letters that
+  channel can carry (`plugin::commandAppliesTo`), each with its name and argument
+  description, plus *none* and the letter's revert form. Typing a letter still sets it,
+  and now **keeps the values, clamped into the new letter's ranges** rather than
+  replacing them with its defaults — an empty cell still takes the defaults, so one
+  keystroke writes a command that does something. Typed arguments are validated against
+  `commandInfo`: a digit the letter cannot hold is refused and the cell shows what it
+  had (this tightened `typeDigit` for every grid column, not only commands). Command
+  arguments stay base 10 in hex display, as spec §9.6 fixes them.
+- **Right-click lists.** A right click on an **INS** cell lists the bank's used
+  instruments by slot and name, the ones the channel plays first and the rest marked
+  with their type; on a **TBL** cell, the bank's tables; on a chain cell, the phrases
+  the song uses with how many bars play each. The left click still selects for typing.
+  `PhraseGrid::setBank` is how the lane reads the names.
+- **Undo and redo for every hand edit** (`Source/plugin/ui/EditHistory.*`, new). A
+  `juce::UndoManager` per processor, capped with `setMaxNumberOfStoredUnits` at 64 MB
+  with a floor of eight transactions — a Song snapshot is ~300 KB and a Bank ~40 KB plus
+  its kit samples, so the cap is counted in bytes. Three kinds of action: a parameter
+  (id, old and new normalised values, applied with `setValueNotifyingHost` so the host
+  sees an undo as it saw the gesture), a bank snapshot and a song snapshot — the
+  before/after pointers the copy-on-write path already makes, so an edit costs no extra
+  copy and only an undo does. `ChipBoyProcessor::editBank` / `editSong` are the undoable
+  entry points; `mutateBank` / `mutateSong` stay as the plain path the timer and the
+  link use. The controls find the history by walking up to their window
+  (`ui::EditHistoryHost` on both editors), so two instances never share one.
+  Surface: **↶ ↷** in the header right of the bank, Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y
+  (never while a text box has the keys), tooltips naming the action ("Undo: PU1 Level
+  inst → 11") and the status line saying what was undone. One gesture is one undo: a
+  knob drag opens a transaction on `mouseDown` and the actions coalesce; a run of edits
+  under the same name — the digits of one typed cell — joins the transaction still open.
+  **Not** on the history, and never opening a transaction: host automation, a state
+  restore (`setStateInformation` clears it), the Voice's edits, which are the Voice's
+  own history, and anything the audio thread does.
+- **The header keeps its height.** The two arrows cost 47 px, found by trimming the
+  right cluster and by fixing the visualizer button's width — it said "Visualizer
+  (open)" and grew by 32 px, which shoved the bank along beside it and could overlap the
+  badge. It says the same thing in its colour now.
+- `juce::ButtonParameterAttachment`, `juce::SliderParameterAttachment` and
+  `juce::ComboBoxParameterAttachment` write straight to the parameter and cannot be
+  undone, so the four places that used them (Quantize, Hex, Keyswitches, the trim, the
+  Voice's velocity and instrument boxes) now use a `ParameterAttachment` with the click
+  routed through the history. `plugin::ToggleParam` is the shared piece.
+
+**Considered and rejected:** hooking undo to a global parameter listener instead of the
+UI write path — it cannot tell a host's automation from a hand on a knob, which is the
+one distinction that matters here. And making `mutateBank` / `mutateSong` themselves
+undoable — the timer and the link call them, and a Voice pushing an instrument is not
+the musician's edit.
+
+**Known limit:** a command with two three-digit arguments (`Z 255,255`) is wider than
+the 53 px the lane can give a command column and is clipped; every other letter fits.
+
+---
 
 ### 2026-09-08 — the Tracker tab, the Grooves tab and presets (interface)
 

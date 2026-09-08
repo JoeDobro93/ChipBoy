@@ -195,7 +195,20 @@ file byte for byte (`ctest --test-dir build -C Release -R demo_song_matches`).
 11. The **Hardware** tab holds the model switch (DMG / CGB / RAW), the hardware states
     (headphone noise, LCD line, CGB bass mod, volume writes at edges) and the two
     departures (de-click, soften master pops), which light the MODIFIED badge.
-12. `Demo/ChipBoy Demo.rpp` opens in Reaper with the tune and its automation, and
+12. **Typing, the wheel and undo.** Every number is typeable: click a stepper's readout
+    or double-click a knob or the trim fader and a small box opens — Enter commits,
+    Escape cancels, and what is not a number in the field's base is refused rather than
+    guessed at, while a number outside the hardware's range is clamped to it. The mouse
+    wheel never changes a value anywhere; it scrolls the pane, the list or the chain
+    under it, so scrolling past a knob cannot retune an instrument. Everything done by
+    hand undoes: **↶ ↷** in the header, **Ctrl+Z**, **Ctrl+Shift+Z** and **Ctrl+Y**,
+    with the buttons naming what they would take back ("Undo: PU1 Instrument 3 → 5").
+    Host automation and loading a project are not edits and never go on the history; a
+    knob drag, a stepper held down and the digits of one typed value are each one step.
+    In a command cell the letter and the values are separate: click the letter for a
+    palette of the letters that channel can carry, then type the values; a right click
+    on an **ins** or **tbl** cell lists the bank's slots by name.
+13. `Demo/ChipBoy Demo.rpp` opens in Reaper with the tune and its automation, and
     `Demo/ChipBoy Demo (song tempo).rpp` runs the same track on the song's clock at 150
     BPM with a `T` that drops it to 100 for four bars; the tune alone is in
     `Demo/chipboy_demo.mid` for any other host, and the same tune recorded onto the
