@@ -9,6 +9,14 @@ using namespace chipboy::ui;
 
 namespace {
 constexpr int kListWidth = 220, kGap = 14, kListHeader = 28, kListButtons = 26;
+/// The cards go two to a row. The right column is fixed at the width two
+/// 150 px field columns need with the card's padding; the left column takes
+/// the rest, which is three of them. Keeping the tab down to two card rows
+/// is what lets the window fit a 1080p screen (UI_DESIGN section 2).
+constexpr int kNarrowCard = 380;
+/// One second of envelope. It reads at this width, and at this width the
+/// Result sits beside the Rate knob instead of taking a row of its own.
+constexpr int kEnvPreview = 90;
 
 String envMsText(int rate) { return rate > 0 ? String(rate * 15.625, 1) + " ms/step" : String("hold"); }
 String dash() { return String(CharPointer_UTF8("\xe2\x80\x93")); }
@@ -383,12 +391,12 @@ void InstrumentPanel::rebuildEditor()
         k->onChange = [this, set](int v) { edit([set, v](bank::Instrument& i) { set(i, v); }); };
         return g.addField(label, hint, std::move(k), Knob::kHeight, Knob::kWidth);
     };
-    auto seg = [this](FlowGrid& g, const String& label, const String& hint, const StringArray& opts, std::function<void(bank::Instrument&, int)> set) {
+    auto seg = [this](FlowGrid& g, const String& label, const String& hint, const StringArray& opts, std::function<void(bank::Instrument&, int)> set, int columns = 1) {
         auto s = std::make_unique<Segmented>(opts);
         s->setMini(true);
         s->onChange = [this, set](int v) { edit([set, v](bank::Instrument& i) { set(i, v); }); };
         const int h = s->preferredHeight(), w = s->preferredWidth();
-        return g.addField(label, hint, std::move(s), h, w);
+        return g.addField(label, hint, std::move(s), h, w, columns);
     };
     auto stepper = [this](FlowGrid& g, const String& label, const String& hint, int lo, int hi, int def, std::function<String(int)> text, std::function<void(bank::Instrument&, int)> set, int width) {
         auto s = std::make_unique<Stepper>();
@@ -426,7 +434,8 @@ void InstrumentPanel::rebuildEditor()
                            [this](int v) { const auto bk = processor.bank(); const bank::Wave* wv = bk ? bk->wave(v) : nullptr; return wv ? slotAndName(v, wv->name) + middot() + String(int(wv->frames.size())) + " fr" : slotAndName(v, "empty"); },
                            [](bank::Instrument& i, int v) { i.wave = uint8_t(v); }, 0);
         w_->frameAdv = knob(*sound, "Frame advance", "ticks per frame; 0 holds", 0, 15, 0, [](bank::Instrument& i, int v) { i.frameAdvance = uint8_t(v); });
-        w_->frameLoop = seg(*sound, "Frame loop", "how the frames run", { "Loop", "One-shot", "Ping-pong" }, [](bank::Instrument& i, int v) { i.frameLoop = bank::FrameLoop(std::clamp(v, 0, 2)); });
+        // three long words: it takes two field columns rather than squeeze
+        w_->frameLoop = seg(*sound, "Frame loop", "how the frames run", { "Loop", "One-shot", "Ping-pong" }, [](bank::Instrument& i, int v) { i.frameLoop = bank::FrameLoop(std::clamp(v, 0, 2)); }, 2);
         w_->waveLevel = seg(*sound, "Volume", "NR32 6-5" + middot() + "no envelope here", { "mute", "25", "50", "100" }, [](bank::Instrument& i, int v) { i.waveLevel = uint8_t(v); });
     } else if (type == bank::InstrumentType::Kit) {
         w_->kit = stepper(*sound, "Kit", "streamed through wave RAM", 1, bank::kKitSlots, 1,
@@ -443,10 +452,10 @@ void InstrumentPanel::rebuildEditor()
         w_->noiseSweep = knob(*sound, "Noise sweep", "shift steps per tick, repeated NR43 writes", -7, 7, 0, [](bank::Instrument& i, int v) { i.noiseSweep = int8_t(v); },
                               [](int v) { return ValueFormat::signedNumber(v); });
     }
-    stack->add(std::make_unique<Card>("Sound", std::move(sound)));
+    std::vector<std::unique_ptr<Block>> cards;
+    cards.push_back(std::make_unique<Card>("Sound", std::move(sound)));
 
-    // --- envelope | modulation ------------------------------------------------
-    auto groups = std::make_unique<Columns>(12);
+    // --- envelope ---------------------------------------------------------
     const bool hasEnvelope = type == bank::InstrumentType::Pulse || type == bank::InstrumentType::Noise;
     if (hasEnvelope) {
         const String nr = type == bank::InstrumentType::Noise ? "NR42" : "NR12/22";
@@ -456,20 +465,20 @@ void InstrumentPanel::rebuildEditor()
         w_->envRate = knob(*env, "Rate", nr + " 2-0: 0 = hold, 1-7 = n x 15.6 ms", 0, 7, 0, [](bank::Instrument& i, int v) { i.envRate = uint8_t(v); });
         auto preview = std::make_unique<EnvPreview>();
         w_->envPreview = preview.get();
-        w_->envResult = env->add(std::make_unique<Field>("Result", envMsText(inst.envRate), std::move(preview), 64, 0, 2));
-        groups->add(std::make_unique<Card>("Envelope", std::move(env), String(CharPointer_UTF8("\xe2\x80\x94")) + " one " + nr + " write, then the chip runs it"));
+        w_->envResult = env->add(std::make_unique<Field>("Result", envMsText(inst.envRate), std::move(preview), 64, kEnvPreview));
+        cards.push_back(std::make_unique<Card>("Envelope", std::move(env), String(CharPointer_UTF8("\xe2\x80\x94")) + " one " + nr + " write, then the chip runs it"));
     }
+
+    // --- modulation -------------------------------------------------------
     auto mod = std::make_unique<FlowGrid>();
     w_->vibShape = seg(*mod, "Vibrato", "a signed period offset, recomputed each tick", { "Tri", "Sq", String(CharPointer_UTF8("Saw\xe2\x86\x91")), String(CharPointer_UTF8("Saw\xe2\x86\x93")) },
                        [](bank::Instrument& i, int v) { i.vib.shape = bank::VibShape(std::clamp(v, 0, 3)); });
     w_->vibSpeed = knob(*mod, "Speed", "ticks per step", 1, 15, 4, [](bank::Instrument& i, int v) { i.vib.speed = uint8_t(v); });
     w_->vibDepth = knob(*mod, "Depth", "raw period units, not cents", 0, 15, 0, [](bank::Instrument& i, int v) { i.vib.depth = uint8_t(v); });
     w_->vibDelay = knob(*mod, "Delay", "ticks before it starts", 0, 255, 0, [](bank::Instrument& i, int v) { i.vib.delay = uint8_t(v); });
-    groups->add(std::make_unique<Card>("Modulation", std::move(mod)));
-    stack->add(std::move(groups));
+    cards.push_back(std::make_unique<Card>("Modulation", std::move(mod)));
 
-    // --- table & note behaviour ------------------------------------------------
-    auto groups2 = std::make_unique<Columns>(12);
+    // --- table & note behaviour -------------------------------------------
     auto tab = std::make_unique<FlowGrid>();
     w_->table = stepper(*tab, "Table", "runs from note-on, one step per tick", 0, bank::kTableSlots, 0,
                         [this](int v) { if (v == 0) return String("none"); const auto bk = processor.bank(); const bank::Table* t = bk ? bk->table(v) : nullptr; return t ? slotAndName(v, t->name) : slotAndName(v, "empty"); },
@@ -481,9 +490,18 @@ void InstrumentPanel::rebuildEditor()
     w_->length = stepper(*tab, "Length", longLength ? "NR31" + middot() + "off or 1-256" : "NRx1 5-0" + middot() + "off or 1-64", 0, longLength ? 256 : 64, 0,
                          [](int v) { return v == 0 ? String("off") : ValueFormat::number(v); }, [](bank::Instrument& i, int v) { i.length = uint16_t(v); }, 100);
     w_->pan = seg(*tab, "Pan", "NR51 default for this instrument", { dash(), "L", "LR", "R" }, [](bank::Instrument& i, int v) { i.pan = panFromIndex(v); });
-    groups2->add(std::make_unique<Card>("Table & note behaviour", std::move(tab)));
-    groups2->add(std::make_unique<Space>(1));
-    stack->add(std::move(groups2));
+    cards.push_back(std::make_unique<Card>("Table & note behaviour", std::move(tab)));
+
+    // Two cards to a row, each row as tall as the taller of its two: Sound
+    // beside Envelope, Modulation beside Table, and the whole tab fits.
+    for (size_t i = 0; i < cards.size(); i += 2) {
+        auto row = std::make_unique<Columns>(12);
+        row->setWidths({ 0, kNarrowCard });
+        row->add(std::move(cards[i]));
+        if (i + 1 < cards.size()) row->add(std::move(cards[i + 1]));
+        else row->add(std::make_unique<Space>(1));
+        stack->add(std::move(row));
+    }
 
     scroll_.setContent(std::move(stack));
     syncValues();

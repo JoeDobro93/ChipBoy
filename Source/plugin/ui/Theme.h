@@ -117,11 +117,13 @@ public:
 
 /// Window sizes at 100 % (UI_DESIGN sections 2 and 8). The main window is
 /// fixed in width and stretches in height: kMainHeight is the default and
-/// the smallest height, the one the Instrument tab's tallest content (a
-/// Pulse instrument, every card) fits into without a scrollbar --
-/// header 54 + mixer row 378 + tab bar 34 + editor pane 826 + status 26.
+/// the smallest height, and it fits a 1080p screen --
+/// header 54 + mixer row 370 + tab bar 34 + editor pane 536 + status 26.
+/// The pane is 512 and its 2 x 12 padding: 512 is what the Instrument tab's
+/// tallest content asks for (a Pulse or Noise instrument, every card: 510)
+/// and what the Phrases lane's sixteen steps need under its head (512).
 constexpr int kMainWidth = 1180;
-constexpr int kMainHeight = 1318;
+constexpr int kMainHeight = 1020;
 constexpr int kMainMaxHeight = 2400;   ///< as tall as a screen is ever likely to be at 100 %
 constexpr int kVoiceWidth = 560;
 constexpr int kVoiceHeight = 420;

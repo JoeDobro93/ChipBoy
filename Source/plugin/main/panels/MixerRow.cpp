@@ -8,8 +8,8 @@ using namespace juce;
 using namespace chipboy::ui;
 
 namespace {
-constexpr int kPad = 8, kGap = 6;
-constexpr int kHead = 20, kScope = 66, kRegs = 14, kRow = 24, kQuick = 70, kSeg = 22, kCaption = 10, kState = 14;
+constexpr int kPad = 8, kGap = 6, kTightGap = 4;
+constexpr int kHead = 20, kScope = 60, kRegs = 14, kRow = 24, kQuick = 70, kSeg = 22, kCaption = 10, kState = 14;
 constexpr int kButton = 26, kButtonH = 20;
 const char* kMuteTip = "NR51 gate off. Pops like the hardware.";
 const char* kSoloTip = "Gates the other three off (NR51). Pops like the hardware.";
@@ -324,11 +324,13 @@ void ChannelStrip::resized()
     pan_.setBounds(x, y, panW, kSeg);
     int bx = x + w - buttons;
     for (auto* b : { &mute_, &solo_, &keyswitch_ }) { b->setBounds(bx, y + (kSeg - kButtonH) / 2, kButton, kButtonH); bx += kButton + 3; }
-    y += kSeg + kGap;
+    // the two slots and the state line read as one block, so they sit on
+    // the tighter gap
+    y += kSeg + kTightGap;
     cmd1_.setBounds(x, y, w, ui::CommandSlot::kHeight);
-    y += ui::CommandSlot::kHeight + 4;
+    y += ui::CommandSlot::kHeight + kTightGap;
     cmd2_.setBounds(x, y, w, ui::CommandSlot::kHeight);
-    y += ui::CommandSlot::kHeight + 4;
+    y += ui::CommandSlot::kHeight + kTightGap;
     stateBox_.setBounds(x, y, w, kState);
 }
 

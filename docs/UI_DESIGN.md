@@ -49,14 +49,16 @@ This is the design you described, made concrete. The alternatives were weighed:
 
 ## 2. The main window
 
-1180 wide like a hardware unit, 1318 tall at minimum, at 100% — with 125% and 150%
+1180 wide like a hardware unit, 1020 tall at minimum, at 100% — with 125% and 150%
 scaling, which multiplies both. The width never changes; the height stretches, so the
 corner resizer only moves vertically and every pixel it adds goes to the editor pane
-(the Phrases lane and the bank lists get the room). 1318 is the height the Instrument
-tab needs: header 54 + mixer row 378 + tab bar 34 + the tallest instrument editor,
-826 with its padding + status line 26. The chosen height is remembered with the
-project, as the scale is. Reading order is top to bottom: *what am I emulating → what
-is each voice doing → edit the thing I selected.*
+(the bank lists and the Hardware tab get the room). 1020 is header 54 + mixer row 370
++ tab bar 34 + a 536 editor pane (512 and its padding) + status line 26, and it fits a
+1080p screen with the host's own chrome. 512 is what the two tabs with the most in them
+ask for: the Instrument tab's four cards, two to a row, need 510, and the Phrases lane's
+sixteen steps need 512 under its head. The chosen height is remembered with the project,
+as the scale is. Reading order is top to bottom: *what am I emulating → what is each
+voice doing → edit the thing I selected.*
 
 1. **Header.** Wordmark; the **model switch** (DMG / CGB / RAW); the **tempo group** —
    source (Host / Song), the song's own BPM, and the *Quantize* toggle (§4); the bank
@@ -216,7 +218,9 @@ the hardware's ranges, and none of the cartridge limits (C10).
   envelope, duty and duty sequence, sweep, length, vibrato shape/speed/depth/delay,
   transpose, table, pan, note-off behaviour, retrigger/legato — plus the wave's frame
   advance and loop mode. The editor shows the field groups for the selected type and the
-  register each field lands in.
+  register each field lands in, as four cards laid two to a row — Sound beside Envelope,
+  Modulation beside Table & note behaviour — so the whole instrument is on screen at the
+  window's smallest size.
 - **Tables** (spec §9.5): 16 steps of volume, transpose, two commands; loop, hop, or
   stop at the end; one step per tick; shared by every instrument that references them.
 - **Commands** (spec §9.6, LSDj lettering): `A` envelope, `C` chord, `D` delay, `F`

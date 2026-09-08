@@ -26,20 +26,31 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
-### 2026-09-08 — the window stretches, and tempo moves to the header (UI_DESIGN §2, §7)
+### 2026-09-08 — the window fits a screen and stretches, tempo moves to the header (UI_DESIGN §2, §6, §7)
 
-The main window was 1180 x 760 and fixed, which the Instrument tab never fitted: a
-Pulse instrument with all four cards is 802 px of editor, so the tab always opened
-scrolled.
+The main window was 1180 x 760 and fixed, which the Instrument tab never fitted: it
+always opened scrolled, because one instrument's four cards were stacked one under
+the other down a full-width column.
 
 **Changed:**
 
-- **The window is 1180 x 1318 at 100 %, and 1318 is now its minimum.** The number is
-  the Instrument tab's own: header 54 + mixer row 378 + tab bar 34 + 826 for the
-  editor pane (802 of content and its 2 x 12 padding) + status line 26. The Instrument
-  tab shows no scrollbar at the default size.
+- **The window is 1180 x 1020 at 100 %, and 1020 is now its minimum** — small enough
+  for a 1080p screen with the host's own chrome around it. It is header 54 + mixer row
+  370 + tab bar 34 + a 536 editor pane (512 of content and its 2 x 12 padding) + status
+  line 26, and 512 is what the two fullest tabs ask for: the Instrument tab's cards
+  need 510, the Phrases lane's sixteen steps 512 under its head. Neither shows a
+  scrollbar at the default size. The Hardware tab (654) still scrolls until the window
+  is stretched, as the bank lists always will.
+- **The Instrument tab is two cards to a row**: Sound beside Envelope, Modulation
+  beside Table & note behaviour. The left column is wide enough for three field
+  columns and the right for two, and every field stays — 510 px where the single
+  column wanted 802. The envelope preview is 90 px of drawing, which is all a
+  one-second envelope needs, so the Result sits beside the Rate knob instead of taking
+  a row of its own.
+- **The mixer strip is 350 rather than 358**: the scope is 60 px instead of 66, and the
+  two command slots and the running-state line read as one block on a 4 px gap.
 - **The height stretches, the width does not.** The constrainer pins the width to the
-  scaled 1180 and the minimum height to the scaled 1318, so the corner resizer only
+  scaled 1180 and the minimum height to the scaled 1020, so the corner resizer only
   moves vertically. Header, mixer row and tab bar keep their heights at the top and
   the status line stays at the bottom: every extra pixel is the editor pane's. The
   chosen height is remembered in `apvts.state` as `ui_height`, unscaled, the way
@@ -54,8 +65,8 @@ scrolled.
   name included. Code identifiers and the prose in these documents keep the British
   spelling.
 
-**Not changed:** the width, the scale steps, the panel layouts, and the status line's
-"tempo host 120 / song 150".
+**Not changed:** the width, the scale steps, every control and field the panels had,
+and the status line's "tempo host 120 / song 150".
 
 ### 2026-09-07 — the demo and the documents follow the new model (§8.1, §8.2, §12.3, §12.4)
 

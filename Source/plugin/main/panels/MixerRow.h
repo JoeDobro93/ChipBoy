@@ -27,9 +27,10 @@ public:
     void setAnalogCornerHz(double hz);
     std::function<void(int)> onSelect;
 
-    /// 8 + 20 head + 66 scope + 14 registers + 24 instrument + 70 level
-    /// + 22 pan + two 34 command slots + 14 running state, with the gaps.
-    static constexpr int kHeight = 358;
+    /// 8 + 20 head + 60 scope + 14 registers + 24 instrument + 70 level
+    /// + 22 pan + two 34 command slots + 14 running state, with the gaps
+    /// (6 down to the pan row, then 4 through the block at the bottom).
+    static constexpr int kHeight = 350;
     void paint(juce::Graphics&) override;
     void resized() override;
     void mouseDown(const juce::MouseEvent&) override;
