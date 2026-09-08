@@ -439,6 +439,10 @@ Default `[DECIDE] D3` is host-synced, on the argument that a DAW user expects an
 line up with the bar and that the tick *rate* was always a driver choice — only its
 existence and its quantising effect are hardware.
 
+*Revised 2026-09-08 (third): see [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md)
+§11 (amended) and §19:* the host contributes the tempo only — its time signature never
+reaches the tracker, in either tempo mode; a song's bar is always its own beats per bar.
+
 Tick boundaries are computed from the absolute sample position of the transport (or of a
 free-running counter when the host is stopped), never accumulated per block — see §7.1.
 
@@ -536,7 +540,10 @@ a kick's exponential fall.
 ## 9. The bank
 
 One bank per instance. It holds everything reusable, and it is the single source of
-truth for instrument definitions (§12.5).
+truth for instrument definitions (§12.5). *Revised 2026-09-08 (third): see
+[`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §18:* one bank per **song**, not
+per instance — an instance holds one open song per tab, each with its own bank, and
+only the active tab's bank is live.
 
 ### 9.1 Slot counts
 
@@ -990,14 +997,20 @@ project load order audible.
   shows the actual staircase, and after the analog stage the actual droop and rounding),
   the instrument in use, level, pan, and the register values currently written. The
   register view is not a debug panel — it is the thing that teaches the instrument, and
-  it stays.
+  it stays. *Revised 2026-09-08 (third): see
+  [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §22:* the oscilloscope's window
+  is two whole periods, locked to the edge the waveform's own shape names, not to
+  wherever the search began, so a sustained note holds still and vibrato breathes rather
+  than sliding.
 - **Bank browser.** Instruments, tables, waves, kits. Rename, duplicate, reorder,
   import, export. *Revised 2026-09-08: see
   [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §15:* an instrument can also
   **Save preset…** / **Load preset…** on its own, a `.cbi` file carrying every table,
   wave and kit it references. Loading one places each dependency in the first free slot
   of its kind (or reuses an identical one already in the bank) and renumbers every
-  reference to match.
+  reference to match. *Revised 2026-09-08 (third): see
+  [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §18:* the browser shows the
+  active song tab's own bank (§9); switching tabs switches the bank it shows.
 - **Wave editor.** 32 × 16 grid, frame strip along the bottom, shape generators,
   interpolate-between-frames.
 - **Table editor.** 16 rows × 4 columns, keyboard-navigable, in the tracker idiom that
@@ -1007,7 +1020,13 @@ project load order audible.
 - **Global.** Master volume L/R, output trim, headphone noise, de-click, tick source,
   link mode. *Revised 2026-09-08: see [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md)
   §4:* **Tempo source** (Host/Song), **Song tempo** and **Quantize notes to ticks**
-  replace the old tick source, and moved to the header bar.
+  replace the old tick source, and moved to the header bar. *Revised 2026-09-08 (third):
+  see [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §19:* the header's tempo is a
+  read-only **readout** now — host or song, whichever is in force — with each song's own
+  master tempo typed in the Tracker tab instead. *Revised 2026-09-08 (third): see
+  [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §21:* master volume L/R is one
+  **VOL** control writing both sides as one undo step, and headphone noise splits into
+  two independent switches, **Headphone Noise** and **LCD Whine**.
 - **Phrases.** A tracker: per channel a note, instrument, table and two command columns,
   sixteen steps to a phrase, phrases chained by bar, following the host transport. A
   channel's notes come either from the piano roll (shown, not editable) or from the
@@ -1029,6 +1048,12 @@ project load order audible.
   Standalone, or a host with no play head — the tab's own **Play** / **Stop** / **Loop**
   run the song from the song start on the plugin's own clock at the Song tempo; in a host
   the buttons mirror its transport instead.
+  *Revised 2026-09-08 (third): see [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md)
+  §§18 and 20:* the tab **is** the song now — one tab per open song, each owning its own
+  bank, and only the active tab plays, records and is edited; a song file (format 5)
+  embeds its bank. **PLAYS** gains a third choice, **Hybrid**: notes come from MIDI,
+  everything else — instrument, table and commands — from the song's cells at their
+  steps.
 - **Visualizer.** A separate resizable window with the five scopes and no chrome, for
   screen capture.
 
