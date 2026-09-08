@@ -69,8 +69,27 @@ public:
     /// tempo is ClockConfig::songTempo, not part of this list.
     void setTempoMap(const TempoPoint* pts, size_t n);
 
+    // --- the plugin's own transport (docs/COMMANDS_AND_TEMPO.md section 16)
+    //
+    // With no host play head -- the Standalone, or a host that offers no
+    // position -- the plugin runs the song itself: the clock makes the
+    // transport at the Song tempo, from the song start, and loops between two
+    // ticks the caller names (the song knows where its bars are, the clock
+    // does not). The tempo source is Song while it owns the transport.
+    void setOwnsTransport(bool on);
+    bool ownsTransport() const { return owns_; }
+    void ownPlay();                       ///< from the loop start, or tick 0
+    void ownStop();
+    bool ownPlaying() const { return ownPlaying_; }
+    void setLoop(bool on, int64_t startTick, int64_t endTick);
+    bool loopOn() const { return loop_; }
+    int64_t loopStart() const { return loopStart_; }
+    int64_t loopEnd() const { return loopEnd_; }
+
     /// One block. Fills the tick list; nothing else about the block is kept.
-    void process(const Transport& t, uint32_t numSamples, uint64_t frameAbs);
+    void process(const Transport& host, uint32_t numSamples, uint64_t frameAbs);
+    /// Whether the transport was running this block, whoever owns it.
+    bool playing() const { return isPlaying_; }
 
     const TickPoint* ticks() const { return ticks_.data(); }
     size_t   tickCount() const { return tickCount_; }
@@ -126,6 +145,12 @@ private:
     uint64_t lastTickFrame_ = 0;
     bool     haveFreeTick_ = false;
     int64_t  freeTick_ = 0;
+
+    // the plugin's own transport
+    bool     owns_ = false, ownPlaying_ = false, isPlaying_ = false;
+    double   ownSeconds_ = 0.0;      ///< its own clock, in the same units as a host's
+    bool     loop_ = false;
+    int64_t  loopStart_ = 0, loopEnd_ = 0;
 };
 
 } // namespace chipboy::driver

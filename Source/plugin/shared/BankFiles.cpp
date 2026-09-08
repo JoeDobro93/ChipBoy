@@ -12,7 +12,6 @@ using namespace juce;
 namespace {
 
 constexpr const char* kBankExtension = ".chipboy";
-constexpr const char* kSongExtension = ".chipboysong";
 constexpr int kOpenFlags = FileBrowserComponent::openMode | FileBrowserComponent::canSelectFiles;
 constexpr int kSaveFlags = FileBrowserComponent::saveMode | FileBrowserComponent::canSelectFiles | FileBrowserComponent::warnAboutOverwriting;
 
@@ -77,23 +76,6 @@ void loadBank(Component* parent, std::function<void(std::unique_ptr<bank::Bank>,
         if (text.isNotEmpty()) {
             loaded = std::make_unique<bank::Bank>();
             if (!bankFromJson(text, *loaded)) loaded.reset();
-        }
-        if (done) done(std::move(loaded), file);
-    });
-}
-
-void saveSongAs(Component* parent, const tracker::Song& s, const String& suggestedName, std::function<void(bool, File)> done)
-{
-    saveText(parent, "Save song", kSongExtension, legalName(suggestedName, "Song"), songToJson(s), std::move(done));
-}
-
-void loadSong(Component* parent, std::function<void(std::unique_ptr<tracker::Song>, File)> done)
-{
-    loadText(parent, "Open song", kSongExtension, [done = std::move(done)](const String& text, const File& file) {
-        std::unique_ptr<tracker::Song> loaded;
-        if (text.isNotEmpty()) {
-            loaded = std::make_unique<tracker::Song>();
-            if (!songFromJson(text, *loaded)) loaded.reset();
         }
         if (done) done(std::move(loaded), file);
     });

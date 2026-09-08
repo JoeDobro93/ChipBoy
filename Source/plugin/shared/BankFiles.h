@@ -3,7 +3,6 @@
 #pragma once
 
 #include "core/Bank/Bank.h"
-#include "core/Tracker/Song.h"
 
 #include <juce_core/juce_core.h>
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -18,9 +17,9 @@ namespace chipboy::plugin {
 void saveBankAs(juce::Component* parent, const bank::Bank& bank, const juce::String& suggestedName, std::function<void(bool ok, juce::File)> done);
 /// An open dialog, then bankFromJson. Null on cancel, or on a file that does not parse.
 void loadBank(juce::Component* parent, std::function<void(std::unique_ptr<bank::Bank>, juce::File)> done);
-/// The same for songs, *.chipboysong.
-void saveSongAs(juce::Component* parent, const tracker::Song& song, const juce::String& suggestedName, std::function<void(bool ok, juce::File)> done);
-void loadSong(juce::Component* parent, std::function<void(std::unique_ptr<tracker::Song>, juce::File)> done);
+/// Songs have their own file (plugin/shared/SongFiles.h): they carry the
+/// bank's name and the names of the instrument slots they use, which a plain
+/// bankToJson-shaped writer cannot.
 /// Documents/ChipBoy/Banks, created on demand; where the dialogs start.
 juce::File banksFolder();
 

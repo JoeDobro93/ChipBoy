@@ -18,6 +18,7 @@
 #include "plugin/shared/LinkTransport.h"
 #include "plugin/shared/Parameters.h"
 #include "plugin/shared/ScopeBuffers.h"
+#include "plugin/shared/SongFiles.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -107,8 +108,36 @@ public:
     // tracker
     void setRecordArm(bool on) { recordArm_.store(on); }
     bool recordArm() const { return recordArm_.load(); }
+    /// The per-channel arm lives in the song (section 14), so it travels with
+    /// the song file and the plugin state.
+    void setChannelArm(int ch, bool on) { const int c = ch & 3; mutateSong([c, on](tracker::Song& s) { s.recordArm[size_t(c)] = on; }); }
+    bool channelArm(int ch) const { const auto s = songShared_; return s ? s->recordArm[size_t(ch & 3)] : true; }
     const tracker::Player& player() const { return player_; }
+
+    // --- the tracker's own transport (section 16) -----------------------
+    //
+    // With no host play head -- the Standalone, or a host that offers no
+    // position -- the plugin runs the song itself, at the Song tempo, from
+    // the song start. In a host the host's transport rules and these do
+    // nothing but report it.
+    void transportPlay() { transportRequest_.store(1); }
+    void transportStop() { transportRequest_.store(2); }
+    void setLoop(bool on) { loopOn_.store(on); }
+    bool loopEnabled() const { return loopOn_.load(); }
+    /// The loop, in bars: from `first` up to but not including `last`. A
+    /// negative `last` loops to the end of the song.
+    void setLoopBars(int first, int last) { loopFrom_.store(std::max(0, first)); loopTo_.store(last); }
+    int  loopFirstBar() const { return loopFrom_.load(); }
+    int  loopLastBar() const { return loopTo_.load(); }
+    /// Whether the plugin is running the transport rather than a host.
+    bool ownsTransport() const { return ownsTransport_.load(); }
     bool transportPlaying() const { return playing_.load(); }
+
+    /// Load a song file and publish it, reporting where this bank differs
+    /// (section 15). Message thread.
+    bool loadSongFile(const juce::File& file, SongReport& report);
+    /// Write the song playing now, with the bank it plays through.
+    bool saveSongFile(const juce::File& file) const;
     double transportPpq() const { return ppq_.load(); }
     double transportBpm() const { return bpm_.load(); }
     double beatsPerBar() const { return beatsPerBar_.load(); }
@@ -181,6 +210,12 @@ private:
     link::Spsc<tracker::RecordMessage, 1024> recordFifo_;
     std::atomic<bool> recordArm_{ false };
     std::atomic<bool> playing_{ false };
+    // The plugin's own transport (section 16): the buttons ask on the message
+    // thread, the audio thread does it, so the clock has one owner.
+    std::atomic<int>  transportRequest_{ 0 };     ///< 1 play, 2 stop
+    std::atomic<bool> loopOn_{ true }, ownsTransport_{ false };
+    std::atomic<int>  loopFrom_{ 0 }, loopTo_{ -1 };
+    uint32_t prevRecMask_ = 0;
     std::atomic<bool> songTempo_{ false };
     std::atomic<double> ppq_{ 0.0 }, bpm_{ 120.0 }, beatsPerBar_{ 4.0 }, tempo_{ 120.0 };
     std::atomic<int64_t> trackerTick_{ 0 };

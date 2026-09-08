@@ -268,6 +268,15 @@ void ChipBoyProcessor::recordNote(const driver::NoteEvent& e, double tickAtEvent
     if (keyswitchNote(ch, bank, e.a)) return;      // it selects an instrument, it is not a cell
     const bool off = e.kind == driver::NoteEvent::NoteOff || (e.kind == driver::NoteEvent::NoteOn && e.b == 0);
     const auto& p = driver_.params(ch);
+    // The command octave (section 13): a note below C0 never sounds, it fires
+    // the channel's slots. It records as a slot-only cell at its step, which
+    // replays the same way; its note-off means nothing.
+    if (e.a < 12) {
+        if (off) return;
+        tracker::RecordMessage cmdCell;
+        if (player_.recordSlots(ch, tickAtEvent, p.cmd[0], p.cmd[1], cmdCell, /*force*/ true)) recordFifo_.push(cmdCell);
+        return;
+    }
     tracker::RecordMessage m;
     // The driver stamped this event with what the note did: the instrument it
     // loaded and whether it was plain (section 9.4).
@@ -297,7 +306,7 @@ void ChipBoyProcessor::applyRecordMessages()
             copy->phrases[size_t(slot - 1)].used = true;
             chain[m.bar] = slot;
         }
-        auto& cell = copy->phrases[size_t(slot - 1)].steps[size_t(m.step & 15)];
+        auto& cell = copy->phrases[size_t(slot - 1)].steps[size_t(m.step) % size_t(tracker::kMaxSteps)];
         // An OFF never displaces a note-on: the note there ends the last one
         // anyway (section 9.4). A command column is written only when the
         // message carries a letter, so a note and a slot change at the same
@@ -310,6 +319,27 @@ void ChipBoyProcessor::applyRecordMessages()
         if (m.cell.cmd2.cmd != bank::Cmd::None) cell.cmd2 = m.cell.cmd2;
     }
     if (copy) publishSong(std::move(copy));
+}
+
+/* ----------------------------------------------------------- song files */
+
+bool ChipBoyProcessor::loadSongFile(const File& file, SongReport& report)
+{
+    auto s = std::make_shared<tracker::Song>();          // 300 KB: never on the stack
+    if (!plugin::loadSong(file, *s, report, bankShared_.get())) return false;
+    publishSong(std::move(s), /*fromFile*/ true);
+    return true;
+}
+
+bool ChipBoyProcessor::saveSongFile(const File& file) const
+{
+    if (!songShared_ || !bankShared_) return false;
+    // The song carries the tempo it was played at -- the Song tempo
+    // parameter, as the plugin state does (section 4).
+    const auto out = std::make_unique<tracker::Song>();
+    *out = *songShared_;
+    out->tempoBpm = songTempoParam();
+    return plugin::saveSong(*out, *bankShared_, file, bankName_);
 }
 
 /* --------------------------------------------------------- the timer */
@@ -453,6 +483,15 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
             if (const auto tis = pos->getTimeInSamples()) if (*tis >= 0) hostFrame = uint64_t(*tis);
         }
     }
+    // A host that gives a beat position but no time in seconds: the song's own
+    // timeline needs a time base, and at the host's tempo the two agree. It
+    // re-anchors on a jump, so a host tempo change costs nothing (section 4).
+    if (t.valid && !t.timeValid && t.bpm > 1.0) { t.seconds = t.ppq * 60.0 / t.bpm; t.timeValid = true; }
+    // No play head, or one that offers no position: the plugin runs the song
+    // itself, on its own clock at the Song tempo (section 16). The Standalone
+    // has no play head at all, so this is what makes it play.
+    clock_.setOwnsTransport(!t.valid);
+    ownsTransport_.store(clock_.ownsTransport());
     const bool link = linkActive_;
     const int behind = prevBlock_ > 0 ? prevBlock_ : n;
     if (link && t.valid) {
@@ -463,7 +502,9 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
 
     // --- the clock: where the ticks are, and where the tracker is --------
     driver::ClockConfig cc;
-    cc.source = paramInt(pTempoSource_) != 0 ? driver::TempoSource::Song : driver::TempoSource::Host;
+    // While the plugin owns the transport the tempo is the song's: there is no
+    // host beat to follow (section 16).
+    cc.source = paramInt(pTempoSource_) != 0 || clock_.ownsTransport() ? driver::TempoSource::Song : driver::TempoSource::Host;
     cc.songTempo = songTempoParam();
     cc.songStartSeconds = song ? song->songStartSeconds : 0.0;
     cc.beatsPerBar = song ? song->beatsPerBar : 4.0;
@@ -480,12 +521,25 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     clock_.setConfig(cc);
     if (song && !song->tempoMap.empty()) clock_.setTempoMap(song->tempoMap.data(), song->tempoMap.size());
     else clock_.setTempoMap(nullptr, 0);
+    // The loop, in the song's own bars, handed over as ticks: the clock knows
+    // ticks, the song knows where its bars are (section 16).
+    {
+        const int songBarTicks = cc.source == driver::TempoSource::Song && song ? song->barTicks() : clock_.barTicks();
+        const int bars = song ? std::max(1, song->bars()) : 1;
+        const int from = std::clamp(loopFrom_.load(), 0, bars - 1);
+        const int to = loopTo_.load() < 0 ? bars : std::clamp(loopTo_.load(), from + 1, bars);
+        if (song) clock_.setLoop(loopOn_.load(), tracker::barStartTick(*song, from, songBarTicks), tracker::barStartTick(*song, to, songBarTicks));
+        else clock_.setLoop(false, 0, 0);
+    }
+    if (const int req = transportRequest_.exchange(0)) { if (req == 1) clock_.ownPlay(); else clock_.ownStop(); }
     clock_.process(t, uint32_t(n), frames_);
     const bool songSource = cc.source == driver::TempoSource::Song;
+    // Whoever owns the transport, this is whether it is running.
+    const bool playing = clock_.playing();
     // In Song mode the tracker's bars are the song's -- the same ruler the
     // tempo map was built with, so a T cell lands where the map says (9.3).
     player_.setBarTicks(songSource && song ? song->barTicks() : clock_.barTicks());
-    playing_.store(t.playing); ppq_.store(t.ppq); bpm_.store(t.bpm);
+    playing_.store(playing); ppq_.store(t.ppq); bpm_.store(t.bpm);
     beatsPerBar_.store(clock_.beatsPerBar());
     songTempo_.store(songSource); tempo_.store(clock_.bpm());
     barTicks_.store(songSource && song ? song->barTicks() : clock_.barTicks());
@@ -494,7 +548,8 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     // alive; that tick is not where the tracker is, so it is not published.
     {
         int64_t at = trackerTick_.load();
-        if (t.valid && t.playing) at = clock_.tickAtBlockStart();
+        if (playing) at = clock_.tickAtBlockStart();
+        else if (clock_.ownsTransport()) { }                          // stopped: it stands where it stopped
         else if (t.valid && !songSource) at = int64_t(std::floor(t.ppq * driver::kTicksPerBeat));
         else if (t.valid && t.timeValid) at = int64_t(std::floor(clock_.ticksAtSeconds(t.seconds)));
         trackerTick_.store(std::max<int64_t>(0, at));
@@ -577,15 +632,24 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     }
 
     // --- the tracker ----------------------------------------------------
-    uint32_t trackerMask = 0;
-    if (song) for (int ch = 0; ch < 4; ++ch) if (song->noteSource[size_t(ch)] == tracker::NoteSource::Tracker) trackerMask |= 1u << ch;
-    const bool rec = recordArm_.load() && t.playing && t.valid;
-    // Record disarmed: what was played through onto a Trk channel stops, before
-    // the lane it was borrowing starts playing its own cells again (9.1).
-    if (!rec && recWasArmed_) for (int ch = 0; ch < 4; ++ch) if (trackerMask & (1u << ch)) flushChannel(ch, events_);
-    player_.setMuteMask(rec ? trackerMask : 0);
-    driver_.setRecording(rec);
-    player_.process(clock_.ticks(), clock_.tickCount(), t.playing && t.valid, events_);
+    uint32_t trackerMask = 0, armMask = 0;
+    if (song) for (int ch = 0; ch < 4; ++ch) {
+        if (song->noteSource[size_t(ch)] == tracker::NoteSource::Tracker) trackerMask |= 1u << ch;
+        if (song->recordArm[size_t(ch)]) armMask |= 1u << ch;
+    }
+    // An armed channel records whatever it plays from; an unarmed one never
+    // does (section 14). An armed tracker channel lets the MIDI through and
+    // its lane goes quiet meanwhile; an unarmed one plays its cells.
+    const bool rec = recordArm_.load() && playing;
+    const uint32_t recMask = rec ? armMask : 0u;
+    // A channel that stops recording drops what was played through onto it,
+    // before the lane it was borrowing plays its own cells again (9.1).
+    for (int ch = 0; ch < 4; ++ch)
+        if ((prevRecMask_ & ~recMask & trackerMask) & (1u << ch)) flushChannel(ch, events_);
+    prevRecMask_ = recMask;
+    player_.setMuteMask(recMask & trackerMask);
+    driver_.setRecordMask(recMask);
+    player_.process(clock_.ticks(), clock_.tickCount(), playing, events_);
     if (rec) {
         // Ticks are the recorder's ruler too: a note lands on the step nearest
         // the tick it arrived on, and the slots are read at each step's own
@@ -595,7 +659,7 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
         for (size_t k = 0; k < clock_.tickCount(); ++k)
             for (int ch = 0; ch < 4; ++ch) {
                 int bar = 0, step = 0;
-                if ((trackerMask & (1u << ch)) && player_.stepAt(ch, tk[k].tick, bar, step)) recordSlots(ch, double(tk[k].tick));
+                if ((recMask & (1u << ch)) && player_.stepAt(ch, tk[k].tick, bar, step)) recordSlots(ch, double(tk[k].tick));
             }
     }
     recWasArmed_ = rec;
@@ -618,7 +682,7 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
         const double tickPerFrame = clock_.bpm() * driver::kTicksPerBeat / 60.0 / sampleRate_;
         const double tick0 = double(clock_.tickAtBlockStart());
         for (const auto& e : events_)
-            if (e.source == driver::NoteEvent::Midi && (trackerMask & (1u << (e.channel & 3))) && (e.kind == driver::NoteEvent::NoteOn || e.kind == driver::NoteEvent::NoteOff))
+            if (e.source == driver::NoteEvent::Midi && (recMask & (1u << (e.channel & 3))) && (e.kind == driver::NoteEvent::NoteOn || e.kind == driver::NoteEvent::NoteOff))
                 recordNote(e, tick0 + e.offset * tickPerFrame, bankNow);
     }
     applyWrites();

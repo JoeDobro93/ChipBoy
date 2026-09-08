@@ -1,9 +1,13 @@
 // chipboy_linktest -- the two plugins in one process, linked through a
 // region file (spec section 16.5). Exit code 0 when every check passes.
+#include "core/Bank/Preset.h"
 #include "plugin/main/ChipBoyProcessor.h"
 #include "plugin/shared/BankJson.h"
+#include "plugin/shared/Presets.h"
+#include "plugin/shared/SongFiles.h"
 #include "plugin/voice/VoiceProcessor.h"
 
+#include <algorithm>
 #include <cmath>
 #include <csignal>
 #include <cstdio>
@@ -349,6 +353,236 @@ int main()
         p.setRecordArm(false);
         play(60, 66, -1, 0, -1);
         check(sounding && !p.driverView().view(0).active, "disarming record stops what was playing through");
+    }
+
+    /* ---- bars, and a song file that says what bank it wants (11, 15) - */
+    stage("song files");
+    {
+        const auto aOwned = machine();
+        auto& a = *aOwned;
+        a.mutateSong([](chipboy::tracker::Song& s) {
+            s.stepsPerBar = 24;                       // a number now, not 8 or 16
+            s.barSteps = { 0, 8, 0 };                 // bar 2 is a third of a bar
+            s.recordArm = { true, false, true, false };
+            s.phrases[0].used = true;
+            s.phrases[0].steps[40].note = 64;         // a cell past the old sixteen
+            s.phrases[0].steps[40].inst = 3;
+            s.phrases[0].steps[63].cmd1 = { chipboy::bank::Cmd::V, 9, 4, 0 };
+            s.chain[0] = { 1, 1, 1 };
+            s.noteSource[0] = chipboy::tracker::NoteSource::Tracker;
+        });
+        const juce::File file = juce::File::getCurrentWorkingDirectory().getChildFile("chipboy_linktest.cbsong");
+        check(a.saveSongFile(file) && file.existsAsFile(), "a song file is written");
+        // The bank it was written with is named, and so is every instrument
+        // slot the song uses -- a load says where this bank differs.
+        const auto bOwned = machine();
+        auto& b = *bOwned;
+        b.mutateBank([](chipboy::bank::Bank& into) { into.instruments[2].name = "Something else"; });
+        SongReport report;
+        const bool loaded = b.loadSongFile(file, report);
+        const auto s = b.song();
+        check(loaded && s != nullptr, "and read back");
+        check(s && s->steps() == 24, "steps per bar is a number 1-64");
+        check(s && s->stepsOfBar(1) == 8 && s->stepsOfBar(0) == 24, "a bar's own step count round-trips");
+        check(s && s->phrases[0].steps[40].note == 64 && s->phrases[0].steps[40].inst == 3, "a cell at step 40 round-trips");
+        check(s && s->phrases[0].steps[63].cmd1.cmd == chipboy::bank::Cmd::V, "and so does one at step 63");
+        check(s && !s->recordArm[1] && !s->recordArm[3] && s->recordArm[0], "the record arms round-trip");
+        check(s && chipboy::tracker::barStartTick(*s, 2, 96) == 96 + 32, "the bar table is built when the song is published");
+        check(report.bankName == "Factory", "the song file names the bank it was written with");
+        check(report.instrumentsUsed == 1 && report.differences.size() == 1
+              && report.differences[0].contains("Something else"), "and reports the slots this bank has renamed");
+        file.deleteFile();
+
+        // A song written before format 4: sixteen dense cells, steps 8 or 16.
+        const auto oldOwned = song();
+        auto& old = *oldOwned;
+        const bool readOld = songFromJson("{\"format\":\"chipboy-song\",\"stepsPerBar\":8,"
+                                          "\"phrases\":[{\"slot\":1,\"steps\":[{},{\"n\":62},{},{\"n\":64}]}]}", old);
+        check(readOld && old.steps() == 8 && old.phrases[0].steps[1].note == 62 && old.phrases[0].steps[3].note == 64,
+              "a song written before format 4 still reads");
+        check(readOld && old.recordArm[0] && old.recordArm[3], "and its channels are all armed");
+    }
+
+    /* ---- the record arms (section 14) -------------------------------- */
+    stage("record arms");
+    {
+        const auto pOwned = machine();
+        auto& p = *pOwned;
+        p.prepareToPlay(48000.0, 512);
+        FakePlayHead head;
+        p.setPlayHead(&head);
+        // Every channel listens to every MIDI channel here, so one note
+        // reaches all four: what differs is the arm and the playback source.
+        for (int ch = 1; ch < 4; ++ch)
+            p.apvts.getParameter(channelParamId(ch, ids::source))->setValueNotifyingHost(0.0f);   // Omni
+        p.mutateSong([](chipboy::tracker::Song& s) {
+            s.noteSource[0] = chipboy::tracker::NoteSource::Tracker;   // armed: it records and sounds
+            s.noteSource[1] = chipboy::tracker::NoteSource::Tracker;   // unarmed: neither
+            s.noteSource[2] = chipboy::tracker::NoteSource::PianoRoll; // armed, and playing from MIDI
+            s.recordArm = { true, false, true, false };
+        });
+        p.setRecordArm(true);
+        juce::AudioBuffer<float> ab(2, 512);
+        juce::MidiBuffer mb2;
+        bool armedSounded = false, unarmedSounded = false;
+        for (int b = 0; b < 40; ++b) {
+            head.frame = int64_t(b) * 512;
+            mb2.clear();
+            if (b == 2) mb2.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8) 100), 0);
+            if (b == 20) mb2.addEvent(juce::MidiMessage::noteOff(1, 60), 0);
+            p.processBlock(ab, mb2);
+            if (b > 3 && b < 19) {
+                if (p.driverView().view(0).active) armedSounded = true;
+                if (p.driverView().view(1).active) unarmedSounded = true;
+            }
+            pump(1);
+        }
+        p.setRecordArm(false);
+        pump(200);
+        const auto s = p.song();
+        auto wrote = [&s](int ch) {
+            if (!s) return false;
+            for (auto slotN : s->chain[size_t(ch)])
+                if (const auto* phrase = s->phrase(slotN))
+                    for (const auto& c : phrase->steps) if (c.note == 60) return true;
+            return false;
+        };
+        check(wrote(0), "an armed channel records what it is played");
+        check(!wrote(1), "an unarmed channel never records");
+        check(wrote(2), "an armed channel records whatever its playback source is");
+        check(!wrote(3), "and an unarmed one does not, either way");
+        check(armedSounded, "an armed tracker channel lets the MIDI through while recording");
+        check(!unarmedSounded, "an unarmed tracker channel drops it");
+    }
+
+    /* ---- the command octave records as a slot-only cell (13) --------- */
+    stage("the command octave");
+    {
+        const auto pOwned = machine();
+        auto& p = *pOwned;
+        p.prepareToPlay(48000.0, 512);
+        FakePlayHead head;
+        p.setPlayHead(&head);
+        p.mutateSong([](chipboy::tracker::Song& s) { s.noteSource[0] = chipboy::tracker::NoteSource::Tracker; });
+        auto* slot = p.apvts.getParameter(channelParamId(0, ids::cmd1Type));
+        slot->setValueNotifyingHost(slot->getNormalisableRange().convertTo0to1(float(choiceFromCmd(chipboy::bank::Cmd::V))));
+        auto* x = p.apvts.getParameter(channelParamId(0, ids::cmd1X));
+        x->setValueNotifyingHost(x->getNormalisableRange().convertTo0to1(9.0f));
+        auto* y = p.apvts.getParameter(channelParamId(0, ids::cmd1Y));
+        y->setValueNotifyingHost(y->getNormalisableRange().convertTo0to1(4.0f));
+        p.setRecordArm(true);
+        juce::AudioBuffer<float> ab(2, 512);
+        juce::MidiBuffer mb2;
+        int heldPeriod = 0;
+        for (int b = 0; b < 40; ++b) {
+            head.frame = int64_t(b) * 512;
+            mb2.clear();
+            if (b == 2) mb2.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8) 100), 0);
+            if (b == 12) mb2.addEvent(juce::MidiMessage::noteOn(1, 0, (juce::uint8) 100), 0);   // the command octave
+            if (b == 20) mb2.addEvent(juce::MidiMessage::noteOff(1, 60), 0);
+            p.processBlock(ab, mb2);
+            if (b == 11) heldPeriod = p.driverView().view(0).note;
+            pump(1);
+        }
+        p.setRecordArm(false);
+        pump(200);
+        const auto s = p.song();
+        bool sawNoteZero = false, sawSlotCell = false;
+        if (s) for (auto slotN : s->chain[0])
+            if (const auto* phrase = s->phrase(slotN))
+                for (const auto& c : phrase->steps) {
+                    if (c.note == 0 && c.cmd1.cmd == chipboy::bank::Cmd::V && c.cmd1.a == 9) sawSlotCell = true;
+                    if (c.note >= 1 && c.note < 12) sawNoteZero = true;
+                }
+        check(heldPeriod == 60, "a note in the command octave leaves the held note alone");
+        check(sawSlotCell, "and records as a slot-only cell");
+        check(!sawNoteZero, "the command octave itself is never a note in a cell");
+    }
+
+    /* ---- the tracker's own transport (section 16) -------------------- */
+    stage("the tracker's own transport");
+    {
+        const auto pOwned = machine();
+        auto& p = *pOwned;
+        p.prepareToPlay(48000.0, 512);
+        p.setPlayHead(nullptr);                        // the Standalone's case
+        p.mutateSong([](chipboy::tracker::Song& s) {
+            s.noteSource[0] = chipboy::tracker::NoteSource::Tracker;
+            s.phrases[0].used = true;
+            s.phrases[0].steps[0].note = 60;
+            s.phrases[0].steps[0].inst = 1;
+            s.phrases[0].steps[8].note = 67;
+            s.phrases[0].steps[8].inst = 1;
+            s.chain[0] = { 1, 1 };
+        });
+        juce::AudioBuffer<float> ab(2, 512);
+        juce::MidiBuffer empty;
+        for (int b = 0; b < 8; ++b) p.processBlock(ab, empty);
+        check(p.ownsTransport(), "with no play head the plugin owns the transport");
+        check(!p.transportPlaying(), "and it starts stopped");
+        check(p.driverView().view(0).note == 0, "so no cell has played");
+        p.transportPlay();
+        float loudest = 0.0f;
+        int notes = 0, last = -1;
+        for (int b = 0; b < 200; ++b) {
+            p.processBlock(ab, empty);
+            const int n = p.driverView().view(0).note;
+            if (n != last && n != 0) { ++notes; last = n; }
+            loudest = std::max(loudest, peak(ab));
+        }
+        check(p.transportPlaying(), "Play runs it");
+        check(notes >= 2, "the song's cells play on the plugin's own clock");
+        check(loudest > 0.01f, "and audio comes out");
+        check(p.trackerTick() > 90, "the position follows the song's tempo");
+        // It loops: two bars, and the position comes back round.
+        p.setLoop(true);
+        p.setLoopBars(0, 2);
+        int64_t highest = 0;
+        bool wrapped = false;
+        for (int b = 0; b < 600; ++b) {
+            p.processBlock(ab, empty);
+            const int64_t at = p.trackerTick();
+            if (at + 8 < highest) wrapped = true;
+            highest = std::max(highest, at);
+        }
+        check(wrapped, "and the loop comes back round");
+        check(highest < 200, "without running past the loop's end");
+        p.transportStop();
+        for (int b = 0; b < 4; ++b) p.processBlock(ab, empty);
+        check(!p.transportPlaying(), "Stop stops it");
+        check(!p.driverView().view(0).active, "and nothing is left ringing");
+    }
+
+    /* ---- an instrument preset saves, loads and is placed (15) -------- */
+    stage("instrument presets");
+    {
+        const auto srcOwned = machine();
+        auto& src = *srcOwned;
+        src.mutateBank([](chipboy::bank::Bank& into) {
+            into.instruments[39] = chipboy::bank::Instrument::defaults(chipboy::bank::InstrumentType::Wave, "Preset lead");
+            into.instruments[39].used = true;
+            into.instruments[39].table = 20;
+            into.instruments[39].wave = 30;
+            into.tables[19].used = true; into.tables[19].name = "preset table";
+            into.tables[19].steps[0].cmd1 = { chipboy::bank::Cmd::A, 21, 0, 0 };
+            into.tables[20].used = true; into.tables[20].name = "chained table";
+            into.waves[29].used = true; into.waves[29].name = "preset wave";
+            into.waves[29].frames.assign(1, chipboy::bank::frameSaw());
+        });
+        const auto srcBank = src.bank();
+        const auto preset = chipboy::bank::collectPreset(*srcBank, 40);
+        check(preset.tables.size() == 2 && preset.waves.size() == 1, "a preset collects the table it chains and its wave");
+        const juce::String text = presetToJson(preset);
+        chipboy::bank::Preset back;
+        check(presetFromJson(text, back), "a preset writes and reads as JSON");
+        check(back.instrument.name == "Preset lead" && back.tables.size() == 2 && back.waves.size() == 1
+              && back.tables[0].first == 20 && back.waves[0].first == 30, "and comes back with its slots");
+        const auto emptyBank = std::unique_ptr<chipboy::bank::Bank>(new chipboy::bank::Bank(chipboy::bank::Bank::empty()));
+        chipboy::bank::PlaceReport placed;
+        const bool ok = chipboy::bank::placePreset(*emptyBank, back, 5, placed);
+        check(ok && emptyBank->instruments[4].used && emptyBank->instruments[4].table == 1
+              && emptyBank->instruments[4].wave == 1, "placing it renumbers what it references");
+        check(emptyBank->tables[0].steps[0].cmd1.a == 2, "and the table's own A follows its table");
     }
 
     std::printf("%s\n", failures == 0 ? "ALL PASSED" : "FAILURES");

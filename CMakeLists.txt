@@ -27,6 +27,7 @@ add_library(chipboy_core STATIC
     Source/core/Render/Renderer.cpp
     Source/core/Render/Reference.cpp
     Source/core/Bank/Bank.cpp
+    Source/core/Bank/Preset.cpp
     Source/core/Driver/Clock.cpp
     Source/core/Driver/Driver.cpp
     Source/core/Tracker/Player.cpp)
@@ -72,6 +73,7 @@ if(CHIPBOY_BUILD_TESTS)
         Tests/DriverTests.cpp
         Tests/ClockTests.cpp
         Tests/TrackerTests.cpp
+        Tests/PresetTests.cpp
         Tests/LinkTests.cpp
         Tests/HardwareTests.cpp)
     target_link_libraries(chipboy_tests PRIVATE chipboy_core chipboy_harness Catch2::Catch2WithMain)
@@ -264,6 +266,13 @@ if(CHIPBOY_BUILD_PLUGIN)
     chipboy_configure_plugin(chipboy_recordtest)
     set(CHIPBOY_MODAL_LOOPS 0)
     add_test(NAME chipboy_recordtest COMMAND chipboy_recordtest --out "${CMAKE_CURRENT_BINARY_DIR}/recordtest")
+
+    # The demo song file is the recorded pass, written through the song writer
+    # (docs/COMMANDS_AND_TEMPO.md section 16): recording the demo again must
+    # produce it byte for byte. It carries no timestamp, so it can.
+    add_test(NAME demo_song_matches COMMAND chipboy_recordtest
+             --out "${CMAKE_CURRENT_BINARY_DIR}/recordtest"
+             --check-song "${CMAKE_CURRENT_SOURCE_DIR}/Demo/ChipBoy Demo.cbsong")
 
     # --- chipboy_uishot: PNG snapshots of the windows (needs a display) ----
     juce_add_console_app(chipboy_uishot PRODUCT_NAME "chipboy_uishot")

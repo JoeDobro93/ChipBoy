@@ -192,3 +192,112 @@ TEST_CASE("a stopped transport still ticks, so live playing has tables", "[clock
     for (uint64_t f = 0; f < 48000; f += 512) { d.process(t, uint32_t(std::min<uint64_t>(512, 48000 - f)), f); m += d.tickCount(); }
     CHECK(m == 24);
 }
+
+/* --------------------------------------- the plugin's own transport (16) */
+
+namespace {
+
+/// The clock running itself: no host transport at all, as the Standalone has.
+std::vector<Tick> runOwn(Clock& c, double seconds, uint32_t block, double rate = 48000.0)
+{
+    std::vector<Tick> out;
+    const uint64_t total = uint64_t(seconds * rate);
+    const Transport none;                    // not valid: there is no host
+    for (uint64_t f = 0; f < total; f += block) {
+        const uint32_t n = uint32_t(std::min<uint64_t>(block, total - f));
+        c.process(none, n, f);
+        for (size_t k = 0; k < c.tickCount(); ++k) out.push_back({ f + c.ticks()[k].offset, c.ticks()[k].tick });
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("the plugin's own transport runs the song at the Song tempo", "[clock][transport]")
+{
+    Clock c; c.prepare(48000.0);
+    ClockConfig cfg; cfg.source = TempoSource::Host; cfg.songTempo = 120.0; cfg.beatsPerBar = 4.0;
+    c.setConfig(cfg);
+    c.setTempoMap(nullptr, 0);
+    c.setOwnsTransport(true);
+    CHECK(c.ownsTransport());
+    CHECK_FALSE(c.ownPlaying());
+
+    // Stopped, it free-runs so a live note still has tables and vibrato, and
+    // the transport reads stopped.
+    const auto idle = runOwn(c, 1.0, 512);
+    CHECK(idle.size() == 48);
+    CHECK_FALSE(c.playing());
+
+    // Playing: from the song's start, at the Song tempo whatever the source
+    // parameter says -- there is no host beat to follow.
+    c.ownPlay();
+    const auto a = runOwn(c, 1.0, 512);
+    REQUIRE(a.size() == 48);              // 120 BPM: 48 ticks a second
+    CHECK(c.playing());
+    CHECK(a[0].index == 0);
+    CHECK(a[0].frame == 0);
+    CHECK(a[24].index == 24);
+    CHECK(a[24].frame == 24000);
+    CHECK(c.tickAtBlockStart() > 40);
+
+    // The block size cannot move a tick here either.
+    Clock d; d.prepare(48000.0); d.setConfig(cfg); d.setTempoMap(nullptr, 0);
+    d.setOwnsTransport(true); d.ownPlay();
+    const auto b = runOwn(d, 1.0, 97);
+    REQUIRE(a.size() == b.size());
+    for (size_t i = 0; i < a.size(); ++i) { CHECK(a[i].frame == b[i].frame); CHECK(a[i].index == b[i].index); }
+
+    // Stopping leaves the position where it was; playing again starts over.
+    c.ownStop();
+    const auto stopped = runOwn(c, 0.5, 512);
+    CHECK_FALSE(c.playing());
+    CHECK(stopped.size() == 24);          // free-running, not the song
+    c.ownPlay();
+    const auto again = runOwn(c, 0.25, 512);
+    REQUIRE_FALSE(again.empty());
+    CHECK(again[0].index == 0);
+
+    // A slower Song tempo is a slower transport.
+    cfg.songTempo = 60.0;
+    c.setConfig(cfg); c.setTempoMap(nullptr, 0);
+    c.ownPlay();
+    CHECK(runOwn(c, 1.0, 512).size() == 24);
+}
+
+TEST_CASE("the plugin's own transport loops, keeping its place", "[clock][transport]")
+{
+    Clock c; c.prepare(48000.0);
+    ClockConfig cfg; cfg.source = TempoSource::Song; cfg.songTempo = 120.0; cfg.beatsPerBar = 4.0;
+    c.setConfig(cfg);
+    c.setTempoMap(nullptr, 0);
+    c.setOwnsTransport(true);
+    c.setLoop(true, 0, 96);               // one 4/4 bar: 96 ticks, two seconds
+    CHECK(c.loopOn());
+    c.ownPlay();
+    const auto a = runOwn(c, 3.0, 512);
+    REQUIRE(a.size() == 144);             // three seconds at 48 ticks a second
+    for (int i = 0; i < 96; ++i) { INFO("tick " << i); CHECK(a[size_t(i)].index == int64_t(i)); }
+    // The wrap is a jump in the tick stream -- what tells the Player to flush
+    // -- and it lands on the sample the next tick was due on.
+    CHECK(a[96].index == 0);
+    CHECK(a[96].frame == 96000);
+    CHECK(a[97].index == 1);
+    CHECK(a[97].frame == 97000);
+
+    // A loop that starts later starts there.
+    Clock d; d.prepare(48000.0); d.setConfig(cfg); d.setTempoMap(nullptr, 0);
+    d.setOwnsTransport(true);
+    d.setLoop(true, 96, 192);
+    d.ownPlay();
+    const auto b = runOwn(d, 2.5, 512);
+    REQUIRE(b.size() >= 120);
+    CHECK(b[0].index == 96);
+    CHECK(b[96].index == 96);             // round again
+    // Loop off: it plays straight on past the end.
+    d.setLoop(false, 96, 192);
+    d.ownPlay();
+    const auto e = runOwn(d, 3.0, 512);
+    REQUIRE(e.size() == 144);
+    CHECK(e.back().index == 143);
+}

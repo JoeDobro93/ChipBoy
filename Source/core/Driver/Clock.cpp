@@ -22,6 +22,7 @@ void Clock::reset()
     tickCount_ = 0; blockStartTick_ = 0;
     offset_ = 0.0; nextSeconds_ = 0.0; nextTick_ = 0.0; running_ = false;
     lastTickFrame_ = 0; haveFreeTick_ = false; freeTick_ = 0;
+    ownPlaying_ = false; ownSeconds_ = 0.0; isPlaying_ = false;
     mapDirty_ = true;
 }
 
@@ -117,15 +118,60 @@ void Clock::freeRun(double framesPerTick, uint32_t numSamples, uint64_t frameAbs
     }
 }
 
-void Clock::process(const Transport& t, uint32_t numSamples, uint64_t frameAbs)
+/* ------------------------------------------------- the plugin's transport */
+
+void Clock::setOwnsTransport(bool on)
+{
+    if (on == owns_) return;
+    owns_ = on;
+    ownPlaying_ = false;
+    running_ = false;
+    haveFreeTick_ = false;
+}
+
+void Clock::ownPlay()
+{
+    // From the loop's start, or the song's: a transport with no host behind it
+    // always starts where the song does (section 16).
+    ownSeconds_ = secondsAtTicks(loop_ && loopEnd_ > loopStart_ ? double(loopStart_) : 0.0);
+    ownPlaying_ = true;
+    running_ = false;                 // the next block anchors on this position
+    haveFreeTick_ = false;
+}
+
+void Clock::ownStop() { ownPlaying_ = false; running_ = false; }
+
+void Clock::setLoop(bool on, int64_t startTick, int64_t endTick)
+{
+    loop_ = on;
+    loopStart_ = std::max<int64_t>(0, startTick);
+    loopEnd_ = std::max<int64_t>(loopStart_, endTick);
+}
+
+void Clock::process(const Transport& host, uint32_t numSamples, uint64_t frameAbs)
 {
     tickCount_ = 0;
     if (mapDirty_) { if (!baseIsCell_) map_[0].bpm = clampBpm(cfg_.songTempo); rebuild(); }
 
-    const bool song = cfg_.source == TempoSource::Song;
+    Transport t = host;
+    if (owns_ && ownPlaying_ && loop_ && loopEnd_ > loopStart_ && ticksAtSeconds(ownSeconds_) >= double(loopEnd_) + 1.0) {
+        // The loop moved out from under the position (its end came back past
+        // where we are): start the pass again rather than run on.
+        ownSeconds_ = secondsAtTicks(double(loopStart_));
+        running_ = false;
+    }
+    if (owns_) {
+        // The plugin's own transport, in the shape a host's arrives in: the
+        // Song tempo, its own seconds, always a valid position (section 16).
+        t.valid = true; t.playing = ownPlaying_; t.timeValid = true;
+        t.bpm = cfg_.songTempo; t.beatsPerBar = cfg_.beatsPerBar;
+        t.seconds = ownSeconds_; t.ppq = 0.0;
+    }
+    const bool song = cfg_.source == TempoSource::Song || owns_;
     barBeats_ = song ? std::max(0.25, cfg_.beatsPerBar) : (t.valid ? std::max(0.25, t.beatsPerBar) : 4.0);
     const double hostBpm = t.valid && t.bpm > 1.0 ? t.bpm : bpm_;
     const bool playing = t.valid && t.playing && (!song || t.timeValid);
+    isPlaying_ = playing;
 
     if (!playing) {
         // Free-running, so a note played with the transport stopped still has
@@ -167,7 +213,13 @@ void Clock::process(const Transport& t, uint32_t numSamples, uint64_t frameAbs)
     running_ = true;
 
     const double tickStart = mapped + offset_;
-    const double tickEnd = ticksAtSeconds(s1) + offset_;
+    const double rawEnd = ticksAtSeconds(s1) + offset_;
+    // The plugin's own transport loops in the tick domain: this pass ends at
+    // the loop's end and the rest of the block is the next pass, from the
+    // loop's start, so the wrap keeps its place to the sample (section 16).
+    // The tick stream jumps, which is what tells the Player to flush (9.1).
+    const bool wrap = owns_ && loop_ && loopEnd_ > loopStart_ && rawEnd > double(loopEnd_);
+    const double tickEnd = wrap ? double(loopEnd_) : rawEnd;
     blockStartTick_ = int64_t(std::floor(tickStart));
     bpm_ = bpmAtTick(int64_t(std::floor(std::max(0.0, mapped))));
     // The block owns the ticks in [tickStart, tickEnd), compared in the tick
@@ -178,6 +230,18 @@ void Clock::process(const Transport& t, uint32_t numSamples, uint64_t frameAbs)
         const uint32_t off = uint32_t(std::clamp(std::floor(f + 1e-6), 0.0, double(numSamples ? numSamples - 1 : 0)));
         pushTick(off, int64_t(std::llround(k)));
     }
+    if (wrap) {
+        // The rest of the block, from the loop's start: tick loopStart is due
+        // exactly where tick loopEnd was, so nothing is lost or repeated.
+        const double sWrap = secondsAtTicks(double(loopEnd_) - offset_);
+        const double sLoop = secondsAtTicks(double(loopStart_) - offset_);
+        for (int64_t j = 0; tickCount_ < kMaxTicksPerBlock; ++j) {
+            const double f = (sWrap + (secondsAtTicks(double(loopStart_ + j) - offset_) - sLoop) - s0) * sampleRate_;
+            if (f >= double(numSamples) - 1e-6) break;
+            if (f >= -1e-6) pushTick(uint32_t(std::clamp(std::floor(f + 1e-6), 0.0, double(numSamples ? numSamples - 1 : 0))), loopStart_ + j);
+        }
+        ownSeconds_ = sLoop + (s1 - sWrap);
+    } else if (owns_) ownSeconds_ = s1;
     nextSeconds_ = s1;
     nextTick_ = tickEnd;
     freeTick_ = blockStartTick_;
