@@ -282,6 +282,17 @@ if(CHIPBOY_BUILD_PLUGIN)
              --out "${CMAKE_CURRENT_BINARY_DIR}/recordtest"
              --check-state "${CMAKE_CURRENT_SOURCE_DIR}/Demo/chipboy_demo_hybrid.state")
 
+    # The demo songs (docs/COMMANDS_AND_TEMPO.md section 24): each one opens in
+    # a tab and plays eight bars on the plugin's own transport, and what comes
+    # out is measured -- no NaN, not silent, and no channel that never moves.
+    # One test per file, so a failure names the song.
+    file(GLOB CHIPBOY_DEMO_SONGS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Demo/songs/*.cbsong")
+    foreach(song ${CHIPBOY_DEMO_SONGS})
+        get_filename_component(song_name "${song}" NAME_WE)
+        add_test(NAME demo_songs_load.${song_name} COMMAND chipboy_recordtest
+                 --out "${CMAKE_CURRENT_BINARY_DIR}/recordtest" --play-song "${song}" 8)
+    endforeach()
+
     # --- chipboy_uishot: PNG snapshots of the windows (needs a display) ----
     juce_add_console_app(chipboy_uishot PRODUCT_NAME "chipboy_uishot")
     target_sources(chipboy_uishot PRIVATE

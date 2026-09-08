@@ -25,11 +25,17 @@
 // NR51 are compared as a fifth stream, because M and O are command letters.
 // A difference prints the bar, the step, the channel and both writes.
 //
+// --play-song is a different job in the same tool (section 24): it opens a
+// song file in a tab and plays it on the plugin's own transport, listening to
+// what comes out rather than comparing two passes. It is what CTest's
+// demo_songs_load runs over Demo/songs.
+//
 //   chipboy_recordtest [--demo DIR] [--out DIR] [--dump]
 //   chipboy_recordtest --write-song FILE     write the recorded song and stop
 //   chipboy_recordtest --check-song FILE     record and compare against FILE
 //   chipboy_recordtest --write-state FILE    write the hybrid project's state
 //   chipboy_recordtest --check-state FILE    build it and compare against FILE
+//   chipboy_recordtest --play-song FILE [bars]   play a song file and hear it
 //
 // Exit code 0 when the passes agree.
 #include "plugin/main/ChipBoyProcessor.h"
@@ -436,6 +442,183 @@ bool buildHybridProject(ChipBoyProcessor& p, const juce::File& songFile, const A
     return true;
 }
 
+/* ------------------------------------------------ --play-song (section 24) */
+
+/// What one run heard: the RMS of every bar, the range the samples covered
+/// (a channel that never moves is silence or a stuck DAC) and whether the
+/// arithmetic went wrong anywhere.
+struct SongRun {
+    std::vector<double> rms;
+    double peak = 0.0;
+    double lo = 1.0e30, hi = -1.0e30;
+    bool   bad = false;             ///< a NaN or an infinity came out
+    int    badBlock = -1;
+};
+
+/// Where a song's bars sit, in ticks and in samples. Bars lie end to end from
+/// the song start and a bar may hold its own step count (section 11), so the
+/// boundaries come from the song's own table rather than from arithmetic.
+struct SongShape {
+    double  tempo = 120.0, beatsPerBar = 4.0;
+    int     barTicks = 96, steps = 16, songBars = 0;
+    std::vector<int64_t> barStartSample;   ///< bars + 1 entries
+    int64_t samples = 0;
+};
+
+/// A fresh processor with the file open in a tab of its own (section 18), the
+/// analog noise floor off and one channel soloed (-1 for the whole mix). The
+/// hiss and the display's line would make a dead channel look alive, and this
+/// is a check on the chip, so both go off (section 21).
+bool openForPlayback(ChipBoyProcessor& p, const juce::File& file, int solo, SongReport& report)
+{
+    if (!p.openSongFileInTab(file, report)) {
+        std::printf("FAIL cannot open %s as a song file\n", file.getFullPathName().toRawUTF8());
+        return false;
+    }
+    p.closeTab(0);                     // the empty tab a fresh plugin starts with
+    setParameter(p, ids::noise, 0.0);
+    setParameter(p, ids::lcd, 0.0);
+    for (int ch = 0; ch < 4; ++ch) p.setChannelSolo(ch, solo == ch);
+    return true;
+}
+
+bool playOnce(const juce::File& file, int solo, const SongShape& shape, SongRun& out)
+{
+    const auto pOwned = std::make_unique<ChipBoyProcessor>();
+    auto& p = *pOwned;
+    SongReport report;
+    if (!openForPlayback(p, file, solo, report)) return false;
+
+    p.prepareToPlay(kSampleRate, kBlock);
+    p.setLoop(false);
+    p.transportPlay();                 // no play head at all: the song's own clock (section 16)
+
+    juce::AudioBuffer<float> buffer(2, kBlock);
+    juce::MidiBuffer midi;
+    const size_t bars = shape.barStartSample.size() - 1;
+    std::vector<double> sum, count;
+    sum.assign(bars, 0.0);
+    count.assign(bars, 0.0);
+    out.rms.assign(bars, 0.0);
+    const int blocks = int((shape.samples + kBlock - 1) / kBlock);
+    size_t bar = 0;
+    for (int b = 0; b < blocks; ++b) {
+        midi.clear();
+        p.processBlock(buffer, midi);
+        const int64_t f0 = int64_t(b) * kBlock;
+        for (int i = 0; i < kBlock; ++i) {
+            const int64_t f = f0 + i;
+            if (f >= shape.samples) break;
+            while (bar + 1 < bars && f >= shape.barStartSample[bar + 1]) ++bar;
+            for (int c = 0; c < buffer.getNumChannels(); ++c) {
+                const double v = double(buffer.getSample(c, i));
+                if (!std::isfinite(v)) { if (!out.bad) out.badBlock = b; out.bad = true; continue; }
+                sum[bar] += v * v;
+                count[bar] += 1.0;
+                out.lo = std::min(out.lo, v);
+                out.hi = std::max(out.hi, v);
+                out.peak = std::max(out.peak, std::fabs(v));
+            }
+        }
+        if (b % 16 == 0) pump(1);
+    }
+    p.transportStop();
+    pump(50);
+    for (size_t i = 0; i < bars; ++i) out.rms[i] = count[i] > 0.0 ? std::sqrt(sum[i] / count[i]) : 0.0;
+    if (!p.ownsTransport()) { std::printf("FAIL the plugin did not take the transport with no play head\n"); return false; }
+    return true;
+}
+
+/// `chipboy_recordtest --play-song FILE [bars]`: the file opens in a tab, the
+/// plugin's own transport plays `bars` bars of it at the song's own tempo, and
+/// what comes out is measured -- once for the mix and once per soloed channel,
+/// since a channel's own audio is what says whether the arrangement plays.
+/// It fails on a NaN, on silence over the whole run, and on a channel whose
+/// audio never changes (it never sounded, or its DAC stood still).
+int playSong(const juce::File& file, int bars)
+{
+    constexpr double kSilence = 1.0e-4;
+    if (!file.existsAsFile()) { std::printf("FAIL %s does not exist\n", file.getFullPathName().toRawUTF8()); return 1; }
+
+    SongShape shape;
+    juce::String bankName;
+    int phrases = 0, instruments = 0;
+    juce::String sources;
+    {
+        const auto pOwned = std::make_unique<ChipBoyProcessor>();
+        auto& p = *pOwned;
+        SongReport report;
+        if (!openForPlayback(p, file, -1, report)) return 1;
+        const auto song = p.song();
+        if (song == nullptr) { std::printf("FAIL %s opened with no song\n", file.getFullPathName().toRawUTF8()); return 1; }
+        shape.tempo = std::clamp(song->tempoBpm, 40.0, 255.0);
+        shape.beatsPerBar = song->beatsPerBar;
+        shape.barTicks = song->barTicks();
+        shape.steps = song->steps();
+        shape.songBars = song->bars();
+        bankName = report.bankName;
+        instruments = report.instrumentsUsed;
+        for (int i = 0; i < tracker::kPhraseSlots; ++i) if (song->phrases[size_t(i)].used) ++phrases;
+        for (int ch = 0; ch < 4; ++ch) {
+            const auto s = song->noteSource[size_t(ch)];
+            sources += juce::String(ch ? " " : "") + juce::String(kStreamName[ch]) + "="
+                       + (s == tracker::NoteSource::Tracker ? "Trkr" : s == tracker::NoteSource::Hybrid ? "Hybrid" : "MIDI");
+        }
+        // Ticks to samples: the tick rate is tempo x 24 / 60 Hz (section 4),
+        // and the bars come from the song's own table, so a bar with its own
+        // step count is the length it really is (section 11).
+        const double samplesPerTick = 60.0 * kSampleRate / (shape.tempo * double(driver::kTicksPerBeat));
+        for (int b = 0; b <= bars; ++b)
+            shape.barStartSample.push_back(int64_t(std::llround(double(tracker::barStartTick(*song, b, shape.barTicks)) * samplesPerTick)));
+        shape.samples = shape.barStartSample.back();
+        if (shape.samples <= 0) { std::printf("FAIL %s is empty: no bars to play\n", file.getFullPathName().toRawUTF8()); return 1; }
+    }
+    std::printf("%s: %.0f BPM, %g beats/bar, %d steps/bar, %d bars, %d phrases, %d instrument slots, bank \"%s\"\n",
+                file.getFileNameWithoutExtension().toRawUTF8(), shape.tempo, shape.beatsPerBar,
+                shape.steps, shape.songBars, phrases, instruments, bankName.toRawUTF8());
+    std::printf("plays %s; %d bars = %.2f s at %.0f BPM\n", sources.toRawUTF8(), bars,
+                double(shape.samples) / kSampleRate, shape.tempo);
+
+    SongRun mix;
+    std::array<SongRun, 4> channels;
+    if (!playOnce(file, -1, shape, mix)) return 1;
+    for (int ch = 0; ch < 4; ++ch)
+        if (!playOnce(file, ch, shape, channels[size_t(ch)])) return 1;
+
+    std::printf("\nRMS per bar\n  bar      PU1      PU2      WAV      NOI      mix\n");
+    for (int b = 0; b < bars; ++b) {
+        std::printf("  %3d", b + 1);
+        for (int ch = 0; ch < 4; ++ch) std::printf("  %7.5f", channels[size_t(ch)].rms[size_t(b)]);
+        std::printf("  %7.5f\n", mix.rms[size_t(b)]);
+    }
+    std::printf("  peak");
+    for (int ch = 0; ch < 4; ++ch) std::printf("  %7.5f", channels[size_t(ch)].peak);
+    std::printf("  %7.5f\n", mix.peak);
+
+    bool ok = true;
+    for (int ch = 0; ch < 5; ++ch) {
+        const SongRun& r = ch < 4 ? channels[size_t(ch)] : mix;
+        if (!r.bad) continue;
+        std::printf("FAIL %s: a block produced a NaN or an infinity (block %d, sample %d)\n",
+                    kStreamName[ch], r.badBlock, r.badBlock * kBlock);
+        ok = false;
+    }
+    if (mix.peak < kSilence) {
+        std::printf("FAIL the whole run is silent (peak %g)\n", mix.peak);
+        ok = false;
+    }
+    for (int ch = 0; ch < 4; ++ch) {
+        const SongRun& r = channels[size_t(ch)];
+        if (r.hi - r.lo >= kSilence) continue;
+        std::printf("FAIL %s never changes across the run: it played nothing at all, or its DAC stood still (range %g)\n",
+                    kStreamName[ch], r.hi - r.lo);
+        ok = false;
+    }
+    std::printf("\n%s %s over %d bars\n", ok ? "PASSED" : "FAILED",
+                file.getFileName().toRawUTF8(), bars);
+    return ok ? 0 : 1;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -444,7 +627,8 @@ int main(int argc, char** argv)
 
     juce::File demoDir = juce::File(CHIPBOY_DEMO_DIR);
     juce::File outDir = juce::File::getCurrentWorkingDirectory().getChildFile("recordtest");
-    juce::File writeSong, checkSong, writeState, checkState;
+    juce::File writeSong, checkSong, writeState, checkState, playFile;
+    int playBars = 8;                                         // --play-song's default (section 24)
     bool dump = false;
     for (int i = 1; i < argc; ++i) {
         const juce::String key(argv[i]);
@@ -456,8 +640,21 @@ int main(int argc, char** argv)
         else if (key == "--check-song") checkSong = juce::File(juce::String(argv[++i]));
         else if (key == "--write-state") writeState = juce::File(juce::String(argv[++i]));
         else if (key == "--check-state") checkState = juce::File(juce::String(argv[++i]));
+        else if (key == "--play-song") {
+            playFile = juce::File(juce::String(argv[++i]));
+            // The bar count is optional and follows the file, so it is taken
+            // only when the next argument is a plain number.
+            if (i + 1 < argc && juce::String(argv[i + 1]).containsOnly("0123456789") && juce::String(argv[i + 1]).isNotEmpty())
+                playBars = std::clamp(juce::String(argv[++i]).getIntValue(), 1, 512);
+        }
     }
     outDir.createDirectory();
+
+    /* ---- --play-song: a song file plays, and is heard (section 24) ---- */
+    // Nothing under Demo/ is needed for this, so it runs before the demo is
+    // read: any song file, anywhere, can be played.
+    if (playFile != juce::File()) return playSong(playFile, playBars);
+
     const juce::File demoSongFile = checkSong != juce::File() ? checkSong : demoDir.getChildFile("ChipBoy Demo.cbsong");
 
     Automation aut;
