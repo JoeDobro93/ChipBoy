@@ -22,23 +22,23 @@ packed byte.
 | Letter | Name | x | y | Pulse | Wave | Noise | Persists after the note? |
 |---|---|---|---|---|---|---|---|
 | A | table | table slot 1–64, 0 stops | – | yes | yes | yes | until cleared or a new instrument loads |
-| C | chord | semitones | semitones | yes | yes | – | no (per note) |
+| C | chord | semitones — the cycle's step 2 (0, x, y; 0, x if y = 0) | semitones — step 3; 0 0 stops; one step per rate + 1 ticks | yes | yes | – | no (per note) |
 | D | delay | ticks | – | yes | yes | yes | no (per note) |
-| E | envelope | volume 0–15 | 0–7 decay speed, 8–15 attack speed (rate = y & 7) | yes | wave level 0–3 in x | yes | until cleared or a new instrument loads |
+| E | envelope | volume 0–15 | 0 and 8 hold, 1–7 decay at that rate, 9–15 attack at y − 8 | yes | wave level 0–3 in x | yes | until cleared or a new instrument loads |
 | F | frame | frame 1–16 | – | – | yes | – | until cleared or a new instrument loads |
 | G | groove | groove slot 1–16, 0 straight | – | tracker timing (Player) | | | until cleared |
 | H | hop | step 1–16 (0 stops) | – | tables only | | | – |
 | K | kill | ticks after note-on | – | yes | yes | yes | no (per note) |
-| L | slide | rate 0–15 (ticks) | – | yes | yes | – | no (per note: portamento from the previous note) |
-| M | master volume | left 0–7 | right 0–7 | global | | | until cleared |
+| L | slide | duration 0–255: ticks in Tick pitch speed, 1/360 s otherwise; 0 instant | – | yes | yes | – | no (per note: portamento from the previous note) |
+| M | master volume | left 0–15: 0–7 absolute, 8/12 no change, 9–11 up 1–3, 13–15 down 1–3 | right, the same 0–15 scheme | global | | | until cleared |
 | O | pan | 0 off, 1 L, 2 R, 3 both | – | yes | yes | yes | until cleared or a new instrument loads |
-| P | pitch offset | 0–255 → signed x − 128 period units | – | yes | yes | – | until cleared |
-| R | retrigger | every y ticks; x = volume step per retrigger (0 none) | ticks | yes | yes | yes | no (per note) |
+| P | bend speed | x − 128 per update: period units (Fast/Tick), an immediate offset (Step), or ÷16 semitones (Drum) | – | yes | yes | – | until cleared |
+| R | retrigger | 0 none, 1–7 up, 9–15 down by x − 8 | ticks between retriggers × (rate + 1); 0 once | yes | yes | yes | no (per note) |
 | S | sweep | rate 0–7 | shift 0–7, direction from the instrument unless x ≥ 128 (down) | PU1 | – | – | until cleared or a new instrument loads |
 | T | tempo | BPM 40–255 | – | song tempo (Song source only) | | | until the next T |
 | V | vibrato | speed 1–15 | depth 0–15 | yes | yes | – | until cleared or a new instrument loads |
 | W | wave | pulse: duty 0–3 (12.5/25/50/75 %); wave: wave slot 1–64 | – | duty | wave slot | – | until cleared or a new instrument loads |
-| Z | random | max | – | re-runs the other slot with a random argument up to x each note-on | | | – |
+| Z | random | re-runs the last non-Z/H command, adding 0…x to its x | …and 0…y to its y | yes | yes | yes | no (per note-on) |
 
 `Cmd::A` used to mean envelope and there was no E; that is corrected here. `B` and the
 ArduinoBoy letters (N X Q Y) are not implemented. Tables keep two commands per step
@@ -185,7 +185,10 @@ the tempo — LSDj's "synced to the music"). `y` is the depth in semitones from 
 table: 0 = ⅛, 1 = ¼, 2 = ⅜, 3 = ½, 4 = ¾, 5 = 1, 6 = 1½, 7 = 2, 8 = 2½, 9 = 3,
 10 = 3½, 11 = 4, 12 = 5, 13 = 6, 14 = 7, 15 = 8. The instrument's own Vibrato uses the
 same speed, depth and delay (delay in ticks, ChipBoy's). The phase restarts at a plain
-note-on and continues through bare notes.
+note-on and continues through bare notes. The two zeroes differ: the instrument's own
+Vibrato depth 0 means no vibrato at all (the interface shows "off"), while a `V`
+command's `y` = 0 is not off but the smallest step on LSDj's table, ⅛ semitone, as in
+LSDj itself.
 
 **L slide** (`L x`). Slides from the pitch the channel is at (mid-slide included) to
 the note of the same cell or note-on, in `x` units: ticks in Tick mode, 1/360 s
@@ -343,7 +346,10 @@ De-click are not automated in either pass.
 - **Instrument tab**: Pitch speed, Vibrato shape and direction, Command rate, Table mode
   and Overlap join the instrument cards (pulse, wave, kit; noise gets shape and Overlap).
   The window's minimum height does not grow: the fields take the space of the removed
-  Legato toggle and the cards' spare rows.
+  Legato toggle and the cards' spare rows. *As built:* the tallest card set (a pulse
+  instrument, two cards to a row) asks 474 px of the pane's 512, against 510 before;
+  kits show Pitch speed with **Drum greyed**, since the driver always plays a kit's Drum
+  as Fast.
 - **Phrases tab**: a **groove editor** — sixteen tick cells, a slot stepper (1–16), the
   total against the bar's ticks, a swing readout (`ticks[0] / (ticks[0] + ticks[1])`, LSDj's
   61 % for 8/5) and a ◀ ▶ nudge that moves one tick between the entries of every pair
@@ -351,6 +357,8 @@ De-click are not automated in either pass.
   row with the sixteen steps (LSDj's groove screen), with the grid narrowed; if the grid
   cannot give up the width, the free 560 px of the tools' second row. No new height. The
   groove preset combo (which overwrote slots 1–3) goes; the phrase's groove is chosen in
-  the grid's chip as now. Steps per bar offers 8 and 16.
+  the grid's chip as now. Steps per bar offers 8 and 16. *As built:* the preferred
+  placement won — a 164 px editor column stands right of a 980 px lane, a 12 px gap
+  between them, row for row with the sixteen steps.
 - The VEL column in the phrase grid; the Voice plugin needs nothing new (instrument
   content is bank content).

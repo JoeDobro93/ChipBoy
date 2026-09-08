@@ -53,6 +53,10 @@ Two hard rules, which apply now and to any future interoperability work (spec §
 2. **File formats may be implemented** from public documentation and observation. A
    format is not a copyrightable work. Do not lift code from `lsdpatch` or any other
    GPL-licensed LSDj tool to do it.
+3. **Behaviour may be checked against LSDj's own manual, for understanding only.** The
+   2026-09-08 addendum to [`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) (command and
+   vibrato semantics) was agreed after checking the LSDj 9.2.6 manual this way; no
+   manual text, tables or data were copied into the repository or a binary.
 
 ---
 

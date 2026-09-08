@@ -468,6 +468,13 @@ Kit streaming is the exception: refilling wave RAM every 32 samples happens far 
 than any tick (§9.8) and is scheduled in the cycle domain against the channel's actual
 consumption, the way a real driver uses a timer interrupt rather than V-blank.
 
+*Revised 2026-09-08: see [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §8:* a
+note only retriggers the instrument when the tracker's instrument column is filled, or a
+MIDI note-on does not land over another held note whose instrument it would repeat with
+Overlap set to legato; anything else is a bare note — it rewrites the period and the
+per-note commands only, leaving the envelope, table, running state and pitch clock
+exactly where they were.
+
 ### 8.3 Envelopes: two honest modes, per instrument
 
 **Hardware envelope** (default). Start volume 0–15, direction, rate 0–7. One write to
@@ -481,6 +488,13 @@ Neither is a cheat and neither is "more accurate" — they are the two things re
 drivers do. What is forbidden is a third mode that interpolates between levels.
 
 ### 8.4 Vibrato
+
+*Revised 2026-09-08: see [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §7:*
+vibrato moved onto the instrument alongside two new fields, Pitch speed and Command
+rate; shape is Triangle/Saw/Square × Down/Up rather than the four-value enum below, and
+depth is LSDj's semitone table rather than raw period units — 0 means no vibrato on the
+instrument's own field (the interface shows "off"), where a `V` command's `y` = 0 is
+LSDj's smallest step, ⅛ semitone. The table below is what was originally specified.
 
 Applied as a signed offset to the 11-bit period register, recomputed on each tick.
 
@@ -503,6 +517,12 @@ below it does not sound (C4).
 
 Slide (`L`) steps the period toward the target by a fixed increment per tick, so slides
 are faster at the top of the range than the bottom. Correct, and characteristic.
+
+*Revised 2026-09-08: see [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §7:* `L`
+now names a duration rather than a rate — ticks in Tick pitch speed, 1/360 s otherwise,
+0 instant — and `P` is a bend speed of `x − 128` per update rather than a fixed offset;
+in the instrument's Drum pitch speed both move in semitones instead of period units, for
+a kick's exponential fall.
 
 ---
 
@@ -536,7 +556,7 @@ inherited.
 | Vibrato | §8.4 | period register |
 | Transpose | on / off | Whether the table's transpose column applies |
 | Note-off behaviour | kill / release / ignore | §10.4 |
-| Retrigger | retrigger / legato | §10.5 |
+| Overlap | legato / retrig | §10.5. *Revised 2026-09-08: see [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §8:* an overlapping MIDI note on the same instrument is a bare note (pitch only) under legato, a plain retrigger under retrig. |
 
 A PULSE instrument may load on PU1 or PU2 (sweep fields are inert on PU2). WAVE and KIT
 load only on WAV; NOISE only on NOI. The UI does not offer invalid combinations.
@@ -605,13 +625,22 @@ One step per tick. At the end: loop to step 1, hop to a given step, or stop and 
 last values. A table is shared by every instrument that references it; editing it changes
 all of them, which is the point.
 
+*Revised 2026-09-08: see [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §7:* one
+row per tick is the default; a `G` inside the table sets that run's row lengths from a
+groove instead, and an instrument whose Table mode is Step advances one row per plain
+note-on instead of per tick.
+
 ### 9.6 Commands
 
 Lettering is LSDj-familiar; **behaviour is defined here**, and arguments are base 10.
 The letters and their two arguments `x` and `y` (0–255 each) are set out in
 [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §2, which supersedes this table:
 `A` is the table select, `E` is the envelope, `G` the groove, `T` the tempo, and `W` is
-duty on the pulses and the wave slot on WAV.
+duty on the pulses and the wave slot on WAV. *Revised 2026-09-08: see
+[`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §7:* `L`, `P`, `Z`, `R`, `M`, `C`
+and `E`'s argument meanings were refined there — `L` and `P` now read their speed from
+the instrument's Pitch speed, and `Z` re-runs the last non-`Z`/`H` command rather than
+just the other slot.
 
 | Cmd | x | y | Effect |
 |---|---|---|---|
@@ -892,7 +921,10 @@ visible tracker row — an instrument, a table, the four performance fields, two
 slots and three switches. The override lanes that used to sit here — wave, frame,
 detune, vibrato, arpeggio, envelope, duty, sweep, LFSR width — are gone: they live in the
 instrument, or arrive as a command (`W`, `F`, `P`, `V`, `A`/`C`, `E`, `S`). Both plugins
-carry this same set; only the main plugin has Source.
+carry this same set; only the main plugin has Source. *Revised 2026-09-08:* three of
+those letters now take their timing from the instrument rather than the command alone —
+`V`, `L` and `P` move at the rate its **Pitch speed** field sets (Fast, Tick, Step or
+Drum; see [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §7).
 
 All automatable, all discrete, all latched at note-on unless Live follow is set (§10.1).
 
@@ -955,12 +987,20 @@ project load order audible.
 - **Kit editor.** Import, trim, note map, playback rate, per-sample preview showing the
   4-bit result rather than the source.
 - **Global.** Master volume L/R, output trim, headphone noise, de-click, tick source,
-  link mode.
+  link mode. *Revised 2026-09-08: see [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md)
+  §4:* **Tempo source** (Host/Song), **Song tempo** and **Quantize notes to ticks**
+  replace the old tick source, and moved to the header bar.
 - **Phrases.** A tracker: per channel a note, instrument, table and two command columns,
   sixteen steps to a phrase, phrases chained by bar, following the host transport. A
   channel's notes come either from the piano roll (shown, not editable) or from the
   tracker; a record arm writes incoming MIDI and the current parameter values into the
   cells. Kept self-contained so a song can later leave for a playback ROM (§15.3).
+  *Revised 2026-09-08: see [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §9:* a
+  cell also carries a velocity, shown as its own column, and each phrase follows one of
+  the song's sixteen grooves — sixteen tick counts, not a pair. The recorder writes what
+  the driver actually did: the instrument the note loaded (blank when the note was
+  bare), the velocity, the table override, and the two command slots as they stood at
+  that step — so a Trk playback of the recorded song reproduces the performance.
 - **Visualizer.** A separate resizable window with the five scopes and no chrome, for
   screen capture.
 
