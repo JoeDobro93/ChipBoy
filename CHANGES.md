@@ -26,6 +26,63 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-08 — the tracker audit (engine)
+
+The engine half of the addendum's §9 (`docs/COMMANDS_AND_TEMPO.md`): the song model, the
+Player, the recorder and the processor's flushes. The groove editor and the VEL column
+in the grid are the interface stage; the phrase's groove is still chosen in the lane's
+chip, and the groove preset combo — which quietly overwrote song grooves 1–3 — is gone.
+
+**Changed:**
+
+- **A groove is sixteen tick counts**, not a pair. `Groove { uint8 ticks[16] }`, each
+  1–48 with 0 unused; the length is the leading non-zero entries and step *i* lasts
+  `ticks[i mod length]`. The counts are absolute, not scaled to the bar: a groove that
+  adds up to less than the bar leaves its last note sustaining, and a step that would
+  start at or past the bar's ticks does not fire. At eight steps per bar every entry is
+  doubled, as before. A new song holds 1 = 6 6, 2 = 7 5, 3 = 8 4, 4 = 5 7, 5 = 9 3,
+  6 = 4 4 4 and the rest straight; slot 0 is straight and not editable.
+- **Cells carry a velocity** (`vel`, 1–127, 0 meaning the default 100) and fire with it;
+  the driver saw a hard-coded 100 before. Steps per bar is 8 or 16 — 32 was offered,
+  never worked, and is read back as 16. The phrase's groove slot 16 no longer falls off
+  on load (it was clamped to 0–15), and the song file carries the sixteen ticks; the old
+  `[a, b]` form still reads, as the first two entries.
+- **The groove in force is worked out at every tick**: the G in a command slot, else the
+  last G cell that played on that channel, else the phrase's own. The stateful override
+  the Player kept could disagree with a cell that had just played; there is no latched
+  copy now. A G that arrives mid-bar re-lays the steps after it, and a step already
+  played in that bar is not played twice.
+- **The Player silences a channel with All notes off** — never a Tracker note-off, which
+  the driver's source gate drops the moment the lane changes — when the transport stops,
+  when the tick stream jumps (a locate or a loop wrap: any tick that is not the last one
+  plus one), and when the channel leaves Trk or is muted. The processor sends the same
+  flush when a channel's Source parameter changes, when the song's Trk/Roll choice flips,
+  when a Voice lets a channel go, when record disarms, and when link mode turns off —
+  where the block of MIDI held for the Voices is now drained into the block rather than
+  dropped.
+- **The tracker position the window shows follows the transport** and stands still while
+  it is stopped. The clock still free-runs so tables and vibrato stay alive with the
+  transport stopped; that tick is simply not the tracker's position.
+- **T cells and the Player agree on the bar.** The tempo map is built with the song's bar
+  ticks and the phrase's own groove, and in Song mode the Player now counts in the same
+  bar ticks, so a T lands where the map says.
+- **The recorder follows §9.4.** The instrument column is filled with what the note
+  loaded when the note was plain and left blank when it was bare, so an overlap records
+  as a bare cell and plays back bare (it used to be omitted whenever it repeated, which
+  now means something else). Velocity is recorded. Keyswitch notes are never written as
+  cells. A note-off goes to its own step, to the next one when that step is the note's
+  own, and nowhere when the step already holds a note-on that ends it anyway. The
+  command slots are read at each step's own tick on the channel's own grid — not once a
+  block at the block start with values a block stale — and a slot going to none is
+  written as the letter it reverts to: the instrument's own E F O S V W, `P 128`, `A 0`,
+  `G 0`, `M` with the master parameters, `T` with the song tempo, nothing for the
+  per-note letters. Quantising uses the recording channel's own phrase and groove, not
+  channel 0's.
+
+**Not done here, on purpose:** the groove editor, the VEL column in the phrase grid and
+the instrument's pitch fields (the interface and driver stages). A G inside a table
+still runs at one tick per row; the Player marks where the driver's setter goes.
+
 ### 2026-09-08 — the window fits a screen and stretches, tempo moves to the header (UI_DESIGN §2, §6, §7)
 
 The main window was 1180 x 760 and fixed, which the Instrument tab never fitted: it
