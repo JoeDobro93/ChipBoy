@@ -26,6 +26,133 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-08 — song tabs, hybrid playback, the noise split (engine)
+
+The third addendum ([`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md) §18–§21),
+engine side, and §11/§19 as amended: the host's time signature stays out of the tracker.
+The interface — the tab strip, the three-way PLAYS switch, the master section's one VOL
+control and the Tracker head — is the stage after this one; the window here only keeps
+building and behaving, with the PLAYS switch still a two-way control that shows Hybrid
+as MIDI and never writes over it.
+
+**Changed:**
+
+- **Song tabs (§18).** `plugin::SongTab` is `{song, bank, file, name, bankName, dirty,
+  id}` and the processor holds a list of them with an active index. `song()`, `bank()`
+  and `bankName()` are the *active* tab's, and every publish, mutate, edit, restore,
+  preset, arm and link path already went through those, so they follow the tab without
+  knowing about it. `setActiveTab(i)` sends all notes off (an atomic the audio thread
+  drains in front of the block's events), swaps the two published pointers without
+  rebuilding anything — the tempo map and the bar table were built when that song was
+  published — and hands the tab's master tempo to the Song tempo parameter. `newTab()`
+  starts an empty song on the factory bank; `closeTab(i)` refuses the last one;
+  `addTab(song, bank, name, bankName)` builds one from a song and a bank already in
+  hand. Global things stay global: model, hardware, master, noise and whine, link, the
+  tempo source, quantize and the channel Source/Level/Pan/Transpose/Velocity/Keyswitch
+  lanes are parameters, and parameters are not per tab.
+- **Undo knows which tab it belongs to.** `BankAction` and `SongAction` carry a **tab
+  id** — stable across closes, unlike an index — and `restoreBank`/`restoreSong` take
+  it, activate that tab and put the snapshot back; a step whose tab has been closed does
+  nothing rather than landing in the wrong song. `Source/plugin/ui/EditHistory.*` did
+  not change at all: the actions live in the processor, which is where the tab is known.
+- **Plugin state version 2.** A `tabs` child with one `tab` per song (name, file path,
+  bank name, bank JSON, song JSON) and `activeTab` beside it. A version-1 state — one
+  bank and one song at the root — loads as one tab.
+- **Song file format 5 (§18).** `songFileText` writes the whole bank into the file
+  (`bankData`, through the bank writer, so kits carry their samples), beside the bank's
+  name and the instrument names it already recorded. `loadSong` takes a `bank::Bank*`
+  and fills it when the file carries one, saying so in `SongReport::hasBank`; the name
+  report is then against *that* bank, which has nothing to differ from. A format-4 file
+  still loads the song alone. `openSongFileInTab()` opens a new tab — with the file's
+  own bank, or a copy of the active one for an older file and the difference report as
+  before — and `loadSongFile()` replaces the active tab's song, and its bank when the
+  file brought one, as one undo step. `Demo/ChipBoy Demo.cbsong` is regenerated: the
+  same recording, now with the factory bank inside it (104 KB → 147 KB), and
+  `demo_song_matches` still compares it byte for byte.
+- **The master tempo, both ways (§19).** `Song::tempoBpm` is the tab's master tempo.
+  `setMasterTempo(bpm)` writes the song and the Song tempo parameter as one undo step,
+  and a song snapshot restores both, so undoing a tempo edit moves the lane back with
+  it. A host moving the parameter is written back into the active song's `tempoBpm` on
+  the timer, in memory and with no undo step, which is also where the tempo map is
+  rebuilt on the new base. Activating a tab pushes its tempo into the parameter.
+  `tempoInForce()` is now `effectiveTempo()` — the name the header reads it by: the
+  host's BPM in Host mode, the song's tempo in force (its master tempo, or the T last
+  passed) in Song mode, straight from the clock, which already knows the map.
+- **The host contributes the tempo, never the signature (§11 amended, §19).**
+  `driver::Transport::beatsPerBar` is gone; `Clock::beatsPerBar()` is
+  `ClockConfig::beatsPerBar` — the song's — in both sources, and the processor no longer
+  reads `getTimeSignature()` at all. The Player's bar ticks, the loop's bar arithmetic
+  and the position readout all take `Song::barTicks()`. A DAW going 4/4 → 3/4 → 5/4
+  under a 4/4 song now moves its own bar markers and nothing else; the ticks run on, so
+  the two line back up when the DAW's bars add up to the song's. Considered: keeping the
+  host's signature in Host mode. Rejected — it silently re-cut every song's step grid at
+  the signature change, which is the bug this fixes, and the *Beats* field is the place
+  to say a song is in 3/4.
+- **Hybrid playback (§20).** `tracker::NoteSource::Hybrid = 2`, through the JSON
+  (song format 5), the plugin state and the song file. The Player fires a Hybrid
+  channel's cells but drops their note and OFF columns, sending the rest as a `Command`
+  event marked `NoteEvent::hybrid`; a cell holding nothing but a note is not sent at
+  all, and a missing phrase, a stop and a timeline jump no longer flush a Hybrid channel
+  — the note sounding on it is the player's, not the song's. In the driver a Hybrid
+  channel's `ChannelParams` are read through `effective(ch)`, which zeroes Instrument,
+  Table and both command slots, and its keyswitch and command octaves are ignored
+  whatever the parameters say; Level, Pan, Transpose and the Velocity mode still apply.
+  A hybrid cell's instrument and table columns are a *selection* for the next note-on
+  (`ksFromCell`, so the velocity bank is not applied on top) and what is sounding is not
+  reloaded; its commands are **held for the tick**: a note-on inside it takes them after
+  `fireSlots` — which is empty there — exactly as a cell's own commands, and with none
+  they land on the sounding voice at the tick's end, where a slot change would have
+  fired. A `D` among them holds them that many ticks longer; an `L` that lands with no
+  note under it waits and becomes the next note-on's portamento. The processor sorts a
+  block's events by (offset, kind): a flush, then the song's cells, then MIDI, so a cell
+  is always in front of the note-on it shapes.
+- **Recording on a Hybrid channel** writes cells as on any channel, through the
+  parameters the channel really read: no commands from the inert slots, no cell for a
+  note in the inert keyswitch or command octaves.
+- **Headphone Noise and LCD Whine are two switches (§21).** In the renderer the hiss
+  and the frame hum are `Options::noise` and the display's line and its harmonic are
+  `Options::lcd`; the phases advance whenever either is on, so switching one does not
+  move the other's, and the per-console levels are untouched. The `lcd` parameter's
+  display name is **LCD Whine** (its id and range are unchanged) and the two tooltips
+  say what each switch now covers. The test harness's one `noise` flag still means the
+  whole floor, so every existing render test measures what it did.
+- **Master volume**: no engine change. `master_l` and `master_r`, the `M` command and
+  their existing tests stand as they were; one control driving both is the interface
+  stage's.
+
+**Tests:**
+
+- Core: a MIDI note under Hybrid takes the cell's instrument and commands in the same
+  tick; a cell with no note lands on the sounding one at the tick; cell notes and OFFs
+  are ignored; the slots, the keyswitch octave and the command octave are inert; `L` is
+  the next note's portamento; a cell's `D` holds its commands back. The Player's Hybrid
+  cells keep everything but the note, and a missing phrase leaves the note alone. The
+  bar is the song's beats per bar in both tempo sources. Headphone Noise and LCD Whine
+  are independent: the line is there with the hiss off, at its measured level, and the
+  hiss is there with the whine off.
+- `chipboy_recordtest` grew a **fourth pass**: a fresh processor with the demo song in a
+  tab, all four channels Hybrid, the MIDI file, no automation lanes and only the two
+  static parameters that are not inert under Hybrid (`ch1_source`, `ch4_velocity`). Its
+  per-channel register stream equals pass 1's exactly, so MIDI plus the song in Hybrid
+  reproduces the recorded demo. `--write-state` / `--check-state` build that same
+  project and write the processor's state to `Demo/chipboy_demo_hybrid.state`, checked
+  by the new CTest `demo_state_matches`. The file is deterministic: the tool pins the
+  instance UUID and name, the tab is built from the song file's contents rather than
+  opened from it so no absolute path is stored, and nothing in the state carries a
+  timestamp.
+- `chipboy_linktest` gained the tabs (new, switch, close, undo across tabs, two tabs and
+  a version-1 state through `getStateInformation`), the format-5 round trip with its
+  bank, a format-4 file opening in a tab with a copy of the active bank and its
+  difference report, the master tempo mirroring both ways and per tab, the header's
+  readout in both tempo modes, Hybrid through the song file and the state, and a play
+  head that changes its time signature mid-song while the song's bars stand still.
+
+**Departures from the brief:** one line of `tools/demo/make_demo.py` (the embedded
+parameter table's name for `lcd`) and the one row it generates in `Demo/PARAMETERS.md`
+were changed with it, so `make_demo.py --paramdump` still reports *identical*. Nothing
+else in `tools/demo` or `Demo/*.rpp` was touched — regenerating the two `.rpp` files and
+the MIDI produces the same bytes.
+
 ### 2026-09-08 — typed fields, no wheel edits, command cells, undo (interface)
 
 A quality-of-life round on both windows. Nothing in `Source/core` or
