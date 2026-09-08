@@ -274,6 +274,14 @@ if(CHIPBOY_BUILD_PLUGIN)
              --out "${CMAKE_CURRENT_BINARY_DIR}/recordtest"
              --check-song "${CMAKE_CURRENT_SOURCE_DIR}/Demo/ChipBoy Demo.cbsong")
 
+    # The hybrid demo project's plugin state (docs/COMMANDS_AND_TEMPO.md
+    # section 20): the demo song in a tab with its own bank, four Hybrid
+    # channels and the two static parameters it needs. It carries no
+    # timestamp and no path, so it is the same bytes on any machine.
+    add_test(NAME demo_state_matches COMMAND chipboy_recordtest
+             --out "${CMAKE_CURRENT_BINARY_DIR}/recordtest"
+             --check-state "${CMAKE_CURRENT_SOURCE_DIR}/Demo/chipboy_demo_hybrid.state")
+
     # --- chipboy_uishot: PNG snapshots of the windows (needs a display) ----
     juce_add_console_app(chipboy_uishot PRODUCT_NAME "chipboy_uishot")
     target_sources(chipboy_uishot PRIVATE

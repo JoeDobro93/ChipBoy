@@ -14,7 +14,13 @@
 // from pass 1 -- with no play head at all, so the plugin's own transport runs
 // it at the Song tempo, as the Standalone does (section 16).
 //
-// The two passes are compared per channel: the same register writes, in the
+// Pass 4 is Hybrid (section 20): the demo song in a tab, all four channels
+// Hybrid, the MIDI file played and no automation at all beyond the two static
+// parameters the project needs -- the notes come from MIDI and everything
+// else from the song's cells, and it must drive the chip exactly as pass 1
+// did. The same configuration is what --write-state writes.
+//
+// The passes are compared per channel: the same register writes, in the
 // same order, with the same values, within 64 samples of each other. NR50 and
 // NR51 are compared as a fifth stream, because M and O are command letters.
 // A difference prints the bar, the step, the channel and both writes.
@@ -22,6 +28,8 @@
 //   chipboy_recordtest [--demo DIR] [--out DIR] [--dump]
 //   chipboy_recordtest --write-song FILE     write the recorded song and stop
 //   chipboy_recordtest --check-song FILE     record and compare against FILE
+//   chipboy_recordtest --write-state FILE    write the hybrid project's state
+//   chipboy_recordtest --check-state FILE    build it and compare against FILE
 //
 // Exit code 0 when the passes agree.
 #include "plugin/main/ChipBoyProcessor.h"
@@ -45,6 +53,12 @@ constexpr int     kBars = 16;            // the demo, ...
 constexpr int     kTailBars = 1;         // ... and one bar of tail
 constexpr int64_t kTimeTolerance = 64;   // samples (section 9.5)
 constexpr size_t  kContext = 8;          // writes printed either side of a difference
+
+/// The instance UUID and name the written state carries. A fresh processor
+/// makes a random UUID; pinning it is what makes the file the same bytes
+/// every run (section 20).
+constexpr const char* kStateUuid = "3E9C1B44-5D2A-4F17-9C63-C1B0A7E5D820";
+constexpr const char* kStateName = "ChipBoy 1";
 
 /* ------------------------------------------------------------ the host */
 
@@ -200,7 +214,18 @@ struct RunOptions {
     const std::vector<TimedMessage>* midi = nullptr;   // null: no MIDI at all
     bool holdAtBarOne = false;                         // lanes frozen at their bar-1 value
     bool ownTransport = false;                         // no play head: the plugin runs itself
+    bool noLanes = false;                              // no automation lane is written at all
+    bool skipInertLanes = false;                       // Hybrid: no Instrument / Table / CMD / keyswitch statics
 };
+
+/// The static parameters a Hybrid channel does not read (section 20): its
+/// Instrument, Table and command slots and its keyswitch octave are inert, so
+/// the hybrid pass leaves them alone and the song's cells do the work.
+bool inertUnderHybrid(const juce::String& id)
+{
+    return id.contains("keyswitch") || id.contains("instrument") || id.contains("table")
+           || id.contains("cmd1") || id.contains("cmd2");
+}
 
 double beatOfSample(int64_t sample, double bpm) { return double(sample) / kSampleRate * bpm / 60.0; }
 
@@ -214,7 +239,8 @@ void run(ChipBoyProcessor& p, const Automation& aut, const RunOptions& opt, Capt
     head.bpm = aut.bpm;
     if (!opt.ownTransport) p.setPlayHead(&head);
     p.setWriteLog(&log);
-    for (const auto& s : aut.statics) setParameter(p, s.first, s.second);
+    for (const auto& s : aut.statics)
+        if (!(opt.skipInertLanes && inertUnderHybrid(s.first))) setParameter(p, s.first, s.second);
     if (opt.record) p.setRecordArm(true);
     if (opt.ownTransport) {
         // The Standalone's case (section 16): no host transport, so the
@@ -236,8 +262,9 @@ void run(ChipBoyProcessor& p, const Automation& aut, const RunOptions& opt, Capt
         // is in force at the tick it names -- that block's first tick, since
         // ticks are 1000 samples apart at 120 BPM and blocks are 512.
         const double blockEndBeat = beatOfSample(f0 + kBlock - 1, aut.bpm);
-        for (const auto& lane : aut.lanes)
-            setParameter(p, lane.id, lane.at(opt.holdAtBarOne ? 0.0 : blockEndBeat));
+        if (!opt.noLanes)
+            for (const auto& lane : aut.lanes)
+                setParameter(p, lane.id, lane.at(opt.holdAtBarOne ? 0.0 : blockEndBeat));
 
         midi.clear();
         if (opt.midi != nullptr)
@@ -383,6 +410,32 @@ bool compare(const Capture& a, const Capture& b, double bpm)
     return true;
 }
 
+/// The hybrid project (section 20): the demo song in a tab with the bank the
+/// file carries, all four channels Hybrid, and the two static parameters the
+/// project needs -- the MIDI channel PU1 listens on and NOI's velocity mode.
+/// Everything else the demo used is inert under Hybrid or a default.
+///
+/// The tab is built from the file's contents rather than opened from it, so
+/// the state this writes holds no absolute path and is the same bytes on any
+/// machine.
+bool buildHybridProject(ChipBoyProcessor& p, const juce::File& songFile, const Automation& aut, bool statics)
+{
+    const auto song = std::make_unique<tracker::Song>();      // 300 KB: never on the stack
+    const auto bank = std::make_unique<bank::Bank>();
+    SongReport report;
+    if (!loadSong(songFile, *song, report, nullptr, bank.get())) return false;
+    if (!report.hasBank) { std::printf("FAIL %s carries no bank; it is not a format-5 song file\n", songFile.getFullPathName().toRawUTF8()); return false; }
+    p.addTab(std::shared_ptr<const tracker::Song>(new tracker::Song(*song)),
+             std::shared_ptr<const bank::Bank>(new bank::Bank(*bank)),
+             songFile.getFileNameWithoutExtension(), report.bankName);
+    p.closeTab(0);                                            // the empty tab a fresh plugin starts with
+    p.mutateSong([](tracker::Song& s) { for (auto& n : s.noteSource) n = tracker::NoteSource::Hybrid; });
+    if (statics)
+        for (const auto& s : aut.statics)
+            if (!inertUnderHybrid(s.first)) setParameter(p, s.first, s.second);
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -391,7 +444,7 @@ int main(int argc, char** argv)
 
     juce::File demoDir = juce::File(CHIPBOY_DEMO_DIR);
     juce::File outDir = juce::File::getCurrentWorkingDirectory().getChildFile("recordtest");
-    juce::File writeSong, checkSong;
+    juce::File writeSong, checkSong, writeState, checkState;
     bool dump = false;
     for (int i = 1; i < argc; ++i) {
         const juce::String key(argv[i]);
@@ -401,12 +454,15 @@ int main(int argc, char** argv)
         else if (key == "--out") outDir = juce::File(juce::String(argv[++i]));
         else if (key == "--write-song") writeSong = juce::File(juce::String(argv[++i]));
         else if (key == "--check-song") checkSong = juce::File(juce::String(argv[++i]));
+        else if (key == "--write-state") writeState = juce::File(juce::String(argv[++i]));
+        else if (key == "--check-state") checkState = juce::File(juce::String(argv[++i]));
     }
     outDir.createDirectory();
     const juce::File demoSongFile = checkSong != juce::File() ? checkSong : demoDir.getChildFile("ChipBoy Demo.cbsong");
 
     Automation aut;
     const auto autFile = demoDir.getChildFile("chipboy_demo_automation.json");
+
     if (!loadAutomation(autFile, aut)) {
         std::printf("FAIL cannot read %s\n", autFile.getFullPathName().toRawUTF8());
         return 1;
@@ -418,6 +474,39 @@ int main(int argc, char** argv)
     }
     std::printf("demo: %d MIDI events, %d static parameters, %d automation lanes\n",
                 int(midi.size()), int(aut.statics.size()), int(aut.lanes.size()));
+
+    /* ---- the hybrid project's plugin state (section 20) -------------- */
+    if (writeState != juce::File() || checkState != juce::File()) {
+        const auto pOwned = std::make_unique<ChipBoyProcessor>();
+        auto& p = *pOwned;
+        p.setInstanceUuid(kStateUuid);
+        p.setInstanceName(kStateName);
+        if (!buildHybridProject(p, demoDir.getChildFile("ChipBoy Demo.cbsong"), aut, /*statics*/ true)) return 1;
+        juce::MemoryBlock state;
+        p.getStateInformation(state);
+        const juce::File target = writeState != juce::File() ? writeState : checkState;
+        if (writeState != juce::File()) {
+            if (!target.replaceWithData(state.getData(), state.getSize())) {
+                std::printf("FAIL cannot write %s\n", target.getFullPathName().toRawUTF8());
+                return 1;
+            }
+            std::printf("wrote %s (%d bytes, %d tabs)\n", target.getFullPathName().toRawUTF8(), int(state.getSize()), p.tabCount());
+            return 0;
+        }
+        if (!target.existsAsFile()) { std::printf("FAIL %s does not exist; write it with --write-state\n", target.getFullPathName().toRawUTF8()); return 1; }
+        juce::MemoryBlock have;
+        target.loadFileAsData(have);
+        if (have != state) {
+            const juce::File wrote = outDir.getChildFile("hybrid.state");
+            wrote.replaceWithData(state.getData(), state.getSize());
+            std::printf("FAIL %s is not the state this build writes\n", target.getFullPathName().toRawUTF8());
+            std::printf("     the file is %d bytes, this build's is %d; it is at %s\n",
+                        int(have.getSize()), int(state.getSize()), wrote.getFullPathName().toRawUTF8());
+            return 1;
+        }
+        std::printf("PASSED the hybrid project's state matches (%d bytes)\n", int(state.getSize()));
+        return 0;
+    }
 
     /* ---- pass 1: play the demo in, record it ------------------------- */
     juce::String recorded, songFile;
@@ -517,14 +606,35 @@ int main(int argc, char** argv)
         if (dump) dumpWrites(outDir.getChildFile("writes_own.txt"), ownPass, aut.bpm);
     }
 
+    /* ---- pass 4: MIDI plus the song in Hybrid (section 20) ------------ */
+    // The demo song loaded in a tab, all four channels Hybrid, the MIDI file
+    // played and nothing automated: the notes come from MIDI, the instruments
+    // and the commands from the cells, and the chip must see pass 1 again.
+    Capture hybridPass;
+    {
+        const auto pOwned = std::make_unique<ChipBoyProcessor>();
+        auto& p = *pOwned;
+        if (!buildHybridProject(p, demoSongFile, aut, /*statics*/ false)) return 1;
+        std::printf("hybrid: %d tab(s), the song's own bank, four Hybrid channels\n", p.tabCount());
+        std::vector<driver::RegWrite> log;
+        log.reserve(1u << 20);
+        RunOptions opt;
+        opt.midi = &midi;
+        opt.noLanes = true;
+        opt.skipInertLanes = true;
+        run(p, aut, opt, hybridPass, log);
+        if (dump) dumpWrites(outDir.getChildFile("writes_hybrid.txt"), hybridPass, aut.bpm);
+    }
+
     /* ---- compare ----------------------------------------------------- */
     const bool ok = compare(recordPass, replayPass, aut.bpm)
-                    && (!ranOwn || compare(recordPass, ownPass, aut.bpm));
+                    && (!ranOwn || compare(recordPass, ownPass, aut.bpm))
+                    && compare(recordPass, hybridPass, aut.bpm);
     std::printf("\nregister writes per channel\n");
     for (int s = 0; s < kStreams; ++s)
-        std::printf("  %-7s record %6d   replay %6d   song file %6d\n", kStreamName[s],
+        std::printf("  %-7s record %6d   replay %6d   song file %6d   hybrid %6d\n", kStreamName[s],
                     int(recordPass.streams[size_t(s)].size()), int(replayPass.streams[size_t(s)].size()),
-                    int(ownPass.streams[size_t(s)].size()));
+                    int(ownPass.streams[size_t(s)].size()), int(hybridPass.streams[size_t(s)].size()));
     std::printf("output RMS per bar\n");
     for (size_t bar = 0; bar < recordPass.rmsPerBar.size(); ++bar)
         std::printf("  bar %2d   record %.5f   replay %.5f\n", int(bar) + 1,
