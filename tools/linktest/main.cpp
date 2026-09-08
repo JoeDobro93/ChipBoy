@@ -15,8 +15,10 @@ int failures = 0;
 void check(bool ok, const char* what)
 {
     std::printf("%s  %s\n", ok ? "ok  " : "FAIL", what);
+    std::fflush(stdout);   // a crash must not eat the lines before it (CI pipes stdout)
     if (!ok) ++failures;
 }
+void stage(const char* what) { std::printf("--   %s\n", what); std::fflush(stdout); }
 
 struct FakePlayHead : juce::AudioPlayHead {
     int64_t frame = 0; bool playing = true;
@@ -45,8 +47,12 @@ float peak(const juce::AudioBuffer<float>& b)
 
 int main()
 {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    stage("juce init");
     juce::ScopedJuceInitialiser_GUI init;
+    stage("main processor");
     ChipBoyProcessor main;
+    stage("voice processor");
     VoiceProcessor voice;
     main.apvts.getParameter(ids::linkMode)->setValueNotifyingHost(1.0f);
     main.prepareToPlay(48000.0, 512);
@@ -54,10 +60,12 @@ int main()
     FakePlayHead ph;
     main.setPlayHead(&ph); voice.setPlayHead(&ph);
 
+    stage("first pump");
     pump(350);
     check(main.linkActive(), "link mode publishes the instance");
     check(main.getLatencySamples() == main.latencyFrames() + 512, "latency = renderer + one block");
 
+    stage("voice claims PU2");
     voice.setTarget(main.instanceUuid(), 1);   // PU2
     pump(400);
     check(voice.link().status() == LinkClient::Status::Linked, "the Voice claims PU2");
