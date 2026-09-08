@@ -11,6 +11,7 @@
 #include "core/Link/LinkLayout.h"
 #include "core/Tracker/Song.h"
 #include "plugin/shared/ScopeBuffers.h"
+#include "plugin/ui/EditHistory.h"
 #include "plugin/ui/Theme.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -23,8 +24,9 @@
 namespace chipboy::ui {
 
 /// A discrete rotary control with its label underneath and the value text
-/// on the dial (the mockup's .knob: 50 px dial). Drag or mouse-wheel steps
-/// by whole values; double-click resets to the default.
+/// on the dial (the mockup's .knob: 50 px dial). Dragging steps by whole
+/// values; a double click opens the value for typing and Alt with it puts
+/// the default back. The wheel never edits (UI_DESIGN section 2.1).
 class Knob : public juce::Component, public juce::SettableTooltipClient {
 public:
     explicit Knob(const juce::String& label = {});
@@ -40,7 +42,7 @@ public:
     static constexpr int kDial = 50, kHeight = 70, kWidth = 64;
     void resized() override; void paint(juce::Graphics&) override;
     void mouseDown(const juce::MouseEvent&) override; void mouseDrag(const juce::MouseEvent&) override; void mouseUp(const juce::MouseEvent&) override;
-    void mouseDoubleClick(const juce::MouseEvent&) override; void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    void mouseDoubleClick(const juce::MouseEvent&) override;
     bool keyPressed(const juce::KeyPress&) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;
@@ -71,6 +73,8 @@ private:
 };
 
 /// [-] value [+] (the mockup's .stepper). Whole values, hardware ranges.
+/// The readout is a typed field: click it and type, Enter commits, Escape
+/// cancels, and the wheel never edits (UI_DESIGN section 2.1).
 class Stepper : public juce::Component, public juce::SettableTooltipClient {
 public:
     Stepper();
@@ -81,15 +85,22 @@ public:
     int value() const;
     void setTextFunction(std::function<juce::String(int)> fn);
     void setWraps(bool wraps);
-    /// Typed entry, the grids' convention: digits build a value, Backspace
-    /// clears it. Off by default, so a stepper that only steps stays that way.
+    /// Digits typed straight at the readout, the grids' convention: they
+    /// build a value and Backspace clears it. On everywhere; turning it off
+    /// leaves a stepper that only steps and only takes the inline box.
     void setTyped(bool typed);
+    /// How the inline box reads and parses when the readout is not a plain
+    /// number in the field's own units (the song start, held in tenths of a
+    /// second). Both or neither.
+    void setEntryFormat(std::function<juce::String(int)> toText, std::function<bool(const juce::String&, int&)> fromText);
+    /// Open the inline box on the readout, as a click on it does.
+    void beginTypedEntry();
     std::function<void(int)> onChange;
     static constexpr int kHeight = 24;
     int preferredWidth() const;           ///< 80: two 22 px buttons and a 34 px readout
     void resized() override; void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
-    void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    void mouseUp(const juce::MouseEvent&) override; void mouseDoubleClick(const juce::MouseEvent&) override;
     bool keyPressed(const juce::KeyPress&) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;
@@ -116,13 +127,15 @@ private:
 };
 
 /// The one continuous control: a vertical fader with a dB readout (the
-/// output trim, C3). Attach to the "trim" parameter.
+/// output trim, C3). Attach to the "trim" parameter. A double click on the
+/// readout types a value; the wheel never edits.
 class Fader : public juce::Component, public juce::SettableTooltipClient {
 public:
     Fader();
     ~Fader() override;
     void attach(juce::RangedAudioParameter& p);
     void resized() override; void paint(juce::Graphics&) override;
+    void mouseDoubleClick(const juce::MouseEvent&) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
@@ -212,7 +225,7 @@ public:
     static constexpr int preferredHeight() { return kHeaderHeight + bank::kTableSteps * kRowHeight; }
     void resized() override; void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
-    void mouseDoubleClick(const juce::MouseEvent&) override; void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    void mouseDoubleClick(const juce::MouseEvent&) override;
     bool keyPressed(const juce::KeyPress&) override; void focusGained(FocusChangeType) override; void focusLost(FocusChangeType) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;
@@ -233,11 +246,17 @@ public:
     ~PhraseGrid() override;
     /// The song, the bar to show, and how many steps that bar holds.
     void setSong(std::shared_ptr<const tracker::Song> song, int bar);
+    /// The bank the right-click lists read: the instruments and tables a
+    /// cell can name, by slot and name (UI_DESIGN section 2.1).
+    void setBank(std::shared_ptr<const bank::Bank> bank);
     int bar() const;
     int steps() const;                                         ///< rows on show, 1-64
     void setPlayingStep(int ch, int step);                     ///< -1 none
     void setRollNote(int ch, int midiNote);                    ///< the piano roll's current note, greyed; -1 none
     std::function<void(int ch, int step, const tracker::Cell&)> onCellChange;
+    /// The cursor left the cell it was typing into: what follows is a new
+    /// undo, not more of the same one.
+    std::function<void()> onEntryEnd;
     std::function<void(int ch, tracker::NoteSource)> onSourceChange;
     std::function<void(int ch, int groove)> onGrooveChange;    ///< per-phrase groove slot, 0 straight
     std::function<void(int ch, bool armed)> onArmChange;       ///< the channel's record arm (section 14)
@@ -253,7 +272,7 @@ public:
     static constexpr int preferredHeight() { return heightForSteps(kVisibleSteps); }
     void resized() override; void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
-    void mouseDoubleClick(const juce::MouseEvent&) override; void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    void mouseDoubleClick(const juce::MouseEvent&) override;
     bool keyPressed(const juce::KeyPress&) override; void focusGained(FocusChangeType) override; void focusLost(FocusChangeType) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;
@@ -270,6 +289,9 @@ public:
     ~ChainColumn() override;
     void setSong(std::shared_ptr<const tracker::Song> song, int selectedBar, int playingBar);
     std::function<void(int bar)> onSelectBar;
+    /// A run of edits the cursor keeps inside is one undo, so the panel is
+    /// told when a typed value is finished with (a click, a cursor move).
+    std::function<void()> onEntryEnd;
     std::function<void(int ch, int bar, int phraseSlot)> onChainChange;   ///< 0 clears
     std::function<void(int bar, int steps)> onBarStepsChange;             ///< 0 = the song's default
     juce::String getTooltip() override;

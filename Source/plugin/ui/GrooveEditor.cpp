@@ -15,18 +15,6 @@ constexpr int kNudgeW = 20, kNudgeH = 18, kNudgeY = 28;
 constexpr int kHeadRow = 26;          ///< as the grid's header splits: name row, caption row
 constexpr float kPixelsPerTick = 6.0f;   ///< a value drag, as the knob's travel reads
 
-/// Whole steps from a wheel, as the other controls read it: a notch is a
-/// step, a trackpad accumulates.
-int wheelSteps(const juce::MouseWheelDetails& w, float& acc)
-{
-    if (std::abs(w.deltaY) < 1.0e-6f) return 0;
-    if (!w.isSmooth) { acc = 0.0f; return w.deltaY > 0.0f ? 1 : -1; }
-    acc += w.deltaY;
-    const int steps = int(acc / 0.1f);
-    acc -= float(steps) * 0.1f;
-    return steps;
-}
-
 /// Multi-digit typing, the grids' convention: a digit that would overflow
 /// starts a new entry, and two digits fill a cell in either display base.
 struct Entry {
@@ -65,7 +53,6 @@ struct GrooveEditor::Impl {
     int cursor = 0, hover = -1, hoverNudge = -1;
     int dragRow = -1, dragFrom = 0;
     Entry entry;
-    float wheelAcc = 0.0f;
 
     explicit Impl(GrooveEditor& o) : owner(o)
     {
@@ -329,6 +316,7 @@ void GrooveEditor::mouseDown(const juce::MouseEvent& e)
     if (row != im.cursor) { im.cursor = row; im.entry.reset(); }
     im.dragRow = row;
     im.dragFrom = im.groove().ticks[size_t(row)];
+    if (im.editable() && onGesture) onGesture(true);
     repaint();
 }
 void GrooveEditor::mouseDrag(const juce::MouseEvent& e)
@@ -337,6 +325,13 @@ void GrooveEditor::mouseDrag(const juce::MouseEvent& e)
     if (im.dragRow < 0 || !im.editable()) return;
     im.entry.reset();
     im.setTick(im.dragRow, im.dragFrom + juce::roundToInt(-float(e.getDistanceFromDragStartY()) / kPixelsPerTick));
+}
+/// A drag down one cell is one edit however many ticks it passed through.
+void GrooveEditor::mouseUp(const juce::MouseEvent&)
+{
+    if (impl_->dragRow < 0) return;
+    impl_->dragRow = -1;
+    if (onGesture) onGesture(false);
 }
 void GrooveEditor::mouseDoubleClick(const juce::MouseEvent& e)
 {
@@ -350,18 +345,6 @@ void GrooveEditor::mouseDoubleClick(const juce::MouseEvent& e)
     grabKeyboardFocus();
     repaint();
 }
-void GrooveEditor::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
-{
-    auto& im = *impl_;
-    const int row = im.rowAt(e.getPosition());
-    if (row < 0 || !im.editable()) return;
-    const int steps = wheelSteps(w, im.wheelAcc);
-    if (steps == 0) return;
-    im.cursor = row;
-    im.entry.reset();
-    im.setTick(row, im.groove().ticks[size_t(row)] + steps);
-}
-
 bool GrooveEditor::keyPressed(const juce::KeyPress& k)
 {
     auto& im = *impl_;

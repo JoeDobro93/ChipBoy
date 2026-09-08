@@ -18,14 +18,19 @@
 
 namespace chipboy::plugin {
 
-class VoiceEditor : public juce::AudioProcessorEditor, private juce::Timer
+class VoiceEditor : public juce::AudioProcessorEditor, public ui::EditHistoryHost, private juce::Timer
 {
 public:
     explicit VoiceEditor(VoiceProcessor& p);
     ~VoiceEditor() override;
 
+    /// Every control here writes its edits on the Voice's own history: its
+    /// parameters and its local instrument (UI_DESIGN section 2.1).
+    ui::EditHistory& editHistory() override { return processor_.history(); }
+
     void paint(juce::Graphics&) override;
     void resized() override;
+    bool keyPressed(const juce::KeyPress&) override;
 
 private:
     void timerCallback() override;
@@ -81,7 +86,7 @@ private:
     ui::Stepper level_, transpose_, table_;
     ui::Segmented pan_;
     juce::ComboBox velocity_;
-    std::unique_ptr<juce::ComboBoxParameterAttachment> velocityAttachment_;
+    std::unique_ptr<juce::ParameterAttachment> velocityAttachment_;
     ui::CommandSlot cmd1_, cmd2_;
     ui::Toggle liveFollow_, keyswitch_;
     std::array<juce::Rectangle<int>, 5> labelAreas_{};

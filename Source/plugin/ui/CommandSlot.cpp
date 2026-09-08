@@ -94,6 +94,9 @@ CommandSlot::CommandSlot(const juce::String& label, plugin::ChannelKind kind)
     : impl_(std::make_unique<Impl>(*this, label, kind))
 {
     auto& im = *impl_;
+    // The wheel never edits: a letter is chosen, not scrolled past
+    // (UI_DESIGN section 2.1). The arguments are Steppers, which are typed.
+    im.type.setScrollWheelEnabled(false);
     addAndMakeVisible(im.type);
     for (auto& a : im.arg) addAndMakeVisible(a);
     im.buildMenu();
@@ -124,16 +127,27 @@ void CommandSlot::attach(juce::RangedAudioParameter& type, juce::RangedAudioPara
     im.typeAtt->sendInitialUpdate();
     // Picking a letter here does what picking one in a cell does: it arrives
     // with the arguments a fresh command has.
-    im.type.onChange = [this] {
+    im.type.onChange = [this, typeParam = &type, xParam = &x, yParam = &y] {
         auto& in = *impl_;
         const int id = in.type.getSelectedId();
         if (id < 1 || id - 1 == in.choice) return;
         const auto cmd = plugin::cmdFromChoice(id - 1);
-        in.typeAtt->setValueAsCompleteGesture(float(id - 1));
-        if (cmd == bank::Cmd::None) return;
-        const auto def = plugin::defaultCommand(cmd);
-        in.argAtt[0]->setValueAsCompleteGesture(float(def.a));
-        in.argAtt[1]->setValueAsCompleteGesture(float(def.b));
+        auto* history = historyFor(*this);
+        // The letter and the arguments it brings with it are one edit.
+        if (history != nullptr) history->beginGesture(typeParam->getName(64));
+        const auto set = [&](juce::RangedAudioParameter& p, juce::ParameterAttachment& att, float v) {
+            if (history != nullptr) history->setParameter(p, v);
+            else att.setValueAsCompleteGesture(v);
+        };
+        set(*typeParam, *in.typeAtt, float(id - 1));
+        if (cmd != bank::Cmd::None) {
+            // The letter arrives with what a fresh command of it holds,
+            // clamped by the parameters' own ranges.
+            const auto def = plugin::defaultCommand(cmd);
+            set(*xParam, *in.argAtt[0], float(def.a));
+            set(*yParam, *in.argAtt[1], float(def.b));
+        }
+        if (history != nullptr) history->endGesture();
     };
 }
 

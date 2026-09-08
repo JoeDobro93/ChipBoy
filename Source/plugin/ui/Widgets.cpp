@@ -30,20 +30,113 @@ struct Binding {
     }
     bool attached() const { return attachment != nullptr; }
     juce::String text(int v) const { return param->getText(param->convertTo0to1(float(v)), 32); }
-    void push(int v) { attachment->setValueAsCompleteGesture(float(v)); }
+    /// Every hand-made move goes through the window's history, so the host
+    /// sees the change and Ctrl+Z can take it back (UI_DESIGN section 2.1).
+    void push(const juce::Component& owner, int v)
+    {
+        if (auto* history = historyFor(owner)) history->setParameter(*param, float(v));
+        else attachment->setValueAsCompleteGesture(float(v));
+    }
     int span() const { return juce::jmax(1, hi - lo); }
 };
 
-/// Whole steps from a wheel: a notch is always a step, a trackpad accumulates.
-int wheelSteps(const juce::MouseWheelDetails& w, float& acc)
+/// A typed whole number, in the display's base. A leading minus is only a
+/// number where the range goes below zero; anything else is refused and the
+/// field keeps what it had (UI_DESIGN section 2.1).
+bool parseTypedInt(const juce::String& text, int lo, int hi, int& out)
 {
-    if (std::abs(w.deltaY) < 1.0e-6f) return 0;
-    if (!w.isSmooth) { acc = 0.0f; return w.deltaY > 0.0f ? 1 : -1; }
-    acc += w.deltaY;
-    const int steps = int(acc / 0.1f);
-    acc -= float(steps) * 0.1f;
-    return steps;
+    const juce::String t = text.trim().removeCharacters(" ");
+    if (t.isEmpty()) return false;
+    const bool hex = ValueFormat::hex();
+    int i = 0;
+    bool negative = false;
+    const auto first = t[0];
+    if (first == '-' || first == juce::juce_wchar(0x2212)) { if (lo >= 0) return false; negative = true; i = 1; }
+    else if (first == '+') i = 1;
+    if (i >= t.length()) return false;
+    int64_t v = 0;
+    for (; i < t.length(); ++i) {
+        const auto c = t[i];
+        int d = -1;
+        if (c >= '0' && c <= '9') d = int(c - '0');
+        else if (hex && c >= 'a' && c <= 'f') d = int(c - 'a') + 10;
+        else if (hex && c >= 'A' && c <= 'F') d = int(c - 'A') + 10;
+        if (d < 0) return false;
+        v = v * (hex ? 16 : 10) + int64_t(d);
+        if (v > 1000000) v = 1000000;              // a long paste cannot overflow
+    }
+    out = juce::jlimit(lo, hi, int(negative ? -v : v));
+    return true;
 }
+
+/// The same for the one continuous control: a decimal number, always base
+/// ten -- decibels are not a register.
+bool parseTypedFloat(const juce::String& text, float lo, float hi, float& out)
+{
+    juce::String t = text.trim().removeCharacters(" ").replaceCharacter(juce::juce_wchar(0x2212), '-').replaceCharacter(',', '.');
+    t = t.upToFirstOccurrenceOf("dB", false, true).trim();
+    if (t.isEmpty()) return false;
+    int i = (t[0] == '-' || t[0] == '+') ? 1 : 0;
+    if (i >= t.length()) return false;
+    int dots = 0;
+    for (int k = i; k < t.length(); ++k) {
+        const auto c = t[k];
+        if (c == '.') { if (++dots > 1) return false; continue; }
+        if (c < '0' || c > '9') return false;
+    }
+    out = juce::jlimit(lo, hi, t.getFloatValue());
+    return true;
+}
+
+/// The inline box a number opens: click or double-click into the value,
+/// Enter commits, Escape cancels, focus loss commits. One per control, kept
+/// alive and hidden, so committing from inside its own focus callback is
+/// safe (UI_DESIGN section 2.1).
+struct TypedEntry {
+    std::unique_ptr<juce::TextEditor> editor;
+    std::function<void(const juce::String&)> commit;
+    bool open = false;
+
+    void begin(juce::Component& owner, juce::Rectangle<int> area, const juce::String& text,
+               juce::Justification j, std::function<void(const juce::String&)> onCommit)
+    {
+        if (area.getWidth() < 8 || area.getHeight() < 8) return;
+        if (editor == nullptr) {
+            editor = std::make_unique<juce::TextEditor>();
+            editor->setFont(Fonts::mono(12.0f));
+            editor->setBorder(juce::BorderSize<int>(0));
+            editor->setIndents(3, 1);
+            editor->setSelectAllWhenFocused(true);
+            editor->setPopupMenuEnabled(false);
+            editor->onReturnKey = [this] { finish(true, true); };
+            editor->onEscapeKey = [this] { finish(false, true); };
+            editor->onFocusLost = [this] { finish(true, false); };
+            owner.addChildComponent(*editor);
+        }
+        owner_ = &owner;
+        editor->setJustification(j);
+        commit = std::move(onCommit);
+        editor->setText(text, false);
+        editor->setBounds(area);
+        editor->setVisible(true);
+        open = true;
+        editor->grabKeyboardFocus();
+        editor->selectAll();
+    }
+
+    void finish(bool doCommit, bool returnFocus)
+    {
+        if (!open || editor == nullptr) return;
+        open = false;
+        const auto text = editor->getText().trim();
+        editor->setVisible(false);
+        if (returnFocus && owner_ != nullptr) owner_->grabKeyboardFocus();
+        if (doCommit && commit) commit(text);
+    }
+
+private:
+    juce::Component* owner_ = nullptr;
+};
 
 juce::Colour contrastText(juce::Colour fill)
 {
@@ -69,7 +162,8 @@ struct Knob::Impl {
     juce::Colour accent = colours::accent;
     bool hasAccent = false;
     int dragStart = 0;
-    float wheelAcc = 0.0f;
+    bool dragging = false;
+    TypedEntry entry;
 
     juce::String text() const
     {
@@ -108,7 +202,7 @@ void Knob::setValue(int v, juce::NotificationType n)
     impl_->value = v;
     repaint();
     if (n == juce::dontSendNotification) return;
-    if (impl_->bind.attached()) impl_->bind.push(v);
+    if (impl_->bind.attached()) impl_->bind.push(*this, v);
     else if (onChange) onChange(v);
 }
 int Knob::value() const { return impl_->value; }
@@ -141,15 +235,35 @@ void Knob::mouseDown(const juce::MouseEvent&)
 void Knob::mouseDrag(const juce::MouseEvent& e)
 {
     if (!isEnabled()) return;
+    // One drag is one undo: the transaction opens on the first movement and
+    // closes when the button comes up (UI_DESIGN section 2.1).
+    if (!impl_->dragging) {
+        impl_->dragging = true;
+        if (auto* history = historyFor(*this))
+            history->beginGesture(impl_->bind.attached() ? impl_->bind.param->getName(64) : impl_->label);
+    }
     const float pixelsForRange = e.mods.isShiftDown() ? 480.0f : 120.0f;   // the mockup: 120 px of travel for the whole range
     setValue(impl_->dragStart + juce::roundToInt(-float(e.getDistanceFromDragStartY()) / pixelsForRange * float(impl_->bind.span())));
 }
-void Knob::mouseUp(const juce::MouseEvent&) {}
-void Knob::mouseDoubleClick(const juce::MouseEvent&) { if (isEnabled()) setValue(impl_->bind.def); }
-void Knob::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& w)
+void Knob::mouseUp(const juce::MouseEvent&)
+{
+    if (!impl_->dragging) return;
+    impl_->dragging = false;
+    if (auto* history = historyFor(*this)) history->endGesture();
+}
+/// A double click types the value; with Alt it puts the default back.
+void Knob::mouseDoubleClick(const juce::MouseEvent& e)
 {
     if (!isEnabled()) return;
-    if (const int steps = wheelSteps(w, impl_->wheelAcc)) setValue(impl_->value + steps);
+    if (e.mods.isAltDown()) { setValue(impl_->bind.def); return; }
+    auto& im = *impl_;
+    const auto b = getLocalBounds();
+    const auto area = juce::Rectangle<int>(b.getCentreX() - kDial / 2 + 6, (kDial - 18) / 2, kDial - 12, 18);
+    im.entry.begin(*this, area, ValueFormat::number(im.value), juce::Justification::centred,
+                   [this](const juce::String& text) {
+                       int v = 0;
+                       if (parseTypedInt(text, impl_->bind.lo, impl_->bind.hi, v)) setValue(v);
+                   });
 }
 bool Knob::keyPressed(const juce::KeyPress& k)
 {
@@ -235,7 +349,7 @@ void Segmented::setSelected(int index, juce::NotificationType n)
     impl_->selected = index;
     repaint();
     if (n == juce::dontSendNotification) return;
-    if (impl_->bind.attached()) impl_->bind.push(impl_->bind.lo + index);
+    if (impl_->bind.attached()) impl_->bind.push(*this, impl_->bind.lo + index);
     else if (onChange) onChange(index);
 }
 int Segmented::selected() const { return impl_->selected; }
@@ -341,10 +455,13 @@ struct Stepper::Impl {
     int value = 0;
     Binding bind;
     std::function<juce::String(int)> textFn;
+    std::function<juce::String(int)> entryToText;
+    std::function<bool(const juce::String&, int&)> entryFromText;
     bool wraps = false;
-    bool typed = false;
+    bool typed = true;                ///< every number is typeable (UI_DESIGN 2.1)
     int hover = -1;   ///< 0 minus, 1 plus
-    float wheelAcc = 0.0f;
+    bool stepping = false;
+    TypedEntry entry;
     /// Typed entry, as the grids read digits: a digit that would overflow
     /// starts a new value, and the entry ends when the value is full.
     int acc = 0;
@@ -364,6 +481,14 @@ struct Stepper::Impl {
         if (textFn) return textFn(value);
         if (bind.attached()) return bind.text(value);
         return ValueFormat::number(value);
+    }
+    /// What the inline box starts with: the field's own units, not the
+    /// decorated readout ("120", not "120 BPM").
+    juce::String entryText() const { return entryToText ? entryToText(value) : ValueFormat::number(value); }
+    bool parseEntry(const juce::String& text, int& out) const
+    {
+        if (entryFromText) return entryFromText(text, out);
+        return parseTypedInt(text, bind.lo, bind.hi, out);
     }
     int stepped(int delta) const
     {
@@ -401,15 +526,33 @@ void Stepper::setValue(int v, juce::NotificationType n)
     impl_->value = v;
     repaint();
     if (n == juce::dontSendNotification) return;
-    if (impl_->bind.attached()) impl_->bind.push(v);
+    if (impl_->bind.attached()) impl_->bind.push(*this, v);
     else if (onChange) onChange(v);
 }
 int Stepper::value() const { return impl_->value; }
 void Stepper::setTextFunction(std::function<juce::String(int)> fn) { impl_->textFn = std::move(fn); repaint(); }
 void Stepper::setWraps(bool wraps) { impl_->wraps = wraps; }
 void Stepper::setTyped(bool typed) { impl_->typed = typed; }
+void Stepper::setEntryFormat(std::function<juce::String(int)> toText, std::function<bool(const juce::String&, int&)> fromText)
+{
+    impl_->entryToText = std::move(toText);
+    impl_->entryFromText = std::move(fromText);
+}
 int Stepper::preferredWidth() const { return 22 + 34 + 22 + 2; }
 void Stepper::resized() {}
+
+/// The readout between the two buttons: what a click opens for typing.
+void Stepper::beginTypedEntry()
+{
+    if (!isEnabled()) return;
+    auto& im = *impl_;
+    im.resetEntry();
+    const auto area = juce::Rectangle<int>(24, 2, juce::jmax(8, getWidth() - 48), getHeight() - 4);
+    im.entry.begin(*this, area, im.entryText(), juce::Justification::centred, [this](const juce::String& text) {
+        int v = 0;
+        if (impl_->parseEntry(text, v)) setValue(juce::jlimit(impl_->bind.lo, impl_->bind.hi, v));
+    });
+}
 
 void Stepper::paint(juce::Graphics& g)
 {
@@ -444,13 +587,23 @@ void Stepper::mouseDown(const juce::MouseEvent& e)
     if (!isEnabled()) return;
     grabKeyboardFocus();
     impl_->resetEntry();
-    if (e.x < 23) setValue(impl_->stepped(-1));
-    else if (e.x >= getWidth() - 23) setValue(impl_->stepped(1));
+    const bool onButton = e.x < 23 || e.x >= getWidth() - 23;
+    if (!onButton) { beginTypedEntry(); return; }
+    // Press and hold is one undo, however many steps it makes.
+    impl_->stepping = true;
+    if (auto* history = historyFor(*this))
+        history->beginGesture(impl_->bind.attached() ? impl_->bind.param->getName(64) : getTooltip());
+    setValue(impl_->stepped(e.x < 23 ? -1 : 1));
 }
-void Stepper::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& w)
+void Stepper::mouseUp(const juce::MouseEvent&)
 {
-    if (!isEnabled()) return;
-    if (const int steps = wheelSteps(w, impl_->wheelAcc)) setValue(impl_->stepped(steps));
+    if (!impl_->stepping) return;
+    impl_->stepping = false;
+    if (auto* history = historyFor(*this)) history->endGesture();
+}
+void Stepper::mouseDoubleClick(const juce::MouseEvent& e)
+{
+    if (e.x >= 23 && e.x < getWidth() - 23) beginTypedEntry();
 }
 bool Stepper::keyPressed(const juce::KeyPress& k)
 {
@@ -458,6 +611,7 @@ bool Stepper::keyPressed(const juce::KeyPress& k)
     auto& im = *impl_;
     if (code == juce::KeyPress::upKey || code == juce::KeyPress::rightKey || k.getTextCharacter() == '+') { im.resetEntry(); setValue(im.stepped(1)); return true; }
     if (code == juce::KeyPress::downKey || code == juce::KeyPress::leftKey || k.getTextCharacter() == '-') { im.resetEntry(); setValue(im.stepped(-1)); return true; }
+    if (code == juce::KeyPress::returnKey || code == juce::KeyPress::F2Key) { beginTypedEntry(); return true; }
     if (!im.typed) return false;
     if (code == juce::KeyPress::backspaceKey || code == juce::KeyPress::deleteKey || code == juce::KeyPress::escapeKey) { im.resetEntry(); return true; }
     const auto ch = k.getTextCharacter();
@@ -507,7 +661,7 @@ void Toggle::setToggled(bool on, juce::NotificationType n)
     impl_->on = on;
     repaint();
     if (n == juce::dontSendNotification) return;
-    if (impl_->bind.attached()) impl_->bind.push(on ? 1 : 0);
+    if (impl_->bind.attached()) impl_->bind.push(*this, on ? 1 : 0);
     else if (onChange) onChange(on);
 }
 bool Toggle::toggled() const { return impl_->on; }
@@ -570,8 +724,10 @@ bool Toggle::keyPressed(const juce::KeyPress& k)
 // ===========================================================================
 struct Fader::Impl {
     juce::Slider slider { juce::Slider::LinearVertical, juce::Slider::NoTextBox };
-    std::unique_ptr<juce::SliderParameterAttachment> attachment;
+    std::unique_ptr<juce::ParameterAttachment> attachment;
     juce::RangedAudioParameter* param = nullptr;
+    TypedEntry entry;
+    bool pushing = false;      ///< inside the attachment's own callback
 
     juce::String readout() const
     {
@@ -588,7 +744,16 @@ Fader::Fader() : impl_(std::make_unique<Impl>())
     auto& s = impl_->slider;
     s.setSliderSnapsToMousePosition(false);
     s.setEnabled(false);
-    s.onValueChange = [this] { repaint(); };
+    s.setScrollWheelEnabled(false);              // the wheel never edits (UI_DESIGN 2.1)
+    s.onValueChange = [this] {
+        auto& im = *impl_;
+        repaint();
+        if (im.param == nullptr || im.pushing) return;
+        if (auto* history = historyFor(*this)) history->setParameter(*im.param, float(im.slider.getValue()));
+        else im.attachment->setValueAsCompleteGesture(float(im.slider.getValue()));
+    };
+    s.onDragStart = [this] { if (auto* history = historyFor(*this)) history->beginGesture(impl_->param != nullptr ? impl_->param->getName(64) : juce::String()); };
+    s.onDragEnd = [this] { if (auto* history = historyFor(*this)) history->endGesture(); };
     addAndMakeVisible(s);
     setSize(56, 120);
 }
@@ -599,8 +764,14 @@ void Fader::attach(juce::RangedAudioParameter& p)
     auto& im = *impl_;
     im.param = &p;
     im.slider.setEnabled(true);
-    im.slider.setDoubleClickReturnValue(true, double(p.convertFrom0to1(p.getDefaultValue())));
-    im.attachment = std::make_unique<juce::SliderParameterAttachment>(p, im.slider);
+    const auto& range = p.getNormalisableRange();
+    im.slider.setRange(double(range.start), double(range.end), double(range.interval));
+    im.attachment = std::make_unique<juce::ParameterAttachment>(p, [this](float v) {
+        const juce::ScopedValueSetter<bool> guard(impl_->pushing, true);
+        impl_->slider.setValue(double(v), juce::dontSendNotification);
+        repaint();
+    });
+    im.attachment->sendInitialUpdate();
     if (getTooltip().isEmpty()) setTooltip(p.getName(64));
     repaint();
 }
@@ -613,6 +784,19 @@ void Fader::paint(juce::Graphics& g)
     g.setColour(colours::text.withMultipliedAlpha(impl_->param != nullptr ? 1.0f : 0.45f));
     g.setFont(Fonts::mono(11.0f));
     g.drawText(impl_->readout(), getLocalBounds().removeFromBottom(18), juce::Justification::centred, false);
+}
+/// The dB readout under the fader is a typed field like every other number.
+void Fader::mouseDoubleClick(const juce::MouseEvent&)
+{
+    auto& im = *impl_;
+    if (im.param == nullptr) return;
+    im.entry.begin(*this, getLocalBounds().removeFromBottom(18), juce::String(im.slider.getValue(), 1), juce::Justification::centred,
+                   [this](const juce::String& text) {
+                       auto& in = *impl_;
+                       const auto& r = in.param->getNormalisableRange();
+                       float v = 0.0f;
+                       if (parseTypedFloat(text, r.start, r.end, v)) in.slider.setValue(double(v), juce::sendNotificationSync);
+                   });
 }
 
 // ===========================================================================

@@ -7,6 +7,7 @@
 #include "core/Bank/Bank.h"
 #include "plugin/shared/LinkTransport.h"
 #include "plugin/shared/Parameters.h"
+#include "plugin/ui/EditHistory.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -59,6 +60,15 @@ public:
     /// The local instrument (spec 12.5), edited in place then `localChanged()`.
     bank::Instrument& localInstrument() { return local_; }
     void localChanged();
+
+    // --- undo (message thread; UI_DESIGN section 2.1) -------------------
+    //
+    // The Voice keeps its own history for its own parameters and its local
+    // instrument. What the linked ChipBoy does with them is that instance's
+    // edit and lives on its history, not this one.
+    ui::UndoHistory& history() { return history_; }
+    /// Puts a local instrument back: the history's own action calls this.
+    void restoreLocalInstrument(const bank::Instrument& i);
     bool usingLocal() const { return paramInt(pSource_) == 1; }
 
     /// Explicit bank exchange with the main instance. Results arrive on the
@@ -87,6 +97,7 @@ private:
     bank::Instrument local_;
     std::atomic<bool> localDirty_{ true };
     std::mutex localMutex_;
+    ui::UndoHistory history_;
 
     std::atomic<float>* pSource_ = nullptr;
     driver::ChannelParams lastParams_;

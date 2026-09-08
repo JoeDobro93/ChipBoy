@@ -11,7 +11,8 @@
 //
 // The song is the only copy: the editor reads the groove through the song
 // it was given and reports an edited one, exactly as the phrase grid
-// reports a cell.
+// reports a cell. The wheel scrolls the tab, never a value
+// (UI_DESIGN section 2.1).
 #pragma once
 
 #include "core/Tracker/Song.h"
@@ -41,6 +42,9 @@ public:
     std::function<void(int slot, const tracker::Groove&)> onChange;
     /// The head's stepper browsed to another slot.
     std::function<void(int slot)> onSlotChange;
+    /// A drag or a typed value is one edit: this brackets it, so the panel
+    /// can put the whole gesture on the undo history as one (UI_DESIGN 2.1).
+    std::function<void(bool begin)> onGesture;
 
     juce::String getTooltip() override;
     /// kRowHeight is the smallest row (the lane's rhythm) and kWidth the
@@ -51,8 +55,8 @@ public:
 
     void resized() override; void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
-    void mouseDrag(const juce::MouseEvent&) override; void mouseDoubleClick(const juce::MouseEvent&) override;
-    void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    void mouseDrag(const juce::MouseEvent&) override; void mouseUp(const juce::MouseEvent&) override;
+    void mouseDoubleClick(const juce::MouseEvent&) override;
     bool keyPressed(const juce::KeyPress&) override; void focusGained(FocusChangeType) override; void focusLost(FocusChangeType) override;
 
 private:

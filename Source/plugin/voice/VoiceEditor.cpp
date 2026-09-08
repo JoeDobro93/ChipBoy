@@ -63,6 +63,7 @@ VoiceEditor::VoiceEditor(VoiceProcessor& p)
     setLookAndFeel(&lnf_);
 
     // header: status, instance, channel
+    setWantsKeyboardFocus(true);
     addAndMakeVisible(statusPill_);
     addAndMakeVisible(instanceBox_);
     instanceBox_.setTextWhenNothingSelected("no ChipBoy");
@@ -97,7 +98,9 @@ VoiceEditor::VoiceEditor(VoiceProcessor& p)
     });
     instrumentBox_.onChange = [this] {
         const int id = instrumentBox_.getSelectedId();
-        if (id >= 1) instrumentAttachment_->setValueAsCompleteGesture(float(id - 1));
+        if (id < 1) return;
+        if (auto* history = historyFor(*this)) history->setParameter(param(ids::instrument), float(id - 1));
+        else instrumentAttachment_->setValueAsCompleteGesture(float(id - 1));
     };
     refreshInstruments(true);
     instrumentAttachment_->sendInitialUpdate();
@@ -130,6 +133,10 @@ VoiceEditor::VoiceEditor(VoiceProcessor& p)
     openButton_.setColour(TextButton::textColourOffId, Colours::white);
     openButton_.setColour(TextButton::textColourOnId, Colours::white);
 
+    // The wheel never edits, here as everywhere: it belongs to whatever
+    // scrolls (UI_DESIGN section 2.1).
+    for (auto* box : { &instanceBox_, &channelBox_, &instrumentBox_, &velocity_ }) box->setScrollWheelEnabled(false);
+
     // the channel's parameters, laid out to fit 560 x 420 without scrolling
     buildParams();
 
@@ -143,6 +150,27 @@ VoiceEditor::~VoiceEditor()
 {
     stopTimer();
     setLookAndFeel(nullptr);
+}
+
+/// Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y, unless a text box has the keys.
+bool VoiceEditor::keyPressed(const KeyPress& key)
+{
+    const auto mods = key.getModifiers();
+    if (!mods.isCtrlDown() && !mods.isCommandDown()) return false;
+    auto* focused = Component::getCurrentlyFocusedComponent();
+    if (focused != nullptr && dynamic_cast<TextEditor*>(focused) != nullptr) return false;
+    const auto ch = key.getTextCharacter();
+    const int code = key.getKeyCode();
+    const bool isZ = code == 'Z' || code == 'z' || ch == 'z' || ch == 'Z';
+    const bool isY = code == 'Y' || code == 'y' || ch == 'y' || ch == 'Y';
+    auto& history = processor_.history();
+    if (isZ) {
+        if (mods.isShiftDown()) { if (history.redo()) hint("redone: " + history.undoName()); }
+        else { const String what = history.undoName(); if (history.undo()) hint("undone: " + what); }
+        return true;
+    }
+    if (isY) { if (history.redo()) hint("redone: " + history.undoName()); return true; }
+    return false;
 }
 
 RangedAudioParameter& VoiceEditor::param(const char* id) const
@@ -203,7 +231,16 @@ void VoiceEditor::buildParams()
     modes.add(arrow() + "instrument bank");
     modes.add("ignored");
     velocity_.addItemList(modes, 1);
-    velocityAttachment_ = std::make_unique<ComboBoxParameterAttachment>(param(ids::velocityMode), velocity_);
+    velocityAttachment_ = std::make_unique<ParameterAttachment>(param(ids::velocityMode), [this](float v) {
+        velocity_.setSelectedId(int(std::lround(v)) + 1, dontSendNotification);
+    });
+    velocityAttachment_->sendInitialUpdate();
+    velocity_.onChange = [this] {
+        const int id = velocity_.getSelectedId();
+        if (id < 1) return;
+        if (auto* history = historyFor(*this)) history->setParameter(param(ids::velocityMode), float(id - 1));
+        else velocityAttachment_->setValueAsCompleteGesture(float(id - 1));
+    };
 
     // The channel is a tracker row: the two command slots carry the letters,
     // their arguments and what they mean (docs/COMMANDS_AND_TEMPO.md section 3).

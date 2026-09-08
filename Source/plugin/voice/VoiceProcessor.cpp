@@ -75,6 +75,44 @@ void VoiceProcessor::setTarget(const String& uuid, int channel)
 
 void VoiceProcessor::localChanged() { localDirty_ = true; }
 
+namespace {
+/// The Voice's local instrument, before and after a Pull: the one thing in
+/// this window that is not a parameter, so it needs its own action
+/// (UI_DESIGN section 2.1).
+struct LocalInstrumentAction : juce::UndoableAction {
+    VoiceProcessor& processor;
+    bank::Instrument before, after;
+    bool inPlace = true;
+
+    LocalInstrumentAction(VoiceProcessor& p, bank::Instrument b, bank::Instrument a)
+        : processor(p), before(std::move(b)), after(std::move(a)) {}
+
+    bool perform() override
+    {
+        if (inPlace) { inPlace = false; return true; }
+        processor.restoreLocalInstrument(after);
+        return true;
+    }
+    bool undo() override
+    {
+        inPlace = false;
+        processor.restoreLocalInstrument(before);
+        return true;
+    }
+    int getSizeInUnits() override { return int(sizeof(bank::Instrument)) * 2; }
+};
+} // namespace
+
+void VoiceProcessor::restoreLocalInstrument(const bank::Instrument& i)
+{
+    {
+        std::lock_guard<std::mutex> lock(localMutex_);
+        local_ = i;
+        local_.used = true;
+    }
+    localDirty_ = true;
+}
+
 void VoiceProcessor::publishLocal()
 {
     auto* s = link_.slot();
@@ -163,15 +201,24 @@ void VoiceProcessor::timerCallback()
             const bool ok = s->ackResult.load() == 0;
             if (pendingRequest_ == Request::PullFromSlot && ok) {
                 bank::InstrumentCore core;
+                bank::Instrument before, after;
+                bool replaced = false;
                 if (s->exchange.read(core)) {
                     std::lock_guard<std::mutex> lock(localMutex_);
+                    before = local_;
                     static_cast<bank::InstrumentCore&>(local_) = core;
                     char n[kInstNameChars]; safeString(s->exchangeName, kInstNameChars, n, kInstNameChars);
                     local_.name = n;
                     local_.used = true;
+                    after = local_;
+                    replaced = true;
                 }
                 localDirty_ = true;
                 requestMessage_ = "pulled slot " + String(pendingSlot_);
+                // A pull replaces the local instrument, so it is an edit.
+                if (replaced)
+                    history_.perform(std::make_unique<LocalInstrumentAction>(*this, before, after),
+                                     "Pull slot " + String(pendingSlot_) + " into the local instrument");
             } else if (pendingRequest_ == Request::PushToSlot) {
                 requestMessage_ = ok ? "pushed to slot " + String(pendingSlot_) : "the ChipBoy instance refused the push";
             } else {
@@ -250,6 +297,8 @@ void VoiceProcessor::getStateInformation(MemoryBlock& dest)
 
 void VoiceProcessor::setStateInformation(const void* data, int size)
 {
+    // A project loading is not an edit (UI_DESIGN section 2.1).
+    history_.clear();
     const ValueTree root = ValueTree::readFromData(data, size_t(size));
     if (!root.isValid() || !root.hasType("ChipBoyVoiceState")) return;
     if (root.hasProperty("uuid")) {
