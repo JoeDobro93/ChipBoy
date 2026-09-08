@@ -33,7 +33,9 @@ class Player {
 public:
     void prepare(double sampleRate);
     void setSong(const Song* s) { song_ = s; }
-    /// Ticks in a bar, from the Clock (the host's signature, or the song's).
+    /// Ticks in a bar of the song's own step count, from the Clock (the
+    /// host's signature, or the song's). A bar that overrides the step count
+    /// is shorter or longer than this in proportion (section 11).
     void setBarTicks(int t) { barTicks_ = t > 0 ? t : driver::kTicksPerBeat * 4; }
     /// Channels whose lane is silenced (bit per channel), e.g. while recording.
     void setMuteMask(uint32_t m) { muteMask_ = m; }
@@ -64,16 +66,19 @@ public:
                     uint8_t instrument, uint8_t table, const bank::Command& c1, const bank::Command& c2,
                     RecordMessage& out);
     /// A step whose slots differ from the last written on this channel, with
-    /// no note of its own.
-    bool recordSlots(int ch, double tick, const bank::Command& c1, const bank::Command& c2, RecordMessage& out);
+    /// no note of its own. `force` writes the slots in force whether they
+    /// changed or not: the command octave fires them, so its cell carries
+    /// them (section 13).
+    bool recordSlots(int ch, double tick, const bank::Command& c1, const bank::Command& c2, RecordMessage& out, bool force = false);
     void resetRecord();
 
     struct Position { int bar = -1; int step = -1; uint8_t phrase = 0; };
     const Position& position(int ch) const { return pos_[size_t(ch & 3)]; }
     bool playing() const { return playing_; }
 
-    /// Step boundaries of a phrase in ticks from the bar start (kSteps + 1).
-    void stepTicks(const Phrase* p, int* startTicks, uint8_t grooveSlot = kGrooveNone) const;
+    /// Step boundaries of a phrase in ticks from the bar start (kMaxSteps + 1
+    /// entries). `barSteps` is the bar's own step count, 0 for the song's.
+    void stepTicks(const Phrase* p, int* startTicks, uint8_t grooveSlot = kGrooveNone, int barSteps = 0) const;
 
 private:
     void fireStep(int ch, int bar, int step, uint8_t phraseSlot, uint32_t offset, std::vector<driver::NoteEvent>& out);
@@ -82,8 +87,14 @@ private:
     void allNotesOff(int ch, uint32_t offset, std::vector<driver::NoteEvent>& out);
     /// What the two command columns at a step hold, and what that leaves as
     /// the last written on the channel.
+    /// What a step's cell carries of the slots in force (sections 9.4, 12):
+    ///   Changed  only a slot that moved -- a step with no note of its own
+    ///   Plain    and both slots in force, which a plain note re-fires
+    ///   Bare     and the per-note letters, which a bare note re-fires
+    ///   All      and everything, for the command octave (section 13)
+    enum class SlotWrite : uint8_t { Changed, Plain, Bare, All };
     void slotCells(int ch, const bank::Command& c1, const bank::Command& c2,
-                   bool plainNote, bank::Command& o1, bank::Command& o2);
+                   SlotWrite mode, bank::Command& o1, bank::Command& o2);
     bool stepHasNote(int ch, int bar, int step) const;
     /// The step after this one, wrapping into the next bar.
     bool nextStep(int ch, int& bar, int& step, int64_t& stepTick) const;

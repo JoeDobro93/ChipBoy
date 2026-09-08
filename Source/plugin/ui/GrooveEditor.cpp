@@ -75,7 +75,7 @@ struct GrooveEditor::Impl {
     }
 
     bool editable() const { return slot >= 1 && slot <= 16; }
-    int steps() const { return song != nullptr ? song->steps() : tracker::kSteps; }
+    int steps() const { return song != nullptr ? std::min(song->steps(), tracker::kGrooveSteps) : tracker::kGrooveSteps; }
     /// Eight steps per bar doubles every entry, so a groove swings the same
     /// way whichever the song is set to (section 9.2).
     int scale() const { return steps() <= 8 ? 2 : 1; }
@@ -89,10 +89,10 @@ struct GrooveEditor::Impl {
     /// disagree with playback about where a step starts.
     void startTicks(int* start) const
     {
-        if (song != nullptr) { tracker::stepStartTicks(*song, nullptr, uint8_t(slot), start); return; }
-        for (int i = 0; i <= tracker::kSteps; ++i) start[i] = i * 6;
+        if (song != nullptr) { tracker::stepStartTicks(*song, nullptr, uint8_t(slot), start, barTicks); return; }
+        for (int i = 0; i <= tracker::kGrooveSteps; ++i) start[i] = i * 6;
     }
-    int total() const { int start[tracker::kSteps + 1]; startTicks(start); return start[steps()]; }
+    int total() const { int start[tracker::kMaxSteps + 1]; startTicks(start); return start[steps()]; }
     /// LSDj's swing: what the first of the pair takes of the two (section 10).
     int swingPercent() const
     {
@@ -108,7 +108,7 @@ struct GrooveEditor::Impl {
     {
         if (p.y < kHeaderHeight) return -1;
         const int row = (p.y - kHeaderHeight) / kRowHeight;
-        return row >= 0 && row < tracker::kSteps ? row : -1;
+        return row >= 0 && row < tracker::kGrooveSteps ? row : -1;
     }
 
     void write(const tracker::Groove& g)
@@ -119,7 +119,7 @@ struct GrooveEditor::Impl {
     }
     bool setTick(int row, int value)
     {
-        if (!editable() || row < 0 || row >= tracker::kSteps) return false;
+        if (!editable() || row < 0 || row >= tracker::kGrooveSteps) return false;
         auto g = groove();
         const auto v = uint8_t(juce::jlimit(0, kMaxTick, value));
         if (g.ticks[size_t(row)] == v) return true;
@@ -178,14 +178,14 @@ struct GrooveEditor::Impl {
         using namespace colours;
         const auto gr = groove();
         const int n = gr.length(), st = steps(), sc = scale(), w = owner.getWidth();
-        int start[tracker::kSteps + 1];
+        int start[tracker::kMaxSteps + 1];
         startTicks(start);
         int peak = 1;
         for (int i = 0; i < st; ++i) peak = juce::jmax(peak, gr.at(i) * sc);
         const bool live = editable();
         const bool focused = owner.hasKeyboardFocus(false);
 
-        for (int row = 0; row < tracker::kSteps; ++row) {
+        for (int row = 0; row < tracker::kGrooveSteps; ++row) {
             const int y = kHeaderHeight + row * kRowHeight;
             if (row == playing) { g.setColour(playRow); g.fillRect(1, y, w - 2, kRowHeight); }
             g.setColour(lineSoft);
@@ -251,7 +251,7 @@ void GrooveEditor::setBarTicks(int ticks)
 }
 void GrooveEditor::setPlayingStep(int step)
 {
-    const int s = step >= 0 && step < tracker::kSteps ? step : -1;
+    const int s = step >= 0 && step < tracker::kGrooveSteps ? step : -1;
     if (s == impl_->playing) return;
     impl_->playing = s;
     repaint();
@@ -352,12 +352,12 @@ bool GrooveEditor::keyPressed(const juce::KeyPress& k)
     if (code == juce::KeyPress::escapeKey) { im.entry.reset(); return true; }
     if (code == juce::KeyPress::downKey || code == juce::KeyPress::tabKey) {
         const int dir = code == juce::KeyPress::tabKey && k.getModifiers().isShiftDown() ? -1 : 1;
-        im.cursor = juce::jlimit(0, tracker::kSteps - 1, im.cursor + dir);
+        im.cursor = juce::jlimit(0, tracker::kGrooveSteps - 1, im.cursor + dir);
         im.entry.reset(); repaint(); return true;
     }
     if (code == juce::KeyPress::upKey) { im.cursor = juce::jmax(0, im.cursor - 1); im.entry.reset(); repaint(); return true; }
     if (code == juce::KeyPress::homeKey) { im.cursor = 0; im.entry.reset(); repaint(); return true; }
-    if (code == juce::KeyPress::endKey) { im.cursor = tracker::kSteps - 1; im.entry.reset(); repaint(); return true; }
+    if (code == juce::KeyPress::endKey) { im.cursor = tracker::kGrooveSteps - 1; im.entry.reset(); repaint(); return true; }
     if (!im.editable()) return false;
     // Nothing to move through sideways in one column, so the arrows are the
     // nudge the head's buttons make.

@@ -39,7 +39,7 @@ public:
 
     juce::String getTooltip() override;
     static constexpr int kRowHeight = 22, kHeaderHeight = 48, kWidth = 164;
-    static constexpr int preferredHeight() { return kHeaderHeight + tracker::kSteps * kRowHeight; }
+    static constexpr int preferredHeight() { return kHeaderHeight + tracker::kGrooveSteps * kRowHeight; }
 
     void resized() override; void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;

@@ -213,11 +213,15 @@ private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
 
-/// The Phrases lane: four channels side by side, 16 steps of note,
+/// The Phrases lane: four channels side by side, sixteen steps of note,
 /// velocity, instrument, table and two commands for one bar (UI_DESIGN
 /// section 7). Column headers carry the Roll / Trk source switch and the
 /// phrase's groove chip; the groove itself is edited in the GrooveEditor
 /// beside the lane.
+///
+/// A phrase holds sixty-four cells now (docs/COMMANDS_AND_TEMPO.md section
+/// 11) and the lane still shows the first sixteen: the Tracker tab that shows
+/// a bar's own step count is the interface stage's.
 class PhraseGrid : public juce::Component, public juce::TooltipClient {
 public:
     PhraseGrid();
@@ -230,8 +234,8 @@ public:
     std::function<void(int ch, tracker::NoteSource)> onSourceChange;
     std::function<void(int ch, int groove)> onGrooveChange;    ///< per-phrase groove slot, 0 straight
     juce::String getTooltip() override;   ///< the hovered cell: what the column is, and what the command says
-    static constexpr int kRowHeight = 22, kHeaderHeight = 48;
-    static constexpr int preferredHeight() { return kHeaderHeight + tracker::kSteps * kRowHeight; }
+    static constexpr int kRowHeight = 22, kHeaderHeight = 48, kVisibleSteps = 16;
+    static constexpr int preferredHeight() { return kHeaderHeight + kVisibleSteps * kRowHeight; }
     void resized() override; void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override; void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;

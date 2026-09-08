@@ -19,6 +19,20 @@ bool      songFromVar(const juce::var& v, tracker::Song& out);
 /// One instrument on its own (the Voice plugin's local instrument, spec 12.5).
 juce::var    instrumentToVar(const bank::Instrument& i);
 bool         instrumentFromVar(const juce::var& v, bank::Instrument& out);
+
+/// The bank's parts on their own, for an instrument preset file
+/// (docs/COMMANDS_AND_TEMPO.md section 15): the same writers and readers the
+/// bank file uses, so a preset and a bank can never drift apart. `slot` is
+/// written into the object as the slot the part came from.
+juce::var instrumentToVar(const bank::Instrument& i, int slot);
+juce::var tableToVar(const bank::Table& t, int slot);
+bool      tableFromVar(const juce::var& v, bank::Table& out);
+juce::var waveToVar(const bank::Wave& w, int slot);
+bool      waveFromVar(const juce::var& v, bank::Wave& out);
+juce::var kitToVar(const bank::Kit& k, int slot);
+bool      kitFromVar(const juce::var& v, bank::Kit& out);
+/// The slot an object written by one of those carries, or 0.
+int slotOfVar(const juce::var& v);
 juce::String instrumentToJson(const bank::Instrument& i);
 bool         instrumentFromJson(const juce::String& text, bank::Instrument& out);
 

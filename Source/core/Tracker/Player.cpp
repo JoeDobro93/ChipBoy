@@ -18,50 +18,120 @@ Groove grooveFor(const Song& s, const Phrase* p, uint8_t slot)
     return Groove{};                        // slot 0 is straight and not editable
 }
 
-void stepStartTicks(const Song& s, const Phrase* p, uint8_t groove, int* start)
+void stepStartTicks(const Song& s, const Phrase* p, uint8_t groove, int* start, int barTicks, int barSteps)
 {
-    // The groove holds the ticks a step lasts, so the grid is the running sum
-    // of its entries (section 9.2). It is not scaled to the bar: a groove that
-    // adds up to less leaves the last note sustaining, and steps that start at
-    // or past the bar's end never fire.
-    const int steps = s.steps();
+    // The bar's ticks divided by the song's steps per bar is a step; the
+    // groove says how many sixths of one each step really lasts (section 11).
+    // Step i therefore starts at (the groove's ticks so far) x bar ticks
+    // / (6 x steps), which is floor(i x bar ticks / steps) for the straight
+    // groove and the plain running sum at sixteen steps in a 4/4 bar -- the
+    // grid every song had before bars could hold another step count.
+    const int ticks = barTicks > 0 ? barTicks : s.barTicks();
+    const int perBar = s.steps();
+    const int steps = std::clamp(barSteps > 0 ? barSteps : perBar, 1, kMaxSteps);
     const Groove g = grooveFor(s, p, groove);
-    const int scale = steps <= 8 ? 2 : 1;   // eight steps per bar: entries doubled
-    int acc = 0;
-    for (int i = 0; i < steps && i < kSteps; ++i) { start[i] = acc; acc += g.at(i) * scale; }
-    for (int i = std::min(steps, kSteps); i <= kSteps; ++i) start[i] = acc;
+    int64_t acc = 0;                        // the groove's ticks so far, at six to a step
+    for (int i = 0; i < steps; ++i) {
+        start[i] = int(acc * int64_t(ticks) / (6 * int64_t(perBar)));
+        acc += g.at(i);
+    }
+    const int end = int(acc * int64_t(ticks) / (6 * int64_t(perBar)));
+    for (int i = steps; i <= kMaxSteps; ++i) start[i] = end;
+}
+
+/* ------------------------------------------------------------- the bars */
+
+void buildBarTable(Song& s)
+{
+    // One entry per bar plus the end: how many steps the song holds before
+    // that bar. Everything else about a bar's place on the timeline follows
+    // from this and the bar ticks in force (section 11).
+    const int n = s.bars();
+    s.barStartSteps.clear();
+    s.barStartSteps.reserve(size_t(n) + 1);
+    int32_t acc = 0;
+    for (int bar = 0; bar <= n; ++bar) {
+        s.barStartSteps.push_back(acc);
+        if (bar < n) acc = int32_t(std::min<int64_t>(int64_t(acc) + s.stepsOfBar(bar), INT32_MAX / 2));
+    }
+}
+
+int64_t barStartStep(const Song& s, int bar)
+{
+    if (bar <= 0) return 0;
+    const auto& t = s.barStartSteps;
+    if (t.empty()) return int64_t(bar) * s.steps();                 // no table: every bar is the default
+    if (size_t(bar) < t.size()) return t[size_t(bar)];
+    // Past the last bar the song describes: default bars, end to end.
+    return int64_t(t.back()) + int64_t(bar - int(t.size()) + 1) * s.steps();
+}
+
+int64_t barStartTick(const Song& s, int bar, int barTicks)
+{
+    const int ticks = barTicks > 0 ? barTicks : s.barTicks();
+    return barStartStep(s, bar) * int64_t(ticks) / int64_t(s.steps());
+}
+
+int barLengthTicks(const Song& s, int bar, int barTicks)
+{
+    return int(std::max<int64_t>(1, barStartTick(s, bar + 1, barTicks) - barStartTick(s, bar, barTicks)));
+}
+
+void barAtTick(const Song& s, int64_t tick, int barTicks, int& bar, int& inBar)
+{
+    const int ticks = barTicks > 0 ? barTicks : s.barTicks();
+    const int64_t t = std::max<int64_t>(0, tick);
+    const int last = s.barStartSteps.empty() ? 0 : int(s.barStartSteps.size()) - 1;
+    if (t >= barStartTick(s, last, ticks)) {
+        // Past the song's own bars: they are the default length from here, so
+        // the rest is arithmetic (the floor is exact over whole bars).
+        bar = last + int(std::min<int64_t>((t - barStartTick(s, last, ticks)) / std::max(1, ticks), 1 << 20));
+    } else {
+        // The last bar that starts at or before this tick; a bar so short it
+        // starts on the same tick as the next is stepped over, never played.
+        int lo = 0, hi = last;
+        while (lo < hi) {
+            const int mid = lo + (hi - lo + 1) / 2;
+            if (barStartTick(s, mid, ticks) <= t) lo = mid; else hi = mid - 1;
+        }
+        bar = lo;
+    }
+    inBar = int(t - barStartTick(s, bar, ticks));
 }
 
 void buildTempoMap(Song& s, double baseBpm)
 {
-    // Every T cell, at the tick its step starts on: the song's own bar ticks
-    // and the phrase's own groove (section 9.3). The chains are short and this
+    // Every T cell, at the tick its step starts on: the song's own bars and
+    // the phrase's own groove (section 9.3). The chains are short and this
     // runs on the message thread when a song is published.
     //
     // The base is not in the map: it is the Song tempo parameter, which the
     // clock holds and a host can automate (section 4). Only T cells are here,
     // and a T reverting is the base again from its tick.
+    buildBarTable(s);
     s.tempoMap.clear();
     const double base = std::clamp(baseBpm, 40.0, 255.0);
-    int bars = 0;
-    for (const auto& c : s.chain) bars = std::max(bars, int(c.size()));
+    const int bars = s.bars();
     const int barTicks = s.barTicks();
-    int starts[kSteps + 1];
-    for (int bar = 0; bar < bars; ++bar)
-        for (int step = 0; step < s.steps(); ++step)
+    std::vector<int> starts(size_t(kMaxSteps) + 1, 0);
+    for (int bar = 0; bar < bars; ++bar) {
+        const int steps = s.stepsOfBar(bar);
+        const int length = barLengthTicks(s, bar, barTicks);
+        for (int step = 0; step < steps; ++step)
             for (int ch = 0; ch < 4; ++ch) {
                 const Phrase* p = s.phrase(s.phraseAt(ch, bar));
                 if (!p) continue;
                 const Cell& cell = p->steps[size_t(step)];
                 const bank::Command* t = cell.cmd1.cmd == bank::Cmd::T ? &cell.cmd1 : cell.cmd2.cmd == bank::Cmd::T ? &cell.cmd2 : nullptr;
                 if (!t) continue;
-                stepStartTicks(s, p, kGrooveNone, starts);
-                if (starts[step] >= barTicks) break;                          // that step never plays
-                const int64_t tick = int64_t(bar) * barTicks + starts[step];
+                stepStartTicks(s, p, kGrooveNone, starts.data(), barTicks, steps);
+                if (starts[size_t(step)] >= length) break;                     // that step never plays
+                const int64_t tick = barStartTick(s, bar, barTicks) + starts[size_t(step)];
                 if (!s.tempoMap.empty() && s.tempoMap.back().tick == tick) break;   // one T per tick: the first channel wins
                 s.tempoMap.push_back({ tick, bank::isRevert(*t) ? base : std::clamp(double(t->a), 40.0, 255.0) });
                 break;
             }
+    }
 }
 
 /* ---------------------------------------------------------------- player */
@@ -88,10 +158,10 @@ uint8_t Player::groove(int ch) const
     return grooveParam_[c] != kGrooveNone ? grooveParam_[c] : grooveCell_[c];
 }
 
-void Player::stepTicks(const Phrase* p, int* start, uint8_t grooveSlot) const
+void Player::stepTicks(const Phrase* p, int* start, uint8_t grooveSlot, int barSteps) const
 {
-    if (!song_) { for (int i = 0; i <= kSteps; ++i) start[i] = i * 6; return; }
-    stepStartTicks(*song_, p, grooveSlot, start);
+    if (!song_) { for (int i = 0; i <= kMaxSteps; ++i) start[i] = i * 6; return; }
+    stepStartTicks(*song_, p, grooveSlot, start, barTicks_, barSteps);
 }
 
 void Player::allNotesOff(int ch, uint32_t offset, std::vector<NoteEvent>& out)
@@ -147,7 +217,6 @@ void Player::process(const TickPoint* ticks, size_t nTicks, bool playing, std::v
         return;
     }
     playing_ = true;
-    const int steps = song_->steps();
 
     bool lane[4];
     for (int ch = 0; ch < 4; ++ch) {
@@ -158,7 +227,7 @@ void Player::process(const TickPoint* ticks, size_t nTicks, bool playing, std::v
         laneOn_[size_t(ch)] = lane[ch];
     }
 
-    int starts[4][kSteps + 1];
+    int starts[4][kMaxSteps + 1];
     int builtBar[4] = { -1, -1, -1, -1 };
     uint8_t builtGroove[4] = { kGrooveNone, kGrooveNone, kGrooveNone, kGrooveNone };
     for (size_t k = 0; k < nTicks; ++k) {
@@ -174,14 +243,18 @@ void Player::process(const TickPoint* ticks, size_t nTicks, bool playing, std::v
         lastTick_ = tick;
         haveTick_ = true;
         if (tick < 0) continue;
-        const int bar = int(tick / barTicks_);
-        const int inBar = int(tick % barTicks_);
+        // The bars are the song's own, laid end to end from tick 0 through
+        // the prefix table, so a bar with its own step count moves the ones
+        // after it (section 11).
+        int bar = 0, inBar = 0;
+        barAtTick(*song_, tick, barTicks_, bar, inBar);
+        const int steps = song_->stepsOfBar(bar);
         for (int ch = 0; ch < 4; ++ch) {
             if (!lane[ch]) continue;
             const uint8_t slot = song_->phraseAt(ch, bar);
             const uint8_t g = groove(ch);
             if (builtBar[ch] != bar || builtGroove[ch] != g) {
-                stepTicks(song_->phrase(slot), starts[ch], g);
+                stepTicks(song_->phrase(slot), starts[ch], g, steps);
                 builtBar[ch] = bar; builtGroove[ch] = g;
             }
             for (int s = 0; s < steps; ++s)
@@ -204,40 +277,42 @@ void Player::process(const TickPoint* ticks, size_t nTicks, bool playing, std::v
 bool Player::quantise(int ch, double tick, int& bar, int& step, int64_t& stepTick) const
 {
     // The channel's own grid: its phrase this bar, and its groove in force.
-    if (!song_) return false;
-    const int steps = song_->steps();
-    bar = int(std::floor(tick / barTicks_));
-    if (bar < 0) return false;
-    const double inBar = tick - double(bar) * barTicks_;
-    int starts[kSteps + 1];
-    stepTicks(song_->phrase(song_->phraseAt(ch, bar)), starts, groove(ch));
+    if (!song_ || tick < 0.0) return false;
+    barAtTick(*song_, int64_t(std::floor(tick)), barTicks_, bar, step);
+    const double barStart = double(barStartTick(*song_, bar, barTicks_));
+    const int length = barLengthTicks(*song_, bar, barTicks_);
+    const int steps = song_->stepsOfBar(bar);
+    const double inBar = tick - barStart;
+    int starts[kMaxSteps + 1];
+    stepTicks(song_->phrase(song_->phraseAt(ch, bar)), starts, groove(ch), steps);
     int best = -1; double bestD = 1e18;
     for (int s = 0; s < steps; ++s) {
-        if (starts[s] >= barTicks_) break;              // that step never fires
+        if (starts[s] >= length) break;                 // that step never fires
         const double d = std::fabs(double(starts[s]) - inBar);
         if (d < bestD) { bestD = d; best = s; }
     }
-    if (best < 0 || double(barTicks_) - inBar < bestD) {
+    if (best < 0 || double(length) - inBar < bestD) {
         // Nearer the bar's end: that is the next bar's first step.
         ++bar;
         step = 0;
-        stepTicks(song_->phrase(song_->phraseAt(ch, bar)), starts, groove(ch));
-        stepTick = int64_t(bar) * barTicks_ + starts[0];
+        stepTicks(song_->phrase(song_->phraseAt(ch, bar)), starts, groove(ch), song_->stepsOfBar(bar));
+        stepTick = barStartTick(*song_, bar, barTicks_) + starts[0];
         return true;
     }
     step = best;
-    stepTick = int64_t(bar) * barTicks_ + starts[best];
+    stepTick = barStartTick(*song_, bar, barTicks_) + starts[best];
     return true;
 }
 
 bool Player::stepAt(int ch, int64_t tick, int& bar, int& step) const
 {
     if (!song_ || tick < 0) return false;
-    bar = int(tick / barTicks_);
-    const int inBar = int(tick % barTicks_);
-    int starts[kSteps + 1];
-    stepTicks(song_->phrase(song_->phraseAt(ch, bar)), starts, groove(ch));
-    for (int s = 0; s < song_->steps(); ++s)
+    int inBar = 0;
+    barAtTick(*song_, tick, barTicks_, bar, inBar);
+    const int steps = song_->stepsOfBar(bar);
+    int starts[kMaxSteps + 1];
+    stepTicks(song_->phrase(song_->phraseAt(ch, bar)), starts, groove(ch), steps);
+    for (int s = 0; s < steps; ++s)
         if (starts[s] == inBar) { step = s; return true; }
     return false;
 }
@@ -245,25 +320,25 @@ bool Player::stepAt(int ch, int64_t tick, int& bar, int& step) const
 bool Player::nextStep(int ch, int& bar, int& step, int64_t& stepTick) const
 {
     if (!song_) return false;
-    int starts[kSteps + 1];
-    if (step + 1 < song_->steps()) {
-        stepTicks(song_->phrase(song_->phraseAt(ch, bar)), starts, groove(ch));
-        if (starts[step + 1] < barTicks_) {
+    int starts[kMaxSteps + 1];
+    if (step + 1 < song_->stepsOfBar(bar)) {
+        stepTicks(song_->phrase(song_->phraseAt(ch, bar)), starts, groove(ch), song_->stepsOfBar(bar));
+        if (starts[step + 1] < barLengthTicks(*song_, bar, barTicks_)) {
             ++step;
-            stepTick = int64_t(bar) * barTicks_ + starts[step];
+            stepTick = barStartTick(*song_, bar, barTicks_) + starts[step];
             return true;
         }
     }
     ++bar;
     step = 0;
-    stepTicks(song_->phrase(song_->phraseAt(ch, bar)), starts, groove(ch));
-    stepTick = int64_t(bar) * barTicks_ + starts[0];
+    stepTicks(song_->phrase(song_->phraseAt(ch, bar)), starts, groove(ch), song_->stepsOfBar(bar));
+    stepTick = barStartTick(*song_, bar, barTicks_) + starts[0];
     return true;
 }
 
 bool Player::stepHasNote(int ch, int bar, int step) const
 {
-    if (!song_ || step < 0 || step >= kSteps) return false;
+    if (!song_ || step < 0 || step >= kMaxSteps) return false;
     const Phrase* p = song_->phrase(song_->phraseAt(ch, bar));
     if (!p) return false;
     const uint8_t n = p->steps[size_t(step)].note;
@@ -271,7 +346,7 @@ bool Player::stepHasNote(int ch, int bar, int step) const
 }
 
 void Player::slotCells(int ch, const bank::Command& c1, const bank::Command& c2,
-                       bool plainNote, bank::Command& o1, bank::Command& o2)
+                       SlotWrite mode, bank::Command& o1, bank::Command& o2)
 {
     const size_t c = size_t(ch & 3);
     const bank::Command* in[2] = { &c1, &c2 };
@@ -280,9 +355,13 @@ void Player::slotCells(int ch, const bank::Command& c1, const bank::Command& c2,
         bank::Command& last = recSlots_[c][i];
         *out[i] = {};
         if (bank::sameCmd(*in[i], last)) {
-            // A plain note reloads the instrument and fires the slots after
-            // it, so its cell carries them even when nothing has changed.
-            if (plainNote && in[i]->cmd != bank::Cmd::None) *out[i] = *in[i];
+            // The slot has not moved, so the cell carries it only where the
+            // driver would fire it again: at a plain note, which reloads the
+            // instrument; at a bare note, the per-note letters it re-fires;
+            // and at a note in the command octave, which fires both slots.
+            const bool wanted = mode == SlotWrite::Plain || mode == SlotWrite::All
+                                || (mode == SlotWrite::Bare && !bank::cmdPersists(in[i]->cmd));
+            if (wanted && in[i]->cmd != bank::Cmd::None) *out[i] = *in[i];
             continue;
         }
         // A slot going to none is written as the letter's revert form, which
@@ -319,36 +398,40 @@ bool Player::recordNote(int ch, double tick, uint8_t note, uint8_t velocity, boo
         }
         if (stepHasNote(int(c), bar, step)) return false;   // occupied: the note there ends it
         out.bar = uint16_t(std::clamp(bar, 0, 65535));
-        out.step = uint8_t(std::clamp(step, 0, kSteps - 1));
+        out.step = uint8_t(std::clamp(step, 0, kMaxSteps - 1));
         out.cell.note = kNoteOff;
         return true;
     }
     out.bar = uint16_t(std::clamp(bar, 0, 65535));
-    out.step = uint8_t(std::clamp(step, 0, kSteps - 1));
+    out.step = uint8_t(std::clamp(step, 0, kMaxSteps - 1));
     out.cell.note = note;
     out.cell.vel = uint8_t(std::clamp<int>(velocity, 0, 127));
     // The instrument column is what the note loaded, and blank when the note
     // was bare -- so an overlap records as a bare cell and plays back bare.
     out.cell.inst = plain ? instrument : 0;
     out.cell.table = table;
-    slotCells(int(c), c1, c2, plain, out.cell.cmd1, out.cell.cmd2);
+    // A plain note's cell carries both slots in force; a bare note's carries
+    // the per-note letters only, since the persistent ones are already in the
+    // running state and re-writing E on a sounding pulse would restart its
+    // envelope (section 12). A slot that moved is written either way.
+    slotCells(int(c), c1, c2, plain ? SlotWrite::Plain : SlotWrite::Bare, out.cell.cmd1, out.cell.cmd2);
     recNoteStep_[c] = at;
     recNote_[c] = note;
     return true;
 }
 
-bool Player::recordSlots(int ch, double tick, const bank::Command& c1, const bank::Command& c2, RecordMessage& out)
+bool Player::recordSlots(int ch, double tick, const bank::Command& c1, const bank::Command& c2, RecordMessage& out, bool force)
 {
     const size_t c = size_t(ch & 3);
     int bar = 0, step = 0; int64_t at = 0;
     if (!quantise(ch, tick, bar, step, at)) return false;
     bank::Command o1, o2;
-    slotCells(int(c), c1, c2, false, o1, o2);
+    slotCells(int(c), c1, c2, force ? SlotWrite::All : SlotWrite::Changed, o1, o2);
     if (o1.cmd == bank::Cmd::None && o2.cmd == bank::Cmd::None) return false;
     out = RecordMessage{};
     out.channel = uint8_t(c);
     out.bar = uint16_t(std::clamp(bar, 0, 65535));
-    out.step = uint8_t(std::clamp(step, 0, kSteps - 1));
+    out.step = uint8_t(std::clamp(step, 0, kMaxSteps - 1));
     out.slotsOnly = true;
     out.cell.cmd1 = o1; out.cell.cmd2 = o2;
     return true;

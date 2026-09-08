@@ -558,10 +558,14 @@ struct PhraseGrid::Impl {
     PhraseGrid& owner;
     std::shared_ptr<const tracker::Song> song;
     int bar = 0;
-    std::array<std::array<tracker::Cell, tracker::kSteps>, 4> cells{};
+    // The lane shows the bar's first sixteen steps; a phrase holds sixty-four
+    // now (docs/COMMANDS_AND_TEMPO.md section 11), and the grid that shows a
+    // bar's own step count is the interface stage's.
+    static constexpr int kRows = PhraseGrid::kVisibleSteps;
+    std::array<std::array<tracker::Cell, kRows>, 4> cells{};
     std::array<int, 4> playing { -1, -1, -1, -1 };
     std::array<int, 4> rollNote { -1, -1, -1, -1 };
-    std::array<std::array<int, tracker::kSteps>, 4> shadow{};   ///< the roll's notes as the bar played, greyed
+    std::array<std::array<int, kRows>, 4> shadow{};   ///< the roll's notes as the bar played, greyed
     std::array<int, 4> groove{};
     std::array<bool, 4> trackerSource{};
     std::array<juce::Rectangle<int>, 4> grooveRects{};
@@ -572,7 +576,7 @@ struct PhraseGrid::Impl {
 
     explicit Impl(PhraseGrid& o) : owner(o)
     {
-        core.rows = tracker::kSteps; core.rowH = kRowHeight; core.headerH = kHeaderHeight;
+        core.rows = kRows; core.rowH = kRowHeight; core.headerH = kHeaderHeight;
         for (int ch = 0; ch < 4; ++ch) {
             source[ch].setOptions({ "Roll", "Trk" });
             source[ch].setMini(true);
@@ -650,7 +654,7 @@ struct PhraseGrid::Impl {
     {
         for (int ch = 0; ch < 4; ++ch) {
             const auto* p = song != nullptr ? song->phrase(song->phraseAt(ch, bar)) : nullptr;
-            cells[size_t(ch)] = p != nullptr ? p->steps : std::array<tracker::Cell, tracker::kSteps>{};
+            for (int i = 0; i < kRows; ++i) cells[size_t(ch)][size_t(i)] = p != nullptr ? p->steps[size_t(i)] : tracker::Cell{};
             groove[size_t(ch)] = p != nullptr ? p->groove : 0;
             trackerSource[size_t(ch)] = song != nullptr && song->noteSource[size_t(ch)] == tracker::NoteSource::Tracker;
             source[ch].setSelected(trackerSource[size_t(ch)] ? 1 : 0, juce::dontSendNotification);
@@ -814,7 +818,7 @@ void PhraseGrid::setPlayingStep(int ch, int step)
     auto& im = *impl_;
     if (im.playing[size_t(ch)] == step) return;
     im.playing[size_t(ch)] = step;
-    if (step >= 0 && step < tracker::kSteps && im.rollNote[size_t(ch)] > 0) im.shadow[size_t(ch)][size_t(step)] = im.rollNote[size_t(ch)];
+    if (step >= 0 && step < Impl::kRows && im.rollNote[size_t(ch)] > 0) im.shadow[size_t(ch)][size_t(step)] = im.rollNote[size_t(ch)];
     repaint();
 }
 void PhraseGrid::setRollNote(int ch, int midiNote)
@@ -823,7 +827,7 @@ void PhraseGrid::setRollNote(int ch, int midiNote)
     auto& im = *impl_;
     im.rollNote[size_t(ch)] = midiNote;
     const int step = im.playing[size_t(ch)];
-    if (midiNote > 0 && step >= 0 && step < tracker::kSteps && im.shadow[size_t(ch)][size_t(step)] != midiNote) {
+    if (midiNote > 0 && step >= 0 && step < Impl::kRows && im.shadow[size_t(ch)][size_t(step)] != midiNote) {
         im.shadow[size_t(ch)][size_t(step)] = midiNote;
         repaint(juce::Rectangle<int>(0, im.core.rowY(step), getWidth(), im.core.rowH));
     }

@@ -96,7 +96,7 @@ PhrasesPanel::PhrasesPanel(ChipBoyProcessor& p)
         const int bar = bar_;
         editSong([ch, step, bar, cell](tracker::Song& s) {
             const uint8_t slot = ensurePhrase(s, ch, bar);
-            if (slot == 0 || step < 0 || step >= tracker::kSteps) return;
+            if (slot == 0 || step < 0 || step >= tracker::kMaxSteps) return;
             s.phrases[size_t(slot - 1)].steps[size_t(step)] = cell;
         });
     };
@@ -180,11 +180,13 @@ int PhrasesPanel::playingStep(int ch, int bar, int inBar) const
     const auto s = processor.song();
     if (!s) return -1;
     const int barTicks = std::max(1, processor.barTicks());
-    int start[tracker::kSteps + 1];
-    tracker::stepStartTicks(*s, s->phrase(s->phraseAt(ch, bar)), processor.player().groove(ch), start);
+    const int steps = s->stepsOfBar(bar);
+    int start[tracker::kMaxSteps + 1];
+    tracker::stepStartTicks(*s, s->phrase(s->phraseAt(ch, bar)), processor.player().groove(ch), start, barTicks, steps);
+    const int length = tracker::barLengthTicks(*s, bar, barTicks);
     int step = -1;
-    for (int i = 0; i < s->steps(); ++i) {
-        if (start[i] >= barTicks || start[i] > inBar) break;   // that step never fires, or has not come yet
+    for (int i = 0; i < steps; ++i) {
+        if (start[i] >= length || start[i] > inBar) break;     // that step never fires, or has not come yet
         step = i;
     }
     return step;
@@ -228,9 +230,12 @@ void PhrasesPanel::tick()
     const bool playing = processor.transportPlaying();
     const int64_t tick = std::max<int64_t>(0, processor.trackerTick());
     const int barTicks = std::max(1, processor.barTicks());
-    const int spb = s ? std::max(1, int(s->stepsPerBar)) : 16;
-    const int bar = int(tick / barTicks);
-    const int inBar = int(tick % barTicks);
+    // The bars are the song's own, laid end to end through its prefix table:
+    // a bar with its own step count moves the ones after it (section 11).
+    int bar = 0, inBar = 0;
+    if (s) tracker::barAtTick(*s, tick, barTicks, bar, inBar);
+    else { bar = int(tick / barTicks); inBar = int(tick % barTicks); }
+    const int spb = s ? s->stepsOfBar(bar) : 16;
     const int beat = inBar / driver::kTicksPerBeat;
     const int stepInBeat = (inBar - beat * driver::kTicksPerBeat) * spb / barTicks;
     pos_.setText(String(bar + 1) + "." + String(beat + 1) + "." + String(stepInBeat + 1));
