@@ -231,11 +231,43 @@ private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
 
+/// One song open in the window: what its tab shows
+/// (docs/COMMANDS_AND_TEMPO.md section 18).
+struct SongTabInfo {
+    juce::String name;
+    bool dirty = false;
+    juce::String tip;            ///< the file behind it, or where it came from
+    bool operator==(const SongTabInfo& o) const { return name == o.name && dirty == o.dirty && tip == o.tip; }
+};
+
+/// The song tabs, where the Tracker tab's summary line was (section 18): one
+/// tab per loaded song with a dot while it has unsaved work and an x to drop
+/// it, the active one lit, and a + that starts an empty song. Only the
+/// active tab is live -- it is what plays and what every other tab edits.
+class SongTabStrip : public juce::Component, public juce::TooltipClient {
+public:
+    SongTabStrip();
+    ~SongTabStrip() override;
+    /// Nothing happens when the list and the active index are unchanged, so
+    /// the panel can hand it the processor's tabs every frame.
+    void setTabs(const std::vector<SongTabInfo>& tabs, int active);
+    std::function<void(int)> onActivate;
+    std::function<void(int)> onClose;      ///< the x; the panel asks before dropping unsaved work
+    std::function<void()> onNew;           ///< the + tab
+    juce::String getTooltip() override;
+    static constexpr int kHeight = 26;
+    void paint(juce::Graphics&) override;
+    void resized() override;
+    void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
+private:
+    struct Impl; std::unique_ptr<Impl> impl_;
+};
+
 /// The tracker lane: four channels side by side, the bar's own step count
 /// of note, velocity, instrument, table and two commands (UI_DESIGN
 /// section 7). Each channel's head carries its record arm, the PLAYS switch
-/// (MIDI / Trkr) and the phrase's groove chip; the groove itself is edited
-/// in the Grooves tab.
+/// (MIDI / Trkr / Hyb, docs/COMMANDS_AND_TEMPO.md section 20) and the
+/// phrase's groove chip; the groove itself is edited in the Grooves tab.
 ///
 /// The rows are the bar's steps, one to sixty-four
 /// (docs/COMMANDS_AND_TEMPO.md section 11): the grid is as tall as they ask
@@ -336,6 +368,10 @@ public:
     void setChannel(int ch);            ///< 0-3: colour, and whether it is pulse / wave / noise
     void setTrace(Trace t);
     void setPeriods(int periods);       ///< 1, 2, 4 or 8; noise uses a fixed time window
+    /// A kit plays a sample rather than a repeating wave, so there is no
+    /// period to lock to: the scope keeps noise's fixed time window while
+    /// one is playing (docs/COMMANDS_AND_TEMPO.md section 22).
+    void setFixedWindow(bool on);
     void setAnalogCornerHz(double hz);  ///< the coupling corner of the current model; <= 0 = RAW (no analog trace)
     void setLcdGround(bool lcd);        ///< LCD green on near-black, or the panel's dark ground
     void setLineWidth(float px);
