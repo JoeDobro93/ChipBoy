@@ -475,6 +475,13 @@ Overlap set to legato; anything else is a bare note — it rewrites the period a
 per-note commands only, leaving the envelope, table, running state and pitch clock
 exactly where they were.
 
+*Revised 2026-09-08 (second): see [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md)
+§12:* a tracker cell's own two commands are not a slot and never occupy CMD1/CMD2 —
+they apply once, at the cell's own step. A persistent letter (`A E F G M O P S T V W`)
+changes the running state and holds until the next plain note reloads the instrument, or
+a later command changes it again; a per-note letter (`C D K L R Z`) shapes only that
+cell's note. The automation slots above keep firing exactly as described.
+
 ### 8.3 Envelopes: two honest modes, per instrument
 
 **Hardware envelope** (default). Start volume 0–15, direction, rate 0–7. One write to
@@ -735,6 +742,12 @@ An optional keyswitch range below the playable range selects the instrument. Off
 default; when on, the switched-out notes are removed from the playable range and the UI
 says so.
 
+*Revised 2026-09-08: see [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §13:*
+MIDI notes 0–11, the **command octave**, never sound on any channel — a note-on there
+fires the channel's two command slots (CMD1 then CMD2) on whatever it is already
+playing, without a trigger, so a held note can be shaped after its attack. Velocity is
+ignored and no keyswitch setting is needed to reach it.
+
 ### 10.4 Note-off
 
 Per instrument:
@@ -979,7 +992,12 @@ project load order audible.
   register view is not a debug panel — it is the thing that teaches the instrument, and
   it stays.
 - **Bank browser.** Instruments, tables, waves, kits. Rename, duplicate, reorder,
-  import, export.
+  import, export. *Revised 2026-09-08: see
+  [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §15:* an instrument can also
+  **Save preset…** / **Load preset…** on its own, a `.cbi` file carrying every table,
+  wave and kit it references. Loading one places each dependency in the first free slot
+  of its kind (or reuses an identical one already in the bank) and renumbers every
+  reference to match.
 - **Wave editor.** 32 × 16 grid, frame strip along the bottom, shape generators,
   interpolate-between-frames.
 - **Table editor.** 16 rows × 4 columns, keyboard-navigable, in the tracker idiom that
@@ -1001,6 +1019,16 @@ project load order audible.
   the driver actually did: the instrument the note loaded (blank when the note was
   bare), the velocity, the table override, and the two command slots as they stood at
   that step — so a Trk playback of the recorded song reproduces the performance.
+  *Revised 2026-09-08 (second): see [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md)
+  §§11 and 14–17:* the tab is renamed **Tracker**; a phrase's length is typed, 1–64
+  steps, and one bar may take its own count instead in the chain's own **STP** column.
+  Each channel carries a **record arm** and a **PLAYS** switch, **MIDI** or **Trkr**,
+  where **Roll** and **Trk** read before. **Save song…** / **Load song…** write and read
+  a `.cbsong`, which also names the bank it was written with and every instrument slot it
+  uses, so a load reports where the two disagree. With no host transport — the
+  Standalone, or a host with no play head — the tab's own **Play** / **Stop** / **Loop**
+  run the song from the song start on the plugin's own clock at the Song tempo; in a host
+  the buttons mirror its transport instead.
 - **Visualizer.** A separate resizable window with the five scopes and no chrome, for
   screen capture.
 
