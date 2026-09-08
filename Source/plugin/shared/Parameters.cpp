@@ -86,8 +86,14 @@ String commandRevertText(bank::Cmd c)
         case bank::Cmd::M: return "the master parameters";
         case bank::Cmd::P: return "no offset, no bend";
         case bank::Cmd::T: return "the song tempo";
-        default: return "the instrument's own";
+        case bank::Cmd::E: case bank::Cmd::F: case bank::Cmd::O:
+        case bank::Cmd::S: case bank::Cmd::V: case bank::Cmd::W:
+            return "the instrument's own";
+        case bank::Cmd::None: case bank::Cmd::C: case bank::Cmd::D: case bank::Cmd::H:
+        case bank::Cmd::K: case bank::Cmd::L: case bank::Cmd::R: case bank::Cmd::Z:
+            break;                     // per-note letters leave nothing to put back
     }
+    return {};
 }
 } // namespace
 

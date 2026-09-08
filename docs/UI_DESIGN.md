@@ -295,6 +295,17 @@ lane are one mechanism, not two. **Vel** is the note's velocity, 1–127, blank 
 the default 100; a recorded note keeps the velocity it arrived with, and every column
 takes the same gestures — the wheel, typed digits, + and −, Backspace to blank.
 
+A command cell can also hold a letter's **revert form**, which is what the recorder
+writes when an automation slot goes back to *none*: it puts that letter back where the
+instrument left it and leaves nothing in force
+([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §9.4). It is drawn as the letter and an
+equals sign — **`E =`** — and `=` is the key that enters it, on a cell that already has
+a letter; typing a value again clears it. Three glyphs sit comfortably in the 53 px
+command column, which holds seven (`V 15,15`), and `=` cannot be misread as an argument
+the way a lone dot could; it is ASCII, so it draws in the embedded fonts whatever the
+platform. The cost is that `=` no longer doubles for `+` in a command column, where `+`
+still steps the argument.
+
 **The groove editor** stands to the right of the lane, its sixteen cells row for row
 with the lane's steps, because a groove is read down the steps and not across the bar. A
 groove is sixteen tick counts, each 1–48 with 0 unused, and step *i* lasts

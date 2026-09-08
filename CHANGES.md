@@ -26,6 +26,64 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-08 — revert cells and the Song tempo parameter
+
+The three things the record test left open ([`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md)
+§3, §4, §9.4). The demo no longer works around any of them.
+
+**Changed:**
+
+- **A cell can say "put this letter back".** A command's internal `c` field gains a
+  meaning: 1 makes the command the **revert form** of its letter, which is exactly what a
+  command slot going to none does — the instrument's own value for E, F, O, S, V and W,
+  no offset and no bend for P, the master parameters for M, the song tempo for T, the
+  phrase's groove for G, a stopped table for A. The driver takes the same function for
+  both, so the two can never disagree, and a cell's revert form is applied once and
+  **leaves the slot empty** — which is the whole point. The recorder writes that form
+  instead of computing a value, and `SlotRevert`, `tracker::revertCommand` and the
+  processor's `slotRevert` go away with it. In the phrase grid a revert reads as the
+  letter and an equals sign, **`E =`**; `=` on a cell that already has a letter enters
+  it, and typing a value clears it again ([`docs/UI_DESIGN.md`](docs/UI_DESIGN.md) §7).
+  The cell's `c` round-trips through the song JSON, and a file written without it reads
+  as a plain command.
+- **The note report is per event.** `Driver::noteReport(ch)` described the block's *last*
+  note-on on a channel, so two note-ons in one block — a fast tempo, a big buffer, a
+  keyswitch between them — gave the first one the second one's instrument column. The
+  driver stamps each note-on with what it did (`NoteEvent::plain` and `::loaded`) as it
+  plays it, and the recorder reads the event; `noteReport` and `NoteReport` are gone. The
+  event list `Driver::process` takes is no longer const.
+- **The Song tempo parameter is the song's base tempo.** `buildTempoMap` seeded the map
+  with `Song::tempoBpm` at tick 0 and the clock let that entry override its config, so the
+  `song_tempo` parameter was dead the moment a song was published: `Demo/ChipBoy Demo
+  (song tempo).rpp` played at 120 rather than 150. The map holds the T cells only now and
+  takes its base from the caller, which is the parameter — automatable, and re-integrated
+  from the current position while playing, as §4 says. `Song::tempoBpm` is the value the
+  *file* carries: stamped from the parameter when a song is published, read back into the
+  parameter when one arrives from a file, so a saved song opens at its tempo. A T cell at
+  tick 0 is still a cell and owns the base from the song's start.
+- **The demo reverts naturally.** PU2's **E** goes to none at bar 13 and the bass's
+  velocity accents come back; PU1's **V** goes to none at bar 9 and the lead plays its own
+  vibrato, ten-tick delay and all; WAV's **W** and **F** go to none at bar 13 and the
+  instrument the keyswitch brings in plays its own wave from its own first frame. All
+  three used to hold a concrete value instead, because a recorded revert stayed in force.
+  `Demo/` is regenerated and `chipboy_recordtest` still passes.
+
+**Why:** the record test's own report said a recorded revert was not a revert, and named
+three demo lanes that had to lie to get past it. A letter's revert is a *kind* of value,
+not a number, and the data model had a spare field for exactly this.
+
+**Considered:** letting a revert stay in force and re-fire at every note-on, as a
+concrete command does. It is what made the concrete form wrong: an E in force sets the
+start volume of every note after it. A revert is a one-shot by definition — after it the
+instrument's own value is what a note-on loads anyway.
+
+**Skipped / uncertain:** a note held by *Quantise notes to ticks* across a block boundary
+has no event left to report to, so its cell is written from the defaults; the driver
+reports back through the pending queue for the notes that fire in the block they arrived
+in. Rebuilding a song's tempo map when the parameter moves is a whole-song copy on the
+message timer, taken only when the song has T cells at all — a song without them never
+pays it, because its base is the clock's, live.
+
 ### 2026-09-08 — pitch speed and bare notes (engine)
 
 The driver side of the addendum to [`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md)

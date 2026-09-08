@@ -523,6 +523,47 @@ TEST_CASE("a slot going to none records the letter's revert form", "[tracker][re
     CHECK_FALSE(p.recordSlots(0, 24.0, none, none, m));
 }
 
+TEST_CASE("a cell's revert form reaches the driver as it was written", "[tracker][record]")
+{
+    // The Player passes a cell's commands through untouched, so what the
+    // recorder wrote as a revert arrives at the driver as a revert
+    // (docs/COMMANDS_AND_TEMPO.md section 3).
+    Song s;
+    s.noteSource[0] = NoteSource::Tracker;
+    auto& ph = s.phrases[0]; ph.used = true;
+    ph.steps[0].note = 60; ph.steps[0].inst = 1;
+    ph.steps[4].cmd1 = bank::revertOf(bank::Cmd::E);
+    ph.steps[4].cmd2 = bank::revertOf(bank::Cmd::V);
+    s.chain[0] = { 1 };
+    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
+    const auto out = ticks(p, 0, 96);
+    const NoteEvent* cmd = nullptr;
+    for (const auto& e : out) if (e.kind == NoteEvent::Command) cmd = &e;
+    REQUIRE(cmd != nullptr);
+    CHECK(cmd->cmd1.cmd == bank::Cmd::E);
+    CHECK(bank::isRevert(cmd->cmd1));
+    CHECK(cmd->cmd2.cmd == bank::Cmd::V);
+    CHECK(bank::isRevert(cmd->cmd2));
+}
+
+TEST_CASE("a G cell reverting puts the phrase's own groove back", "[tracker][groove]")
+{
+    Song s;
+    s.noteSource[0] = NoteSource::Tracker;
+    s.grooves[1].ticks = { 12, 12 };            // slot 2: twelve ticks a step
+    auto& ph = s.phrases[0]; ph.used = true;
+    ph.groove = 0;                              // the phrase's own is straight
+    ph.steps[0].cmd1 = { bank::Cmd::G, 2, 0, 0 };
+    s.chain[0] = { 1, 1 };
+    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
+    ticks(p, 0, 1);
+    CHECK(p.groove(0) == 2);
+    auto& ph2 = s.phrases[0];
+    ph2.steps[1].cmd1 = bank::revertOf(bank::Cmd::G);
+    ticks(p, 1, 20);
+    CHECK(p.groove(0) == kGrooveNone);          // the phrase's own again
+}
+
 TEST_CASE("the SPSC ring survives a corrupted head", "[link]")
 {
     link::Spsc<int, 8> q;

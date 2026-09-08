@@ -83,6 +83,12 @@ NoteEvent cellOn(int ch, uint8_t note, uint8_t inst, uint8_t vel = 100, uint32_t
     NoteEvent e; e.channel = uint8_t(ch); e.kind = NoteEvent::NoteOn; e.source = NoteEvent::Tracker;
     e.a = note; e.b = vel; e.inst = inst; e.offset = off; return e;
 }
+/// A cell with no note: its columns are the slots from that step on.
+NoteEvent cellCmd(int ch, const Command& c1, const Command& c2 = {})
+{
+    NoteEvent e; e.channel = uint8_t(ch); e.kind = NoteEvent::Command; e.source = NoteEvent::Tracker;
+    e.cmd1 = c1; e.cmd2 = c2; return e;
+}
 NoteEvent allOff(int ch)
 {
     NoteEvent e; e.channel = uint8_t(ch); e.kind = NoteEvent::AllNotesOff; return e;
@@ -430,6 +436,118 @@ TEST_CASE("a slot fires when it changes, again at each note-on, and reverts", "[
     REQUIRE(last(w, 0xFF12) != nullptr);
     CHECK(last(w, 0xFF12)->value == 0xD0);                         // the instrument's vol 13
     CHECK(r.drv.slot(0, 1).cmd == Cmd::None);
+}
+
+TEST_CASE("a cell's revert form puts the letter back and leaves nothing in force", "[driver][commands]")
+{
+    // Command::c = kRevert is the letter going back to where the instrument
+    // left it -- the slot going to none, said in a cell (section 3). It is
+    // applied once and leaves the slot empty, which is what makes it exact:
+    // a concrete E would stay in force and set the start volume of every note
+    // after it, so the velocity accents could never come back.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    ChannelParams p; p.instrument = 1; r.drv.setParams(0, p);      // Square lead: vol 13, rate 0
+    NoteEvent e = cellOn(0, 69, 1, 127);
+    e.cmd1 = { Cmd::E, 5, 0, 0 };
+    auto w = r.block({ e }, 480);
+    CHECK(last(w, 0xFF12)->value == 0x50);                         // E's volume, not the velocity's
+    w = r.block({ cellOn(0, 67, 1, 127) }, 480);
+    CHECK(last(w, 0xFF12)->value == 0x50);                         // in force: it fires at every note-on
+
+    w = r.block({ cellCmd(0, bank::revertOf(Cmd::E)) }, 480);
+    REQUIRE(last(w, 0xFF12) != nullptr);
+    CHECK(last(w, 0xFF12)->value == 0xD0);                         // the instrument's own vol 13
+    CHECK(r.drv.slot(0, 0).cmd == Cmd::None);                      // and nothing is left in force
+    w = r.block({ cellOn(0, 65, 1, 127) }, 480);
+    CHECK(last(w, 0xFF12)->value == 0xF0);                         // velocity 127 gets through again
+    w = r.block({ cellOn(0, 64, 1, 64) }, 480);
+    CHECK(last(w, 0xFF12)->value == 0x80);                         // and so does velocity 64
+}
+
+TEST_CASE("a V revert brings back the instrument's vibrato, delay and all", "[driver][commands][pitch]")
+{
+    // A V command has no delay argument, so the value a concrete V could
+    // carry is lossy: it would start the lead's vibrato at once at every
+    // note-on. The revert form leaves the slot empty, so the instrument's own
+    // ten-tick delay is what the notes that follow get (section 9.4).
+    auto rig = [](bool useRevert) {
+        auto r = std::make_unique<Rig>();
+        r->tickHz = 100.0;
+        r->song.noteSource[0] = tracker::NoteSource::Tracker;
+        ChannelParams p; p.instrument = 1; p.velocityMode = 2; r->drv.setParams(0, p);
+        NoteEvent e = cellOn(0, 69, 1);
+        e.cmd1 = { Cmd::V, 15, 12, 0 };                            // fast and deep, no delay
+        r->block({ e }, 480);
+        CHECK(r->drv.view(0).vibSpeed == 15);
+        CHECK(r->drv.view(0).vibDepth == 12);
+        // Back to the instrument's: the revert form, or the value the old
+        // recorder wrote -- the instrument's speed and depth, its delay lost.
+        r->block({ cellCmd(0, useRevert ? bank::revertOf(Cmd::V) : Command{ Cmd::V, 10, 2, 0 }) }, 480);
+        CHECK(r->drv.view(0).vibSpeed == 10);                      // the lead's speed
+        CHECK(r->drv.view(0).vibDepth == 2);                       // and its depth, either way
+        r->block({ cellOn(0, 69, 1) }, 480);                       // a fresh note, five ticks in
+        r->block({}, 2400);
+        return int(r->drv.view(0).period);
+    };
+    CHECK(rig(true) == note(69));                                  // still waiting out the delay
+    CHECK(rig(false) != note(69));                                 // a concrete V starts at once
+}
+
+TEST_CASE("a W revert gives the instrument a keyswitch brought in its own wave", "[driver][commands]")
+{
+    // The demo's case: WAV's W is in force, a keyswitch hands the channel
+    // another instrument, and the letter goes back to none. Nothing is left in
+    // force, so the note that follows plays the new instrument's own wave; the
+    // concrete W the old recorder wrote would override it for good (9.4).
+    // The first sixteen wave-RAM bytes of a block: the frame the note loaded,
+    // before the instrument's own frame advance writes any more.
+    auto ram = [](const std::vector<RegWrite>& w) {
+        std::vector<uint8_t> out;
+        for (const auto& x : w) if (x.addr >= 0xFF30 && x.addr <= 0xFF3F && out.size() < 16) out.push_back(x.value);
+        return out;
+    };
+    // A run with no W at all: what instrument 9 (Organ frames, wave 5) sounds like.
+    auto plain = [&] {
+        Rig r;
+        r.song.noteSource[2] = tracker::NoteSource::Tracker;
+        ChannelParams p; p.instrument = 9; r.drv.setParams(2, p);
+        return ram(r.block({ cellOn(2, 48, 9) }, 512));
+    };
+    auto afterW = [&](Command back) {
+        Rig r;
+        r.song.noteSource[2] = tracker::NoteSource::Tracker;
+        ChannelParams p; p.instrument = 7; p.keyswitch = true; r.drv.setParams(2, p);   // Triangle bass
+        NoteEvent e = cellOn(2, 48, 7);
+        e.cmd1 = { Cmd::W, 2, 0, 0 };                              // wave 2, the saw
+        r.block({ e }, 512);
+        r.block({ Rig::on(2, 20, 100) }, 512);                     // keyswitch: 12 + 9 - 1 selects slot 9
+        r.block({ cellCmd(2, back) }, 512);
+        return ram(r.block({ cellOn(2, 48, 9) }, 512));
+    };
+    const auto organ = plain();
+    REQUIRE(organ.size() == 16);
+    CHECK(afterW(bank::revertOf(Cmd::W)) == organ);                // the Organ's own wave
+    CHECK(afterW(Command{ Cmd::W, 1, 0, 0 }) != organ);            // a value stays in force: the triangle
+}
+
+TEST_CASE("two note-ons in one block are each reported as what they were", "[driver][notes]")
+{
+    // The report used to be the block's last note-on per channel, so the
+    // first note of a block took the second one's instrument. It is stamped on
+    // each event now (section 9.4): a keyswitch between two notes of one block
+    // gives the two notes two different instrument columns.
+    Rig r;
+    ChannelParams p; p.instrument = 1; p.keyswitch = true; r.drv.setParams(0, p);
+    r.block({ Rig::on(0, 60, 100), Rig::off(0, 60, 100),
+              Rig::on(0, 26, 100, 200),                            // D1: keyswitch to slot 3
+              Rig::on(0, 64, 100, 300) }, 512);
+    REQUIRE(r.events.size() == 4);
+    CHECK(r.events[0].plain);
+    CHECK(r.events[0].loaded == 1);                                // the Instrument parameter's
+    CHECK(r.events[3].plain);
+    CHECK(r.events[3].loaded == 3);                                // the keyswitch's, in the same block
 }
 
 TEST_CASE("Z re-runs the other slot with a random amount added", "[driver][commands]")

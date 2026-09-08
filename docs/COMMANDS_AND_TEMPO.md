@@ -313,11 +313,21 @@ automation off reproduces what was heard:
 - **Slots**: read at the step's tick (not the block start). At every step, a slot whose
   in-force value differs from the last one written on that channel is written into the
   matching command column (CMD1 → cmd1, CMD2 → cmd2), with or without a note. A slot going
-  to *none* is written as the letter with the instrument's own value for E, F, O, S, V, W,
-  as `P 128`, `A 0`, `G 0`, `M` with the master parameters, `T` with the song tempo; the
-  per-note letters write nothing. A plain note's cell also carries both in-force slots.
+  to *none* is written as the letter's **revert form** — the same letter with nothing to
+  say but "put this back where the instrument left it" (§3), a cell command whose internal
+  `c` field is 1. The per-note letters, which leave nothing behind, write nothing. A plain
+  note's cell also carries both in-force slots.
 - Not recorded, documented: the Level, Pan and Transpose lanes (static parameters that
   still apply on playback), the bend wheel, controllers, model and hardware options.
+
+A revert cell is the exact form, and the reason there is one: a concrete value —
+`E 15 2`, `V 10 2`, `W 2` — would say what the letter reverted *to* at that step and then
+stay in force at every note-on after it, overriding velocity accents for ever, losing the
+instrument's vibrato delay (a `V` has no argument for it), and beating the instrument a
+later keyswitch brings in. The revert form is applied once, through exactly the code a
+slot going to none takes, and leaves the slot empty, so what follows is the instrument's
+own. The driver's per-note re-fire rules are untouched: there is simply nothing in force
+to re-fire.
 
 ### 9.5 The demo is tracker-shaped, and a test proves it
 

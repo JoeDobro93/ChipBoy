@@ -73,9 +73,13 @@ inline bool cmdPersists(Cmd c)
 {
     switch (c) {
         case Cmd::A: case Cmd::E: case Cmd::F: case Cmd::G: case Cmd::M:
-        case Cmd::O: case Cmd::P: case Cmd::S: case Cmd::T: case Cmd::V: case Cmd::W: return true;
-        default: return false;
+        case Cmd::O: case Cmd::P: case Cmd::S: case Cmd::T: case Cmd::V: case Cmd::W:
+            return true;
+        case Cmd::None: case Cmd::C: case Cmd::D: case Cmd::H: case Cmd::K:
+        case Cmd::L: case Cmd::R: case Cmd::Z:
+            return false;
     }
+    return false;
 }
 /// The revert form of a letter, or Cmd::None when the letter leaves nothing.
 inline Command revertOf(Cmd c) { return cmdPersists(c) ? Command{ c, 0, 0, kRevert } : Command{}; }

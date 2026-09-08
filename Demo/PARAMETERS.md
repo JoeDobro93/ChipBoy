@@ -106,8 +106,10 @@ rather than momentary. It fires at the next tick whenever one of the three
 changes, and again at every note-on, after the instrument and its table, so a
 letter drawn across a bar shapes every note in that bar. Put the letter back
 to `none` and what it changed reverts to the instrument's own value (`E` `F`
-`O` `S` `V` `W`), to zero (`P`), to the parameter (`M`), or stops (`A`, `G`).
-CMD1 is applied before CMD2.
+`O` `S` `V` `W`), to zero (`P`), to the parameter (`M`, `T`), or stops (`A`, `G`).
+The recorder writes that as the letter's *revert cell* -- the same letter saying
+"put this back" rather than a value -- so a recorded song reverts exactly where
+the lane did. CMD1 is applied before CMD2.
 
 | Letter | Meaning | x | y |
 |---|---|---|---|
@@ -158,6 +160,6 @@ quantised, and tracker cells are always on ticks.
 
 `ChipBoy Demo (song tempo).rpp` draws the same lanes plus `tempo_source`,
 `song_tempo`, and PU1's second slot carries `T` for bars 9-12 instead of going
-back to none at bar 9.
+back to `none` at bar 9.
 
 VST3 class id of ChipBoy: `ABCDEF019182FAEB4368706243686279`; Reaper's number for it: `425386462`.
