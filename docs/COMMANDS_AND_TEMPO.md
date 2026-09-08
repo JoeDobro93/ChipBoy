@@ -388,7 +388,10 @@ Agreed after playing the round above. Binding. Changes §3 (cells are not slots)
   host's signature in Host mode, the song's in Song mode). When that is not a whole
   number, step *i* starts at ⌊*i* × bar ticks / steps⌋ (never more than a tick of
   jitter). Grooves keep meaning "ticks at sixteen steps in 4/4": step *i* lasts
-  `groove.at(i)` × step ticks / 6, as before.
+  `groove.at(i)` × step ticks / 6, as before. At the usual sixteen, sixteen steps now
+  divide whatever the bar's length is rather than being cut off once six-tick steps run
+  out — a 3/4 bar (72 ticks) makes sixteen 4.5-tick steps; set *Steps / bar* to 12 there
+  to keep the six-tick steps a 3/4 bar had before.
 - **A bar override** (`barSteps[bar]`, 0 = the song's default) gives one bar another
   step count, for every channel — one chain row is one bar. Its length is its steps ×
   step ticks, so a bar of 8 steps in a 16-step song moves the whole song on half a bar
@@ -471,16 +474,33 @@ the factory bank.
 
 ## 17. Interface
 
-- The tab is called **Tracker**. The explanatory paragraph goes.
+- The tab is called **Tracker**. The explanatory paragraph goes. *As built:* the panel is
+  `TrackerPanel.*`, renamed from `PhrasesPanel.*`; the paragraph's space became part of
+  the head row below.
 - **Chain**, rotated: channels as columns (PU1 PU2 WAV NOI), bars as rows numbered
   1, 2, 3… (no word), lowest at the top, scrolling with the song; a narrow fifth column
   holds the bar's step override (blank = default), typed like a cell. It takes the column
-  to the right of the grid where the groove editor sat.
+  to the right of the grid where the groove editor sat. *As built:* 164 px — a 25 px
+  gutter for the bar number and five 25 px cells 2 px apart — with 22 px rows keeping the
+  lane's own rhythm; `ui::ChainStrip` became `ui::ChainColumn`.
 - **Per channel**, in the lane head: the arm (a red dot) and a **PLAYS** caption with
-  the MIDI / Trkr switch.
+  the MIDI / Trkr switch. *As built:* `setChannelArm` / `channelArm`; the switch's
+  options read **MIDI** and **Trkr** where they read Roll and Trk (the enum itself is
+  unchanged).
 - **Steps / bar** is a typed Stepper (1–64). **Save song… / Load song…** and the transport
-  buttons sit in the head row; the window's height does not change.
+  buttons sit in the head row; the window's height does not change. *As built:* the
+  typed entry is `Stepper::setTyped`, opt-in for this one control — every other stepper
+  still only steps. The 112 px head is two 26 px tool rows — Play/Stop/Loop, the playing
+  readout, Rec, Steps/bar; then Start, Beats, Save song…, Load song…, Export .gb — over a
+  48 px line naming the song and what the last file action did; sixteen steps still fit
+  the 1180 × 1020 window exactly, so it does not grow.
 - A **Grooves tab** (after Tables) takes the groove editor: the sixteen slots on the left,
   the sixteen-cell editor with total, swing and nudge on the right — grooves serve tables
-  as well as phrases. The grid's per-phrase groove chip stays.
-- **Instrument tab**: Save preset… / Load preset….
+  as well as phrases. The grid's per-phrase groove chip stays. *As built:* the list reads
+  as a bank list — the number, the ticks (`7 5`, `4 4 4`) and the swing the first pair
+  makes, with a seventeenth row for groove 0 — beside a `GrooveEditor` now 520 px wide
+  with 29 px rows (against 164 and 22 in the lane's old corner), so the bar that shows
+  the swing is 426 px instead of 70.
+- **Instrument tab**: Save preset… / Load preset…. *As built:* on the row under New and
+  Dup; the status bar summarises what `bank::placePreset` did — "Pluck → slot 3; table
+  5 → 9 (renumbered); wave 2 reused".
