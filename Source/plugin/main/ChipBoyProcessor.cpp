@@ -676,7 +676,14 @@ void ChipBoyProcessor::getStateInformation(MemoryBlock& dest)
     root.setProperty("bankName", bankName_, nullptr);
     root.addChild(apvts.copyState(), -1, nullptr);
     if (bankShared_) root.setProperty("bank", bankToJson(*bankShared_), nullptr);
-    if (songShared_) root.setProperty("song", songToJson(*songShared_), nullptr);
+    if (songShared_) {
+        // The song carries the tempo it was played at: the Song tempo
+        // parameter, which may have moved since the song was published
+        // (docs/COMMANDS_AND_TEMPO.md section 4).
+        tracker::Song saved = *songShared_;
+        saved.tempoBpm = songTempoParam();
+        root.setProperty("song", songToJson(saved), nullptr);
+    }
     MemoryOutputStream mo(dest, false);
     root.writeToStream(mo);
 }

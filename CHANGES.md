@@ -77,6 +77,15 @@ concrete command does. It is what made the concrete form wrong: an E in force se
 start volume of every note after it. A revert is a one-shot by definition — after it the
 instrument's own value is what a note-on loads anyway.
 
+**Checked, not registered as a test:** the demo played on the song's clock at a base of
+150 against the same run at 120. The tempo in force is now the parameter's — 150 and 120,
+where both used to be 120 — and the notes, which are sample-accurate against the host's
+120, land in the same places: NOI, whose drums are note-driven, writes exactly the same
+1022 registers in the same order. Everything the *tick* drives is a quarter faster and
+so writes more: WAV 4198 registers against 3686, PU1 2471 against 2442. That is what
+§9.5 and this file already say the song-tempo variant does, and why the record test runs
+the host-tempo project.
+
 **Skipped / uncertain:** a note held by *Quantise notes to ticks* across a block boundary
 has no event left to report to, so its cell is written from the defaults; the driver
 reports back through the pending queue for the notes that fire in the block they arrived

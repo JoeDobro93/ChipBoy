@@ -207,12 +207,16 @@ int main()
         // A song saved from here carries that tempo, and one loaded brings its own back.
         juce::MemoryBlock state;
         p.getStateInformation(state);
-        const auto saved = p.song();
-        check(saved && std::abs(saved->tempoBpm - 150.0) < 1e-6, "the song carries the Song tempo parameter's value");
+        chipboy::tracker::Song written;
+        const auto tree = juce::ValueTree::readFromData(state.getData(), state.getSize());
+        check(tree.isValid() && songFromJson(tree["song"].toString(), written) && std::abs(written.tempoBpm - 150.0) < 1e-6,
+              "the saved song carries the Song tempo parameter's value");
         ChipBoyProcessor q;
         q.setStateInformation(state.getData(), int(state.getSize()));
         const auto reopened = q.song();
         check(reopened && std::abs(reopened->tempoBpm - 150.0) < 1e-6, "a saved song opens at its own tempo");
+        check(std::abs(double(paramInt(q.apvts.getRawParameterValue(ids::songTempo))) - 150.0) < 0.5,
+              "and its tempo is the Song tempo parameter's value");
     }
 
     /* ---- a channel whose feed changes hands is flushed (section 9.1) -- */

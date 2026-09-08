@@ -258,6 +258,8 @@ void run(ChipBoyProcessor& p, const Automation& aut, const RunOptions& opt, Capt
 juce::String cmdText(const bank::Command& c)
 {
     if (c.cmd == bank::Cmd::None) return "-";
+    // The revert form carries no value: it puts the letter back (section 9.4).
+    if (bank::isRevert(c)) return juce::String(bank::cmdLetter(c.cmd)) + " =";
     const auto* info = commandInfo(c.cmd);
     juce::String text = juce::String(bank::cmdLetter(c.cmd)) + " " + juce::String(int(c.a));
     if (info == nullptr || info->nargs > 1) text += " " + juce::String(int(c.b));

@@ -8,11 +8,11 @@
 // the command with its default argument, digits then edit the argument,
 // comma moves to the next argument, "=" makes the letter its revert form
 // ("E =": put the envelope back where the instrument left it, which is what
-// the slot going to none does), and typing a value again clears that. Enter
-// or a double-click opens the palette. The note column is a piano: z s x d c v g b h n j m are C..B,
-// comma l period continue into the next octave, q 2 w 3 e r 5 t 6 y 7 u are
-// the octave above and i 9 o 0 p the one above that; minus enters note off;
-// Ctrl/Alt with + or - changes the octave.
+// the slot going to none does) and typing a value again clears that, Enter
+// or a double-click opens the palette. The note column is a piano: z s x d
+// c v g b h n j m are C..B, comma l period continue into the next octave,
+// q 2 w 3 e r 5 t 6 y 7 u are the octave above and i 9 o 0 p the one above
+// that; minus enters note off; Ctrl/Alt with + or - changes the octave.
 #include "plugin/shared/Parameters.h"
 #include "plugin/ui/Widgets.h"
 
