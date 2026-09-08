@@ -229,26 +229,48 @@ def reaper_vst3_number(cid_hex):
 # the tune
 # ---------------------------------------------------------------------------
 
+# Everything the demo plays has to fit in a tracker cell, so the whole tune
+# sits on the step grid (docs/COMMANDS_AND_TEMPO.md section 9.5): sixteen
+# steps to a bar, a step being a sixteenth = 0.25 beat. Two rules follow, and
+# the generator asserts both:
+#
+#   * every note starts on a step and ends one step before the next note on
+#     its channel, so its note-off has a step of its own to be recorded in
+#     (a note-off sharing a step with a note-on is not written as a cell --
+#     the next note ends it -- and the recorded song would not reproduce the
+#     register writes the release made);
+#   * every automation point sits on a step where its channel has no note
+#     starting, because a slot fires at the tick and a note-on that shares
+#     that tick runs first: the recorded cell would carry the new command on
+#     the note, and playing it back would apply it a note early.
+#
+# No mod wheel and no pitch wheel: a tracker holds commands, not wheel moves,
+# so the vibrato ride is a V slot and the bends are L and P slots.
+
 # Events are tuples (tick, priority, channel, kind, a, b). The priority orders
-# events that share a tick: keyswitches select before notes start, bends and
-# controllers precede the note they shape, note-offs precede note-ons.
-PRIO_KEYSWITCH, PRIO_BEND, PRIO_CC, PRIO_OFF, PRIO_ON = 0, 1, 2, 3, 4
+# events that share a tick: keyswitches select before notes start, note-offs
+# precede note-ons.
+PRIO_KEYSWITCH, PRIO_OFF, PRIO_ON = 0, 1, 2
 
 PU1, PU2, WAV, NOI = 0, 1, 2, 3
-BEND_CENTRE = 8192
+
+STEP = 0.25                   # a sixteenth: one tracker step at 16 steps per bar
+STEPS_PER_BAR = 16
 
 # Factory bank slots (Source/core/Bank/Bank.cpp)
 SLOT_SQUARE_LEAD, SLOT_PLUCK, SLOT_BASS25 = 1, 2, 3
 SLOT_TRIANGLE_BASS, SLOT_SAW, SLOT_ORGAN_FRAMES, SLOT_TRI_TO_SAW = 7, 8, 9, 10
 SLOT_KICK, SLOT_SNARE, SLOT_HAT_CLOSED, SLOT_HAT_OPEN, SLOT_CRASH = 11, 12, 13, 14, 15
+SLOT_PULSE_KICK = 17          # Drum pitch speed, table 7 "Drum drop": P falls in semitones
 
 # Factory waves, the slots a W command names on the wave channel: 1 Triangle,
 # 2 Saw, 3 Sine, 4 Pulse 25, 5 Organ (four frames), 6 Tri to saw (six frames).
-WAVE_TRIANGLE, WAVE_SAW, WAVE_TRI_TO_SAW = 1, 2, 6
+WAVE_TRIANGLE, WAVE_SAW, WAVE_ORGAN, WAVE_TRI_TO_SAW = 1, 2, 5, 6
 
 # Keyswitch octaves (Source/core/Driver/Driver.cpp, keyswitchBase): notes
 # base..base+11 select slots 1..12 and never sound. Pulse channels: base 24.
-# Wave, kit and noise channels: base 12.
+# Wave, kit and noise channels: base 12. Slot 17 is out of that octave's
+# reach, so PU1's kick instrument arrives through the Instrument lane instead.
 KEYSWITCH_BASE_PULSE, KEYSWITCH_BASE_OTHER = 24, 12
 
 # Drum hits: the note numbers are only labels for the piano roll (the factory
@@ -261,7 +283,12 @@ DRUM_HAT_CLOSED = (42, 20)    # slot 13
 DRUM_HAT_OPEN = (46, 28)      # slot 14
 DRUM_CRASH = (49, 36)         # slot 15
 
-NOTE_GAP = 10                 # ticks between a note-off and the next note-on
+# The L slide's duration on the lead (bars 13-14). The lead's pitch speed is
+# Fast (Bank.cpp instrument 1), so the unit is 1/360 s: 30 units is 83 ms.
+LEAD_SLIDE = 30
+# The P bend in bars 15-16, signed around 128: Fast, so -2 period units every
+# 1/360 s -- every note leans downwards out of its attack.
+LEAD_BEND = 126
 
 # Chords per bar: A minor, F, C, G, repeated.
 CHORD_ROOTS = [57, 53, 48, 55]                     # A3 F3 C3 G3 (lead register - 12)
@@ -271,15 +298,27 @@ def chord_of_bar(n):
     return CHORD_ROOTS[(n - 1) % 4]
 
 
+def on_step(beat):
+    """Is this beat a step boundary (a sixteenth)?"""
+    return abs(beat / STEP - round(beat / STEP)) < 1e-9
+
+
 class Song:
+    """The tune as note onsets per channel; lengths come from the grid.
+
+    A note runs until one step before the next note on its channel, which is
+    where its note-off goes -- the step the recorder writes OFF into. The last
+    note of each channel is given a tail so that it, too, ends on a step.
+    """
+
     def __init__(self):
         self.events = []
+        self.onsets = [[] for _ in range(4)]      # (beat, pitch, velocity)
+        self.tail = [1.0, 1.0, 1.0, 1.0]          # beats the last note of each channel lasts
 
-    def note(self, ch, pitch, start, length, velocity):
-        on = ticks(start)
-        off = max(on + 1, ticks(start + length) - NOTE_GAP)
-        self.events.append((on, PRIO_ON, ch, "on", pitch, velocity))
-        self.events.append((off, PRIO_OFF, ch, "off", pitch, 0))
+    def note(self, ch, pitch, start, velocity=100):
+        assert on_step(start), "note off the step grid: %g" % start
+        self.onsets[ch].append((start, pitch, velocity))
 
     def keyswitch(self, ch, slot, at_tick):
         base = KEYSWITCH_BASE_PULSE if ch in (PU1, PU2) else KEYSWITCH_BASE_OTHER
@@ -288,36 +327,23 @@ class Song:
         self.events.append((at_tick, PRIO_KEYSWITCH, ch, "on", note, 100))
         self.events.append((at_tick + 30, PRIO_KEYSWITCH, ch, "off", note, 0))
 
-    def cc(self, ch, number, value, at_tick):
-        self.events.append((at_tick, PRIO_CC, ch, "cc", number, max(0, min(127, int(round(value))))))
+    def onset_beats(self, ch):
+        return set(round(b / STEP) for b, _p, _v in self.onsets[ch])
 
-    def bend(self, ch, value, at_tick):
-        v = max(0, min(16383, int(round(BEND_CENTRE + value))))
-        self.events.append((at_tick, PRIO_BEND, ch, "bend", v & 0x7F, v >> 7))
-
-    def bend_ramp(self, ch, start_beat, end_beat, from_value, to_value, step_ticks=40):
-        t0, t1 = ticks(start_beat), ticks(end_beat)
-        t = t0
-        while t <= t1:
-            x = (t - t0) / float(t1 - t0) if t1 > t0 else 1.0
-            self.bend(ch, from_value + (to_value - from_value) * x, t)
-            t += step_ticks
-        if (t1 - t0) % step_ticks:
-            self.bend(ch, to_value, t1)
+    def finish(self):
+        """Turn the onsets into note-on / note-off events on the step grid."""
+        for ch in range(4):
+            notes = sorted(self.onsets[ch])
+            for i, (start, pitch, vel) in enumerate(notes):
+                end = notes[i + 1][0] - STEP if i + 1 < len(notes) else start + self.tail[ch]
+                assert end > start, "channel %d: notes at %g are less than two steps apart" % (ch, start)
+                assert on_step(end)
+                self.events.append((ticks(start), PRIO_ON, ch, "on", pitch, vel))
+                self.events.append((ticks(end), PRIO_OFF, ch, "off", pitch, 0))
+        return self
 
     def sorted_events(self):
         return sorted(self.events)
-
-
-def mod_wheel_value(beat):
-    """CC1 curve for bars 5-8: up over bars 5-6, full through bar 7, down over bar 8."""
-    if beat < bar(5) or beat >= bar(9):
-        return 0
-    if beat < bar(7):
-        return 127.0 * (beat - bar(5)) / (bar(7) - bar(5))
-    if beat < bar(8):
-        return 127.0
-    return 127.0 * (1.0 - (beat - bar(8)) / (bar(9) - bar(8)))
 
 
 def build_song():
@@ -327,32 +353,23 @@ def build_song():
     lead = 100   # velocity -> envelope start volume 12 of 15
     # Bars 1-4: the theme.
     theme = [
-        (69, 0, .5), (72, .5, .5), (76, 1, .5), (81, 1.5, .5), (79, 2, 1), (76, 3, 1),
-        (77, 4, .5), (76, 4.5, .5), (74, 5, .5), (72, 5.5, .5), (74, 6, 2),
-        (76, 8, .5), (79, 8.5, .5), (84, 9, .5), (83, 9.5, .5), (79, 10, 1), (76, 11, 1),
-        (74, 12, .5), (71, 12.5, .5), (67, 13, .5), (71, 13.5, .5), (74, 14, 1), (76, 15, 1),
+        (69, 0), (72, .5), (76, 1), (81, 1.5), (79, 2), (76, 3),
+        (77, 4), (76, 4.5), (74, 5), (72, 5.5), (74, 6),
+        (76, 8), (79, 8.5), (84, 9), (83, 9.5), (79, 10), (76, 11),
+        (74, 12), (71, 12.5), (67, 13), (71, 13.5), (74, 14), (76, 15),
     ]
-    for pitch, start, length in theme:
-        s.note(PU1, pitch, bar(1, start), length, lead)
-    # Bars 5-8: long notes under PU1's second command slot (V, vibrato) with
-    # the mod wheel (CC1 = vibrato depth 0-15) riding the depth between notes.
+    for pitch, start in theme:
+        s.note(PU1, pitch, bar(1, start), lead)
+    # Bars 5-8: long notes under PU1's second command slot, V, whose depth the
+    # automation rides a notch a beat -- the mod wheel's job, in a cell.
     sustained = [
-        (81, 0, 2), (76, 2, 2),
-        (77, 4, 2), (72, 6, 1), (74, 7, 1),
-        (76, 8, 3), (79, 11, 1),
-        (74, 12, 2), (71, 14, 1), (67, 15, 1),
+        (81, 0), (76, 2),
+        (77, 4), (72, 6), (74, 7),
+        (76, 8), (79, 11),
+        (74, 12), (71, 14), (67, 15),
     ]
-    for pitch, start, length in sustained:
-        b = bar(5, start)
-        s.note(PU1, pitch, b, length, lead)
-        # the depth in force right after the note starts (a new note latches
-        # the instrument's own depth, so the wheel is re-sent)
-        s.cc(PU1, 1, mod_wheel_value(b), ticks(b) + 5)
-    beat = bar(5)
-    while beat < bar(9):
-        s.cc(PU1, 1, mod_wheel_value(beat), ticks(beat))
-        beat += 0.25
-    s.cc(PU1, 1, 0, ticks(bar(9)))
+    for pitch, start in sustained:
+        s.note(PU1, pitch, bar(5, start), lead)
     # Bars 9-12: eighth notes; the duty changes per bar through PU1's first
     # command slot (W, one duty per bar).
     eighths = [
@@ -362,49 +379,44 @@ def build_song():
         (74, 12), (71, 12.5), (67, 13), (71, 13.5), (74, 14), (76, 15), (79, 15.5),
     ]
     for pitch, start in eighths:
-        length = 1.0 if start == 14 else 0.5
-        s.note(PU1, pitch, bar(9, start), length, lead)
-    # Bars 13-16: pitch bends (range +-2 semitones).
-    s.bend(PU1, 0, 0)
-    s.bend(PU1, 0, ticks(bar(13)) - 20)
-    s.note(PU1, 79, bar(13, 0), 2, lead)                       # G5 bent up to A5
-    s.bend_ramp(PU1, bar(13, 0), bar(13, 1), 0, 8191)
-    s.bend(PU1, 0, ticks(bar(13, 2)) - 20)
-    s.note(PU1, 76, bar(13, 2), 2, lead)                       # E5 falling to D5
-    s.bend_ramp(PU1, bar(13, 3), bar(14, 0), 0, -8191)
-    s.bend(PU1, 0, ticks(bar(14, 0)) - 20)
-    s.note(PU1, 77, bar(14, 0), 1, lead)
-    s.note(PU1, 81, bar(14, 1), 1, lead)
-    s.note(PU1, 84, bar(14, 2), 2, lead)                       # C6 easing down to B5
-    s.bend_ramp(PU1, bar(14, 3), bar(15, 0), 0, -4096)
-    s.bend(PU1, -8191, ticks(bar(15, 0)) - 20)                 # start a whole tone low ...
-    s.note(PU1, 76, bar(15, 0), 2, lead)
-    s.bend_ramp(PU1, bar(15, 0), bar(15, 1), -8191, 0)         # ... and scoop into E5
-    s.bend(PU1, 0, ticks(bar(15, 2)) - 20)
-    s.note(PU1, 79, bar(15, 2), 1, lead)
-    s.note(PU1, 76, bar(15, 3), 1, lead)
-    s.note(PU1, 74, bar(16, 0), 1.5, lead)
-    s.note(PU1, 81, bar(16, 1.5), 2.5, lead)                   # the last note dives out
-    s.bend_ramp(PU1, bar(16, 3), bar(17, 0), 0, -8191)
+        s.note(PU1, pitch, bar(9, start), lead)
+    # Bars 13-14: the same slot holds L, so every note slides in from the one
+    # before it -- the portamento the pitch wheel used to draw by hand.
+    for pitch, start in [(79, 0), (76, 2), (77, 4), (81, 5), (84, 6)]:
+        s.note(PU1, pitch, bar(13, start), lead)
+    # Bars 15-16: L gives way to P, a Fast bend that leans every note down.
+    for pitch, start in [(76, 0), (79, 2), (76, 3), (74, 4), (81, 5.5)]:
+        s.note(PU1, pitch, bar(15, start), lead)
+    s.tail[PU1] = 2.5                                          # to bar 17's first step
 
     # --- PU2: the bass -----------------------------------------------------
     # Velocity is the envelope start volume: 127 -> 15, 112 -> 14, 104 -> 13,
     # 88 -> 11, 72 -> 9.
-    for n in range(1, BARS + 1):
+    for n in range(1, 15):
         root = chord_of_bar(n) - 12                            # A2 F2 C2 G2 register
         fifth, octave = root + 7, root + 12
         if 5 <= n <= 8:
-            pattern = [(root, 0, 1.5, 127), (root, 1.5, .5, 88), (fifth, 2, 1, 104), (root, 3, 1, 112)]
+            pattern = [(root, 0, 127), (root, 1.5, 88), (fifth, 2, 104), (root, 3, 112)]
         else:
-            pattern = [(root, 0, .5, 127), (root, .5, .5, 88), (fifth, 1, .5, 104), (root, 1.5, .5, 72),
-                       (octave, 2, .5, 112), (root, 2.5, .5, 72), (fifth, 3, .5, 104), (root, 3.5, .5, 88)]
-        for pitch, start, length, vel in pattern:
-            s.note(PU2, pitch, bar(n, start), length * 0.9, vel)
+            pattern = [(root, 0, 127), (root, .5, 88), (fifth, 1, 104), (root, 1.5, 72),
+                       (octave, 2, 112), (root, 2.5, 72), (fifth, 3, 104), (root, 3.5, 88)]
+        for pitch, start, vel in pattern:
+            s.note(PU2, pitch, bar(n, start), vel)
+    # Bars 15-16: the Instrument lane hands PU2 factory slot 17, Pulse kick --
+    # Drum pitch speed, and its table 7 does the drop -- for a kick pattern,
+    # then gives the Pluck back for the last bass note.
+    for start in [0, 1, 1.5, 2, 3]:
+        s.note(PU2, 48, bar(15, start), 120)
+    for start in [0, 1, 2, 2.5]:
+        s.note(PU2, 48, bar(16, start), 120)
+    s.note(PU2, chord_of_bar(16) - 12, bar(16, 3), 112)
+    s.tail[PU2] = 1.0
 
     # --- WAV: the wave bass ------------------------------------------------
     # Keyswitches (base 12 on the wave channel) choose the instrument per
     # section: 18 -> slot 7 Triangle bass, 21 -> slot 10 Tri to saw,
-    # 20 -> slot 9 Organ frames.
+    # 20 -> slot 9 Organ frames. A keyswitch note selects and never sounds, so
+    # it writes no register and is never recorded as a cell.
     s.keyswitch(WAV, SLOT_TRIANGLE_BASS, 0)
     s.keyswitch(WAV, SLOT_TRI_TO_SAW, ticks(bar(5)) - 30)
     s.keyswitch(WAV, SLOT_TRIANGLE_BASS, ticks(bar(9)) - 30)
@@ -413,18 +425,19 @@ def build_song():
         root = chord_of_bar(n) - 24                            # A1 F1 C2 G1 register
         fifth, octave = root + 7, root + 12
         if n <= 4:
-            pattern = [(root, 0, 2), (fifth, 2, 1), (root, 3, 1)]
+            pattern = [(root, 0), (fifth, 2), (root, 3)]
         elif n <= 8:
-            pattern = [(root, 0, 2), (fifth, 2, 2)]
+            pattern = [(root, 0), (fifth, 2)]
         elif n <= 12:
-            pattern = [(root, 0, .5), (root, .5, .5), (fifth, 1, .5), (root, 1.5, .5),
-                       (octave, 2, .5), (root, 2.5, .5), (fifth, 3, .5), (root, 3.5, .5)]
+            pattern = [(root, 0), (root, .5), (fifth, 1), (root, 1.5),
+                       (octave, 2), (root, 2.5), (fifth, 3), (root, 3.5)]
         elif n < 16:
-            pattern = [(root, 0, 2), (fifth, 2, 2)]
+            pattern = [(root, 0), (fifth, 2)]
         else:
-            pattern = [(root, 0, 2), (root, 2, 2)]
-        for pitch, start, length in pattern:
-            s.note(WAV, pitch, bar(n, start), length * 0.95, 100)
+            pattern = [(root, 0), (root, 2)]
+        for pitch, start in pattern:
+            s.note(WAV, pitch, bar(n, start), 100)
+    s.tail[WAV] = 2.0
 
     # --- NOI: the drums ----------------------------------------------------
     # The keyswitch (base 12 on the noise channel) selects Kick, slot 11, as
@@ -432,27 +445,18 @@ def build_song():
     for n in (1, 5, 9, 13):
         s.keyswitch(NOI, SLOT_KICK, 0 if n == 1 else ticks(bar(n)) - 30)
     for n in range(1, BARS + 1):
-        hits = []
-        if n in (5, 9, 13):
-            hits.append((0, DRUM_CRASH, 0.95))                 # rings until the snare
-        else:
-            hits.append((0, DRUM_KICK, .45))
-            hits.append((.5, DRUM_HAT_CLOSED, .45))
-        hits.append((1, DRUM_SNARE, .45))
-        hits.append((1.5, DRUM_HAT_CLOSED, .2 if n % 4 == 2 else .45))
+        hits = [(0, DRUM_CRASH if n in (5, 9, 13) else DRUM_KICK), (.5, DRUM_HAT_CLOSED), (1, DRUM_SNARE)]
         if n % 4 == 2:
-            hits.append((1.75, DRUM_KICK, .2))
-        hits.append((2, DRUM_KICK, .45))
-        hits.append((2.5, DRUM_HAT_CLOSED, .45))
-        if n % 4 == 0:                                          # a snare fill
-            hits += [(3, DRUM_SNARE, .2), (3.25, DRUM_SNARE, .2), (3.5, DRUM_SNARE, .2), (3.75, DRUM_SNARE, .2)]
+            hits += [(1.75, DRUM_KICK), (2.5, DRUM_HAT_CLOSED)]     # the kick pushed off the beat
         else:
-            hits.append((3, DRUM_SNARE, .45))
-            hits.append((3.5, DRUM_HAT_OPEN, .45))
-        for start, (note, vel), length in hits:
-            s.note(NOI, note, bar(n, start), length, vel)
+            hits += [(1.5, DRUM_HAT_CLOSED), (2, DRUM_KICK), (2.5, DRUM_HAT_CLOSED)]
+        hits.append((3, DRUM_SNARE))
+        hits.append((3.5, DRUM_SNARE if n % 4 == 0 else DRUM_HAT_OPEN))
+        for start, (note, vel) in hits:
+            s.note(NOI, note, bar(n, start), vel)
+    s.tail[NOI] = 0.5
 
-    return s
+    return s.finish()
 
 
 # ---------------------------------------------------------------------------
@@ -462,14 +466,11 @@ def build_song():
 class Envelope:
     def __init__(self, pid, points):
         self.pid = pid
-        self.points = points   # (seconds, parameter value), value held until the next point
+        self.points = points   # (beat, parameter value), value held until the next point
 
 
-EARLY = 0.01   # seconds before a bar line, so a value is in force for the bar's first note
-
-
-def build_envelopes(song_tempo=False):
-    """The lanes the demo draws.
+def build_envelopes(song, song_tempo=False):
+    """The lanes the demo draws, as (beat, value) points.
 
     Everything the performance does is either a command slot -- a letter, an x
     and a y, in force until the letter changes -- or one of the few channel
@@ -479,12 +480,19 @@ def build_envelopes(song_tempo=False):
     note in that bar; putting the letter back to none reverts what it changed to
     the instrument's own value.
 
+    Every point sits on a step, one step before the bar it is meant for so that
+    it is already in force when that bar's first note starts, and never on a
+    step where its own channel starts a note (checked below).
+
     With song_tempo the project runs on the song's clock instead of the host's,
     and PU1's second slot carries T for bars 9-12.
     """
-    b = lambda n: seconds(bar(n)) - EARLY
     out = []
     add = lambda pid, points: out.append(Envelope(pid, points))
+    # One step before bar n: where a lane changes so the bar's first note has
+    # it. The step before that (two steps early) is where a letter that must
+    # revert first goes.
+    pre = lambda n, back=1: bar(n) - back * STEP
 
     if song_tempo:
         # The song owns the tempo: the tracker's ticks run at 150 BPM against
@@ -492,55 +500,114 @@ def build_envelopes(song_tempo=False):
         add("tempo_source", [(0, 1)])                           # Song
         add("song_tempo", [(0, SONG_TEMPO)])
 
-    # What the channels are before a note plays.
-    add("ch1_source", [(0, 1)])                                 # PU1 stops being omni: MIDI 1
-    add("ch3_keyswitch", [(0, 1)])
-    add("ch4_keyswitch", [(0, 1)])
-    add("ch4_velocity", [(0, 1)])                               # instrument bank: velocity picks the drum
-    add("ch2_instrument", [(0, SLOT_PLUCK)])
+    # PU1 CMD1: W for the duty over bars 9-12, then L (portamento) for bars
+    # 13-14 and P (a Fast bend) for bars 15-16. One slot, three letters.
+    add("ch1_cmd1_type", [(0, CMD["none"]), (pre(9), CMD["W"]),
+                          (pre(13, 3), CMD["none"]), (pre(13), CMD["L"]), (pre(15), CMD["P"])])
+    add("ch1_cmd1_x", [(0, 0), (pre(9), 0), (pre(10), 1), (pre(11), 2), (pre(12), 3),
+                       (pre(13, 3), 0), (pre(13), LEAD_SLIDE), (pre(15), LEAD_BEND)])
 
-    # PU1 CMD1 = W: the duty, one per bar through bars 9-12, then back to the
-    # instrument's 50 %.
-    add("ch1_cmd1_type", [(0, CMD["none"]), (b(9), CMD["W"]), (b(13), CMD["none"])])
-    add("ch1_cmd1_x", [(0, 0), (b(9), 0), (b(10), 1), (b(11), 2), (b(12), 3), (b(13), 0)])
-
-    # PU1 CMD2 = V: vibrato over bars 5-8, speed and depth in the slot's x and
-    # y, the mod wheel still riding the depth between notes. In the song-tempo
-    # project the same lane then becomes T for bars 9-12: one slot, two letters,
-    # never at the same time.
-    cmd2_type = [(0, CMD["none"]), (b(5), CMD["V"])]
-    cmd2_x = [(0, 0), (b(5), 3), (b(7), 6)]
-    cmd2_y = [(0, 0), (b(5), 2), (b(7), 4), (b(9), 0)]
+    # PU1 CMD2 = V: the vibrato over bars 5-8. The depth rides a notch a beat
+    # through the slot's y, on step boundaries -- what the mod wheel used to
+    # do. In the song-tempo project the same lane then becomes T for bars
+    # 9-12: one slot, two letters, never at the same time.
+    ride = [1, 2, 3, 4, 5, 6, 7, 8, 8, 7, 6, 5, 4, 3, 2, 1]
+    cmd2_type = [(0, CMD["none"]), (pre(5), CMD["V"])]
+    cmd2_x = [(0, 0), (pre(5), 3), (pre(7), 6)]
+    cmd2_y = [(0, 0)] + [(pre(5) + j, ride[j]) for j in range(len(ride))]
     if song_tempo:
-        cmd2_type += [(b(9), CMD["T"]), (b(13), CMD["none"])]
-        cmd2_x += [(b(9), SONG_TEMPO_DROP), (b(13), 0)]
+        cmd2_type += [(pre(9), CMD["T"]), (pre(13, 3), CMD["none"])]
+        cmd2_x += [(pre(9), SONG_TEMPO_DROP), (pre(13, 3), 0)]
+        cmd2_y += [(pre(9), 0)]
     else:
-        cmd2_type += [(b(9), CMD["none"])]
-        cmd2_x += [(b(9), 0)]
+        # V 0 0 rather than none: a slot going to none is recorded as the
+        # letter with the instrument's own speed and depth (section 9.4), and
+        # a V command has no delay argument, so the lead's ten-tick vibrato
+        # delay could not come back. Switching the vibrato off records exactly.
+        cmd2_x += [(pre(9), 0)]
+        cmd2_y += [(pre(9), 0)]
     add("ch1_cmd2_type", cmd2_type)
     add("ch1_cmd2_x", cmd2_x)
     add("ch1_cmd2_y", cmd2_y)
 
+    # PU2's instrument: the Pluck, then factory slot 17 "Pulse kick" for the
+    # kick pattern of bars 15-16, then the Pluck again for the last note. The
+    # keyswitch octave only reaches slots 1-12, so this is the Instrument lane.
+    add("ch2_instrument", [(0, SLOT_PLUCK), (pre(15), SLOT_PULSE_KICK), (bar(16, 2.75), SLOT_PLUCK)])
+
     # PU2 CMD1 = E: the envelope, alternating pluck and long by the bar. While
     # E is in force it sets the start volume, so the bass's velocity accents
     # step aside for four bars.
-    add("ch2_cmd1_type", [(0, CMD["none"]), (b(9), CMD["E"]), (b(13), CMD["none"])])
-    add("ch2_cmd1_x", [(0, 0), (b(9), 15), (b(10), 11), (b(11), 15), (b(12), 12), (b(13), 0)])
-    add("ch2_cmd1_y", [(0, 0), (b(9), env_y(3)), (b(10), env_y(0)), (b(11), env_y(2)), (b(12), env_y(0)), (b(13), 0)])
+    # From bar 13 the slot holds the Pluck's own envelope (vol 15, decay 2)
+    # rather than going to none: a slot going to none is recorded as that same
+    # letter with the instrument's value (section 9.4), and an E in force sets
+    # the start volume, so a recorded revert cannot hand the velocity accents
+    # back. Holding the instrument's own values records exactly.
+    add("ch2_cmd1_type", [(0, CMD["none"]), (pre(9), CMD["E"])])
+    add("ch2_cmd1_x", [(0, 0), (pre(9), 15), (pre(10), 11), (pre(11), 15), (pre(12), 12), (pre(13), 15)])
+    add("ch2_cmd1_y", [(0, 0), (pre(9), env_y(3)), (pre(10), env_y(0)), (pre(11), env_y(2)), (pre(12), env_y(0)), (pre(13), env_y(2))])
 
     # WAV CMD1 = W (the wave slot) and CMD2 = F (the frame): saw for bar 9, then
     # the six-frame Tri-to-saw walked from its triangle end to its saw end.
-    add("ch3_cmd1_type", [(0, CMD["none"]), (b(9), CMD["W"]), (b(13), CMD["none"])])
-    add("ch3_cmd1_x", [(0, 0), (b(9), WAVE_SAW), (b(10), WAVE_TRI_TO_SAW), (b(13), 0)])
-    add("ch3_cmd2_type", [(0, CMD["none"]), (b(10), CMD["F"]), (b(13), CMD["none"])])
-    add("ch3_cmd2_x", [(0, 0), (b(10), 1), (b(11), 3), (b(12), 6), (b(13), 0)])
+    # At bar 13 the keyswitch hands WAV the Organ frames, and the two slots
+    # follow it -- its own wave and its first frame -- instead of going to
+    # none. A recorded revert is the letter with the instrument's value at
+    # that step (section 9.4), and it stays in force, so it would override the
+    # instrument the keyswitch is about to bring in. PU1's W does the
+    # revert-to-none the demo shows off; it keeps its instrument throughout.
+    add("ch3_cmd1_type", [(0, CMD["none"]), (pre(9), CMD["W"])])
+    add("ch3_cmd1_x", [(0, 0), (pre(9), WAVE_SAW), (pre(10), WAVE_TRI_TO_SAW), (pre(13), WAVE_ORGAN)])
+    add("ch3_cmd2_type", [(0, CMD["none"]), (pre(10), CMD["F"])])
+    add("ch3_cmd2_x", [(0, 0), (pre(10), 1), (pre(11), 3), (pre(12), 6), (pre(13), 1)])
 
-    # The master strip and the hardware.
-    add("master_l", [(0, 7), (seconds(bar(8, 2)), 5), (seconds(bar(8, 3)), 3), (b(9), 7)])
-    add("master_r", [(0, 7), (seconds(bar(8, 2)), 5), (seconds(bar(8, 3)), 3), (b(9), 7)])
-    add("declick", [(0, 0), (b(14), 1), (b(15), 0)])
-    add("model", [(0, 0), (b(15), 1), (b(16), 2)])
+    # NOI CMD1 = M: the master volume dips over the last two beats of bar 8 and
+    # comes back before bar 9 -- a command in a cell, not the master parameters.
+    add("ch4_cmd1_type", [(0, CMD["none"]), (bar(8, 1.75), CMD["M"])])
+    add("ch4_cmd1_x", [(0, 0), (bar(8, 1.75), 5), (bar(8, 2.75), 3), (bar(8, 3.75), 7)])
+    add("ch4_cmd1_y", [(0, 0), (bar(8, 1.75), 5), (bar(8, 2.75), 3), (bar(8, 3.75), 7)])
+
+    check_envelopes(song, out)
     return out
+
+
+def static_parameters():
+    """The channel fields the demo sets once and leaves alone.
+
+    They are not recorded (docs/COMMANDS_AND_TEMPO.md section 9.4 keeps Level,
+    Pan, Transpose and the switches out of the cells) and still apply when the
+    recorded song plays back, so the record test sets them in both passes.
+    """
+    return [
+        ("ch1_source", 1),          # PU1 stops being omni: MIDI 1
+        ("ch3_keyswitch", 1),
+        ("ch4_keyswitch", 1),
+        ("ch4_velocity", 1),        # instrument bank: velocity picks the drum
+    ]
+
+
+def hardware_envelopes():
+    """De-click and the model: not tracker-level, and not part of the record
+    test (they are the analog stage, not a cell). The Reaper projects draw
+    them; `chipboy_recordtest` leaves both at their defaults in both passes."""
+    return [Envelope("declick", [(0, 0), (bar(14), 1), (bar(15), 0)]),
+            Envelope("model", [(0, 0), (bar(15), 1), (bar(16), 2)])]
+
+
+def check_envelopes(song, envelopes):
+    """Every point on a step, and never on a step where its own channel starts
+    a note (see the note at the top of "the tune")."""
+    for env in envelopes:
+        ch = int(env.pid[2]) - 1 if env.pid.startswith("ch") else -1
+        onsets = song.onset_beats(ch) if 0 <= ch < 4 else set()
+        last = None
+        for beat, _value in env.points:
+            assert on_step(beat), "%s: automation point off the step grid at beat %g" % (env.pid, beat)
+            assert last is None or beat > last, "%s: automation points out of order" % env.pid
+            last = beat
+            if beat <= 0.0:
+                continue          # the lane's starting value, in force before a note plays
+            assert round(beat / STEP) not in onsets, \
+                "%s: automation point at beat %g shares a step with a note on channel %d" % (env.pid, beat, ch + 1)
 
 
 # ---------------------------------------------------------------------------
@@ -711,8 +778,8 @@ def write_rpp(path, song, envelopes, table, tag=""):
         w('        LANEHEIGHT 0 0')
         w('        ARM 0')
         w('        DEFSHAPE 1 -1 -1')
-        for t, value in env.points:
-            w('        PT %s %s 1' % (fmt(float(t)), fmt(p.normalised(value))))
+        for beat, value in env.points:
+            w('        PT %s %s 1' % (fmt(seconds(float(beat))), fmt(p.normalised(value))))
         w('      >')
     w('      WAK 0 0')
     w('    >')
@@ -765,6 +832,60 @@ def write_rpp(path, song, envelopes, table, tag=""):
     w('  >')
     w('>')
     with open(path, "w", newline="\r\n", encoding="utf-8") as f:
+        f.write("\n".join(L) + "\n")
+
+
+def write_automation_json(path, table, statics, lanes, hardware):
+    """Demo/chipboy_demo_automation.json -- the demo's automation as data.
+
+    The Reaper projects, the MIDI file and this JSON all come from the same
+    Python tables, so a tool that cannot read an .rpp still drives exactly what
+    the demo draws. `chipboy_recordtest` is that tool.
+
+        {
+          "format": "chipboy-demo-automation", "version": 1,
+          "bpm": 120, "beatsPerBar": 4, "bars": 16, "step": 0.25,
+          "static": { "<param id>": value, ... },
+          "lanes":  { "<param id>": [[beat, value], ...], ... },
+          "hardware": { "<param id>": [[beat, value], ...], ... }
+        }
+
+    `static` holds the parameters the demo sets once before anything plays and
+    never moves; `lanes` the ones it automates. Both are in **plugin units** --
+    the parameter's own range from PARAMETERS.md, so a command type is the
+    index into the letter list, an x or a y is 0-255 and an instrument is its
+    slot -- not the 0-1 a host stores. A lane's value is the value of the last
+    point at or before a moment, held until the next point; `beat` is quarter
+    notes from the start of bar 1 and always lands on a step (0.25 beat).
+    `hardware` is De-click and the model: the analog stage rather than
+    anything a tracker cell can hold, drawn by the projects and left alone by
+    the record test.
+    """
+    ids = {p.pid for p in table}
+    L = []
+    w = L.append
+    w("{")
+    w('  "format": "chipboy-demo-automation",')
+    w('  "version": 1,')
+    w('  "bpm": %s, "beatsPerBar": %d, "bars": %d, "step": %s,' % (fmt(float(BPM)), BEATS_PER_BAR, BARS, fmt(STEP)))
+    w('  "static": {')
+    rows = []
+    for pid, value in statics:
+        assert pid in ids, pid
+        rows.append('    "%s": %s' % (pid, fmt(value)))
+    w(",\n".join(rows))
+    w("  },")
+    for name, group in (("lanes", lanes), ("hardware", hardware)):
+        w('  "%s": {' % name)
+        rows = []
+        for env in group:
+            assert env.pid in ids, env.pid
+            points = ", ".join("[%s, %s]" % (fmt(float(beat)), fmt(value)) for beat, value in env.points)
+            rows.append('    "%s": [%s]' % (env.pid, points))
+        w(",\n".join(rows))
+        w("  }," if name == "lanes" else "  }")
+    w("}")
+    with open(path, "w", newline="\n", encoding="utf-8") as f:
         f.write("\n".join(L) + "\n")
 
 
@@ -906,14 +1027,20 @@ def main():
 
     table = parameter_table()
     song = build_song()
-    envelopes = build_envelopes()
-    song_tempo_envelopes = build_envelopes(song_tempo=True)
+    statics = static_parameters()
+    hardware = hardware_envelopes()
+    lanes = build_envelopes(song)
+    song_tempo_lanes = build_envelopes(song, song_tempo=True)
+    fixed = [Envelope(pid, [(0, value)]) for pid, value in statics]
+    envelopes = fixed + lanes + hardware
+    song_tempo_envelopes = fixed + song_tempo_lanes + hardware
     out = os.path.normpath(args.out)
     os.makedirs(out, exist_ok=True)
     write_midi(os.path.join(out, "chipboy_demo.mid"), song)
     write_rpp(os.path.join(out, "ChipBoy Demo.rpp"), song, envelopes, table)
     write_rpp(os.path.join(out, "ChipBoy Demo (song tempo).rpp"), song, song_tempo_envelopes, table, "song-tempo/")
     write_parameters_md(os.path.join(out, "PARAMETERS.md"), table, envelopes, song_tempo_envelopes)
+    write_automation_json(os.path.join(out, "chipboy_demo_automation.json"), table, statics, lanes, hardware)
     n = len(song.events)
     print("wrote %s: %d MIDI events, %d + %d envelopes, %d parameters"
           % (out, n, len(envelopes), len(song_tempo_envelopes), len(table)))

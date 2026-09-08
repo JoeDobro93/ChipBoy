@@ -10,6 +10,7 @@ two runs give byte-identical files).
 | `ChipBoy Demo.rpp` | A Reaper project: one track with the ChipBoy VST3, the tune as a MIDI item, and the automation envelopes. |
 | `ChipBoy Demo (song tempo).rpp` | The same track on the song's own clock — *Tempo source* = **Song**, *Song tempo* = **150** — with a `T` command that drops it to 100 for bars 9–12. |
 | `chipboy_demo.mid` | The same tune as a Standard MIDI File, one track per hardware channel on MIDI channels 1–4. For any host. |
+| `chipboy_demo_automation.json` | The same automation as data: the static parameters and the per-lane `(beat, value)` points, in plugin units. What a tool reads when it cannot read an `.rpp`. |
 | `PARAMETERS.md` | ChipBoy's host-visible parameters in index order, with the normalised values Reaper stores, the VST3 parameter ids, and the command letters. |
 
 ## The idea
@@ -22,30 +23,87 @@ letter drawn across a bar shapes every note in that bar. Setting the letter back
 `none` puts what it changed back to the instrument's own value. The demo automates
 letters and arguments; nothing silently overrides an instrument any more.
 
+### Everything here fits in a cell
+
+There is no mod wheel and no pitch wheel anywhere in the demo, and nothing happens
+between the sixteenths. **A performance on the wheels is not recordable**: a tracker cell
+holds a note, a velocity, an instrument, a table and two commands, and neither wheel is
+one of those. So the demo says the same things with letters — **V** for the vibrato ride
+that used to be CC1, **L** and **P** for the bends that used to be the pitch wheel — and
+`chipboy_recordtest` (`../tools/recordtest`) proves it: it plays the MIDI file and this
+automation into the plugin with record armed, then plays the recorded song back with no
+MIDI and no automation, and the two runs must write the same APU registers, in the same
+order, with the same values (`../docs/COMMANDS_AND_TEMPO.md` §9.5).
+
+Two rules keep it recordable, and the generator asserts both:
+
+- **notes start on a step and end one step before the next note** on their channel, so
+  every note-off has a step of its own to be recorded into. A note-off sharing a step
+  with a note-on is not written as a cell — the next note ends it — and the release it
+  performed would go missing on playback;
+- **an automation point never shares a step with a note starting on its own channel.** A
+  slot fires at the tick, and a note-on at that same tick runs first, so the note would be
+  heard with the old command and recorded with the new one.
+
+Not everything reverts exactly, either. A slot going back to `none` is recorded as its
+letter carrying the instrument's own value (§9.4), and that letter then stays in force,
+so the demo lets a slot go to `none` only where that is faithful: PU1's **W**, whose
+instrument never changes under it. Where it would not be — **E** against the velocity
+accents, **V** against the lead's vibrato delay, **W** and **F** on WAV across the
+keyswitch that brings in another instrument — the lane moves to the instrument's own
+value instead, which sounds the same and records exactly.
+
 ## What it plays
 
 | Bars | PU1 (MIDI 1) | PU2 (MIDI 2) | WAV (MIDI 3) | NOI (MIDI 4) |
 |---|---|---|---|---|
 | 1–4 | Square lead, the theme. Both slots empty: the instrument is the whole sound | Pluck bass (`ch2_instrument` = 2), velocity as the start volume | Triangle bass (keyswitch → slot 7) | Kick, snare, hats (keyswitch → slot 11; velocity picks the drum) |
-| 5–8 | CMD2 = **V**: vibrato speed 3 depth 2, then speed 6 depth 4 from bar 7. The mod wheel (CC1) still rides the depth between notes, so the lane and the wheel are visibly the same control | Bass, half-time | Tri-to-saw (keyswitch → slot 10); its frames advance on the tick | Beat with a crash on bar 5, open hats on the offbeats; master volume dips over the last two beats of bar 8 |
-| 9–12 | CMD1 = **W**: duty 12.5 % → 25 % → 50 % → 75 %, one per bar, under eighth notes. CMD2 goes to `none` at bar 9 and the vibrato reverts to the instrument's | CMD1 = **E**: pluck (vol 15, decay 3), long (vol 11, no decay), pluck (vol 15, decay 2), long (vol 12, no decay) — one per bar. While E is in force it sets the start volume, so the velocity accents stand down | Keyswitch → slot 7; CMD1 = **W** wave 2 (Saw) for bar 9, then wave 6 (Tri to saw) with CMD2 = **F** walking the frame 1 → 3 → 6 | Beat with a crash |
-| 13–16 | Pitch bends. Both slots to `none`: duty and vibrato are the instrument's again | Bass; E off, the velocity accents return | Organ frames (keyswitch → slot 9); W and F to `none`, so the instrument's wave and frame come back | Fill; **De-click** on for bar 14, and the model switches DMG → CGB (bar 15) → RAW (bar 16) |
+| 5–8 | CMD2 = **V**: vibrato speed 3, then 6 from bar 7, and the **depth rides a notch a beat** through the slot's `y` — 1 up to 8 and back down again — every point on a step | Bass, half-time | Tri-to-saw (keyswitch → slot 10); its frames advance on the tick | Beat with a crash on bar 5; CMD1 = **M**, the master volume dipping 7 → 5 → 3 → 7 over the last two beats of bar 8 |
+| 9–12 | CMD1 = **W**: duty 12.5 % → 25 % → 50 % → 75 %, one per bar, under eighth notes. CMD2 goes to `V 0 0`, so the vibrato is off for the run | CMD1 = **E**: pluck (vol 15, decay 3), long (vol 11, no decay), pluck (vol 15, decay 2), long (vol 12, no decay) — one per bar. While E is in force it sets the start volume, so the velocity accents stand down | Keyswitch → slot 7; CMD1 = **W** wave 2 (Saw) for bar 9, then wave 6 (Tri to saw) with CMD2 = **F** walking the frame 1 → 3 → 6 | Beat with a crash |
+| 13–14 | W goes to `none` — the duty is the lead's own again — and CMD1 becomes **L 30**: every note slides in from the one before it. The lead's pitch speed is Fast, so 30 units is 30/360 s, about 83 ms | Bass; E holds the Pluck's own envelope (vol 15, decay 2) | Organ frames (keyswitch → slot 9); W and F follow it: wave 5, frame 1 | Fill; **De-click** on for bar 14 |
+| 15–16 | CMD1 becomes **P 126**: a Fast bend of −2 period units every 1/360 s, so every note leans downwards out of its attack and the last one dives out | `ch2_instrument` hands PU2 factory slot 17 **Pulse kick** — Drum pitch speed, and its table 7 does the drop — for a kick pattern, then gives the Pluck back for the closing bass note | Organ frames | Fill; the model switches DMG → CGB (bar 15) → RAW (bar 16) |
 
 The chords are A minor, F, C, G. Watch the strip's running-state line while it plays: an
 automation move shows up as the slot changing and the running state following it.
 
 Drums and wave instruments change through **keyswitches**: the wave and noise channels'
 keyswitch octave is MIDI notes 12–23 (pulse channels use 24–35), and note 12 + slot − 1
-selects factory slot *slot* without sounding. The envelopes turn `ch3_keyswitch` and
-`ch4_keyswitch` on, set `ch4_velocity` to *instrument bank* so the drum kit answers
-velocity, and set `ch1_source` to *MIDI 1* so PU1 stops answering every channel.
+selects factory slot *slot* without sounding. That octave reaches slots 1–12 only, which
+is why PU2's Pulse kick (slot 17) arrives through the `ch2_instrument` lane instead. The
+envelopes turn `ch3_keyswitch` and `ch4_keyswitch` on, set `ch4_velocity` to *instrument
+bank* so the drum kit answers velocity, and set `ch1_source` to *MIDI 1* so PU1 stops
+answering every channel.
+
+## The automation as data
+
+`chipboy_demo_automation.json` comes from the same Python tables as the Reaper envelopes
+and the MIDI file — one source, three files:
+
+```json
+{
+  "format": "chipboy-demo-automation", "version": 1,
+  "bpm": 120, "beatsPerBar": 4, "bars": 16, "step": 0.25,
+  "static":   { "ch1_source": 1, "ch4_velocity": 1, ... },
+  "lanes":    { "ch1_cmd1_type": [[0, 0], [31.75, 16], ...], ... },
+  "hardware": { "declick": [[0, 0], [52, 1], [56, 0]], ... }
+}
+```
+
+`static` is what the demo sets once before anything plays and never moves; `lanes` is
+what it automates. Both are in **plugin units** — the parameter's own range from
+`PARAMETERS.md`, so a command type is the index into the letter list, an `x` or a `y` is
+0–255 and an instrument is its slot — not the 0–1 a host stores. A lane holds the value
+of the last point at or before a moment; `beat` is quarter notes from the start of bar 1
+and always lands on a step (0.25 beat). `hardware` is De-click and the model: the analog
+stage rather than anything a cell can hold, drawn by the Reaper projects and left at its
+default by the record test.
 
 ## The song-tempo project
 
 `ChipBoy Demo (song tempo).rpp` is the same track with two global lanes added —
 *Tempo source* = **Song** and *Song tempo* = **150** — and PU1's second slot carrying
-**T 100** for bars 9–12 instead of going back to `none` at bar 9. One slot, two letters,
-never at the same time: V for bars 5–8, T for bars 9–12.
+**T 100** for bars 9–12 instead of switching the vibrato off there. One slot, two
+letters, never at the same time: V for bars 5–8, T for bars 9–12.
 
 Ticks are always 24 to the beat; what changes is what a beat is worth. The host still
 runs at 120 BPM and the MIDI item is untouched, so **the notes land in exactly the same
@@ -56,17 +114,20 @@ is everything the tick drives:
   so the lead's vibrato in bars 5–8 is a quarter faster, the Tri-to-saw wave sweeps its
   frames sooner, and the kick's volume table is shorter and snappier;
 - from bar 9 the `T` drops the song to **100 BPM** — 40 ticks a second, slower than the
-  host project's 48 — so bars 9–12 have a lazier lead vibrato (the instrument's own
-  again: the first note-on of bar 9 latches it back) and longer drum shapes;
+  host project's 48 — so bars 9–12 have longer drum shapes and a lazier feel;
 - at bar 13 the letter goes back to `none` and the song returns to its 150 BPM base.
 
-In Song mode the host's bars are only a ruler: the tracker's bars are its own. One
-caveat worth hearing for yourself — a `T` in an *automation lane* is tempo automation,
-not a cell. Play through and the clock integrates continuously; locate straight into
-bar 10 and the plugin re-anchors with the value it sees there (100 from the song start),
-so the tracker's position is not the one playing through would have reached. `T` in
-tracker cells is the exact form: the song's tempo map sits at known ticks, so a locate
-lands on the right step every time (`../docs/COMMANDS_AND_TEMPO.md` §4).
+In Song mode the host's bars are only a ruler: the tracker's bars are its own. Which is
+also why the record test runs the host-tempo project and not this one: the notes and the
+automation points sit on the host's sixteenths, while the tracker's steps are 60 Hz ones
+somewhere else entirely, so recording *re-times* the performance onto the song's grid
+instead of reproducing it. One caveat worth hearing for yourself — a `T` in an
+*automation lane* is tempo automation, not a cell. Play through and the clock integrates
+continuously; locate straight into bar 10 and the plugin re-anchors with the value it
+sees there (100 from the song start), so the tracker's position is not the one playing
+through would have reached. `T` in tracker cells is the exact form: the song's tempo map
+sits at known ticks, so a locate lands on the right step every time
+(`../docs/COMMANDS_AND_TEMPO.md` §4).
 
 ## Reaper
 
@@ -80,24 +141,28 @@ order and does not change between builds of the same version.
 Drop `chipboy_demo.mid` onto a new pattern (FL: File → Import → MIDI file, or drag it
 onto the channel rack). Put one ChipBoy instance in the channel rack and give the four
 imported MIDI tracks channels 1–4 (FL: the channel's MIDI channel in its settings, or
-the pattern's per-channel port). Then in the plugin:
+the pattern's per-channel port). Then set the four `static` parameters from
+`chipboy_demo_automation.json` in the plugin:
 
 - set PU1's source to *MIDI 1* (its default is omni),
 - turn **Keyswitches** on for the WAV and NOI channels (in the Instrument tab, or the
   `ch3_keyswitch` / `ch4_keyswitch` parameters),
-- set NOI's **Velocity** to *instrument bank*, and PU2's instrument to slot 2 (Pluck).
+- set NOI's **Velocity** to *instrument bank*.
 
-For the second half, draw the command slots. Each is three lanes — `chN_cmdM_type`,
+For the rest, draw the lanes. Each command slot is three lanes — `chN_cmdM_type`,
 `chN_cmdM_x`, `chN_cmdM_y` — and the type lane is a list of letters, so hosts draw it as
-steps:
+steps. Every point sits on a sixteenth, one step before the bar it is meant for, so it is
+already in force when that bar's first note starts:
 
 | Lane | Letter | What to draw |
 |---|---|---|
-| `ch1_cmd1_*` | **W** — duty on a pulse channel | x = 0, 1, 2, 3 for 12.5 / 25 / 50 / 75 %, one per bar over bars 9–12 |
-| `ch1_cmd2_*` | **V** — vibrato | x = speed 1–15, y = depth 0–15, over bars 5–8 |
+| `ch1_cmd1_*` | **W**, then **L**, then **P** | duty x = 0, 1, 2, 3, one per bar over bars 9–12; `none` late in bar 12; **L** x = 30 for bars 13–14; **P** x = 126 for bars 15–16 |
+| `ch1_cmd2_*` | **V** — vibrato | x = speed 3, and 6 from bar 7; y = the depth, a notch a beat from 1 up to 8 over bars 5–6 and back down over 7–8; x = y = 0 from bar 9 |
+| `ch2_instrument` | – | 2 (Pluck), 17 (Pulse kick) for bars 15–16, 2 again for the last bass note |
 | `ch2_cmd1_*` | **E** — envelope | x = start volume 0–15, y = 0–7 for a decay and 8–15 for an attack (the rate is y & 7) |
-| `ch3_cmd1_*` | **W** — wave slot on WAV | x = the wave slot, 1–64 |
-| `ch3_cmd2_*` | **F** — frame on WAV | x = the frame, 1–16 |
+| `ch3_cmd1_*` | **W** — wave slot on WAV | x = the wave slot: 2 (Saw), 6 (Tri to saw), then 5 (Organ) |
+| `ch3_cmd2_*` | **F** — frame on WAV | x = the frame: 1, 3, 6, then 1 |
+| `ch4_cmd1_*` | **M** — master volume | x = y = 5, then 3, then 7, over the last two beats of bar 8 |
 
 **A** is the table (x = a table slot, 0 stops it) — the letter that used to mean the
 envelope. The full letter set, with what `x` and `y` mean for each, is in
@@ -111,4 +176,13 @@ undocumented.
 ```
 python3 tools/demo/make_demo.py
 python3 tools/demo/make_demo.py --paramdump build-plugin/chipboy_paramdump_artefacts/Release/chipboy_paramdump   # cross-check the parameter table
+```
+
+Everything under `Demo/` except this file comes out of that one script, so change the
+tune or the lanes there and regenerate. The record test reads `chipboy_demo.mid` and
+`chipboy_demo_automation.json` straight from this directory, so it checks the files that
+ship:
+
+```
+ctest --test-dir build-plugin -C Release -R recordtest --output-on-failure
 ```

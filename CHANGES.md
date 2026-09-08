@@ -197,6 +197,81 @@ the instrument's pitch fields (the interface and driver stages). A G inside a ta
 still runs at one tick per row; the processor marks where the driver's setter
 for it goes.
 
+### 2026-09-08 — the demo records and plays back (recordtest)
+
+The addendum's §9.5 (`docs/COMMANDS_AND_TEMPO.md`): everything the demo does is now
+something a tracker cell can hold, and `chipboy_recordtest` proves it by recording the
+demo and playing the recording back, comparing the APU register writes.
+
+**Changed:**
+
+- **The demo is tracker-shaped.** No mod wheel and no pitch wheel anywhere: the vibrato
+  ride of bars 5–8 is the V slot's depth moving a notch a beat on step boundaries, bars
+  13–14 give PU1 an **L 30** slide (the lead's pitch speed is Fast, so 30/360 s ≈ 83 ms of
+  portamento into every note) and bars 15–16 a **P 126** Fast bend that leans every note
+  down. The master dip in bar 8 is an **M** slot on NOI (7 → 5 → 3 → 7) instead of the
+  master parameters, and PU2 takes factory slot 17 "Pulse kick" — Drum pitch speed, its
+  table doing the drop — for a kick pattern in bars 15–16. Every note starts on a step and
+  ends one step before the next note on its channel, and every automation point sits on a
+  step where its own channel starts no note; the generator asserts both.
+- **`Demo/chipboy_demo_automation.json`**, written from the same Python tables as the
+  Reaper envelopes and the MIDI file: `static` for the parameters the demo sets once,
+  `lanes` for the ones it automates as `(beat, value)` points in plugin units, `hardware`
+  for De-click and the model, which are the analog stage rather than anything a cell can
+  hold. One source, three files.
+- **`tools/recordtest` (`chipboy_recordtest`)**, a console tool beside `chipboy_linktest`,
+  registered with CTest and run in CI. Pass 1 plays the MIDI file and the automation into
+  the processor at 120 BPM, 48 kHz, 512-sample blocks with all four channels on Trk and
+  record armed, and saves the recorded song through the JSON writer next to a listing of
+  its cells. Pass 2 loads that song into a fresh processor, holds every lane at its bar-1
+  value, sends no MIDI and plays the same seventeen bars. The two runs are compared per
+  channel — the same writes, in the same order, with the same values, within 64 samples —
+  with NR50 and NR51 as a fifth stream, because M and O are letters. `Driver` gained an
+  optional write log for it: a vector pointer, null in normal builds, filled where the
+  block's writes are handed back.
+- **An OFF cell carries its columns.** A cell that ends a note dropped its instrument,
+  table and command columns on the floor; they are applied now, after the note-off, as
+  §3 says cells and slots are one code path. The recorder writes exactly such cells — a
+  slot change at a step that also holds an OFF — so a recorded song could not play back
+  without this.
+- **A cell's instrument column is exact.** With Velocity = *instrument bank* the driver
+  added `velocity / 8` to whatever slot was selected, cell columns included, so a recorded
+  drum (the slot the note really loaded, §9.4) was banked a second time on playback and
+  came out as a different drum. The bank now applies to the channel's own choice only.
+- **A pitch update inside a tick's burst follows it.** A tick's writes go out an
+  instruction pair apart; a 360 Hz update landing inside that burst was sorted in front of
+  writes that had been computed before it, so a period computed at the tick could be
+  written over the fresher one the update produced. The update now follows the burst, as
+  it would on hardware, where a timer cannot interleave with an interrupt's register
+  writes.
+- **The recorder reads the note report after the note has played.** The instrument column
+  and the plain/bare flag came from the driver's report while the driver had not yet
+  played the block, so they described the *previous* note: a keyswitch or an Instrument
+  lane move was recorded a note late. The note events are recorded after `Driver::process`
+  now; the report is the block's last note-on on that channel, which is the cell that
+  survives, a block being far shorter than a step.
+
+**Why:** a demo that cannot be recorded cannot show that the recorder works, and §9.5
+asks for the proof rather than the claim. Running it found four real defects — three in
+the driver, one in the processor — that no unit test had reached, because each needs a
+whole performance to show up.
+
+**Considered:** keeping the mod and pitch wheels as a second, unrecordable layer. They
+would have made the test meaningless, and the point of the channel model is that what you
+hear is what a cell holds.
+
+**A limit the test found, and the demo works around.** A slot going back to `none` is
+recorded as its letter carrying the instrument's own value (§9.4), and that letter then
+stays in force at every note-on — which is not what `none` does. Three cases in the demo:
+**E** reverting would keep setting the start volume, so the velocity accents could never
+come back; **V** reverting would restore the lead's speed and depth but not its ten-tick
+vibrato delay, which a V command has no argument for; and a **W** revert on WAV would
+override the instrument the keyswitch brings in a step later. The demo therefore reverts
+to `none` only where it is faithful — PU1's W, whose instrument never changes under it —
+and elsewhere moves the lane to the instrument's own value, which sounds the same and
+records exactly. Making a cell able to say "clear this letter" would need a new value in
+the data model, which §9.1 does not have.
+
 ### 2026-09-08 — the window fits a screen and stretches, tempo moves to the header (UI_DESIGN §2, §6, §7)
 
 The main window was 1180 x 760 and fixed, which the Instrument tab never fitted: it

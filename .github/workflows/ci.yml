@@ -85,12 +85,12 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCHIPBOY_BUILD_PLUGIN=ON -DCHIPBOY_BUILD_TESTS=OFF
       - name: Build (VST3, Standalone, tools)
-        run: cmake --build build --config Release --parallel --target ChipBoy_VST3 ChipBoyVoice_VST3 ChipBoy_Standalone chipboy_paramdump chipboy_linktest
+        run: cmake --build build --config Release --parallel --target ChipBoy_VST3 ChipBoyVoice_VST3 ChipBoy_Standalone chipboy_paramdump chipboy_linktest chipboy_recordtest
       - name: Build (AU)
         if: runner.os == 'macOS'
         run: cmake --build build --config Release --parallel --target ChipBoy_AU ChipBoyVoice_AU
-      - name: Link integration test
-        run: ctest --test-dir build -C Release -R linktest --output-on-failure
+      - name: Link and record integration tests
+        run: ctest --test-dir build -C Release -R "linktest|recordtest" --output-on-failure
       - name: Parameter table matches the demo generator
         shell: bash
         run: |
