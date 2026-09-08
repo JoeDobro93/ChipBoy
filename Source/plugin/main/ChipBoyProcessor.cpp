@@ -593,11 +593,6 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
                 int bar = 0, step = 0;
                 if ((trackerMask & (1u << ch)) && player_.stepAt(ch, tk[k].tick, bar, step)) recordSlots(ch, double(tk[k].tick), bankNow);
             }
-        const double tickPerFrame = clock_.bpm() * driver::kTicksPerBeat / 60.0 / sampleRate_;
-        const double tick0 = double(clock_.tickAtBlockStart());
-        for (const auto& e : events_)
-            if (e.source == driver::NoteEvent::Midi && (trackerMask & (1u << (e.channel & 3))) && (e.kind == driver::NoteEvent::NoteOn || e.kind == driver::NoteEvent::NoteOff))
-                recordNote(e, tick0 + e.offset * tickPerFrame, bankNow);
     }
     recWasArmed_ = rec;
 
@@ -610,6 +605,18 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     // --- drive the chip -------------------------------------------------
     writes_.clear();
     driver_.process(events_.data(), events_.size(), uint32_t(n), frames_, clock_.ticks(), clock_.tickCount(), cycleAt_, writes_);
+    // The notes are recorded now that the driver has played them: the cell's
+    // instrument column is the instrument the note actually loaded, and
+    // whether it was plain, which only the note-on itself decides (9.4). The
+    // report is the block's last note-on on that channel -- the cell that
+    // survives, since a block is far shorter than a step.
+    if (rec) {
+        const double tickPerFrame = clock_.bpm() * driver::kTicksPerBeat / 60.0 / sampleRate_;
+        const double tick0 = double(clock_.tickAtBlockStart());
+        for (const auto& e : events_)
+            if (e.source == driver::NoteEvent::Midi && (trackerMask & (1u << (e.channel & 3))) && (e.kind == driver::NoteEvent::NoteOn || e.kind == driver::NoteEvent::NoteOff))
+                recordNote(e, tick0 + e.offset * tickPerFrame, bankNow);
+    }
     applyWrites();
     apu_.runTo(std::max(renderer_.cycleForFrame(frames_ + uint64_t(n)), apu_.cycle()));
     for (int ch = 0; ch < 4; ++ch) channelLevels[size_t(ch)].store(apu_.dacOn(ch) ? apu_.level(ch) : -1);

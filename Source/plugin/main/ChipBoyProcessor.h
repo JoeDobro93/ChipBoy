@@ -79,6 +79,9 @@ public:
     void setBankName(const juce::String& n) { bankName_ = n; }
 
     const driver::Driver& driverView() const { return driver_; }   ///< read-only, may be a block stale
+    /// Tap every register write the driver emits, for the record test
+    /// (docs/COMMANDS_AND_TEMPO.md section 9.5). Null to stop.
+    void setWriteLog(std::vector<driver::RegWrite>* log) { driver_.setWriteLog(log); }
     ScopeBuffers& scopes() { return scopes_; }
     juce::String instanceName() const { return instanceName_; }
     void setInstanceName(const juce::String& n) { instanceName_ = n; }

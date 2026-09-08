@@ -128,8 +128,13 @@ uint8_t Driver::levelFromVelocity(uint8_t vel) const { return uint8_t(std::min(1
 int Driver::resolveSlot(int ch, uint8_t vel) const
 {
     const auto& p = params_[size_t(ch)];
-    int slot = v_[size_t(ch)].ksInstrument ? v_[size_t(ch)].ksInstrument : p.instrument;
-    if (p.velocityMode == 1 && slot) slot += vel / 8;           // velocity -> instrument bank of 16
+    const Voice& v = v_[size_t(ch)];
+    int slot = v.ksInstrument ? v.ksInstrument : p.instrument;
+    // The velocity bank picks an instrument around the channel's own choice.
+    // A cell's instrument column has already named one -- the recorder writes
+    // the slot the note really loaded (section 9.4) -- so it is taken as it is
+    // and the bank is not applied a second time.
+    if (p.velocityMode == 1 && slot && !v.ksFromCell) slot += vel / 8;
     return slot;
 }
 
@@ -250,7 +255,7 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
     const InstrumentType t = cur ? cur->type : (ch == 2 ? InstrumentType::Wave : ch == 3 ? InstrumentType::Noise : InstrumentType::Pulse);
     if (p.keyswitch) {
         const int base = keyswitchBase(t);
-        if (note >= base && note < base + 12) { v.ksInstrument = uint8_t(note - base + 1); return; }
+        if (note >= base && note < base + 12) { v.ksInstrument = uint8_t(note - base + 1); v.ksFromCell = false; return; }
     }
     // Whether a note is still held under this one decides, with the
     // instrument's Overlap, if the new note is plain or bare (section 8).
@@ -260,7 +265,7 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
     // write over them, and fireSlots() applies the result in order.
     syncSlots(ch);
     if (cell) {
-        if (cell->inst) v.ksInstrument = cell->inst;        // a cell's instrument column selects like a keyswitch
+        if (cell->inst) { v.ksInstrument = cell->inst; v.ksFromCell = true; }   // a cell's instrument column names it exactly
         if (cell->table) v.tableOverride = cell->table;      // the channel's table override, from this step on
         // A cell's commands are the slots from this step on (section 3).
         if (cell->cmd1.cmd != Cmd::None) v.slot[0] = cell->cmd1;
@@ -1050,7 +1055,7 @@ void Driver::adoptInstrumentParam(int ch)
     Voice& v = v_[size_t(ch)];
     const int16_t p = int16_t(params_[size_t(ch)].instrument);
     if (v.instParam == p) return;
-    if (v.instParam >= 0) v.ksInstrument = 0;
+    if (v.instParam >= 0) { v.ksInstrument = 0; v.ksFromCell = false; }
     v.instParam = p;
 }
 
@@ -1248,7 +1253,13 @@ void Driver::handleEvent(const NoteEvent& e)
             if (e.b == 0) { noteOff(ch, e.a); break; }
             noteOn(ch, e.a, e.b, e.source == NoteEvent::Tracker ? &e : nullptr);
             break;
-        case NoteEvent::NoteOff: noteOff(ch, e.a); break;
+        case NoteEvent::NoteOff:
+            // A cell's OFF ends the note; its instrument, table and command
+            // columns are still the cell's, and apply from this step on
+            // (section 3: cells and slots are one code path).
+            noteOff(ch, e.a);
+            if (e.source == NoteEvent::Tracker) applyCellColumns(ch, e);
+            break;
         case NoteEvent::PitchBend: v.bend = double(e.value) / 8192.0 * 2.0; if (v.active) writePeriod(ch, false); break;
         case NoteEvent::Control:
             if (e.a == 1) v.vibDepth = uint8_t(e.b / 8);       // the mod wheel is vibrato depth
@@ -1259,14 +1270,23 @@ void Driver::handleEvent(const NoteEvent& e)
         case NoteEvent::Command:
             // A tracker cell with no note: its columns are the slots from here
             // on, and its instrument column reloads the instrument first.
-            if (e.table) { v.tableOverride = e.table; if (v.active) { v.tableSlot = e.table; v.tableStep = 0; v.tableRow = 0; v.tableWait = 0; v.tableOn = bank_ && bank_->table(e.table); } }
-            if (e.cmd1.cmd != Cmd::None) v.slot[0] = e.cmd1;
-            if (e.cmd2.cmd != Cmd::None) v.slot[1] = e.cmd2;
-            if (e.inst && e.inst != v.ksInstrument) { v.ksInstrument = e.inst; if (v.haveInst) { reloadInstrument(ch); break; } }
-            if (e.cmd1.cmd != Cmd::None) applyCommand(ch, e.cmd1, false);
-            if (e.cmd2.cmd != Cmd::None) applyCommand(ch, e.cmd2, false);
+            applyCellColumns(ch, e);
             break;
     }
+}
+
+/// The columns of a cell that does not start a note: the table override, the
+/// two commands as the slots in force from this step, and an instrument
+/// column, which reloads and fires the slots itself (section 3).
+void Driver::applyCellColumns(int ch, const NoteEvent& e)
+{
+    Voice& v = v_[size_t(ch)];
+    if (e.table) { v.tableOverride = e.table; if (v.active) { v.tableSlot = e.table; v.tableStep = 0; v.tableRow = 0; v.tableWait = 0; v.tableOn = bank_ && bank_->table(e.table); } }
+    if (e.cmd1.cmd != Cmd::None) v.slot[0] = e.cmd1;
+    if (e.cmd2.cmd != Cmd::None) v.slot[1] = e.cmd2;
+    if (e.inst && e.inst != v.ksInstrument) { v.ksInstrument = e.inst; v.ksFromCell = true; if (v.haveInst) { reloadInstrument(ch); return; } }
+    if (e.cmd1.cmd != Cmd::None) applyCommand(ch, e.cmd1, false);
+    if (e.cmd2.cmd != Cmd::None) applyCommand(ch, e.cmd2, false);
 }
 
 /* ------------------------------------------------------------ process */
@@ -1277,6 +1297,7 @@ void Driver::process(const NoteEvent* events, size_t n, uint32_t numSamples, uin
                      std::vector<RegWrite>& out)
 {
     out_ = &out;
+    const size_t logFrom = out.size();
     const uint64_t blockEnd = frameAbs + numSamples;
 
     // Events land where the host put them (sample accurate); the tick drives
@@ -1305,7 +1326,11 @@ void Driver::process(const NoteEvent* events, size_t n, uint32_t numSamples, uin
                 if (best < 0 || v.pitchClock < at) { best = ch; at = v.pitchClock; }
             }
             if (best < 0) break;
-            moveTo(at);
+            // A tick's register writes go out as one burst, an instruction
+            // pair apart. A 360 Hz update landing inside that burst cannot
+            // interleave with it on real hardware, and must not overtake
+            // writes that were computed before it, so it follows the burst.
+            if (at > cycle_ + uint64_t(burst_) * kBurstSpacing) moveTo(at);
             pitchStep(best, false);
             v_[size_t(best)].pitchClock = at + kPitchCycles;
         }
@@ -1352,6 +1377,7 @@ void Driver::process(const NoteEvent* events, size_t n, uint32_t numSamples, uin
     scheduleStreams(cycleAt(frameAbs), cycleAt(blockEnd));
 
     std::stable_sort(out.begin(), out.end(), [](const RegWrite& a, const RegWrite& b) { return a.cycle < b.cycle; });
+    if (writeLog_) for (size_t i = logFrom; i < out.size(); ++i) writeLog_->push_back(out[i]);
     for (int ch = 0; ch < 4; ++ch) refreshView(ch);
     out_ = nullptr;
 }

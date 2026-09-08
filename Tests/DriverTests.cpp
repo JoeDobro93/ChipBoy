@@ -1061,3 +1061,65 @@ TEST_CASE("L in a table slides to the row's own transpose", "[driver][commands]"
     r.block({}, 12000);
     CHECK(r.drv.view(0).period == note(69));             // and it arrives at the note itself
 }
+
+/* ---------------------------------------------------- cells and the clock */
+
+TEST_CASE("an OFF cell's command columns still apply", "[driver][notes]")
+{
+    // A cell that ends a note carries its columns like any other cell
+    // (docs/COMMANDS_AND_TEMPO.md section 3): the note stops, and the two
+    // commands are the slots in force from that step on.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    ChannelParams p; p.instrument = 1; r.drv.setParams(0, p);      // Square lead, duty 2
+    auto w = r.block({ cellOn(0, 69, 1) }, 480);
+    CHECK(last(w, 0xFF11)->value == 0x80);                         // 50 %
+    NoteEvent e; e.channel = 0; e.kind = NoteEvent::NoteOff; e.source = NoteEvent::Tracker; e.a = 69;
+    e.cmd1 = { Cmd::W, 0, 0, 0 };                                  // 12.5 % from here on
+    r.block({ e }, 480);
+    w = r.block({ cellOn(0, 69, 1) }, 480);
+    CHECK(last(w, 0xFF11)->value == 0x00);
+}
+
+TEST_CASE("a cell's instrument column is exact under the velocity bank", "[driver][notes]")
+{
+    // Velocity picks an instrument around the channel's own choice; a cell has
+    // already named the one the recorder saw load (section 9.4), so playing it
+    // back must not move it again.
+    Rig r;
+    r.song.noteSource[3] = tracker::NoteSource::Tracker;
+    r.drv.setRecording(true);                                      // MIDI plays through onto a Trk lane
+    ChannelParams p; p.instrument = 11; p.velocityMode = 1; r.drv.setParams(3, p);
+    auto w = r.block({ Rig::on(3, 60, 20) }, 512);                 // 11 + 20/8 = 13, Hat closed
+    CHECK(last(w, 0xFF21)->value == 0x91);
+    r.block({ Rig::off(3, 60) }, 512);
+    w = r.block({ cellOn(3, 60, 13, 20) }, 512);                   // the cell names 13, and stays there
+    CHECK(last(w, 0xFF21)->value == 0x91);
+}
+
+TEST_CASE("a pitch update inside a tick's burst follows it", "[driver][commands]")
+{
+    // A tick's register writes go out as one burst an instruction pair apart.
+    // A 360 Hz pitch update landing inside that burst must follow it, or a
+    // period computed at the tick would be written over the fresher one the
+    // update produced -- the last period write must always be the period the
+    // driver has arrived at.
+    Rig r;
+    r.tickHz = 375.0;
+    r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    ChannelParams p; p.instrument = 1; r.drv.setParams(0, p);
+    r.block({ cellOn(0, 69, 1) }, 128);
+    int checked = 0;
+    for (int i = 0; i < 120; ++i) {
+        NoteEvent e; e.channel = 0; e.kind = NoteEvent::Command; e.source = NoteEvent::Tracker;
+        e.cmd1 = { Cmd::E, int16_t(10 + (i & 3)), 0, 0 };          // a write before the period one
+        e.cmd2 = { Cmd::V, 15, int16_t(8 + (i & 1)), 0 };          // and one that moves the period
+        const auto w = r.block({ e }, 128);
+        if (const auto* lo = last(w, 0xFF13)) {
+            CHECK(lo->value == (r.drv.view(0).period & 0xFF));
+            ++checked;
+        }
+    }
+    CHECK(checked > 50);
+}

@@ -147,6 +147,12 @@ public:
     void setTableGroove(int ch, const uint8_t* ticks16);
     uint8_t tableGrooveSlot(int ch) const;   ///< the slot a table's G asked for, 0 none
 
+    /// An optional log of every register write this driver emits, in cycle
+    /// order: what the record test compares (docs/COMMANDS_AND_TEMPO.md
+    /// section 9.5). Null in normal builds, so the audio thread pays one
+    /// branch a block and nothing per write.
+    void setWriteLog(std::vector<RegWrite>* log) { writeLog_ = log; }
+
     uint8_t nr50() const { return shadow_[0x14]; }
     uint8_t nr51() const { return shadow_[0x15]; }
     uint64_t tickCount() const { return tickCount_; }
@@ -212,6 +218,7 @@ private:
         // held notes for last-note priority
         std::array<uint8_t, 16> held{}; uint8_t heldCount = 0;
         uint8_t  ksInstrument = 0;
+        bool     ksFromCell = false;                  ///< a cell's column named it, so it is exact
         int16_t  instParam = -1;                      ///< the Instrument parameter last seen (-1 = none yet)
         uint32_t instKey = 0;                         ///< what resolveInstrument() picked, to compare against
         bool     reportPlain = true; uint8_t reportInst = 0;   ///< the last note-on, for noteReport()
@@ -234,6 +241,9 @@ private:
     void tick(int ch);
     void tickAll();
     void handleEvent(const NoteEvent& e);
+    /// A cell's instrument, table and command columns, for the cells that do
+    /// not start a note: a Command cell and an OFF (section 3).
+    void applyCellColumns(int ch, const NoteEvent& e);
     void noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell);
     void noteOff(int ch, uint8_t note);
     /// A plain note loads the instrument and triggers; a bare note writes the
@@ -286,6 +296,8 @@ private:
     const bank::Instrument* resolveInstrument(int ch, uint8_t vel);
     int      resolveSlot(int ch, uint8_t vel) const;  ///< the bank slot a note-on would load, 0 none
     uint32_t instrumentKey(int ch, uint8_t vel) const;///< identity of that instrument, local ones included
+
+    std::vector<RegWrite>* writeLog_ = nullptr;
 
     const bank::Bank* bank_ = nullptr;
     const tracker::Song* song_ = nullptr;
