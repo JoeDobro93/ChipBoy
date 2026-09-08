@@ -12,6 +12,9 @@ namespace {
 /// left, the bar chain beside them on the right, so the lane below keeps as
 /// much of a fixed window as it can get.
 constexpr int kToolRow = 26, kToolGap = 6, kChainWidth = 340;
+/// The lane and the groove editor divide the pane: the editor takes its
+/// fixed width off the right, the lane the rest (UI_DESIGN section 7).
+constexpr int kGrooveGap = 12;
 constexpr int kHeadHeight = ui::ChainStrip::preferredHeight();
 /// Song start is held in tenths of a second so a stepper can reach it.
 constexpr int kStartSteps = 10, kStartMax = 600 * kStartSteps;
@@ -66,12 +69,17 @@ PhrasesPanel::PhrasesPanel(ChipBoyProcessor& p)
     });
 
     RichText h;
-    h.plain("Per channel, ").bold("Roll").plain(" shows the piano roll's notes, greyed; ").bold("Trk").plain(" plays the tracker's own notes and ignores incoming MIDI. Commands fire on their step and latch for the notes that follow.");
+    h.plain("Per channel, ").bold("Roll").plain(" shows the piano roll's notes, greyed; ").bold("Trk").plain(" plays the tracker's own notes and ignores incoming MIDI. Commands fire on their step and latch for the notes that follow. The ")
+     .bold("groove").plain(" on the right says how many ticks each step lasts.");
     help_.setText(h);
 
     addAndMakeVisible(chain_);
+    auto lane = std::make_unique<Columns>(kGrooveGap);
+    lane->setWidths({ 0, GrooveEditor::kWidth });
+    lane->add(std::make_unique<Hold>(grid_, PhraseGrid::preferredHeight()));
+    lane->add(std::make_unique<Hold>(groove_, GrooveEditor::preferredHeight()));
     auto stack = std::make_unique<Stack>(0);
-    stack->add(std::make_unique<Hold>(grid_, PhraseGrid::preferredHeight()));
+    stack->add(std::move(lane));
     scroll_.setContent(std::move(stack));
 
     chain_.onSelectBar = [this](int bar) { bar_ = std::max(0, bar); refreshViews(); contextChanged(); };
@@ -93,6 +101,9 @@ PhrasesPanel::PhrasesPanel(ChipBoyProcessor& p)
         });
     };
     grid_.onSourceChange = [this](int ch, tracker::NoteSource src) { editSong([ch, src](tracker::Song& s) { s.noteSource[size_t(ch & 3)] = src; }); };
+    groove_.onChange = [this](int slot, const tracker::Groove& g) {
+        editSong([slot, g](tracker::Song& s) { if (slot >= 1 && slot <= int(s.grooves.size())) s.grooves[size_t(slot - 1)] = g; });
+    };
     grid_.onGrooveChange = [this](int ch, int groove) {
         const int bar = bar_;
         editSong([ch, bar, groove](tracker::Song& s) {
@@ -120,6 +131,13 @@ uint8_t PhrasesPanel::ensurePhrase(tracker::Song& s, int ch, int bar)
     return slot;
 }
 
+void PhrasesPanel::setChannel(int ch)
+{
+    EditorPanel::setChannel(ch);
+    grooveSlot_ = -1;      // picking a channel shows its groove again, browsed or not
+    refreshViews();
+}
+
 RichText PhrasesPanel::contextLine() const
 {
     RichText r;
@@ -136,9 +154,40 @@ void PhrasesPanel::refreshViews()
     const auto s = processor.song();
     chain_.setSong(s, bar_, playingBar_);
     grid_.setSong(s, bar_);
+    groove_.setSong(s);
+    groove_.setBarTicks(processor.barTicks());
+    // The editor shows the groove in force for the selected channel, and
+    // follows it when it changes; browsing the stepper is left alone.
+    const int inForce = grooveInForce(channel);
+    if (inForce != grooveSlot_) { grooveSlot_ = inForce; groove_.setSlot(inForce); }
     const int spb = s ? int(s->stepsPerBar) : 16;
     steps_.setSelected(spb <= 8 ? 0 : 1, dontSendNotification);
     syncSongTime();
+}
+
+int PhrasesPanel::grooveInForce(int ch) const
+{
+    const auto s = processor.song();
+    if (!s) return 0;
+    const uint8_t slot = processor.player().groove(ch);
+    if (slot != tracker::kGrooveNone) return int(slot);
+    const auto* p = s->phrase(s->phraseAt(ch, bar_));
+    return p != nullptr ? int(p->groove) : 0;
+}
+
+int PhrasesPanel::playingStep(int ch, int bar, int inBar) const
+{
+    const auto s = processor.song();
+    if (!s) return -1;
+    const int barTicks = std::max(1, processor.barTicks());
+    int start[tracker::kSteps + 1];
+    tracker::stepStartTicks(*s, s->phrase(s->phraseAt(ch, bar)), processor.player().groove(ch), start);
+    int step = -1;
+    for (int i = 0; i < s->steps(); ++i) {
+        if (start[i] >= barTicks || start[i] > inBar) break;   // that step never fires, or has not come yet
+        step = i;
+    }
+    return step;
 }
 
 /// The song's own timeline: the two fields that live in the song rather than
@@ -182,7 +231,6 @@ void PhrasesPanel::tick()
     const int spb = s ? std::max(1, int(s->stepsPerBar)) : 16;
     const int bar = int(tick / barTicks);
     const int inBar = int(tick % barTicks);
-    const int step = inBar * spb / barTicks;
     const int beat = inBar / driver::kTicksPerBeat;
     const int stepInBeat = (inBar - beat * driver::kTicksPerBeat) * spb / barTicks;
     pos_.setText(String(bar + 1) + "." + String(beat + 1) + "." + String(stepInBeat + 1));
@@ -195,9 +243,15 @@ void PhrasesPanel::tick()
     if (playing && bar != bar_) { bar_ = bar; views = true; contextChanged(); }   // the view follows the transport
     if (views) refreshViews();
 
+    groove_.setBarTicks(barTicks);
+    const int inForce = grooveInForce(channel);
+    if (inForce != grooveSlot_) { grooveSlot_ = inForce; groove_.setSlot(inForce); }
     for (int ch = 0; ch < 4; ++ch) {
-        const int st = playing && bar == bar_ && step >= 0 && step < tracker::kSteps ? step : -1;
+        const int st = playing && bar == bar_ ? playingStep(ch, bar, inBar) : -1;
         if (st != lastStep_[size_t(ch)]) { lastStep_[size_t(ch)] = st; grid_.setPlayingStep(ch, st); }
+        // The editor's rows line up with the lane's, so the row it marks is
+        // the selected channel's -- and only while it shows that groove.
+        if (ch == channel) groove_.setPlayingStep(groove_.slot() == inForce ? st : -1);
         const bool roll = s && s->noteSource[size_t(ch)] == tracker::NoteSource::PianoRoll;
         const int note = roll ? processor.lastNotes[size_t(ch)].load() : -1;
         if (note != lastRoll_[size_t(ch)]) { lastRoll_[size_t(ch)] = note; grid_.setRollNote(ch, note); }
