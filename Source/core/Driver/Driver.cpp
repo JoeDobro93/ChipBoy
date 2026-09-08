@@ -1369,7 +1369,17 @@ void Driver::refreshView(int ch)
     // The running state the strip prints under the two slots (section 3).
     w.envVol = v.envVol; w.envRate = v.envRate; w.envDir = v.envDir == EnvDir::Up ? 1 : 0;
     w.vibSpeed = v.vibSpeed; w.vibDepth = v.vibDepth;
-    w.pitchOffset = int16_t(v.pOffset + (v.slideDrum ? 0 : slideResidual(v))); w.pan = uint8_t(v.pan);
+    // What the pitch effects have added, in register units: P and a slide
+    // give them directly, and a Drum-mode bend through the note it moves.
+    int off = v.pOffset + (v.slideDrum ? 0 : slideResidual(v));
+    const int32_t fine = v.fineOffset + (v.slideDrum ? slideResidual(v) : 0);
+    if (fine && v.inst.type != InstrumentType::Noise && v.inst.type != InstrumentType::Kit) {
+        const bool wave = v.inst.type == InstrumentType::Wave;
+        const double n = noteOfVoice(ch);
+        const int a = periodForNote(n, wave), b = periodForNote(n - double(fine) / 32.0, wave);
+        if (a >= 0 && b >= 0) off += a - b;
+    }
+    w.pitchOffset = int16_t(std::clamp(off, -2047, 2047)); w.pan = uint8_t(v.pan);
     for (int r = 0; r < 5; ++r) w.regs[r] = known_[size_t(ch * 5 + r)] ? shadow_[size_t(ch * 5 + r)] : 0;
 }
 

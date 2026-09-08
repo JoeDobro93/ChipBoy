@@ -665,6 +665,11 @@ TEST_CASE("P bends at the instrument's pitch speed", "[driver][pitch]")
         const int stopped = r.drv.view(0).pitchOffset;
         r.block({}, 4800);
         CHECK(r.drv.view(0).pitchOffset == stopped);
+        // A bare note leaves it where it is (section 8).
+        r.block({ Rig::on(0, 72, 100) }, 480);
+        CHECK(r.drv.view(0).pitchOffset == stopped);
+        CHECK_FALSE(r.drv.noteReport(0).plain);
+        r.block({ Rig::off(0, 72) }, 480);
         // A plain note-on puts the offset back to zero.
         r.block({ Rig::off(0, 69) }, 480);
         r.block({ Rig::on(0, 69, 100) }, 480);
@@ -696,6 +701,8 @@ TEST_CASE("P bends at the instrument's pitch speed", "[driver][pitch]")
         r.block({ Rig::on(0, 69, 100) }, 240);
         r.block({}, 4060);                               // 32 updates: an eighth of a semitone each
         CHECK(std::abs(int(r.drv.view(0).period) - note(65)) <= 6);
+        // The running state shows what a Drum bend is worth in register units.
+        CHECK(std::abs(int(r.drv.view(0).pitchOffset) - (note(65) - note(69))) <= 6);
     }
 }
 
