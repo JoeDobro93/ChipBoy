@@ -387,8 +387,12 @@ Agreed after playing the round above. Binding. Changes §3 (cells are not slots)
 
 - **Steps per bar** is a number, 1–64, typed in the Tracker tab (was 8 or 16). A phrase
   holds up to 64 cells (`kMaxSteps`); the grid shows the bar's step count.
-- **Step ticks** = bar ticks / steps per bar, where bar ticks = beats per bar × 24 (the
-  host's signature in Host mode, the song's in Song mode). When that is not a whole
+- **Step ticks** = bar ticks / steps per bar, where bar ticks = the **song's** beats per
+  bar × 24 in both tempo modes. *(Amended in the third addendum: the host contributes
+  the tempo only. Its time signature never reaches the tracker — a DAW change to 3/4
+  moves the DAW's bar markers, not the song's bars, and a DAW that goes 4/4 4/4 3/4 5/4
+  while the song stays in 4/4 lines back up at the end because the ticks are continuous.
+  A song that wants a 3/4 bar sets its beats per bar, or a bar's step override.)* When that is not a whole
   number, step *i* starts at ⌊*i* × bar ticks / steps⌋ (never more than a tick of
   jitter). Grooves keep meaning "ticks at sixteen steps in 4/4": step *i* lasts
   `groove.at(i)` × step ticks / 6, as before. At the usual sixteen, sixteen steps now
@@ -534,7 +538,12 @@ Agreed after playing the third round. Binding.
   tempo source, quantize, the channel Source/Level/Pan/Transpose/Velocity/Keyswitch lanes.
 - Undo steps record the tab they belong to and re-activate it.
 
-## 19. Tempo
+## 19. Tempo, and the host's signature stays out
+
+- The host contributes the **tempo** only: in Host mode ticks follow the host's beat
+  position, continuously, whatever its time signature does. Bar ticks always come from
+  the song's beats per bar (§11, amended), so the Beats field works in both modes and a
+  DAW signature change never moves the song's bars.
 
 - The header's tempo is a **readout**: the host's BPM in Host mode, the active song's
   tempo in force (its master tempo, or the T last passed) in Song mode. The Host/Song
