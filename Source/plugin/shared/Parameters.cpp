@@ -199,8 +199,10 @@ void addGlobalParameters(AudioProcessorValueTreeState::ParameterLayout& L)
     L.add(std::make_unique<AudioParameterFloat>(ParameterID(ids::trim, 1), "Output Trim",
           NormalisableRange<float>(-40.0f, 6.0f, 0.1f), -6.0f,
           AudioParameterFloatAttributes().withLabel("dB").withStringFromValueFunction([](float v, int) { return String(v, 1) + " dB"; })));
+    // The two halves of the noise floor, independent switches (section 21):
+    // the hiss and the frame hum, and the display's own line.
     L.add(boolParam(ids::noise, "Headphone Noise", true));
-    L.add(boolParam(ids::lcd, "LCD On", true));
+    L.add(boolParam(ids::lcd, "LCD Whine", true));
     L.add(choiceParam(ids::bassMod, "CGB Bass Mod", { "stock", "x10", "x47" }, 0));
     L.add(boolParam(ids::volEdges, "Volume Writes At Edges", false));
     L.add(boolParam(ids::declick, "De-click", false));

@@ -47,15 +47,17 @@ public:
     int latencyFrames() const { return (kernel_.head + (firTaps_ - 1) / 2) / kOversample; }
     uint64_t framesRendered() const { return frames_; }
 
-    /// Headphone Noise (spec C8): the one switch. Default on.
+    /// Headphone Noise (spec C8): the hiss and the frame hum. Default on.
+    /// The display's line has its own switch (docs/COMMANDS_AND_TEMPO.md
+    /// section 21), so either can be heard without the other.
     void setNoise(bool on) { opt_.noise = on; }
     bool noise() const { return opt_.noise; }
 
     /// The Hardware panel (UI_DESIGN section 5). Hardware states and
     /// departures alike; the badge logic lives in the plugin.
     struct Options {
-        bool    noise = true;        ///< Headphone Noise
-        bool    lcd = true;          ///< off removes the LCD line
+        bool    noise = true;        ///< Headphone Noise: the hiss and the frame hum
+        bool    lcd = true;          ///< LCD Whine: the display line, independent of `noise`
         uint8_t bassMod = 0;         ///< CGB capacitor swap: 0 stock, 1 x10, 2 x47
         float   declickMs = 0.0f;    ///< > 0: crossfade DAC-on steps (a departure)
         bool    softenMaster = false;///< ramp NR50 changes (a departure)
@@ -109,7 +111,6 @@ private:
     double cyclesPerWork_ = 0.0, workPerCycle_ = 0.0;
     double hpCoef_ = 1.0;
     double hissPerSample_ = 0.0;
-    double lineScale_ = 1.0;
     bool   bypass_ = false;
     Options opt_;
     int    declickSamples_ = 0;

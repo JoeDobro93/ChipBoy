@@ -98,7 +98,6 @@ void Renderer::recomputeCoefficients()
     hpCoef_ = std::pow(a, cyclesPerWork_);
     // The measured floor is an RMS over 0-96 kHz; keep the spectral density.
     hissPerSample_ = model_.hissRms * std::sqrt(fsWork_ / 192000.0) * kSqrt3;
-    lineScale_ = opt_.lcd ? 1.0 : 0.0;
     declickSamples_ = opt_.declickMs > 0.0f ? std::max(1, int(std::lround(double(opt_.declickMs) * 1e-3 * fsWork_))) : 0;
 }
 
@@ -235,16 +234,21 @@ void Renderer::renderWorking(uint64_t m1, float* outL, float* outR)
     float* out[2] = { outL, outR };
     int k = 0;
     for (uint64_t m = work_; m < m1; ++m) {
-        // Noise floor, shared components (the LCD and frame lines are common
-        // to both sides; the hiss is not).
+        // Noise floor, shared components: the lines are common to both sides,
+        // the hiss is not. Headphone Noise is the hiss and the frame hum, LCD
+        // Whine the display's line and its harmonic, and the two switches are
+        // independent (docs/COMMANDS_AND_TEMPO.md section 21). The phases
+        // advance whenever either is on, so switching one does not move the
+        // other's.
         double lines = 0.0;
         const bool noise = opt_.noise && !bypass_;
-        if (noise) {
+        const bool whine = opt_.lcd && !bypass_;
+        if (noise || whine) {
             linePhase_ += lineInc_; line2Phase_ += line2Inc_; framePhase_ += frameInc_;
             const double s = std::ldexp(1.0, -64) * 2.0 * kPi;
-            lines = (model_.lcdLineAmp  * std::sin(double(linePhase_)  * s)
-                  +  model_.lcdLine2Amp * std::sin(double(line2Phase_) * s)) * lineScale_
-                  +  model_.frameAmp    * std::sin(double(framePhase_) * s);
+            if (whine) lines += model_.lcdLineAmp  * std::sin(double(linePhase_)  * s)
+                              + model_.lcdLine2Amp * std::sin(double(line2Phase_) * s);
+            if (noise) lines += model_.frameAmp * std::sin(double(framePhase_) * s);
         }
         for (int side = 0; side < 2; ++side) {
             Side& s = side_[side];
@@ -256,11 +260,11 @@ void Renderer::renderWorking(uint64_t m1, float* outL, float* outR)
             s.hpIn = x;
             s.hpOut = y;
             double v = y;
-            if (noise) {
+            if (noise || whine) {
                 const uint64_t z = hash64((m * 2 + uint64_t(side)) ^ seed_);
                 const double u = (double(z & 0xFFFF) + double((z >> 16) & 0xFFFF)
                                 + double((z >> 32) & 0xFFFF) + double(z >> 48)) / 65536.0 - 2.0;
-                v += u * hissPerSample_ + lines;
+                v += (noise ? u * hissPerSample_ : 0.0) + lines;
             }
             s.firHist[s.firPos] = float(v);
             s.firPos = (s.firPos + 1) & firMask_;

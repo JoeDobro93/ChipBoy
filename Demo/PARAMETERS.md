@@ -27,7 +27,7 @@ and the plugin rounds to the nearest step when it reads it back.
 | 2 | `master_r` | Master Volume R | 0-7 (NR50; 0 is 1/8, not mute) | 7 | 283911637 |
 | 3 | `trim` | Output Trim | -40-6 dB, continuous | -6 | 3568674 |
 | 4 | `noise` | Headphone Noise | 0-1 (off, on) | 1 | 104998682 |
-| 5 | `lcd` | LCD On | 0-1 (off, on) | 1 | 106957 |
+| 5 | `lcd` | LCD Whine | 0-1 (off, on) | 1 | 106957 |
 | 6 | `bass_mod` | CGB Bass Mod | 0-2 (stock, x10, x47) | 0 (stock) | 439244194 |
 | 7 | `vol_edges` | Volume Writes At Edges | 0-1 (off, on) | 0 | 1529433066 |
 | 8 | `declick` | De-click | 0-1 (off, on) | 0 | 1542349223 |

@@ -12,7 +12,14 @@ std::vector<float> renderScript(const std::vector<Write>& script, const AnalogMo
     Apu apu;
     render::Renderer r;
     r.prepare(sampleRate, model, 8192);
-    r.setNoise(noise);
+    // The harness's one switch is the whole noise floor: the hiss and the
+    // frame hum, and the display's line, which the plugin splits in two
+    // (docs/COMMANDS_AND_TEMPO.md section 21).
+    {
+        render::Renderer::Options o;
+        o.noise = noise; o.lcd = noise;
+        r.setOptions(o);
+    }
     std::vector<float> out(size_t(frames) * 2, 0.0f);
     std::vector<float> L, R;
     size_t w = 0;

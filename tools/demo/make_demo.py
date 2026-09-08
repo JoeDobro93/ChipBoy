@@ -156,7 +156,7 @@ def parameter_table():
     integer("master_r", "Master Volume R", 0, 7, 7, "NR50; 0 is 1/8, not mute")
     real("trim", "Output Trim", -40.0, 6.0, -6.0, "dB")
     boolean("noise", "Headphone Noise", True)
-    boolean("lcd", "LCD On", True)
+    boolean("lcd", "LCD Whine", True)
     choice("bass_mod", "CGB Bass Mod", ["stock", "x10", "x47"], 0)
     boolean("vol_edges", "Volume Writes At Edges", False)
     boolean("declick", "De-click", False)

@@ -215,13 +215,13 @@ HardwarePanel::HardwarePanel(ChipBoyProcessor& p) : EditorPanel(p)
     // --- hardware states -------------------------------------------------------
     auto states = std::make_unique<Stack>(8);
     {
-        auto r = std::make_unique<ToggleRow>("Headphone Noise", "Hiss, the LCD line and the frame hum, at the measured levels. The original switch.", "");
+        auto r = std::make_unique<ToggleRow>("Headphone Noise", "The broadband hiss and the 59.7 Hz frame hum, at the measured levels. The display's line has its own switch.", "");
         r->toggle.attach(param(processor, ids::noise));
         noise_ = r.get();
         states->add(std::move(r));
     }
     {
-        auto r = std::make_unique<ToggleRow>("LCD on", "Off removes the 9198 Hz whine the way switching the display off does. \"Disable the whine\" is this.", "");
+        auto r = std::make_unique<ToggleRow>("LCD Whine", "The 9198 Hz line the display puts into the headphones, and its harmonic. Off removes it the way switching the display off does; it is independent of Headphone Noise. \"Disable the whine\" is this.", "");
         r->toggle.attach(param(processor, ids::lcd));
         lcd_ = r.get();
         states->add(std::move(r));

@@ -370,7 +370,7 @@ MasterStrip::MasterStrip(ChipBoyProcessor& p)
     volR_.setTooltip("NR50 bits 2-0: right master volume, 0 = 1/8, not mute");
     volL_.attach(param(processor_, ids::masterL));
     volR_.attach(param(processor_, ids::masterR));
-    noise_.setTooltip("The original switch. Hiss, the LCD line and the frame hum, together, as measured.");
+    noise_.setTooltip("The hiss and the frame hum, as measured. The display's 9198 Hz line is LCD Whine, its own switch.");
     noise_.attach(param(processor_, ids::noise));
     declick_.setTooltip("Crossfades each DAC-on step over a few milliseconds. Not what a Game Boy does: the header reads MODIFIED while it is on. Also in the Hardware tab.");
     declick_.attach(param(processor_, ids::declick));

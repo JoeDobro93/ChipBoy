@@ -130,6 +130,62 @@ TEST_CASE("the pulse quiet-edge query lands on the low half", "[hardware][apu]")
     CHECK(checkedLow > 10);
 }
 
+/// The amplitude of one frequency in a block of samples, by correlation.
+double toneLevel(const std::vector<float>& out, double hz, double fs, size_t from)
+{
+    double re = 0.0, im = 0.0;
+    const size_t n = out.size() - from;
+    for (size_t i = 0; i < n; ++i) {
+        const double a = 2.0 * 3.14159265358979323846 * hz * double(i) / fs;
+        re += double(out[from + i]) * std::cos(a);
+        im += double(out[from + i]) * std::sin(a);
+    }
+    return 2.0 * std::sqrt(re * re + im * im) / double(n);
+}
+
+double rmsOf(const std::vector<float>& out, size_t from)
+{
+    double s = 0.0;
+    for (size_t i = from; i < out.size(); ++i) s += double(out[i]) * double(out[i]);
+    return std::sqrt(s / double(out.size() - from));
+}
+
+TEST_CASE("Headphone Noise and LCD Whine are independent switches", "[hardware][render]")
+{
+    // docs/COMMANDS_AND_TEMPO.md section 21: the hiss and the frame hum are
+    // one switch, the display's 9198 Hz line another. Either can be heard
+    // without the other; the levels themselves stay as measured.
+    const double fs = 48000.0;
+    const double lineHz = AnalogModel::dmg().lcdLineHz;
+    auto floorWith = [](bool noise, bool lcd) {
+        return renderWith([noise, lcd](render::Renderer& r) {
+                              render::Renderer::Options o; o.noise = noise; o.lcd = lcd; r.setOptions(o);
+                          },
+                          [](Apu&, double) {}, 0.5);
+    };
+    const auto both = floorWith(true, true);
+    const auto hissOnly = floorWith(true, false);
+    const auto lineOnly = floorWith(false, true);
+    const auto neither = floorWith(false, false);
+    const size_t from = 4800;                      // past the coupling filter's settling
+
+    const double lineBoth = toneLevel(both, lineHz, fs, from);
+    const double lineWithoutHiss = toneLevel(lineOnly, lineHz, fs, from);
+    const double lineWithoutLcd = toneLevel(hissOnly, lineHz, fs, from);
+    INFO("line: both " << lineBoth << ", lcd only " << lineWithoutHiss << ", noise only " << lineWithoutLcd);
+    // The line is there with the hiss switched off, at the measured level.
+    CHECK(lineWithoutHiss > 0.5 * lineBoth);
+    CHECK(lineWithoutHiss < 2.0 * lineBoth);
+    CHECK(lineWithoutLcd < 0.2 * lineBoth);        // and gone when only its own switch is off
+
+    // The hiss is there with the whine off, and both switches off is silence.
+    // The measured figure is an RMS over 0-96 kHz and this is band-limited to
+    // 24, so what is left is a fraction of it, not all of it.
+    CHECK(rmsOf(hissOnly, from) > 0.3 * AnalogModel::dmg().hissRms);
+    CHECK(rmsOf(lineOnly, from) < rmsOf(hissOnly, from));
+    CHECK(rmsOf(neither, from) == 0.0);
+}
+
 TEST_CASE("RAW output is silence with the DACs off and carries no noise floor", "[hardware][render]")
 {
     const auto out = renderWith(
