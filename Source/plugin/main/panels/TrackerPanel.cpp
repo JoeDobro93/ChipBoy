@@ -280,10 +280,7 @@ void TrackerPanel::syncTabs()
         t.tip = f != File() ? f.getFullPathName() : String("not saved to a file yet");
         list.push_back(std::move(t));
     }
-    const int active = processor.activeTab();
-    tabs_.setTabs(list, active);
-    tabsShown_ = std::move(list);
-    activeTabShown_ = active;
+    tabs_.setTabs(list, processor.activeTab());
 }
 
 void TrackerPanel::editSong(const String& what, const std::function<void(tracker::Song&)>& fn)

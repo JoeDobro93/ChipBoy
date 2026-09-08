@@ -66,7 +66,6 @@ private:
     std::unique_ptr<ParamWatch> tempoWatch_;
     /// The songs open in this window (section 18); the active one is live.
     ui::SongTabStrip tabs_;
-    std::vector<ui::SongTabInfo> tabsShown_;
     ScrollBlock scroll_;
     Hold* laneHold_ = nullptr;
     ui::PhraseGrid grid_;
@@ -77,7 +76,6 @@ private:
     std::array<juce::Rectangle<int>, 4> groups_{};
     int bar_ = 0, playingBar_ = -1;
     int gridSteps_ = 0;
-    int activeTabShown_ = -1;
     std::array<int, 4> lastRoll_{ { -2, -2, -2, -2 } };
     std::array<int, 4> lastStep_{ { -2, -2, -2, -2 } };
     bool songMode_ = false, owns_ = false, wasPlaying_ = false, loopOn_ = false;
