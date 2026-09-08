@@ -56,6 +56,10 @@ struct NoteEvent {
     int16_t  value = 0;          ///< pitch bend -8192..8191
     bank::Command cmd1, cmd2;    ///< tracker cells carry their commands
     uint8_t  inst = 0, table = 0;///< tracker cells: 0 keep
+    /// The cell comes from a Hybrid channel (section 20): its columns choose
+    /// what the next MIDI note-on loads instead of reloading what sounds, and
+    /// its commands are held for the rest of the tick.
+    bool     hybrid = false;
     // What the driver made of this note-on, stamped as it plays it, so the
     // recorder describes this event and not the channel's latest one
     // (docs/COMMANDS_AND_TEMPO.md section 9.4).
@@ -116,6 +120,14 @@ public:
     static constexpr uint16_t kAlignToQuietEdge = 0xFFFF;
     void setParams(int ch, const ChannelParams& p) { params_[size_t(ch & 3)] = p; }
     const ChannelParams& params(int ch) const { return params_[size_t(ch & 3)]; }
+    /// The channel takes its notes from MIDI and everything else from the
+    /// song's cells (section 20). Its Instrument, Table and command slots are
+    /// inert, and so are its keyswitch and command octaves.
+    bool hybrid(int ch) const { return song_ != nullptr && song_->noteSource[size_t(ch & 3)] == tracker::NoteSource::Hybrid; }
+    /// The parameters as the channel reads them: a Hybrid channel's
+    /// Instrument, Table and command slots read as none (section 20). This is
+    /// what the recorder writes, so a cell says what really played.
+    ChannelParams effective(int ch) const;
     /// The command in force in a slot: the automation lane's, which is the
     /// only thing a slot holds -- a cell's commands fire once and never
     /// occupy one (section 12). This is what the recorder writes (section 5).
@@ -230,6 +242,12 @@ private:
         bank::Command slot[2], slotParam[2];          ///< the automation lane's, in force and as the parameter left it
         bank::Command noteCmd[2];                     ///< the cell's two columns, applied once when the note starts
         bank::Command pendingCmd[2];                  ///< and where they wait while a D holds the note back
+        bank::Command heldCmd[2];                     ///< Hybrid: the cell's commands, waiting for this tick's note-on
+        bool     heldCmdOn = false;
+        int16_t  heldDelay = 0;                       ///< ... and the D that keeps them waiting
+        /// Hybrid: an L that landed with no note under it. It has nothing to
+        /// slide yet, so it is the portamento the next note-on takes (20).
+        bank::Command hybridSlide;
         int16_t  retrigStep = 0;                      ///< R: volume change per retrigger
         uint32_t rng = 1;
         // model of the wave channel timer, for streaming
@@ -250,6 +268,10 @@ private:
     /// A cell's instrument, table and command columns, for the cells that do
     /// not start a note: a Command cell and an OFF (section 3).
     void applyCellColumns(int ch, const NoteEvent& e);
+    /// A Hybrid channel's cell (section 20): the instrument and table columns
+    /// choose what the next MIDI note-on loads -- what is sounding is not
+    /// reloaded -- and the commands wait for the rest of the tick.
+    void applyHybridCell(int ch, const NoteEvent& e);
     void noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell);
     void noteOff(int ch, uint8_t note);
     /// A plain note loads the instrument and triggers; a bare note writes the

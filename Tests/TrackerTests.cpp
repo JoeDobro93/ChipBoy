@@ -325,6 +325,49 @@ TEST_CASE("a blank phrase sustains, a bar with no phrase ends the note", "[track
     CHECK(gone[0].a == 67);                       // the note still sounding from bar 1
 }
 
+TEST_CASE("a Hybrid channel's cells keep everything but the note", "[tracker][hybrid]")
+{
+    // Section 20: the notes come from MIDI, so a cell's note and OFF columns
+    // are dropped and the rest goes out as a command event the driver knows
+    // came from a Hybrid lane.
+    const auto owned = std::make_unique<Song>(); Song& s = *owned;
+    s.noteSource[0] = NoteSource::Hybrid;
+    auto& ph = s.phrases[0]; ph.used = true;
+    ph.steps[0].note = 60; ph.steps[0].inst = 4; ph.steps[0].vel = 90;
+    ph.steps[0].cmd1 = { bank::Cmd::E, 9, 1, 0 };
+    ph.steps[4].note = kNoteOff;                  // nothing but an OFF: nothing to send
+    ph.steps[8].note = 67;                        // nor a note on its own
+    ph.steps[12].cmd1 = { bank::Cmd::V, 4, 6, 0 };
+    s.chain[0] = { 1 };
+    buildBarTable(s);
+    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
+    const auto out = ticks(p, 0, 96);
+    REQUIRE(out.size() == 2);
+    CHECK(out[0].kind == NoteEvent::Command);
+    CHECK(out[0].hybrid);
+    CHECK(out[0].inst == 4);
+    CHECK(out[0].a == 0);                         // no note, and no velocity either
+    CHECK(out[0].cmd1.cmd == bank::Cmd::E);
+    CHECK(out[1].kind == NoteEvent::Command);
+    CHECK(out[1].cmd1.cmd == bank::Cmd::V);
+    // Stopping the transport does not silence a Hybrid channel: the note
+    // sounding on it is the player's, not the song's.
+    const auto stopped = ticks(p, 96, 0, false);
+    CHECK(stopped.empty());
+}
+
+TEST_CASE("a Hybrid channel with no phrase leaves the note alone", "[tracker][hybrid]")
+{
+    const auto owned = std::make_unique<Song>(); Song& s = *owned;
+    s.noteSource[0] = NoteSource::Hybrid;
+    s.phrases[0].used = true; s.phrases[0].steps[0].note = 67;
+    s.chain[0] = { 1, 0 };
+    buildBarTable(s);
+    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
+    ticks(p, 0, 96);
+    CHECK(ticks(p, 96, 8).empty());               // a Trkr lane would send a note-off here
+}
+
 TEST_CASE("all notes off when the transport stops", "[tracker]")
 {
     const auto owned = demoSong(); Song& s = *owned;

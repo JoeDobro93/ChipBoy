@@ -123,11 +123,24 @@ void Driver::emitAt(uint64_t cycle, uint16_t addr, uint8_t v)
 
 uint8_t Driver::levelFromVelocity(uint8_t vel) const { return uint8_t(std::min(15, (vel * 16) / 128)); }
 
+/// A Hybrid channel's Instrument, Table and command slots are inert: the
+/// song's cells choose the instrument and carry the commands, and the lane
+/// would fight them (section 20). Level, pan, transpose and the velocity mode
+/// still apply, so only four fields are cleared.
+ChannelParams Driver::effective(int ch) const
+{
+    ChannelParams p = params_[size_t(ch & 3)];
+    if (!hybrid(ch)) return p;
+    p.instrument = 0; p.table = 0;
+    p.cmd[0] = Command{}; p.cmd[1] = Command{};
+    return p;
+}
+
 /* --------------------------------------------------------- resolution */
 
 int Driver::resolveSlot(int ch, uint8_t vel) const
 {
-    const auto& p = params_[size_t(ch)];
+    const ChannelParams p = effective(ch);
     const Voice& v = v_[size_t(ch)];
     int slot = v.ksInstrument ? v.ksInstrument : p.instrument;
     // The velocity bank picks an instrument around the channel's own choice.
@@ -175,7 +188,7 @@ void Driver::latch(int ch)
     // The running state starts as the instrument's; the level and pan
     // parameters sit on top, and the command slots on top of those.
     Voice& v = v_[size_t(ch)];
-    v.p = params_[size_t(ch)];
+    v.p = effective(ch);
     const auto& p = v.p;
     const auto& i = v.inst;
     v.envVol = i.envVol; v.envRate = i.envRate; v.envDir = i.envDir;
@@ -243,12 +256,16 @@ bool perNoteCmd(Cmd c) { return c == Cmd::C || c == Cmd::D || c == Cmd::K || c =
 void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
 {
     Voice& v = v_[size_t(ch)];
-    const auto& p = params_[size_t(ch)];
+    const ChannelParams p = effective(ch);
+    const bool hy = hybrid(ch);
     // The command octave (section 13): notes 0-11 never sound and never join
     // the held stack. They fire the channel's slots on whatever it is playing,
     // without a trigger, so a held note can be shaped after its attack; with
     // nothing sounding the persistent letters still land in the running state.
     if (note < 12) {
+        // On a Hybrid channel the command octave is inert: the cells carry the
+        // commands, and the slots it would fire are empty (section 20).
+        if (hy) return;
         syncSlots(ch);
         fireSlots(ch, /*live*/ true);
         if (cell) applyCellCommands(ch, cell->cmd1, cell->cmd2);
@@ -257,9 +274,14 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
     // Keyswitch octave: selects an instrument, never sounds.
     const Instrument* cur = local_[size_t(ch)] ? local_[size_t(ch)] : bank_ ? bank_->instrument(p.instrument) : nullptr;
     const InstrumentType t = cur ? cur->type : (ch == 2 ? InstrumentType::Wave : ch == 3 ? InstrumentType::Noise : InstrumentType::Pulse);
-    if (p.keyswitch) {
+    if (p.keyswitch || hy) {
+        // Inert on a Hybrid channel, whatever the parameter says: the cell's
+        // instrument column chooses, so a note there does nothing at all.
         const int base = keyswitchBase(t);
-        if (note >= base && note < base + 12) { v.ksInstrument = uint8_t(note - base + 1); v.ksFromCell = false; return; }
+        if (note >= base && note < base + 12) {
+            if (!hy) { v.ksInstrument = uint8_t(note - base + 1); v.ksFromCell = false; }
+            return;
+        }
     }
     // Whether a note is still held under this one decides, with the
     // instrument's Overlap, if the new note is plain or bare (section 8).
@@ -269,6 +291,21 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
     // fire once, after them, when the note starts (section 12).
     syncSlots(ch);
     v.noteCmd[0] = {}; v.noteCmd[1] = {};
+    // Hybrid: the cell at this tick chose the instrument and left its commands
+    // waiting; the note loads that instrument and then takes them, exactly as
+    // a cell's own note would (section 20).
+    if (hy) {
+        if (v.heldCmdOn) {
+            v.noteCmd[0] = v.heldCmd[0]; v.noteCmd[1] = v.heldCmd[1];
+            v.heldCmdOn = false; v.heldDelay = 0; v.heldCmd[0] = {}; v.heldCmd[1] = {};
+            v.hybridSlide = {};                     // this tick's cell says what happens
+        } else if (v.hybridSlide.cmd != Cmd::None) {
+            // An L from an earlier cell: the portamento it asked for is this
+            // note's, from wherever the channel is (section 20).
+            v.noteCmd[0] = v.hybridSlide;
+            v.hybridSlide = {};
+        }
+    }
     if (cell) {
         if (cell->inst) { v.ksInstrument = cell->inst; v.ksFromCell = true; }   // a cell's instrument column names it exactly
         if (cell->table) v.tableOverride = cell->table;      // the channel's table override, from this step on
@@ -289,7 +326,9 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
     if (plain) v.noteInst = uint8_t(std::clamp(resolveSlot(ch, vel), 0, kInstrumentSlots));
     // D postpones the start, whether it came from a cell or a slot. The
     // cell's commands wait with it and fire when the note does.
-    const int delay = delayFor(ch, cell ? &cell->cmd1 : nullptr, cell ? &cell->cmd2 : nullptr);
+    // The cell's own D, whether it came with the note or was held for this
+    // tick by a Hybrid cell; then a slot's.
+    const int delay = delayFor(ch, &v.noteCmd[0], &v.noteCmd[1]);
     const uint8_t velRule = cell ? (cell->velSet ? 2 : 1) : 0;
     if (delay >= 0) {
         v.pendingOn = true; v.pendingNote = note; v.pendingVel = vel; v.pendingPlain = plain; v.pendingVelRule = velRule;
@@ -541,6 +580,8 @@ void Driver::allNotesOff(int ch)
 {
     Voice& v = v_[size_t(ch)];
     v.delay = -1; v.kill = -1;
+    v.heldCmdOn = false; v.heldDelay = 0; v.heldCmd[0] = {}; v.heldCmd[1] = {};
+    v.hybridSlide = {};
     v.retrigEvery = 0; v.retrigCount = 0; v.retrigOnce = false;
     v.bendSpeed = 0; v.slideLeft = 0; v.chordIdx = 0; v.chordCount = 0;
     stopVoice(ch, true);
@@ -1117,7 +1158,7 @@ void Driver::fireSlots(int ch, bool live)
 void Driver::adoptInstrumentParam(int ch)
 {
     Voice& v = v_[size_t(ch)];
-    const int16_t p = int16_t(params_[size_t(ch)].instrument);
+    const int16_t p = int16_t(effective(ch).instrument);
     if (v.instParam == p) return;
     if (v.instParam >= 0) { v.ksInstrument = 0; v.ksFromCell = false; }
     v.instParam = p;
@@ -1128,7 +1169,7 @@ void Driver::adoptInstrumentParam(int ch)
 void Driver::syncSlots(int ch)
 {
     Voice& v = v_[size_t(ch)];
-    const auto& p = params_[size_t(ch)];
+    const ChannelParams p = effective(ch);
     adoptInstrumentParam(ch);
     if (p.table != v.tableParam) { v.tableParam = p.table; v.tableOverride = p.table; }
     for (int i = 0; i < 2; ++i)
@@ -1140,7 +1181,7 @@ void Driver::syncSlots(int ch)
 void Driver::updateSlots(int ch)
 {
     Voice& v = v_[size_t(ch)];
-    const auto& p = params_[size_t(ch)];
+    const ChannelParams p = effective(ch);
     adoptInstrumentParam(ch);
     if (p.table != v.tableParam) { v.tableParam = p.table; v.tableOverride = p.table; }
     for (int i = 0; i < 2; ++i) {
@@ -1206,11 +1247,26 @@ void Driver::tick(int ch)
     Voice& v = v_[size_t(ch)];
     // A slot whose value changed fires here, at the tick after the change.
     updateSlots(ch);
+    // A Hybrid cell's commands waited for a note-on through this tick; with
+    // none they land on the sounding voice now, where a slot change would
+    // have fired (section 20).
+    if (v.heldCmdOn) {
+        if (v.heldDelay > 0) --v.heldDelay;
+        else {
+            const Command c1 = v.heldCmd[0], c2 = v.heldCmd[1];
+            v.heldCmdOn = false; v.heldCmd[0] = {}; v.heldCmd[1] = {};
+            applyCellCommands(ch, c1, c2);
+            // L is the one per-note letter with nothing under it yet: no note
+            // arrived, so it is the next one's portamento (section 20).
+            for (const Command* c : { &c1, &c2 })
+                if (c->cmd == Cmd::L && !isRevert(*c)) v.hybridSlide = *c;
+        }
+    }
     if (params_[size_t(ch)].liveFollow && v.haveInst) {
         // Live follow: instrument, table, level, pan and transpose apply to the
         // sounding note instead of waiting for the next one (section 3).
         const ChannelParams before = v.p;
-        v.p = params_[size_t(ch)];
+        v.p = effective(ch);
         if (v.active) {
             if (before.instrument != v.p.instrument) { reloadInstrument(ch); return; }
             if (before.table != v.p.table || v.tableOverride != v.tableSlot) {
@@ -1313,6 +1369,8 @@ void Driver::handleEvent(NoteEvent& e)
     // Channels playing from the tracker ignore the piano roll and vice versa.
     // Only notes are gated: a flush silences a channel whatever its source is.
     if (song_) {
+        // Trkr only: a Hybrid channel's notes come from MIDI and its cells
+        // never carry one, so both pass its gate (section 20).
         const bool trackerCh = song_->noteSource[size_t(ch)] == tracker::NoteSource::Tracker;
         const bool note = e.kind == NoteEvent::NoteOn || e.kind == NoteEvent::NoteOff;
         if (note && e.source == NoteEvent::Tracker && !trackerCh) return;
@@ -1354,6 +1412,7 @@ void Driver::handleEvent(NoteEvent& e)
 void Driver::applyCellColumns(int ch, const NoteEvent& e)
 {
     Voice& v = v_[size_t(ch)];
+    if (e.hybrid) { applyHybridCell(ch, e); return; }
     if (e.table) { v.tableOverride = e.table; if (v.active) { v.tableSlot = e.table; v.tableStep = 0; v.tableRow = 0; v.tableWait = 0; v.tableOn = bank_ && bank_->table(e.table); } }
     if (e.inst && e.inst != v.ksInstrument) {
         v.ksInstrument = e.inst; v.ksFromCell = true;
@@ -1362,6 +1421,25 @@ void Driver::applyCellColumns(int ch, const NoteEvent& e)
         if (v.haveInst) { reloadInstrument(ch); applyCellCommands(ch, e.cmd1, e.cmd2); return; }
     }
     applyCellCommands(ch, e.cmd1, e.cmd2);
+}
+
+/// A Hybrid channel's cell (section 20). The instrument and table columns are
+/// a selection for the next MIDI note-on -- what is sounding keeps its own,
+/// exactly as a cell's instrument column is exact under the velocity bank --
+/// and the two commands are held for the rest of this tick: a note-on inside
+/// it takes them, otherwise the tick's end lands them on the sounding voice.
+/// A D among them holds them that many ticks longer, as it delays a note.
+void Driver::applyHybridCell(int ch, const NoteEvent& e)
+{
+    Voice& v = v_[size_t(ch)];
+    if (e.inst) { v.ksInstrument = e.inst; v.ksFromCell = true; }
+    if (e.table) { v.tableOverride = e.table; }
+    v.heldCmd[0] = e.cmd1; v.heldCmd[1] = e.cmd2;
+    v.heldCmdOn = e.cmd1.cmd != Cmd::None || e.cmd2.cmd != Cmd::None;
+    v.heldDelay = 0;
+    // The cell's own D, and only that: on a Hybrid channel the slots are inert.
+    for (const Command* c : { &v.heldCmd[0], &v.heldCmd[1] })
+        if (c->cmd == Cmd::D && !isRevert(*c)) { v.heldDelay = int16_t(std::clamp<int>(c->a, 0, 255)); break; }
 }
 
 /* ------------------------------------------------------------ process */

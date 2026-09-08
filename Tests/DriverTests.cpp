@@ -95,6 +95,13 @@ NoteEvent cellCmd(int ch, const Command& c1, const Command& c2 = {})
     NoteEvent e; e.channel = uint8_t(ch); e.kind = NoteEvent::Command; e.source = NoteEvent::Tracker;
     e.cmd1 = c1; e.cmd2 = c2; return e;
 }
+/// A Hybrid channel's cell, as the Player sends it (section 20): never a
+/// note, and marked so the driver holds its commands for the tick.
+NoteEvent cellHybrid(int ch, uint8_t inst, const Command& c1 = {}, const Command& c2 = {}, uint8_t table = 0, uint32_t off = 0)
+{
+    NoteEvent e; e.channel = uint8_t(ch); e.kind = NoteEvent::Command; e.source = NoteEvent::Tracker;
+    e.hybrid = true; e.inst = inst; e.table = table; e.cmd1 = c1; e.cmd2 = c2; e.offset = off; return e;
+}
 NoteEvent allOff(int ch)
 {
     NoteEvent e; e.channel = uint8_t(ch); e.kind = NoteEvent::AllNotesOff; return e;
@@ -1379,4 +1386,121 @@ TEST_CASE("a pitch update inside a tick's burst follows it", "[driver][commands]
         }
     }
     CHECK(checked > 50);
+}
+
+
+/* ---------------------------------------------------------------- Hybrid */
+// docs/COMMANDS_AND_TEMPO.md section 20: the notes come from MIDI and
+// everything else from the song's cells.
+
+TEST_CASE("a MIDI note under Hybrid takes the cell's instrument and commands", "[driver][hybrid]")
+{
+    Rig r;
+    r.song.noteSource[0] = tracker::NoteSource::Hybrid;
+    ChannelParams p; p.instrument = 1; r.drv.setParams(0, p);
+    // The cell's columns apply first; the note-on in the same tick loads what
+    // the cell chose and then takes its commands.
+    auto w = r.block({ cellHybrid(0, 3, { Cmd::E, 5, 2, 0 }), Rig::on(0, 69, 100) }, 512);
+    CHECK(r.drv.view(0).instrument == 3);            // not the Instrument parameter's 1
+    CHECK(r.drv.view(0).active);
+    CHECK(anyTrigger(w, 0xFF14));                    // the MIDI note sounded
+    REQUIRE(last(w, 0xFF12) != nullptr);
+    CHECK(last(w, 0xFF12)->value == 0x52);           // E 5 2, after the note's own envelope
+}
+
+TEST_CASE("a Hybrid cell with no note lands on the sounding one at the tick", "[driver][hybrid]")
+{
+    Rig r;
+    r.song.noteSource[0] = tracker::NoteSource::Hybrid;
+    ChannelParams p; p.instrument = 1; r.drv.setParams(0, p);
+    r.block({ cellHybrid(0, 3), Rig::on(0, 69, 100) }, 512);
+    // No note this block: the commands wait for the tick and then shape what
+    // is sounding.
+    auto w = r.block({ cellHybrid(0, 0, { Cmd::E, 9, 1, 0 }) }, 512);
+    REQUIRE(last(w, 0xFF12) != nullptr);
+    CHECK(last(w, 0xFF12)->value == 0x91);
+    CHECK(r.drv.view(0).active);                     // and it is still the same note
+    CHECK(r.drv.view(0).note == 69);
+}
+
+TEST_CASE("a Hybrid cell's note and OFF are ignored", "[driver][hybrid]")
+{
+    Rig r;
+    r.song.noteSource[0] = tracker::NoteSource::Hybrid;
+    ChannelParams p; p.instrument = 1; r.drv.setParams(0, p);
+    // The Player never sends one, and the source gate drops it if it does.
+    auto w = r.block({ cellOn(0, 60, 1) }, 512);
+    CHECK(!r.drv.view(0).active);
+    CHECK(!anyTrigger(w, 0xFF14));
+    r.block({ Rig::on(0, 69, 100) }, 512);
+    CHECK(r.drv.view(0).active);
+    NoteEvent cellOff;
+    cellOff.channel = 0; cellOff.kind = NoteEvent::NoteOff; cellOff.source = NoteEvent::Tracker; cellOff.a = 69;
+    r.block({ cellOff }, 512);
+    CHECK(r.drv.view(0).active);                     // the MIDI note owns the channel
+}
+
+TEST_CASE("a Hybrid channel's slots and keyswitches are inert", "[driver][hybrid]")
+{
+    Rig r;
+    r.song.noteSource[0] = tracker::NoteSource::Hybrid;
+    ChannelParams p;
+    p.instrument = 3; p.table = 2; p.keyswitch = true;
+    p.cmd[0] = { Cmd::E, 3, 2, 0 };
+    r.drv.setParams(0, p);
+    // A note in the keyswitch octave does nothing at all: it neither selects
+    // nor sounds.
+    auto w = r.block({ Rig::on(0, 27, 100) }, 512);
+    CHECK(!r.drv.view(0).active);
+    CHECK(!has(w, 0xFF12));                          // the channel's registers are untouched
+    CHECK(!has(w, 0xFF14));
+    // A playable note takes neither the Instrument parameter nor the slot.
+    w = r.block({ Rig::on(0, 69, 100) }, 512);
+    CHECK(r.drv.view(0).active);
+    CHECK(r.drv.view(0).instrument == 0);            // the parameter's 3 is inert
+    REQUIRE(last(w, 0xFF12) != nullptr);
+    CHECK(last(w, 0xFF12)->value != 0x32);           // and so is the E slot
+    CHECK(r.drv.view(0).tableSlot == 0);             // and the Table parameter
+    // The command octave is inert too: it fires nothing.
+    const auto before = r.drv.view(0).envVol;
+    w = r.block({ Rig::on(0, 5, 100) }, 512);
+    CHECK(r.drv.view(0).envVol == before);
+}
+
+TEST_CASE("L in a Hybrid cell is the next note's portamento", "[driver][hybrid]")
+{
+    Rig r;
+    r.tickHz = 20.0;
+    r.bank.instruments[0].vib.depth = 0;             // the lead's own vibrato would ride on top
+    r.song.noteSource[0] = tracker::NoteSource::Hybrid;
+    ChannelParams p; p.velocityMode = 2; r.drv.setParams(0, p);
+    r.block({ cellHybrid(0, 1), Rig::on(0, 60, 100) }, 480);
+    const int from = note(60), target = note(72);
+    CHECK(int(r.drv.view(0).period) == from);
+    // The cell asks for a slide; no note arrives in its tick, so it waits for
+    // one instead of sliding what is sounding (section 20).
+    r.block({ cellHybrid(0, 0, { Cmd::L, 180, 0, 0 }) }, 480);
+    CHECK(int(r.drv.view(0).period) == from);        // nothing has moved yet
+    r.block({ Rig::on(0, 72, 100) }, 240);
+    const int started = int(r.drv.view(0).period);
+    INFO("from " << from << " started " << started << " target " << target);
+    CHECK(std::abs(started - from) < std::abs(started - target));    // it left from the note before
+    r.block({}, 11760);                              // half of the half-second
+    CHECK(std::abs(int(r.drv.view(0).period) - (target + (from - target) / 2)) <= 6);
+    r.block({}, 14000);
+    CHECK(int(r.drv.view(0).period) == target);      // and it arrives
+}
+
+TEST_CASE("a Hybrid cell's D holds its commands back", "[driver][hybrid]")
+{
+    Rig r;
+    r.tickHz = 240.0;
+    r.song.noteSource[0] = tracker::NoteSource::Hybrid;
+    ChannelParams p; r.drv.setParams(0, p);
+    r.block({ cellHybrid(0, 1), Rig::on(0, 69, 100) }, 512);
+    // D 3 with no note: the E waits three ticks and then lands.
+    auto w = r.block({ cellHybrid(0, 0, { Cmd::D, 3, 0, 0 }, { Cmd::E, 7, 1, 0 }) }, 400);
+    CHECK(!has(w, 0xFF12, 0x71));
+    w = r.block({}, 400);
+    CHECK(has(w, 0xFF12, 0x71));
 }

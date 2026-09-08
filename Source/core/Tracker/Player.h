@@ -107,6 +107,9 @@ private:
     Position pos_[4];
     uint8_t lastNote_[4] = { 0, 0, 0, 0 };
     bool    laneOn_[4] = { false, false, false, false };   ///< the lane played last block
+    /// The lane owned its notes last block (Trkr, not Hybrid): only those can
+    /// be left ringing when it stops or the timeline jumps (section 20).
+    bool    ownedNotes_[4] = { false, false, false, false };
     int64_t lastTick_ = -1;
     bool    haveTick_ = false;
     // The last step each channel fired, so a groove change mid-bar moves the

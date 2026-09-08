@@ -145,6 +145,7 @@ void Player::prepare(double sampleRate)
     for (auto& p : pos_) p = Position{};
     for (auto& n : lastNote_) n = 0;
     for (auto& l : laneOn_) l = false;
+    for (auto& o : ownedNotes_) o = false;
     for (auto& g : grooveCell_) g = kGrooveNone;
     for (auto& b : firedBar_) b = -1;
 }
@@ -175,10 +176,13 @@ void Player::allNotesOff(int ch, uint32_t offset, std::vector<NoteEvent>& out)
 void Player::fireStep(int ch, int bar, int step, uint8_t slot, uint32_t offset, std::vector<NoteEvent>& out)
 {
     const Phrase* ph = song_->phrase(slot);
+    // Hybrid: the notes are the incoming MIDI's and only the other columns
+    // come from the cell (section 20), so nothing here ends a note.
+    const bool notes = cellNotes(song_->noteSource[size_t(ch)]);
     pos_[size_t(ch)] = { bar, step, slot };
     if (!ph) {
         // A bar with no phrase is silence: end the note at its first step.
-        if (step == 0 && lastNote_[ch]) {
+        if (notes && step == 0 && lastNote_[ch]) {
             NoteEvent e; e.offset = offset; e.channel = uint8_t(ch); e.source = NoteEvent::Tracker; e.kind = NoteEvent::NoteOff; e.a = lastNote_[ch];
             out.push_back(e); lastNote_[ch] = 0;
         }
@@ -192,10 +196,14 @@ void Player::fireStep(int ch, int bar, int step, uint8_t slot, uint32_t offset, 
             // G reverting is the phrase's own groove back (section 3).
             grooveCell_[size_t(ch)] = bank::isRevert(*cmd) ? kGrooveNone : uint8_t(std::clamp<int>(cmd->a, 0, 16));
     if (c.note == 0 && c.inst == 0 && c.table == 0 && c.cmd1.cmd == bank::Cmd::None && c.cmd2.cmd == bank::Cmd::None) return;
+    // A Hybrid cell that holds nothing but a note has nothing to say: its
+    // note and its VEL are the MIDI's business (section 20).
+    if (!notes && c.inst == 0 && c.table == 0 && c.cmd1.cmd == bank::Cmd::None && c.cmd2.cmd == bank::Cmd::None) return;
     NoteEvent e;
     e.offset = offset; e.channel = uint8_t(ch); e.source = NoteEvent::Tracker;
     e.inst = c.inst; e.table = c.table; e.cmd1 = c.cmd1; e.cmd2 = c.cmd2;
-    if (c.note == kNoteOff) { e.kind = NoteEvent::NoteOff; e.a = lastNote_[ch]; lastNote_[ch] = 0; }
+    if (!notes) { e.kind = NoteEvent::Command; e.hybrid = true; }
+    else if (c.note == kNoteOff) { e.kind = NoteEvent::NoteOff; e.a = lastNote_[ch]; lastNote_[ch] = 0; }
     else if (c.note) { e.kind = NoteEvent::NoteOn; e.a = c.note; e.b = velocityOf(c); e.velSet = c.vel != 0; lastNote_[ch] = c.note; }
     else e.kind = NoteEvent::Command;
     out.push_back(e);
@@ -204,14 +212,17 @@ void Player::fireStep(int ch, int bar, int step, uint8_t slot, uint32_t offset, 
 void Player::process(const TickPoint* ticks, size_t nTicks, bool playing, std::vector<NoteEvent>& out)
 {
     if (!song_ || !playing) {
-        // The transport stopped: nothing is left ringing (section 9.1).
+        // The transport stopped: nothing the lane started is left ringing
+        // (section 9.1). A Hybrid channel's notes are the player's, not the
+        // song's, so they are not touched (section 20).
         if (playing_)
             for (int ch = 0; ch < 4; ++ch)
-                if (laneOn_[size_t(ch)] || lastNote_[size_t(ch)]) allNotesOff(ch, 0, out);
+                if ((laneOn_[size_t(ch)] && ownedNotes_[size_t(ch)]) || lastNote_[size_t(ch)]) allNotesOff(ch, 0, out);
         playing_ = false;
         haveTick_ = false;
         for (auto& p : pos_) p = Position{};
         for (auto& l : laneOn_) l = false;
+        for (auto& o : ownedNotes_) o = false;
         for (auto& g : grooveCell_) g = kGrooveNone;
         for (auto& b : firedBar_) b = -1;
         return;
@@ -220,11 +231,19 @@ void Player::process(const TickPoint* ticks, size_t nTicks, bool playing, std::v
 
     bool lane[4];
     for (int ch = 0; ch < 4; ++ch) {
-        lane[ch] = song_->noteSource[size_t(ch)] == NoteSource::Tracker && !(muteMask_ & (1u << ch));
+        // Trkr and Hybrid both play their cells; only Trkr's notes are the
+        // song's, and only those can be left ringing (section 20).
+        const NoteSource src = song_->noteSource[size_t(ch)];
+        lane[ch] = cellsPlay(src) && !(muteMask_ & (1u << ch));
+        const bool owned = cellNotes(src);
         // Leaving the lane (the source switched to the piano roll, or the
         // channel was muted for recording) must not leave a note ringing.
-        if (!lane[ch] && laneOn_[size_t(ch)]) { allNotesOff(ch, 0, out); pos_[size_t(ch)] = Position{}; }
+        if (!lane[ch] && laneOn_[size_t(ch)]) {
+            if (ownedNotes_[size_t(ch)]) allNotesOff(ch, 0, out);
+            pos_[size_t(ch)] = Position{};
+        }
         laneOn_[size_t(ch)] = lane[ch];
+        ownedNotes_[size_t(ch)] = owned;
     }
 
     int starts[4][kMaxSteps + 1];
@@ -235,7 +254,7 @@ void Player::process(const TickPoint* ticks, size_t nTicks, bool playing, std::v
         // A tick that is not the one after the last means the transport jumped
         // (a locate, a loop wrap): what was sounding has no note-off coming.
         if (haveTick_ && tick != lastTick_ + 1) {
-            for (int ch = 0; ch < 4; ++ch) if (lane[ch]) allNotesOff(ch, ticks[k].offset, out);
+            for (int ch = 0; ch < 4; ++ch) if (lane[ch] && ownedNotes_[size_t(ch)]) allNotesOff(ch, ticks[k].offset, out);
             for (auto& g : grooveCell_) g = kGrooveNone;   // the groove starts again from the song
             for (auto& b : firedBar_) b = -1;
             for (auto& b : builtBar) b = -1;

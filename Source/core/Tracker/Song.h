@@ -78,9 +78,16 @@ constexpr std::array<Groove, 16> factoryGrooves()
     return g;
 }
 
-/// What a channel plays (section 14): the incoming MIDI, or its own cells.
-/// These are the data model's names; the window calls them MIDI and Trkr.
-enum class NoteSource : uint8_t { PianoRoll = 0, Tracker = 1 };
+/// What a channel plays (sections 14 and 20): the incoming MIDI, its own
+/// cells, or both -- Hybrid takes the notes from MIDI and everything else
+/// from the cells. These are the data model's names; the window calls them
+/// MIDI, Trkr and Hybrid.
+enum class NoteSource : uint8_t { PianoRoll = 0, Tracker = 1, Hybrid = 2 };
+
+/// The channel's cells play at their steps: its notes, or only its columns.
+inline bool cellsPlay(NoteSource s) { return s == NoteSource::Tracker || s == NoteSource::Hybrid; }
+/// The channel's notes come from its cells; under Hybrid they come from MIDI.
+inline bool cellNotes(NoteSource s) { return s == NoteSource::Tracker; }
 
 struct Song {
     std::array<Phrase, kPhraseSlots> phrases;         ///< slot n is phrases[n-1]
