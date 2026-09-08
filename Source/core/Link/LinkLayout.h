@@ -25,7 +25,7 @@
 namespace chipboy::link {
 
 constexpr uint32_t kMagic = 0x4B4C4243u;      ///< "CBLK"
-constexpr uint32_t kVersion = 2;
+constexpr uint32_t kVersion = 3;
 constexpr uint32_t kUuidChars = 40;
 constexpr uint32_t kNameChars = 64;
 constexpr uint32_t kInstNameChars = 16;

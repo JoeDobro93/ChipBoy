@@ -139,9 +139,7 @@ private:
     void flushChannel(int ch, std::vector<driver::NoteEvent>& dst, uint32_t offset = 0);
     /// Whether the last note-on on a channel loaded its instrument, and which
     /// slot it loaded -- what the recorder puts in the instrument column.
-    struct NoteReport { bool plain = true; uint8_t instrument = 0; };
-    NoteReport lastNote(int ch) const   // wired to Driver::noteReport when the pitch branch lands
-    { return { true, uint8_t(driver_.params(ch).instrument) }; }
+    driver::NoteReport lastNote(int ch) const { return driver_.noteReport(ch); }
     void publishInstrumentNames();
     void handleVoiceRequests();
     void tapScopes(int n, const float* L, const float* R);

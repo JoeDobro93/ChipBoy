@@ -563,7 +563,13 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
         for (int i = 0; i < 2; ++i) if (driver_.params(ch).cmd[i].cmd == bank::Cmd::G) groove = uint8_t(std::clamp<int>(driver_.params(ch).cmd[i].a, 0, 16));
         player_.setGrooveSlot(ch, groove);
         driver_.setViewGroove(ch, player_.groove(ch));
-        // TODO(orchestrator): a G inside a table sets that run's row lengths -- pass the groove's ticks with driver_.setTableGroove(ch, ...) once the pitch branch lands (section 9.2).
+        // A G inside a table sets that run's row lengths from the song's
+        // groove (9.2): the driver remembers the slot the table asked for and
+        // is handed its tick counts here, straight (null) for slot 0.
+        {
+            const int ts = driver_.tableGrooveSlot(ch);
+            driver_.setTableGroove(ch, song && ts >= 1 && ts <= 16 ? song->grooves[size_t(ts - 1)].ticks.data() : nullptr);
+        }
     }
 
     // --- the tracker ----------------------------------------------------
@@ -572,7 +578,7 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     const bool rec = recordArm_.load() && t.playing && t.valid;
     // Record disarmed: what was played through onto a Trk channel stops, before
     // the lane it was borrowing starts playing its own cells again (9.1).
-    if (!rec && recWasArmed_) for (int ch = 0; ch < 4; ++ch) flushChannel(ch, events_);
+    if (!rec && recWasArmed_) for (int ch = 0; ch < 4; ++ch) if (trackerMask & (1u << ch)) flushChannel(ch, events_);
     player_.setMuteMask(rec ? trackerMask : 0);
     driver_.setRecording(rec);
     player_.process(clock_.ticks(), clock_.tickCount(), t.playing && t.valid, events_);
