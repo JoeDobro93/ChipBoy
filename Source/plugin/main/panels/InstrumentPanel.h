@@ -34,7 +34,7 @@ private:
     void rebuildEditor();
     void syncValues();
     void updateUsedOn();
-    void refreshEnvPreview();
+    void refreshDerived();               ///< the envelope preview and every hint that shows a value
     void edit(const std::function<void(bank::Instrument&)>& fn);
     void newInstrument();
     void duplicate();

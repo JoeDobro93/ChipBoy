@@ -17,7 +17,7 @@ const char* kPanTip = "NR51: off, left, both, right, or the instrument's own. Th
 const char* kTableTip = "Table override for this channel; inst = the instrument's own table";
 const char* kInstTip = "The instrument this channel's notes latch at note-on; automate it to switch per note";
 const char* kTransposeTip = "Semitones added to every note on this channel, before the period is worked out";
-const char* kStateTip = "What the driver is doing right now: the instrument, its table and the two command slots, resolved.";
+const char* kStateTip = "What the driver is doing right now: the instrument, its table and the two command slots, resolved. The vibrato reads speed / depth, the depth in semitones.";
 /// The reserved octave is one below the channel's playable floor.
 juce::String keyswitchTip(int ch)
 {
@@ -27,6 +27,18 @@ juce::String keyswitchTip(int ch)
 }
 
 const String kDot = String(CharPointer_UTF8(" \xc2\xb7 "));
+
+/// V's y as the semitones LSDj's table means (section 7), so the line says
+/// what the depth is worth rather than which row of the table it is. The
+/// command slot above spells them "3/4 st"; this line has barely 200 px for
+/// everything the driver is doing, so it uses the one-glyph fractions and
+/// leaves the unit to the tooltip -- the same width the raw index took.
+String vibDepthText(int y)
+{
+    static const char* const n[16] = { "\xe2\x85\x9b", "\xc2\xbc", "\xe2\x85\x9c", "\xc2\xbd", "\xc2\xbe", "1", "1\xc2\xbd", "2",
+                                       "2\xc2\xbd", "3", "3\xc2\xbd", "4", "5", "6", "7", "8" };
+    return String(CharPointer_UTF8(n[std::clamp(y, 0, 15)]));
+}
 
 /// "6/6": the groove in force on this channel, resolved through the song --
 /// a G slot, else the phrase's own, else straight. A groove is a list of tick
@@ -55,7 +67,7 @@ String stateText(int ch, const driver::VoiceView& v, const tracker::Song* song, 
     else if (wave) { static const char* lvl[] = { "mute", "25%", "50%", "100%" }; add("lvl " + String(lvl[v.volume & 3])); add("frm " + String(v.frame)); }
     if (!wave) add("env " + String(v.envVol) + String::charToString(v.envDir ? 0x2191 : 0x2193) + String(v.envRate));
     if (pulse || wave) {
-        if (v.vibDepth) add("vib " + String(v.vibSpeed) + "/" + String(v.vibDepth));
+        if (v.vibDepth) add("vib " + String(v.vibSpeed) + "/" + vibDepthText(v.vibDepth));
         if (v.pitchOffset) add("P " + String(v.pitchOffset > 0 ? "+" : "") + String(v.pitchOffset));
     }
     { static const char* pan[] = { "off", "L", "R", "LR" }; add(String(pan[v.pan & 3])); }

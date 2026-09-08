@@ -54,11 +54,11 @@ scaling, which multiplies both. The width never changes; the height stretches, s
 corner resizer only moves vertically and every pixel it adds goes to the editor pane
 (the bank lists and the Hardware tab get the room). 1020 is header 54 + mixer row 370
 + tab bar 34 + a 536 editor pane (512 and its padding) + status line 26, and it fits a
-1080p screen with the host's own chrome. 512 is what the two tabs with the most in them
-ask for: the Instrument tab's four cards, two to a row, need 510, and the Phrases lane's
-sixteen steps need 512 under its head. The chosen height is remembered with the project,
-as the scale is. Reading order is top to bottom: *what am I emulating → what is each
-voice doing → edit the thing I selected.*
+1080p screen with the host's own chrome. 512 is what the Phrases lane's sixteen steps
+need under its head, and it is the ceiling the Instrument tab is laid out against: its
+four cards, two to a row, ask 474 at their tallest (§6, which does the arithmetic). The
+chosen height is remembered with the project, as the scale is. Reading order is top to
+bottom: *what am I emulating → what is each voice doing → edit the thing I selected.*
 
 1. **Header.** Wordmark; the **model switch** (DMG / CGB / RAW); the **tempo group** —
    source (Host / Song), the song's own BPM, and the *Quantize* toggle (§4); the bank
@@ -215,12 +215,52 @@ Everything LSDj can express about a sound, ChipBoy can express — with base-10 
 the hardware's ranges, and none of the cartridge limits (C10).
 
 - **Instruments** (spec §9.2–9.3): Pulse, Wave, Kit, Noise, with every field LSDj has —
-  envelope, duty and duty sequence, sweep, length, vibrato shape/speed/depth/delay,
-  transpose, table, pan, note-off behaviour, retrigger/legato — plus the wave's frame
-  advance and loop mode. The editor shows the field groups for the selected type and the
-  register each field lands in, as four cards laid two to a row — Sound beside Envelope,
-  Modulation beside Table & note behaviour — so the whole instrument is on screen at the
-  window's smallest size.
+  envelope, duty and duty sequence, sweep, length, vibrato, transpose, table, pan,
+  note-off behaviour — plus the pitch fields of
+  [`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §7 and the wave's frame advance and
+  loop mode. The editor shows the field groups for the selected type and the register
+  each field lands in, as four cards laid two to a row — Sound beside Envelope, Pitch &
+  modulation beside Table & note behaviour — so the whole instrument is on screen at the
+  window's smallest size. Switching the type keeps every field: each type reads the ones
+  it uses, and switching back finds the rest as they were.
+
+  | Card | Fields |
+  |---|---|
+  | **Sound** | what the type's registers are: duty, duty sequence and sweep (pulse); wave, frame advance, frame loop, volume (wave); kit, loop, rate (kit); LFSR width, pitch, clock shift, divisor, noise sweep (noise) — and **pan**, which is NR51 and belongs with them |
+  | **Envelope** | volume, direction, rate and the one-second picture; pulse and noise only |
+  | **Pitch & modulation** | **vibrato** shape and direction in one cell, then speed, depth and delay; **pitch speed** — Fast / Tick / Step / Drum, absent on noise, with Drum greyed on kits because a kit plays it as Fast; **command rate** |
+  | **Table & note behaviour** | table, **table mode**, transpose, note-off, **overlap**, length |
+
+  The fields whose value means something other than its number say so where the hint
+  goes, and the hint changes as the value does: the vibrato speed reads "4 Hz" (Fast,
+  Step, Drum) or "8 cycles/4 beats" (Tick), its depth "3/4 st" from LSDj's semitone
+  table — "off" at 0, which is what the driver does with it — the pitch speed "360 Hz",
+  "per tick", "P jumps" or "semitones", the command rate "every 3 ticks", the table mode
+  "row per tick" or "row per note", and overlap "only the pitch" or "starts it again".
+  The whole sentence for each is the control's tooltip, per option where the options
+  differ.
+
+  **The row arithmetic.** The pane is 512 tall and 1156 wide; the slot list takes 220 and
+  a 14 px gap, so the cards have 922. A row is two cards: the left one 530 wide (three
+  158 px field columns) and the right one 380 (two of 170). A field is a 16 px caption
+  over its control — 38 with a segmented, 40 with a stepper, 86 with a knob — and fields
+  flow into the columns, wrapping when the next one does not fit; a card adds 12 padding,
+  a 22 px heading and 12 more. The tab is then the 26 px name row, a 12 px gap, the first
+  card row, another 12, and the second. Wave and kit have no Envelope card, so their
+  first row is Sound beside Pitch & modulation and Table & note behaviour has the second
+  to itself:
+
+  | | Pulse | Wave | Kit | Noise |
+  |---|---|---|---|---|
+  | first row | 236 | 282 | 282 | 230 |
+  | second row | 188 | 138 | 138 | 188 |
+  | **total** | **474** | **470** | **470** | **468** |
+
+  Before the pitch fields joined the cards it was 510 / 468 / 468 / 510. The three new
+  cells are paid for in the second row: the vibrato's shape and direction share one cell
+  now, its delay is a stepper where it was a knob (40 px against 86), and pan went to the
+  Sound card, which had a spare row where the two-column card next to it did not. A pulse
+  instrument's second row is 188 where it was 230.
 - **Tables** (spec §9.5): 16 steps of volume, transpose, two commands; loop, hop, or
   stop at the end; one step per tick; shared by every instrument that references them.
 - **Commands** (spec §9.6, LSDj lettering): `A` envelope, `C` chord, `D` delay, `F`

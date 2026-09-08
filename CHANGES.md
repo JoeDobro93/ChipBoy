@@ -191,6 +191,47 @@ the other down a full-width column.
 **Not changed:** the width, the scale steps, every control and field the panels had,
 and the status line's "tempo host 120 / song 150".
 
+### 2026-09-08 — the Instrument tab's pitch fields (interface)
+
+The window half of [`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md) §7 and §10:
+Pitch speed, Command rate and Table mode reach the instrument cards, the vibrato reads as
+one group with its depth in semitones, and the cards re-flow so the tallest instrument
+still fits the pane the window already has. `Theme.h`'s sizes do not change.
+
+**Changed:**
+
+- **Three fields join the cards.** *Pitch speed* (Fast / Tick / Step / Drum) on pulse,
+  wave and kit — not on noise, where P and L do not apply — and with Drum greyed on kits
+  because the driver plays a kit's Drum as Fast; *Command rate* 0–15 and *Table mode*
+  (Tick / Step) on every type. Overlap and the vibrato's direction, which the engine
+  stage put there to keep the tab compiling, get the captions and hints they were owed.
+- **The vibrato is one group again.** Shape and direction share a single cell — two
+  segmented controls side by side, the way the mockup pairs values — with speed, depth
+  and delay following it, and the card is *Pitch & modulation* rather than *Modulation*.
+- **A field says what its value is worth, and keeps saying it as the value moves.** The
+  vibrato speed reads "4 Hz" in Fast, Step and Drum and "8 cycles/4 beats" in Tick; the
+  depth reads LSDj's semitone table, "3/4 st", and "off" at 0, which is what the driver
+  makes of it; the pitch speed reads "360 Hz", "per tick", "P jumps" or "semitones"; the
+  command rate "every 3 ticks"; the table mode "row per tick" or "row per note"; overlap
+  "only the pitch" or "starts it again". The sentence behind each short hint is the
+  control's tooltip, per option where the options differ.
+- **The cards re-flow instead of the window growing.** The vibrato's delay is a stepper
+  rather than a knob (40 px where a knob asks 86, and the same control the Length field
+  uses for a range this wide), and pan moves to the Sound card, where it sits with the
+  other registers — it is NR51 — and where there was a row to spare. The tab now asks
+  474 px of the 512 the pane has for a pulse instrument, 470 for wave and kit and 468
+  for noise, against 510 / 468 / 468 / 510 before; nothing scrolls at the minimum
+  height. The kit's Loop field takes two field columns so "Loop from point" is not cut.
+- **The strip's running-state line says what the vibrato depth is worth**: "vib 8/¾"
+  rather than "vib 8/4", the depth now being a semitone table rather than an amount.
+  The line has barely 200 px for everything the driver is doing, so it uses the
+  one-glyph fractions — the same width the raw index took — and its tooltip names the
+  unit; the command slot above it keeps the roomier "3/4 st".
+
+**Not changed:** the window's minimum height and the editor pane, the cards' order and
+their two-to-a-row layout, the Assign / double-click behaviour, and type switching, which
+still keeps every field so switching back finds them as they were.
+
 ### 2026-09-07 — the demo and the documents follow the new model (§8.1, §8.2, §12.3, §12.4)
 
 Stage 3 of the revision above: nothing in the code changed, the demo project and every
