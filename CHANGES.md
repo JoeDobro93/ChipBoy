@@ -26,6 +26,58 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-08 — pitch speed and bare notes (engine)
+
+The driver side of the addendum to [`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md)
+(§7, §8): the speed of every pitch effect moves into the instrument, and a note without
+an instrument stops retriggering.
+
+**Changed:**
+
+- **The instrument carries the pitch** — Pitch speed (Fast, Tick, Step, Drum), the
+  vibrato's shape *and* direction (replacing the Triangle/Square/SawUp/SawDown enum),
+  Command rate 0–15, Table mode (Tick, Step) and Overlap (legato, retrig) in place of
+  the Legato flag. Vibrato depth is LSDj's semitone table rather than raw period units,
+  so a lead's vibrato is the same interval at every pitch. A bank written before this
+  still reads: the old `legato` flag becomes Overlap, the old four-value shape becomes a
+  shape and a direction.
+- **A pitch pipeline** of `periodOf(noteFine) + periodOffset`, driven by a per-voice
+  360 Hz clock (11651 CPU cycles) restarted at every plain note-on and interleaved with
+  the events and the ticks in cycle order, so a note sounds the same whatever sample it
+  started on. V is a phase and a semitone depth (one cycle every 720/x updates, or 96/x
+  ticks in Tick); L is a residual that walks to zero over the duration it is given; P is
+  a bend speed rather than an absolute offset — `P 128` stops the bend and keeps what it
+  reached, and a plain note-on is what puts the offset back to zero.
+- **Plain and bare notes.** A tracker cell is plain when its instrument column is
+  filled; a MIDI note is bare when it lands over a held note, would load the instrument
+  already sounding, and that instrument overlaps legato. A bare note writes the period
+  and nothing else — no trigger, no reload, no table restart — and fires only C, D, K, L,
+  R and Z. `Driver::noteReport()` tells the recorder which it was and which slot was
+  involved.
+- **Four ways a channel could ring for ever are closed**: All notes off kills any voice
+  whose DAC is on whatever `active` says and is never filtered by the source gate, a
+  kill or a stop clears the held stack, the notes-on-tick queue runs its oldest event
+  first when it is full rather than letting a note-off overtake its note-on, and moving
+  the Instrument parameter clears a keyswitch.
+- **Note-off Release finishes the sound**: a held or rising envelope gets a decrease at
+  rate 1 written, without a trigger; WAV and KIT step the level 100 → 50 → 25 → mute one
+  tick apart.
+- **C, R and M follow §7**: C and R step every `cmdRate + 1` ticks, R's x is 0 none,
+  1–7 up, 9–15 down by x − 8, and M's sides take 8 as "keep" and 9–15 as a relative
+  move. Z adds a random 0…x to the re-run command's x and 0…y to its y instead of
+  replacing the argument. E was already the NRx2 encoding the addendum describes; only
+  the wording changed.
+- **The factory bank** shows the new fields: the lead's vibrato is 5 Hz and three
+  eighths of a semitone, the Pluck runs its pitch on the tick, table 5 "Slide up" starts
+  an octave below and slides back over 60 updates, and instrument 17 "Pulse kick" with
+  table 7 "Drum drop" is a Drum-speed P bend.
+
+**Not done here**, and left to the tracker stage: `Driver::setTableGroove()` exists and
+is documented but nothing calls it yet — a `G` inside a table records the slot it wants
+in `Driver::tableGrooveSlot()` for the Player to answer with that groove's ticks. The
+Instrument tab keeps the fields it had, renamed, plus the vibrato's direction; Pitch
+speed, Command rate and Table mode reach the window in the interface stage.
+
 ### 2026-09-08 — the window fits a screen and stretches, tempo moves to the header (UI_DESIGN §2, §6, §7)
 
 The main window was 1180 x 760 and fixed, which the Instrument tab never fitted: it
