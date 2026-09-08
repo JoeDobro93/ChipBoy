@@ -54,3 +54,4 @@ venv/
 
 # Interface screenshots are kept
 !docs/screenshots/*.png
+chipboy_linktest.stages.txt
