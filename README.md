@@ -31,11 +31,12 @@ Four voices per instance, always. If you want more, load another instance.
 **v1 is built.** Everything the workshop decided ships: the cycle-exact APU with the
 DMG and CGB chip variants, the measured analog stage with a RAW bypass, the LSDj-shaped
 bank (instruments, tables, waves and frames, kits), a driver with its own tick, a
-tracker that follows the host transport and records, two plugins linked through shared
-memory, the Hardware panel's options, and the window from the mockup with its
-visualizer. It has been compiled and tested on Linux (61 core tests, the link
-integration test, VST3 and Standalone builds). The Windows and macOS builds are made
-by hand from the same tree (the build section below); CI builds them only when asked
+tracker that follows the host transport or runs its own, records, and saves songs and
+instrument presets to their own files, two plugins linked through shared memory, the
+Hardware panel's options, and the window from the mockup with its visualizer. It has
+been compiled and tested on Linux (61 core tests, the link integration test, VST3 and
+Standalone builds). The Windows and macOS builds are made by hand from the same tree
+(the build section below); CI builds them only when asked
 (Actions → CI → Run workflow) or for a `v*` tag, since the local Linux gate runs
 before every push.
 
@@ -110,9 +111,12 @@ host-visible parameter list in index order (the demo generator checks itself aga
 it); `chipboy_linktest` runs both plugins in one process through a link region and
 checks the whole path (`ctest --test-dir build -C Release -R linktest`); and
 `chipboy_recordtest` plays the demo song through the processor twice — once recording a
-Trk performance, once replaying the song that recording produced — and fails on the
+Trkr performance, once replaying the song that recording produced — and fails on the
 first APU register write the two passes disagree on
-(`ctest --test-dir build -C Release -R recordtest`).
+(`ctest --test-dir build -C Release -R recordtest`). A third pass, `demo_song_matches`,
+loads `Demo/ChipBoy Demo.cbsong` with no MIDI and no play head and checks it drives the
+chip exactly as the recording did, and that recording the demo again reproduces the
+file byte for byte (`ctest --test-dir build -C Release -R demo_song_matches`).
 
 ## Playing it
 
@@ -142,7 +146,10 @@ first APU register write the two passes disagree on
    instrument's own **Pitch speed** — Fast, Tick, Step or Drum — sets how `V`, `L` and
    `P` move: Fast is a tempo-independent 360 Hz, Tick follows the tempo, Step makes `P`
    an immediate jump instead of a bend, and Drum bends `P` and `L` in semitones, for a
-   kick.
+   kick. A note-on in the **command octave** — MIDI notes 0–11, on any channel — never
+   sounds: it fires CMD1 then CMD2 on whatever the channel is already playing, without a
+   trigger, so a held note can be shaped after its attack from a keyboard with no wheel
+   to spare.
 4. Velocity sets the envelope's start volume — or selects an instrument, or is ignored,
    per channel — the mod wheel sets vibrato depth, and pitch bend moves the period.
 5. **Tempo.** Ticks, which tables, vibrato, wave frames and tracker steps all run on, are
@@ -160,19 +167,39 @@ first APU register write the two passes disagree on
    where you expect them.
 7. **Keyswitches** (per channel, off by default): notes 24–35 on a pulse channel and
    12–23 on the wave and noise channels select instrument slots 1–12 without sounding.
-8. The **Phrases** tab is a tracker on that same clock, with a groove editor beside the
-   lane — sixteen tick counts per phrase, for the swing and triplets a straight six
-   ticks a step can't give. Set a channel to *Trk* to play its lane; arm *Rec* to write
-   what you play — the note, its velocity, the instrument, the table and both command
-   slots as they stand at each step — into the cells, so recording a performance once
-   and playing the song back in *Trk* reproduces it, tempo and groove included.
-9. The **Hardware** tab holds the model switch (DMG / CGB / RAW), the hardware states
-   (headphone noise, LCD line, CGB bass mod, volume writes at edges) and the two
-   departures (de-click, soften master pops), which light the MODIFIED badge.
-10. `Demo/ChipBoy Demo.rpp` opens in Reaper with the tune and its automation, and
+8. The **Tracker** tab (renamed from Phrases) is a tracker on that same clock: note,
+   velocity, instrument, table and two commands per channel. *Steps / bar* is a typed
+   number, 1–64, and a bar may take its own count instead, in the chain's **STP**
+   column. A cell's two commands fire once, at their step: the persistent letters
+   (`A E F G M O P S T V W`) hold until the next note that carries an instrument, same as
+   a slot; the rest (`C D K L R Z`) shape only that note. Each lane carries a record
+   **arm** and a **PLAYS** switch, **MIDI** or **Trkr**; with the head row's *Rec* on, an
+   armed channel records what it plays whatever the switch says — an overdub onto a
+   Trkr lane stays audible — and playing the song back in Trkr reproduces the
+   performance, tempo and groove included. *Play*, *Stop* and *Loop* run the song on the
+   plugin's own clock when nothing else offers a transport (the Standalone, chiefly),
+   and mirror the host's transport, disabled, when one is playing. *Save song…* /
+   *Load song…* write and read a `.cbsong`; it also names the bank it was written with
+   and every instrument slot it uses, so loading it against a different bank reports
+   where the two disagree.
+9. The **Grooves** tab holds the song's sixteen editable grooves (groove 0 is straight)
+   — sixteen tick counts each, for the swing and triplets a straight six ticks a step
+   can't give — with the total against the bar's ticks, a swing readout and a ◀ ▶
+   nudge. A phrase picks its groove from the chip in the Tracker tab's lane; tables run
+   on one too.
+10. Instruments save and load on their own: **Save preset…** / **Load preset…** in the
+    Instrument tab write and read a `.cbi` — the instrument plus every table, wave and
+    kit it depends on. Loading one drops each dependency into a free slot of its kind
+    (or reuses an identical one already in the bank) and renumbers every reference to
+    match.
+11. The **Hardware** tab holds the model switch (DMG / CGB / RAW), the hardware states
+    (headphone noise, LCD line, CGB bass mod, volume writes at edges) and the two
+    departures (de-click, soften master pops), which light the MODIFIED badge.
+12. `Demo/ChipBoy Demo.rpp` opens in Reaper with the tune and its automation, and
     `Demo/ChipBoy Demo (song tempo).rpp` runs the same track on the song's clock at 150
     BPM with a `T` that drops it to 100 for four bars; the tune alone is in
-    `Demo/chipboy_demo.mid` for any other host (see `Demo/README.md`).
+    `Demo/chipboy_demo.mid` for any other host, and the same tune recorded onto the
+    tracker is `Demo/ChipBoy Demo.cbsong` (see `Demo/README.md`).
 
 ## Building the core and its tests
 
