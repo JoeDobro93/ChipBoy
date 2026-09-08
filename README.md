@@ -103,10 +103,14 @@ Outputs land in the same `*_artefacts/Release/` folders; VST3s go to
 libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libgl1-mesa-dev
 libcurl4-openssl-dev`, then the same commands; the VST3 goes to `~/.vst3`.
 
-Two console tools come with the plugin build: `chipboy_paramdump` prints the
+Three console tools come with the plugin build: `chipboy_paramdump` prints the
 host-visible parameter list in index order (the demo generator checks itself against
-it), and `chipboy_linktest` runs both plugins in one process through a link region and
-checks the whole path (`ctest --test-dir build -C Release -R linktest`).
+it); `chipboy_linktest` runs both plugins in one process through a link region and
+checks the whole path (`ctest --test-dir build -C Release -R linktest`); and
+`chipboy_recordtest` plays the demo song through the processor twice — once recording a
+Trk performance, once replaying the song that recording produced — and fails on the
+first APU register write the two passes disagree on
+(`ctest --test-dir build -C Release -R recordtest`).
 
 ## Playing it
 
@@ -119,17 +123,24 @@ checks the whole path (`ctest --test-dir build -C Release -R linktest`).
    *Velocity* and *Keyswitches*. That is the whole list. The instrument holds the sound —
    there are no lanes quietly overriding its duty, envelope, sweep, wave, frame, vibrato,
    arpeggio or detune. Each note takes the values in force when it starts, or follows
-   them live with *Live follow*.
+   them live with *Live follow*. A note landing over one still held is legato when the
+   instrument's **Overlap** field says so — it just bends to the new pitch, instead of
+   retriggering the instrument (pulse and wave default to legato, noise and kits to
+   retrig).
 3. **The two command slots** are LSDj's letters with base-10 arguments: `W` duty on a
    pulse channel and the wave slot on WAV, `E` envelope, `V` vibrato, `A` table, `F`
-   frame, `C` chord, `L` slide, `R` retrigger, `P` pitch offset, `O` pan, `S` PU1's
+   frame, `C` chord, `L` slide, `R` retrigger, `P` bend speed, `O` pan, `S` PU1's
    sweep, `K` kill, `D` delay, `M` master volume, `G` groove, `T` tempo, `Z` random. A
    slot is three parameters — the letter, `x` and `y` — and it is *in force*, not
    momentary: it fires at the next tick when one of the three changes, and again at every
    note-on after the instrument and its table. Put the letter back to *none* and what it
    changed reverts to the instrument's own value. The strip shows the meaning
    ("vol 12 · down 3"), never a packed byte, with the running state under it, so an
-   automation move is visible as the slot changing and the state following.
+   automation move is visible as the slot changing and the state following. The
+   instrument's own **Pitch speed** — Fast, Tick, Step or Drum — sets how `V`, `L` and
+   `P` move: Fast is a tempo-independent 360 Hz, Tick follows the tempo, Step makes `P`
+   an immediate jump instead of a bend, and Drum bends `P` and `L` in semitones, for a
+   kick.
 4. Velocity sets the envelope's start volume — or selects an instrument, or is ignored,
    per channel — the mod wheel sets vibrato depth, and pitch bend moves the period.
 5. **Tempo.** Ticks, which tables, vibrato, wave frames and tracker steps all run on, are
@@ -147,10 +158,12 @@ checks the whole path (`ctest --test-dir build -C Release -R linktest`).
    where you expect them.
 7. **Keyswitches** (per channel, off by default): notes 24–35 on a pulse channel and
    12–23 on the wave and noise channels select instrument slots 1–12 without sounding.
-8. The **Phrases** tab is a tracker on that same clock. Set a channel to *Trk* to play
-   its lane; arm *Rec* to write what you play — the note, the instrument, the table and
-   both command slots as they stand at each step — into the cells, so a recorded song
-   carries its own tempo and groove.
+8. The **Phrases** tab is a tracker on that same clock, with a groove editor beside the
+   lane — sixteen tick counts per phrase, for the swing and triplets a straight six
+   ticks a step can't give. Set a channel to *Trk* to play its lane; arm *Rec* to write
+   what you play — the note, its velocity, the instrument, the table and both command
+   slots as they stand at each step — into the cells, so recording a performance once
+   and playing the song back in *Trk* reproduces it, tempo and groove included.
 9. The **Hardware** tab holds the model switch (DMG / CGB / RAW), the hardware states
    (headphone noise, LCD line, CGB bass mod, volume writes at edges) and the two
    departures (de-click, soften master pops), which light the MODIFIED badge.

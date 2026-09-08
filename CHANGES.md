@@ -16,15 +16,104 @@ intended product rather than a progress report.
 | M1 — APU core + test-ROM harness | **done** 2026-09-07 — blargg `dmg_sound` 01–12 and the four DMG-observable SameSuite APU tests pass; CI on Linux, macOS, Windows |
 | M2 — analog stage + renderer | **done** 2026-09-07 — first sound; fast path nulls against the reference at −122 dB; bit-identical across block sizes |
 | M3 — main plugin shell | **done** 2026-09-07 — parameters per §12.3/§12.4, per-channel MIDI routing, JSON state, Linux VST3 and Standalone build |
-| M4 — bank + driver | **done** 2026-09-07 — the bank with a factory set, the driver on its own tick, 11 driver tests |
+| M4 — bank + driver | **done** 2026-09-07 — the bank with a factory set, the driver on its own tick, 11 driver tests. **2026-09-08**: the instrument carries the pitch (Pitch speed, vibrato shape/direction, Command rate, Table mode, Overlap); a note without an instrument only changes pitch (bare notes); four note-hang paths closed (all-notes-off, kill, event ordering, keyswitch-clear) |
 | M5 — Voice plugin + link | **done** 2026-09-07 — region files, claims, one-block timing, push/pull; `chipboy_linktest` passes 16 checks |
-| M6 — tracker, waves, frames, kits | **done** 2026-09-07 — tracker player on the host transport, record arm, kit import (resample + 4-bit dither), bank/song files |
-| M7 — interface | **done** 2026-09-07 — the window from the mockup: header, mixer with period-locked scopes, seven tabs, status bar, visualizer window, Voice window |
+| M6 — tracker, waves, frames, kits | **done** 2026-09-07 — tracker player on the host transport, record arm, kit import (resample + 4-bit dither), bank/song files. **2026-09-08**: grooves are sixteen tick counts, cells carry velocity, the Player flushes a channel with All notes off on stop/locate/source change, and the recorder follows §9.4; `chipboy_recordtest` (record/replay parity) and the tracker-shaped demo are in progress, next to the link test |
+| M7 — interface | **done** 2026-09-07 — the window from the mockup: header, mixer with period-locked scopes, seven tabs, status bar, visualizer window, Voice window. **2026-09-08**: the Phrases tab gained a groove editor and a VEL column, the Instrument tab gained the pitch fields, and the window was resized to fit a 1080p screen with tempo moved to the header |
 | M8 — CGB / RAW / hardware options | **done** 2026-09-07 — CGB chip variant, RAW bypass, headphone noise, LCD line, bass mod, quiet-edge volume writes, de-click, soften master pops; 61 core tests |
 
 ---
 
 ## Spec revisions
+
+### 2026-09-08 — the Instrument tab's pitch fields (interface)
+
+The window half of [`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md) §7 and §10:
+Pitch speed, Command rate and Table mode reach the instrument cards, the vibrato reads as
+one group with its depth in semitones, and the cards re-flow so the tallest instrument
+still fits the pane the window already has. `Theme.h`'s sizes do not change.
+
+**Changed:**
+
+- **Three fields join the cards.** *Pitch speed* (Fast / Tick / Step / Drum) on pulse,
+  wave and kit — not on noise, where P and L do not apply — and with Drum greyed on kits
+  because the driver plays a kit's Drum as Fast; *Command rate* 0–15 and *Table mode*
+  (Tick / Step) on every type. Overlap and the vibrato's direction, which the engine
+  stage put there to keep the tab compiling, get the captions and hints they were owed.
+- **The vibrato is one group again.** Shape and direction share a single cell — two
+  segmented controls side by side, the way the mockup pairs values — with speed, depth
+  and delay following it, and the card is *Pitch & modulation* rather than *Modulation*.
+- **A field says what its value is worth, and keeps saying it as the value moves.** The
+  vibrato speed reads "4 Hz" in Fast, Step and Drum and "8 cycles/4 beats" in Tick; the
+  depth reads LSDj's semitone table, "3/4 st", and "off" at 0, which is what the driver
+  makes of it; the pitch speed reads "360 Hz", "per tick", "P jumps" or "semitones"; the
+  command rate "every 3 ticks"; the table mode "row per tick" or "row per note"; overlap
+  "only the pitch" or "starts it again". The sentence behind each short hint is the
+  control's tooltip, per option where the options differ.
+- **The cards re-flow instead of the window growing.** The vibrato's delay is a stepper
+  rather than a knob (40 px where a knob asks 86, and the same control the Length field
+  uses for a range this wide), and pan moves to the Sound card, where it sits with the
+  other registers — it is NR51 — and where there was a row to spare. The tab now asks
+  474 px of the 512 the pane has for a pulse instrument, 470 for wave and kit and 468
+  for noise, against 510 / 468 / 468 / 510 before; nothing scrolls at the minimum
+  height. The kit's Loop field takes two field columns so "Loop from point" is not cut.
+- **The strip's running-state line says what the vibrato depth is worth**: "vib 8/¾"
+  rather than "vib 8/4", the depth now being a semitone table rather than an amount.
+  The line has barely 200 px for everything the driver is doing, so it uses the
+  one-glyph fractions — the same width the raw index took — and its tooltip names the
+  unit; the command slot above it keeps the roomier "3/4 st".
+
+**Not changed:** the window's minimum height and the editor pane, the cards' order and
+their two-to-a-row layout, the Assign / double-click behaviour, and type switching, which
+still keeps every field so switching back finds them as they were.
+
+### 2026-09-08 — groove editor and VEL column (interface)
+
+The interface half of the addendum's §9.2 and §10 (`docs/COMMANDS_AND_TEMPO.md`), in the
+Phrases tab. Nothing in the engine moved; this is what the tab shows and how it is
+edited (`docs/UI_DESIGN.md` §7).
+
+**Changed:**
+
+- **A groove editor beside the lane**, sixteen cells row for row with the lane's steps
+  (the preferred placement of §10; the grid gave up the width). Each row is the count
+  that step lasts, a bar drawn against the longest entry, and the tick the step starts
+  on — in the warn colour when that start is at or past the end of the bar and the step
+  therefore never fires. The head carries the slot (0 straight and read-only, 1–16 the
+  song's), the total against the bar's ticks (green when they match, warn either way
+  round), the swing of the first pair, and a ◀ ▶ nudge that trades one tick inside every
+  pair keeping its total. The editor follows the groove in force for the selected
+  channel — a `G` in a slot or a cell, else the phrase's chip — until the stepper browses
+  somewhere else. Edits go through `mutateSong`, the path the cells already take, so the
+  Player picks them up with the next published song.
+- **The lane has a VEL column**, 1–127 with blank meaning the default 100, editing like
+  the instrument column. The cells always carried the velocity (the engine stage); it
+  was not visible or editable.
+- **The playing row is the row that is playing.** It was `inBar × steps / barTicks`, a
+  sixteenth of the bar, which is the wrong row on every swung groove; it is now read
+  from the channel's own step grid (`stepStartTicks` with the groove in force), and a
+  step whose start falls past the bar's end never lights.
+- The lane's columns were re-measured for the width the editor took: of 1156 px, 164 to
+  the editor and 12 to the gap leave 980 — a 34 px step column and four groups of 236
+  (note 39, vel 31, ins 31, tbl 29, two commands of 53). Command arguments of seven
+  characters (`C 60,60`) clip a little sooner than they did; they clipped before too, at
+  nine (`R 255,255`).
+- *Steps / bar* already offered 8 and 16 only, and the groove preset combo was already
+  gone, both from the engine stage. Nothing was left to remove.
+
+**Why:** a sixteen-tick groove cannot be typed anywhere else — the lane's chip picks a
+slot, it does not write one — and the total against the bar is the one number that says
+whether a groove will drift, so it belongs beside the steps it lengthens.
+
+**Considered:** the second row of tools, §10's fallback, which has ~560 px free. Sixteen
+cells in a row there fit, but they lose what the column gives for nothing: step 3 of the
+groove sits on step 3 of the lane, and the playing row crosses both.
+
+**Note on the screenshots:** `chipboy_uishot` builds no song, so
+`docs/screenshots/main-phrases.png` is the empty tab as the tool renders it.
+`main-phrases-groove.png` is the same tab with a bar of cells and a groove typed into the
+song by hand, since an empty tracker shows neither the velocities nor a groove worth
+looking at.
 
 ### 2026-09-08 — pitch speed and bare notes (engine)
 
@@ -77,54 +166,6 @@ is documented but nothing calls it yet — a `G` inside a table records the slot
 in `Driver::tableGrooveSlot()` for the Player to answer with that groove's ticks. The
 Instrument tab keeps the fields it had, renamed, plus the vibrato's direction; Pitch
 speed, Command rate and Table mode reach the window in the interface stage.
-
-### 2026-09-08 — groove editor and VEL column (interface)
-
-The interface half of the addendum's §9.2 and §10 (`docs/COMMANDS_AND_TEMPO.md`), in the
-Phrases tab. Nothing in the engine moved; this is what the tab shows and how it is
-edited (`docs/UI_DESIGN.md` §7).
-
-**Changed:**
-
-- **A groove editor beside the lane**, sixteen cells row for row with the lane's steps
-  (the preferred placement of §10; the grid gave up the width). Each row is the count
-  that step lasts, a bar drawn against the longest entry, and the tick the step starts
-  on — in the warn colour when that start is at or past the end of the bar and the step
-  therefore never fires. The head carries the slot (0 straight and read-only, 1–16 the
-  song's), the total against the bar's ticks (green when they match, warn either way
-  round), the swing of the first pair, and a ◀ ▶ nudge that trades one tick inside every
-  pair keeping its total. The editor follows the groove in force for the selected
-  channel — a `G` in a slot or a cell, else the phrase's chip — until the stepper browses
-  somewhere else. Edits go through `mutateSong`, the path the cells already take, so the
-  Player picks them up with the next published song.
-- **The lane has a VEL column**, 1–127 with blank meaning the default 100, editing like
-  the instrument column. The cells always carried the velocity (the engine stage); it
-  was not visible or editable.
-- **The playing row is the row that is playing.** It was `inBar × steps / barTicks`, a
-  sixteenth of the bar, which is the wrong row on every swung groove; it is now read
-  from the channel's own step grid (`stepStartTicks` with the groove in force), and a
-  step whose start falls past the bar's end never lights.
-- The lane's columns were re-measured for the width the editor took: of 1156 px, 164 to
-  the editor and 12 to the gap leave 980 — a 34 px step column and four groups of 236
-  (note 39, vel 31, ins 31, tbl 29, two commands of 53). Command arguments of seven
-  characters (`C 60,60`) clip a little sooner than they did; they clipped before too, at
-  nine (`R 255,255`).
-- *Steps / bar* already offered 8 and 16 only, and the groove preset combo was already
-  gone, both from the engine stage. Nothing was left to remove.
-
-**Why:** a sixteen-tick groove cannot be typed anywhere else — the lane's chip picks a
-slot, it does not write one — and the total against the bar is the one number that says
-whether a groove will drift, so it belongs beside the steps it lengthens.
-
-**Considered:** the second row of tools, §10's fallback, which has ~560 px free. Sixteen
-cells in a row there fit, but they lose what the column gives for nothing: step 3 of the
-groove sits on step 3 of the lane, and the playing row crosses both.
-
-**Note on the screenshots:** `chipboy_uishot` builds no song, so
-`docs/screenshots/main-phrases.png` is the empty tab as the tool renders it.
-`main-phrases-groove.png` is the same tab with a bar of cells and a groove typed into the
-song by hand, since an empty tracker shows neither the velocities nor a groove worth
-looking at.
 
 ### 2026-09-08 — the tracker audit (engine)
 
@@ -238,47 +279,6 @@ the other down a full-width column.
 
 **Not changed:** the width, the scale steps, every control and field the panels had,
 and the status line's "tempo host 120 / song 150".
-
-### 2026-09-08 — the Instrument tab's pitch fields (interface)
-
-The window half of [`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md) §7 and §10:
-Pitch speed, Command rate and Table mode reach the instrument cards, the vibrato reads as
-one group with its depth in semitones, and the cards re-flow so the tallest instrument
-still fits the pane the window already has. `Theme.h`'s sizes do not change.
-
-**Changed:**
-
-- **Three fields join the cards.** *Pitch speed* (Fast / Tick / Step / Drum) on pulse,
-  wave and kit — not on noise, where P and L do not apply — and with Drum greyed on kits
-  because the driver plays a kit's Drum as Fast; *Command rate* 0–15 and *Table mode*
-  (Tick / Step) on every type. Overlap and the vibrato's direction, which the engine
-  stage put there to keep the tab compiling, get the captions and hints they were owed.
-- **The vibrato is one group again.** Shape and direction share a single cell — two
-  segmented controls side by side, the way the mockup pairs values — with speed, depth
-  and delay following it, and the card is *Pitch & modulation* rather than *Modulation*.
-- **A field says what its value is worth, and keeps saying it as the value moves.** The
-  vibrato speed reads "4 Hz" in Fast, Step and Drum and "8 cycles/4 beats" in Tick; the
-  depth reads LSDj's semitone table, "3/4 st", and "off" at 0, which is what the driver
-  makes of it; the pitch speed reads "360 Hz", "per tick", "P jumps" or "semitones"; the
-  command rate "every 3 ticks"; the table mode "row per tick" or "row per note"; overlap
-  "only the pitch" or "starts it again". The sentence behind each short hint is the
-  control's tooltip, per option where the options differ.
-- **The cards re-flow instead of the window growing.** The vibrato's delay is a stepper
-  rather than a knob (40 px where a knob asks 86, and the same control the Length field
-  uses for a range this wide), and pan moves to the Sound card, where it sits with the
-  other registers — it is NR51 — and where there was a row to spare. The tab now asks
-  474 px of the 512 the pane has for a pulse instrument, 470 for wave and kit and 468
-  for noise, against 510 / 468 / 468 / 510 before; nothing scrolls at the minimum
-  height. The kit's Loop field takes two field columns so "Loop from point" is not cut.
-- **The strip's running-state line says what the vibrato depth is worth**: "vib 8/¾"
-  rather than "vib 8/4", the depth now being a semitone table rather than an amount.
-  The line has barely 200 px for everything the driver is doing, so it uses the
-  one-glyph fractions — the same width the raw index took — and its tooltip names the
-  unit; the command slot above it keeps the roomier "3/4 st".
-
-**Not changed:** the window's minimum height and the editor pane, the cards' order and
-their two-to-a-row layout, the Assign / double-click behaviour, and type switching, which
-still keeps every field so switching back finds them as they were.
 
 ### 2026-09-07 — the demo and the documents follow the new model (§8.1, §8.2, §12.3, §12.4)
 

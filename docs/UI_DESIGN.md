@@ -263,12 +263,13 @@ the hardware's ranges, and none of the cartridge limits (C10).
   instrument's second row is 188 where it was 230.
 - **Tables** (spec §9.5): 16 steps of volume, transpose, two commands; loop, hop, or
   stop at the end; one step per tick; shared by every instrument that references them.
-- **Commands** (spec §9.6, LSDj lettering): `A` envelope, `C` chord, `D` delay, `F`
-  frame, `H` hop, `K` kill, `L` slide, `O` pan, `P` pitch offset, `R` retrigger, `S`
-  sweep/shift, `V` vibrato, `W` wave. Added by this workshop: `M` master volume L/R
-  (NR50, hardware-legal) and `Z` random argument for the previous command. `T` tempo and
-  `G` groove are not commands here — tempo is the host's, and groove is a property of
-  the Phrases lane (§7).
+- **Commands** (spec §9.6, LSDj lettering; [`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md)
+  §2 has every letter's arguments): `A` table, `C` chord, `D` delay, `E` envelope, `F`
+  frame, `G` groove, `H` hop (tables only), `K` kill, `L` slide, `O` pan, `P` bend
+  speed, `R` retrigger, `S` sweep/shift, `T` tempo, `V` vibrato, `W` wave. Added by this
+  workshop: `M` master volume L/R (NR50, hardware-legal) and `Z`, which re-runs the
+  last command with a random argument; the rest are LSDj's own. The 2026-09-08 addendum
+  (§7) refines `L`, `P`, `Z`, `R`, `M`, `C` and `E`.
 - **Waves** (spec §9.7): 32 × 16 grid, up to 16 frames per wave, shape generators,
   interpolate between frames. The editor states the DMG cost of a frame change.
 - **Kits** (spec §9.8): up to 32 one-shots, note map, playback rate quantised to the
