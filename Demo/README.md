@@ -186,10 +186,10 @@ no automation lanes and no DAW required:
   **Play** — the plugin runs its own transport from the song start, at the Song tempo.
   This is the same path `chipboy_recordtest`'s third pass checks against, and it is how
   `../docs/screenshots/main-tracker.png` was captured.
-- **In a DAW**, load the file the same way, but set **Tempo source** to **Song** in the
-  header first: the host owns the transport there, so the Tracker tab's own
-  Play/Stop/Loop mirror it and are disabled, and pressing play in the host drives the
-  song on its own tempo map rather than the host's bars.
+- **In a DAW**, load the file the same way and press play in the host: it owns the
+  transport there, so the Tracker tab's own Play/Stop/Loop mirror it and are disabled.
+  With *Tempo source* on **Host** the song follows the host's tempo (120 BPM reproduces
+  the recording); on **Song** it keeps its own tempo map whatever the host runs at.
 
 What "sounds the same" depends on the bank. The file was written against **Factory** and
 carries its name and the name of every instrument slot it uses, so `Load song…` always
