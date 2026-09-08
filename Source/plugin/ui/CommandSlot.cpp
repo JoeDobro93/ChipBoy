@@ -30,6 +30,8 @@ struct CommandSlot::Impl {
     std::unique_ptr<juce::ParameterAttachment> typeAtt, argAtt[2];
     int choice = 0, value[2] = { 0, 0 };
     juce::String caption;
+    bool inert = false;
+    juce::String inertWhy;
 
     Impl(CommandSlot& o, const juce::String& l, plugin::ChannelKind k) : owner(o), label(l), kind(k) {}
 
@@ -158,19 +160,45 @@ void CommandSlot::setChannelKind(plugin::ChannelKind kind)
     impl_->buildMenu();
 }
 
+void CommandSlot::setInert(bool inert, const juce::String& why)
+{
+    auto& im = *impl_;
+    if (inert == im.inert && why == im.inertWhy) return;
+    im.inert = inert;
+    im.inertWhy = why;
+    // The children read isEnabled() through their parent, so one call greys
+    // the letter and both arguments and stops them taking the mouse.
+    setEnabled(!inert);
+    if (inert) {
+        im.type.setTooltip(why);
+        for (auto& a : im.arg) a.setTooltip(why);
+    }
+    else im.applyLetter();               // the letter's own tooltips come back
+    repaint();
+}
+
 void CommandSlot::paint(juce::Graphics& g)
 {
     auto& im = *impl_;
+    const float alpha = im.inert ? 0.45f : 1.0f;
     const auto area = getLocalBounds().withHeight(kCaption);
     const juce::Font lf = Fonts::caption(10.0f);
     const juce::String up = im.label.toUpperCase();
     g.setFont(lf);
-    g.setColour(colours::textDim);
+    g.setColour(colours::textDim.withMultipliedAlpha(alpha));
     g.drawText(up, area, juce::Justification::centredLeft, false);
-    if (im.caption.isEmpty()) return;
     const int x = int(draw::textWidth(lf, up)) + 8;
+    // An inert slot says so where the resolved command reads, so the greying
+    // is explained on the strip and not only in the tooltip.
+    if (im.inert && im.inertWhy.isNotEmpty()) {
+        g.setFont(Fonts::sans(10.0f));
+        g.setColour(colours::textDim);
+        g.drawText(im.inertWhy, area.withTrimmedLeft(x), juce::Justification::centredLeft, true);
+        return;
+    }
+    if (im.caption.isEmpty()) return;
     g.setFont(Fonts::mono(10.0f));
-    g.setColour(colours::textMute);
+    g.setColour(colours::textMute.withMultipliedAlpha(alpha));
     g.drawText(im.caption, area.withTrimmedLeft(x), juce::Justification::centredLeft, true);
 }
 

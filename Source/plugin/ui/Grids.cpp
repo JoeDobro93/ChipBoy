@@ -678,6 +678,11 @@ struct PhraseGrid::Impl {
     std::array<std::array<int, kMax>, 4> shadow{};   ///< the roll's notes as the bar played, greyed
     std::array<int, 4> groove{};
     std::array<bool, 4> trackerSource{};
+    /// What each channel plays (section 20). Only Trkr types notes into the
+    /// note column; MIDI and Hybrid both take their notes from the host, so
+    /// both show the roll's note greyed there.
+    std::array<tracker::NoteSource, 4> plays{ { tracker::NoteSource::PianoRoll, tracker::NoteSource::PianoRoll,
+                                                tracker::NoteSource::PianoRoll, tracker::NoteSource::PianoRoll } };
     std::array<bool, 4> armed{ { true, true, true, true } };
     std::array<juce::Rectangle<int>, 4> grooveRects{}, armRects{}, playsRects{};
     Segmented source[4];
@@ -689,17 +694,22 @@ struct PhraseGrid::Impl {
     {
         core.rows = PhraseGrid::kVisibleSteps; core.rowH = kRowHeight; core.headerH = kHeaderHeight;
         for (int ch = 0; ch < 4; ++ch) {
-            // The switch is the playback source now (section 14): the channel
-            // plays the incoming MIDI, or its own cells.
-            source[ch].setOptions({ "MIDI", "Trkr" });
+            // The switch is the playback source (sections 14 and 20): the
+            // channel plays the incoming MIDI, its own cells, or both -- MIDI
+            // for the notes and the cells for everything else.
+            source[ch].setOptions({ "MIDI", "Trkr", "Hyb" });
             source[ch].setMini(true);
             source[ch].setOptionTooltip(0, "MIDI: this channel plays the notes arriving from the host, and its cells are shown greyed beside them.");
             source[ch].setOptionTooltip(1, "Trkr: this channel plays its own cells. Incoming MIDI is ignored unless the channel is armed and recording.");
+            source[ch].setOptionTooltip(2, "Hybrid: the notes come from MIDI and everything else from the cells at their steps -- the instrument and table they select, "
+                                           "and their commands, fired once on whatever is sounding; the strip's Instrument, Table and both command slots are inert.");
             source[ch].onChange = [this, ch](int i) {
+                plays[size_t(ch)] = i == 1 ? tracker::NoteSource::Tracker : i == 2 ? tracker::NoteSource::Hybrid : tracker::NoteSource::PianoRoll;
                 trackerSource[size_t(ch)] = i == 1;
                 buildColumns(owner.getWidth());
                 owner.repaint();
-                if (owner.onSourceChange) owner.onSourceChange(ch, i == 1 ? tracker::NoteSource::Tracker : tracker::NoteSource::PianoRoll);
+                if (owner.onSourceChange)
+                    owner.onSourceChange(ch, i == 1 ? tracker::NoteSource::Tracker : i == 2 ? tracker::NoteSource::Hybrid : tracker::NoteSource::PianoRoll);
             };
             owner.addAndMakeVisible(source[ch]);
         }
@@ -740,18 +750,18 @@ struct PhraseGrid::Impl {
     /// chip (UI_DESIGN section 7).
     void layoutHeader(int ch, int x, int w)
     {
-        int cx = x + 6;
+        int cx = x + 4;
         armRects[size_t(ch)] = { cx, (kHead1 - kArm) / 2, kArm, kArm };
-        cx += kArm + 5;
+        cx += kArm + 4;
         const int nameW = juce::roundToInt(draw::textWidth(Fonts::pixel(10.0f), colours::channelName(ch))) + 4;
-        cx += nameW + 6;
+        cx += nameW + 5;
         const int playsW = juce::roundToInt(draw::textWidth(Fonts::caption(9.0f), "PLAYS")) + 4;
         playsRects[size_t(ch)] = { cx, 0, playsW, kHead1 };
-        cx += playsW + 4;
+        cx += playsW + 3;
         auto& seg = source[ch];
         seg.setBounds(cx, 3, seg.preferredWidth(), 20);
-        const int gx = seg.getRight() + 6;
-        grooveRects[size_t(ch)] = { gx, 3, juce::jmin(64, juce::jmax(0, x + w - gx - 4)), 20 };
+        const int gx = seg.getRight() + 5;
+        grooveRects[size_t(ch)] = { gx, 3, juce::jmin(64, juce::jmax(0, x + w - gx - 3)), 20 };
     }
 
     int cmdSlot(int col) const   // 0: cmd1, 1: cmd2
@@ -768,11 +778,20 @@ struct PhraseGrid::Impl {
         for (int i = 0; i < gr.length(); ++i) t += (i ? "/" : "") + juce::String(gr.at(i));
         return t;
     }
-    juce::String grooveText(int ch) const
+    /// The chip closes the head row and takes what the PLAYS switch leaves
+    /// it, so it says as much as fits: the slot and its ticks where there is
+    /// room, the ticks alone where there is not, and the slot when the row is
+    /// down to a chip's width. The whole of it is in the tooltip and the menu.
+    juce::String grooveText(int ch, int width) const
     {
         const int g = groove[size_t(ch)];
-        if (g <= 0) return "6/6";
-        return ValueFormat::number(g) + juce::String::charToString(0x00b7) + grooveTicks(g);
+        const juce::String ticks = g <= 0 ? juce::String("6/6") : grooveTicks(g);
+        if (g <= 0) return ticks;
+        const juce::String full = ValueFormat::number(g) + juce::String::charToString(0x00b7) + ticks;
+        const auto fits = [width](const juce::String& s) { return draw::textWidth(Fonts::mono(10.5f), s) <= float(width - 8); };
+        if (fits(full)) return full;
+        if (fits(ticks)) return ticks;
+        return ValueFormat::number(g);
     }
 
     void refreshFromSong()
@@ -783,9 +802,11 @@ struct PhraseGrid::Impl {
             const auto* p = song != nullptr ? song->phrase(song->phraseAt(ch, bar)) : nullptr;
             for (int i = 0; i < kMax; ++i) cells[size_t(ch)][size_t(i)] = p != nullptr ? p->steps[size_t(i)] : tracker::Cell{};
             groove[size_t(ch)] = p != nullptr ? p->groove : 0;
-            trackerSource[size_t(ch)] = song != nullptr && song->noteSource[size_t(ch)] == tracker::NoteSource::Tracker;
+            plays[size_t(ch)] = song != nullptr ? song->noteSource[size_t(ch)] : tracker::NoteSource::PianoRoll;
+            trackerSource[size_t(ch)] = plays[size_t(ch)] == tracker::NoteSource::Tracker;
             armed[size_t(ch)] = song == nullptr || song->recordArm[size_t(ch)];
-            source[ch].setSelected(trackerSource[size_t(ch)] ? 1 : 0, juce::dontSendNotification);
+            source[ch].setSelected(plays[size_t(ch)] == tracker::NoteSource::Tracker ? 1
+                                   : plays[size_t(ch)] == tracker::NoteSource::Hybrid ? 2 : 0, juce::dontSendNotification);
         }
     }
 
@@ -921,7 +942,11 @@ struct PhraseGrid::Impl {
         if (row < 0 || row >= core.rows || col < 0 || col >= int(core.cols.size())) return {};
         const auto& c = core.cols[size_t(col)];
         const auto& cell = cells[size_t(c.ch)][size_t(row)];
-        if (c.kind == Kind::Ghost) return "The note the host sent as this bar played. Set the channel to Trkr to type notes here.";
+        if (c.kind == Kind::Ghost)
+            return plays[size_t(c.ch)] == tracker::NoteSource::Hybrid
+                       ? "The note the host sent as this bar played. This channel is Hybrid: its notes come from MIDI and its cells' notes are ignored, "
+                         "but the instrument, table and command columns beside them still fire at their steps."
+                       : juce::String("The note the host sent as this bar played. Set the channel to Trkr to type notes here.");
         if (c.kind == Kind::Note) return "The note this step plays; minus enters a note off";
         if (c.kind == Kind::Vel) return "How hard this step's note is played, 1-127; blank is the default "
                                         + juce::String(int(tracker::kDefaultVelocity)) + ". A recorded note keeps the velocity it arrived with.";
@@ -971,11 +996,11 @@ struct PhraseGrid::Impl {
             g.drawText(channelName(ch), juce::Rectangle<int>(ar.getRight() + 5, 0, 40, h1), juce::Justification::centredLeft, false);
             draw::caption(g, "PLAYS", playsRects[size_t(ch)], juce::Justification::centredLeft, textDim, 9.0f);
             const auto gr = grooveRects[size_t(ch)];
-            if (gr.getWidth() > 24) {
+            if (gr.getWidth() >= 20) {
                 draw::panel(g, gr, hoverGroove == ch ? raisedHi : raised, line, 3.0f);
                 g.setFont(Fonts::mono(10.5f));
                 g.setColour(hoverGroove == ch ? text : textMute);
-                g.drawText(grooveText(ch), gr.reduced(4, 0), juce::Justification::centred, false);
+                g.drawFittedText(grooveText(ch, gr.getWidth()), gr.reduced(4, 0), juce::Justification::centred, 1, 0.72f);
             }
         }
         for (size_t i = 1; i < core.cols.size(); ++i)

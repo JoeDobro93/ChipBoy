@@ -44,8 +44,16 @@ private:
     const int ch_;
     bool selected_ = false;
 
+    /// Whether the song has this channel on Hybrid (section 20): the strip's
+    /// Instrument, Table and both command slots are inert there, so they grey
+    /// out and the head says why.
+    void refreshHybrid();
+
     ui::Led led_;
     TextLine name_;
+    ui::Pill hybrid_;
+    TipBox hybridBox_;
+    int hybridShown_ = -1;
     ui::Pill source_;
     TipBox sourceBox_;
     ui::ScopeView scope_;
@@ -74,8 +82,9 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChannelStrip)
 };
 
-/// The stereo mix scope, master volume L / R, Headphone Noise, De-click
-/// and the output trim.
+/// The stereo mix scope, the NR50 / NR51 readout, one VOL that sets both
+/// NR50 sides, the three switches -- Headphone Noise, LCD Whine, De-click --
+/// and the output trim (docs/COMMANDS_AND_TEMPO.md section 21).
 class MasterStrip : public juce::Component {
 public:
     explicit MasterStrip(ChipBoyProcessor& p);
@@ -91,14 +100,20 @@ private:
     ui::Pill model_;
     TipBox modelBox_;
     ui::MasterScope scope_;
-    TextLine volLLabel_, volRLabel_, trimLabel_;
+    TextLine volLabel_, trimLabel_;
     TextLine mix_;
     TipBox mixBox_;
-    ui::Stepper volL_, volR_;
-    ui::Toggle noise_, declick_;
+    /// One control for both NR50 sides (section 21). The two parameters
+    /// stay -- the M command and existing automation address left and right
+    /// -- so the readout shows the left value, and both when they differ.
+    ui::Stepper vol_;
+    ui::Toggle noise_, lcd_, declick_;
     ui::Fader trim_;
+    std::unique_ptr<juce::ParameterAttachment> volLAtt_, volRAtt_;
+    int volL_ = 7, volR_ = 7;
     int lastModel_ = -1;
     uint32_t mixShown_ = ~uint32_t(0);
+    void refreshVol();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MasterStrip)
 };
