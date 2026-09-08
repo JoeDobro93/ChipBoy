@@ -10,20 +10,28 @@
 // Pass 2 loads that song into a fresh processor, holds every automated lane at
 // its bar-1 value, sends no MIDI, and plays the same length.
 //
+// Pass 3 does the same from Demo/ChipBoy Demo.cbsong -- the song file written
+// from pass 1 -- with no play head at all, so the plugin's own transport runs
+// it at the Song tempo, as the Standalone does (section 16).
+//
 // The two passes are compared per channel: the same register writes, in the
 // same order, with the same values, within 64 samples of each other. NR50 and
 // NR51 are compared as a fifth stream, because M and O are command letters.
 // A difference prints the bar, the step, the channel and both writes.
 //
-//   chipboy_recordtest [--demo DIR] [--out DIR]
+//   chipboy_recordtest [--demo DIR] [--out DIR] [--dump]
+//   chipboy_recordtest --write-song FILE     write the recorded song and stop
+//   chipboy_recordtest --check-song FILE     record and compare against FILE
 //
-// Exit code 0 when the two passes agree.
+// Exit code 0 when the passes agree.
 #include "plugin/main/ChipBoyProcessor.h"
 #include "plugin/shared/BankJson.h"
+#include "plugin/shared/SongFiles.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <vector>
 
 using namespace chipboy;
@@ -191,6 +199,7 @@ struct RunOptions {
     bool record = false;
     const std::vector<TimedMessage>* midi = nullptr;   // null: no MIDI at all
     bool holdAtBarOne = false;                         // lanes frozen at their bar-1 value
+    bool ownTransport = false;                         // no play head: the plugin runs itself
 };
 
 double beatOfSample(int64_t sample, double bpm) { return double(sample) / kSampleRate * bpm / 60.0; }
@@ -203,10 +212,16 @@ void run(ChipBoyProcessor& p, const Automation& aut, const RunOptions& opt, Capt
     p.prepareToPlay(kSampleRate, kBlock);
     FakePlayHead head;
     head.bpm = aut.bpm;
-    p.setPlayHead(&head);
+    if (!opt.ownTransport) p.setPlayHead(&head);
     p.setWriteLog(&log);
     for (const auto& s : aut.statics) setParameter(p, s.first, s.second);
     if (opt.record) p.setRecordArm(true);
+    if (opt.ownTransport) {
+        // The Standalone's case (section 16): no host transport, so the
+        // plugin's own clock plays the song at the Song tempo, once through.
+        p.setLoop(false);
+        p.transportPlay();
+    }
 
     juce::AudioBuffer<float> buffer(2, kBlock);
     juce::MidiBuffer midi;
@@ -239,6 +254,7 @@ void run(ChipBoyProcessor& p, const Automation& aut, const RunOptions& opt, Capt
         if (opt.record || b % 16 == 0) pump(1);
     }
     p.setRecordArm(false);
+    if (opt.ownTransport) p.transportStop();
     pump(400);                       // the recorder's FIFO is applied on a timer
     p.setWriteLog(nullptr);
     p.setPlayHead(nullptr);
@@ -375,6 +391,7 @@ int main(int argc, char** argv)
 
     juce::File demoDir = juce::File(CHIPBOY_DEMO_DIR);
     juce::File outDir = juce::File::getCurrentWorkingDirectory().getChildFile("recordtest");
+    juce::File writeSong, checkSong;
     bool dump = false;
     for (int i = 1; i < argc; ++i) {
         const juce::String key(argv[i]);
@@ -382,8 +399,11 @@ int main(int argc, char** argv)
         else if (i + 1 >= argc) continue;
         else if (key == "--demo") demoDir = juce::File(juce::String(argv[++i]));
         else if (key == "--out") outDir = juce::File(juce::String(argv[++i]));
+        else if (key == "--write-song") writeSong = juce::File(juce::String(argv[++i]));
+        else if (key == "--check-song") checkSong = juce::File(juce::String(argv[++i]));
     }
     outDir.createDirectory();
+    const juce::File demoSongFile = checkSong != juce::File() ? checkSong : demoDir.getChildFile("ChipBoy Demo.cbsong");
 
     Automation aut;
     const auto autFile = demoDir.getChildFile("chipboy_demo_automation.json");
@@ -400,7 +420,7 @@ int main(int argc, char** argv)
                 int(midi.size()), int(aut.statics.size()), int(aut.lanes.size()));
 
     /* ---- pass 1: play the demo in, record it ------------------------- */
-    juce::String recorded;
+    juce::String recorded, songFile;
     Capture recordPass;
     {
         ChipBoyProcessor p;
@@ -416,6 +436,31 @@ int main(int argc, char** argv)
         if (song == nullptr) { std::printf("FAIL the record pass produced no song\n"); return 1; }
         recorded = songToJson(*song);
         outDir.getChildFile("recorded_song.json").replaceWithText(recorded);
+        // The song file: the recording, with the bank it plays through
+        // (docs/COMMANDS_AND_TEMPO.md section 15). It carries no timestamp, so
+        // two recordings of the demo are the same file byte for byte.
+        const auto bank = p.bank();
+        if (bank == nullptr) { std::printf("FAIL the record pass has no bank\n"); return 1; }
+        songFile = songFileText(*song, *bank, p.bankName());
+        if (writeSong != juce::File()) {
+            if (!writeSong.replaceWithText(songFile)) { std::printf("FAIL cannot write %s\n", writeSong.getFullPathName().toRawUTF8()); return 1; }
+            std::printf("wrote %s (%d bytes)\n", writeSong.getFullPathName().toRawUTF8(), int(songFile.getNumBytesAsUTF8()));
+        }
+        if (checkSong != juce::File()) {
+            // The CTest check: the file in Demo/ is this recording.
+            if (!checkSong.existsAsFile()) { std::printf("FAIL %s does not exist; write it with --write-song\n", checkSong.getFullPathName().toRawUTF8()); return 1; }
+            const juce::String have = checkSong.loadFileAsString();
+            if (have != songFile) {
+                const juce::File wrote = outDir.getChildFile("recorded_song.cbsong");
+                wrote.replaceWithText(songFile);
+                std::printf("FAIL %s is not what recording the demo produces\n", checkSong.getFullPathName().toRawUTF8());
+                std::printf("     the recording is %d bytes, the file %d; the recording is at %s\n",
+                            int(songFile.getNumBytesAsUTF8()), int(have.getNumBytesAsUTF8()), wrote.getFullPathName().toRawUTF8());
+                return 1;
+            }
+            std::printf("PASSED the demo song file matches a fresh recording (%d bytes)\n", int(songFile.getNumBytesAsUTF8()));
+            return 0;
+        }
         writeCellListing(outDir.getChildFile("recorded_cells.txt"), *song);
         int cells = 0;
         for (int ch = 0; ch < 4; ++ch)
@@ -443,12 +488,43 @@ int main(int argc, char** argv)
         if (dump) dumpWrites(outDir.getChildFile("writes_replay.txt"), replayPass, aut.bpm);
     }
 
+    /* ---- pass 3: the song file, on the plugin's own transport --------- */
+    // Section 16: Demo/ChipBoy Demo.cbsong loaded, the factory bank, no MIDI
+    // and no play head at all -- the Standalone's case -- must drive the chip
+    // exactly as the recording did.
+    Capture ownPass;
+    bool ranOwn = false;
+    {
+        const auto pOwned = std::make_unique<ChipBoyProcessor>();
+        auto& p = *pOwned;
+        SongReport report;
+        if (!p.loadSongFile(demoSongFile, report)) {
+            std::printf("FAIL cannot read the demo song %s\n", demoSongFile.getFullPathName().toRawUTF8());
+            return 1;
+        }
+        std::printf("demo song: bank \"%s\", %d instrument slots used, %d differ here\n",
+                    report.bankName.toRawUTF8(), report.instrumentsUsed, report.differences.size());
+        for (const auto& line : report.differences) std::printf("  %s\n", line.toRawUTF8());
+        p.mutateSong([](tracker::Song& s) { for (auto& n : s.noteSource) n = tracker::NoteSource::Tracker; });
+        std::vector<driver::RegWrite> log;
+        log.reserve(1u << 20);
+        RunOptions opt;
+        opt.holdAtBarOne = true;
+        opt.ownTransport = true;
+        run(p, aut, opt, ownPass, log);
+        ranOwn = true;
+        if (!p.ownsTransport()) { std::printf("FAIL the plugin did not take the transport with no play head\n"); return 1; }
+        if (dump) dumpWrites(outDir.getChildFile("writes_own.txt"), ownPass, aut.bpm);
+    }
+
     /* ---- compare ----------------------------------------------------- */
-    const bool ok = compare(recordPass, replayPass, aut.bpm);
+    const bool ok = compare(recordPass, replayPass, aut.bpm)
+                    && (!ranOwn || compare(recordPass, ownPass, aut.bpm));
     std::printf("\nregister writes per channel\n");
     for (int s = 0; s < kStreams; ++s)
-        std::printf("  %-7s record %6d   replay %6d\n", kStreamName[s],
-                    int(recordPass.streams[size_t(s)].size()), int(replayPass.streams[size_t(s)].size()));
+        std::printf("  %-7s record %6d   replay %6d   song file %6d\n", kStreamName[s],
+                    int(recordPass.streams[size_t(s)].size()), int(replayPass.streams[size_t(s)].size()),
+                    int(ownPass.streams[size_t(s)].size()));
     std::printf("output RMS per bar\n");
     for (size_t bar = 0; bar < recordPass.rmsPerBar.size(); ++bar)
         std::printf("  bar %2d   record %.5f   replay %.5f\n", int(bar) + 1,
