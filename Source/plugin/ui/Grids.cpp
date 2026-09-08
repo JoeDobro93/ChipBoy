@@ -201,7 +201,7 @@ bool editCmd(bank::Command& c, const juce::KeyPress& k, Entry& e)
 bool sameCommand(const bank::Command& a, const bank::Command& b) { return a.cmd == b.cmd && a.a == b.a && a.b == b.b && a.c == b.c; }
 bool sameCell(const tracker::Cell& a, const tracker::Cell& b)
 {
-    return a.note == b.note && a.inst == b.inst && a.table == b.table && sameCommand(a.cmd1, b.cmd1) && sameCommand(a.cmd2, b.cmd2);
+    return a.note == b.note && a.vel == b.vel && a.inst == b.inst && a.table == b.table && sameCommand(a.cmd1, b.cmd1) && sameCommand(a.cmd2, b.cmd2);
 }
 
 bool wheelCmd(bank::Command& c, int delta, int arg)
@@ -608,12 +608,20 @@ struct PhraseGrid::Impl {
         const auto& c = core.cols[size_t(col)];
         return (col >= 1 && c.kind == Kind::Cmd && core.cols[size_t(col - 1)].kind == Kind::Cmd) ? 1 : 0;
     }
+    /// The groove's tick counts, as the chip and its menu print them.
+    juce::String grooveTicks(int slot) const
+    {
+        if (slot <= 0 || song == nullptr || slot > int(song->grooves.size())) return "6/6";
+        const auto& gr = song->grooves[size_t(slot - 1)];
+        juce::String t;
+        for (int i = 0; i < gr.length(); ++i) t += (i ? "/" : "") + juce::String(gr.at(i));
+        return t;
+    }
     juce::String grooveText(int ch) const
     {
         const int g = groove[size_t(ch)];
-        if (g <= 0 || song == nullptr || g > int(song->grooves.size())) return "6/6";
-        const auto& gr = song->grooves[size_t(g - 1)];
-        return ValueFormat::number(g) + juce::String::charToString(0x00b7) + juce::String(gr.a) + "/" + juce::String(gr.b);
+        if (g <= 0) return "6/6";
+        return ValueFormat::number(g) + juce::String::charToString(0x00b7) + grooveTicks(g);
     }
 
     void refreshFromSong()
@@ -714,10 +722,8 @@ struct PhraseGrid::Impl {
         m.addSectionHeader("Groove");
         m.addItem(1, "Straight (6/6)", true, groove[size_t(ch)] == 0);
         if (song != nullptr)
-            for (int g = 1; g <= int(song->grooves.size()); ++g) {
-                const auto& gr = song->grooves[size_t(g - 1)];
-                m.addItem(1 + g, ValueFormat::number(g) + "  " + juce::String(gr.a) + " / " + juce::String(gr.b) + " ticks", true, groove[size_t(ch)] == g);
-            }
+            for (int g = 1; g <= int(song->grooves.size()); ++g)
+                m.addItem(1 + g, ValueFormat::number(g) + "  " + grooveTicks(g) + " ticks", true, groove[size_t(ch)] == g);
         m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(owner).withTargetScreenArea(owner.localAreaToGlobal(grooveRects[size_t(ch)])),
                         [this, ch, safe = juce::Component::SafePointer<juce::Component>(&owner)](int id) {
                             if (safe == nullptr || id == 0) return;

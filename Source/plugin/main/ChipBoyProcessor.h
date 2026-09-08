@@ -126,9 +126,22 @@ private:
     void applyHardwareOptions();
     void consumeLink(int n, uint64_t hostFrame, bool hostTimeKnown);
     void placeLinkEvent(const link::LinkEvent& e, int n, uint64_t hostFrame, bool hostTimeKnown);
-    void recordNote(const driver::NoteEvent& e, double tickAtEvent);
-    void recordSlots(int ch, double tick);
+    void recordNote(const driver::NoteEvent& e, double tickAtEvent, const bank::Bank* bank);
+    void recordSlots(int ch, double tick, const bank::Bank* bank);
     void applyRecordMessages();
+    /// Notes in a channel's keyswitch octave select an instrument and never
+    /// sound, so the recorder never writes them as cells (section 9.4).
+    bool keyswitchNote(int ch, const bank::Bank* bank, uint8_t note) const;
+    /// What this channel's slots revert to when they go to none (section 9.4).
+    tracker::SlotRevert slotRevert(int ch, const bank::Bank* bank) const;
+    /// All notes off on a channel: unconditional, never filtered by the
+    /// Trk/MIDI gate, so a lane changing hands leaves nothing ringing (9.1).
+    void flushChannel(int ch, std::vector<driver::NoteEvent>& dst, uint32_t offset = 0);
+    /// Whether the last note-on on a channel loaded its instrument, and which
+    /// slot it loaded -- what the recorder puts in the instrument column.
+    struct NoteReport { bool plain = true; uint8_t instrument = 0; };
+    NoteReport lastNote(int ch) const   // wired to Driver::noteReport when the pitch branch lands
+    { return { true, uint8_t(driver_.params(ch).instrument) }; }
     void publishInstrumentNames();
     void handleVoiceRequests();
     void tapScopes(int n, const float* L, const float* R);
@@ -172,6 +185,12 @@ private:
     std::atomic<int64_t> trackerTick_{ 0 };
     std::atomic<int> barTicks_{ driver::kTicksPerBeat * 4 };
     bool recWasArmed_ = false;
+    // What each lane looked like last block, so a change of hands can be
+    // flushed (section 9.1). -1 means "nothing seen yet".
+    std::array<int, 4> prevSource_{ -1, -1, -1, -1 };
+    std::array<int, 4> prevNoteSource_{ -1, -1, -1, -1 };
+    uint32_t prevOwned_ = 0;
+    bool     prevLink_ = false;
 
     // scopes
     ScopeBuffers scopes_;

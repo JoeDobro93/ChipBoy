@@ -201,7 +201,7 @@ bool bankFromVar(const var& v, Bank& out)
 var songToVar(const tracker::Song& s)
 {
     auto* o = new DynamicObject();
-    o->setProperty("format", "chipboy-song"); o->setProperty("version", 2); o->setProperty("stepsPerBar", int(s.stepsPerBar));
+    o->setProperty("format", "chipboy-song"); o->setProperty("version", 3); o->setProperty("stepsPerBar", int(s.stepsPerBar));
     // The song's own timeline (docs/COMMANDS_AND_TEMPO.md section 4).
     o->setProperty("tempoBpm", s.tempoBpm); o->setProperty("songStartSeconds", s.songStartSeconds); o->setProperty("beatsPerBar", s.beatsPerBar);
     Array<var> phrases;
@@ -212,6 +212,7 @@ var songToVar(const tracker::Song& s)
         for (const auto& c : p.steps) {
             auto* co = new DynamicObject();
             if (c.note) co->setProperty("n", int(c.note));
+            if (c.vel) co->setProperty("v", int(c.vel));
             if (c.inst) co->setProperty("i", int(c.inst));
             if (c.table) co->setProperty("t", int(c.table));
             if (c.cmd1.cmd != Cmd::None) co->setProperty("c1", cmdToVar(c.cmd1));
@@ -224,7 +225,11 @@ var songToVar(const tracker::Song& s)
     Array<var> chains; for (const auto& c : s.chain) { Array<var> a; for (auto p : c) a.add(int(p)); chains.add(a); }
     o->setProperty("chains", chains);
     Array<var> src; for (auto n : s.noteSource) src.add(int(n)); o->setProperty("noteSource", src);
-    Array<var> gr; for (const auto& g : s.grooves) { Array<var> a; a.add(int(g.a)); a.add(int(g.b)); gr.add(a); } o->setProperty("grooves", gr);
+    // A groove is sixteen tick counts (section 9.2); trailing unused entries
+    // are left out, so the common two-entry swing still reads as [a, b].
+    Array<var> gr;
+    for (const auto& g : s.grooves) { Array<var> a; for (int k = 0; k < g.length(); ++k) a.add(int(g.ticks[size_t(k)])); gr.add(a); }
+    o->setProperty("grooves", gr);
     return var(o);
 }
 
@@ -233,7 +238,7 @@ bool songFromVar(const var& v, tracker::Song& out)
     auto* o = v.getDynamicObject(); if (!o) return false;
     if (o->getProperty("format").toString() != "chipboy-song") return false;
     out = tracker::Song{};
-    out.stepsPerBar = uint8_t(std::clamp(getOr(o, "stepsPerBar", 16), 4, 32));
+    out.stepsPerBar = getOr(o, "stepsPerBar", 16) <= 8 ? 8 : 16;      // 8 or 16 (section 9.1)
     out.tempoBpm = std::clamp(o->hasProperty("tempoBpm") ? double(o->getProperty("tempoBpm")) : 120.0, 40.0, 255.0);
     out.songStartSeconds = std::max(0.0, o->hasProperty("songStartSeconds") ? double(o->getProperty("songStartSeconds")) : 0.0);
     out.beatsPerBar = std::clamp(o->hasProperty("beatsPerBar") ? double(o->getProperty("beatsPerBar")) : 4.0, 0.25, 32.0);
@@ -241,19 +246,28 @@ bool songFromVar(const var& v, tracker::Song& out)
         for (const auto& pv : *ph) {
             auto* po = pv.getDynamicObject(); if (!po) continue;
             const int slot = getOr(po, "slot", 0); if (slot < 1 || slot > tracker::kPhraseSlots) continue;
-            auto& p = out.phrases[size_t(slot - 1)]; p.used = true; p.groove = uint8_t(std::clamp(getOr(po, "groove", 0), 0, 15));
+            auto& p = out.phrases[size_t(slot - 1)]; p.used = true; p.groove = uint8_t(std::clamp(getOr(po, "groove", 0), 0, 16));
             if (auto* steps = po->getProperty("steps").getArray())
                 for (int k = 0; k < std::min(16, steps->size()); ++k) {
                     auto* co = (*steps)[k].getDynamicObject(); if (!co) continue;
                     auto& c = p.steps[size_t(k)];
-                    c.note = uint8_t(std::clamp(getOr(co, "n", 0), 0, 255)); c.inst = uint8_t(std::clamp(getOr(co, "i", 0), 0, 128)); c.table = uint8_t(std::clamp(getOr(co, "t", 0), 0, 64));
+                    c.note = uint8_t(std::clamp(getOr(co, "n", 0), 0, 255)); c.vel = uint8_t(std::clamp(getOr(co, "v", 0), 0, 127));
+                    c.inst = uint8_t(std::clamp(getOr(co, "i", 0), 0, 128)); c.table = uint8_t(std::clamp(getOr(co, "t", 0), 0, 64));
                     c.cmd1 = cmdFromVar(co->getProperty("c1")); c.cmd2 = cmdFromVar(co->getProperty("c2"));
                 }
         }
     if (auto* chains = o->getProperty("chains").getArray())
         for (int ch = 0; ch < std::min(4, chains->size()); ++ch) if (auto* a = (*chains)[ch].getArray()) { out.chain[size_t(ch)].clear(); for (const auto& p : *a) out.chain[size_t(ch)].push_back(uint8_t(std::clamp(int(p), 0, 255))); }
     if (auto* src = o->getProperty("noteSource").getArray()) for (int ch = 0; ch < std::min(4, src->size()); ++ch) out.noteSource[size_t(ch)] = tracker::NoteSource(std::clamp(int((*src)[ch]), 0, 1));
-    if (auto* gr = o->getProperty("grooves").getArray()) for (int k = 0; k < std::min(16, gr->size()); ++k) if (auto* a = (*gr)[k].getArray()) if (a->size() >= 2) { out.grooves[size_t(k)].a = uint8_t(std::clamp(int((*a)[0]), 1, 32)); out.grooves[size_t(k)].b = uint8_t(std::clamp(int((*a)[1]), 1, 32)); }
+    // Sixteen tick counts; the old two-entry form reads as the first two.
+    if (auto* gr = o->getProperty("grooves").getArray())
+        for (int k = 0; k < std::min(16, gr->size()); ++k)
+            if (auto* a = (*gr)[k].getArray()) {
+                auto& t = out.grooves[size_t(k)].ticks;
+                t = {};
+                for (int i = 0; i < std::min(int(t.size()), a->size()); ++i) t[size_t(i)] = uint8_t(std::clamp(int((*a)[i]), 0, 48));
+                if (t[0] == 0) t[0] = 6;
+            }
     return true;
 }
 
