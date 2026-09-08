@@ -556,7 +556,7 @@ inherited.
 | Vibrato | §8.4 | period register |
 | Transpose | on / off | Whether the table's transpose column applies |
 | Note-off behaviour | kill / release / ignore | §10.4 |
-| Retrigger | retrigger / legato | §10.5 |
+| Overlap | legato / retrig | §10.5. *Revised 2026-09-08: see [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §8:* an overlapping MIDI note on the same instrument is a bare note (pitch only) under legato, a plain retrigger under retrig. |
 
 A PULSE instrument may load on PU1 or PU2 (sweep fields are inert on PU2). WAVE and KIT
 load only on WAV; NOISE only on NOI. The UI does not offer invalid combinations.
@@ -624,6 +624,11 @@ not pretend the parameter is continuous, and it does not hide the duplicates.
 One step per tick. At the end: loop to step 1, hop to a given step, or stop and hold the
 last values. A table is shared by every instrument that references it; editing it changes
 all of them, which is the point.
+
+*Revised 2026-09-08: see [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §7:* one
+row per tick is the default; a `G` inside the table sets that run's row lengths from a
+groove instead, and an instrument whose Table mode is Step advances one row per plain
+note-on instead of per tick.
 
 ### 9.6 Commands
 
@@ -982,7 +987,9 @@ project load order audible.
 - **Kit editor.** Import, trim, note map, playback rate, per-sample preview showing the
   4-bit result rather than the source.
 - **Global.** Master volume L/R, output trim, headphone noise, de-click, tick source,
-  link mode.
+  link mode. *Revised 2026-09-08: see [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md)
+  §4:* **Tempo source** (Host/Song), **Song tempo** and **Quantize notes to ticks**
+  replace the old tick source, and moved to the header bar.
 - **Phrases.** A tracker: per channel a note, instrument, table and two command columns,
   sixteen steps to a phrase, phrases chained by bar, following the host transport. A
   channel's notes come either from the piano roll (shown, not editable) or from the
