@@ -1,6 +1,8 @@
 // ChipBoy -- the main window (UI_DESIGN section 2): header, mixer row,
 // tabs with their context line, the seven editor panels and the status
-// line. Fixed 1180 x 760 at 100 %, scaled as a whole at 125 / 150 %.
+// line. 1180 wide at 100 %, scaled as a whole at 125 / 150 %; the height
+// stretches from kMainHeight up, and everything the extra height buys goes
+// to the editor pane.
 //
 // One 30 Hz timer drives everything live: LEDs, badges, registers, the
 // context line, the transport, focus requests from Voice plugins, and the
@@ -56,6 +58,8 @@ private:
     std::unique_ptr<ParamWatch> hexWatch_;
     int selected_ = 0, tab_ = 0;
     float scale_ = 1.0f;
+    int height_ = ui::kMainHeight;   ///< the window height at 100 %, what the panels are laid out in
+    bool rescaling_ = false;         ///< inside setScale: a resize then is the scale's, not the user's
     const bank::Bank* lastBank_ = nullptr;
     const tracker::Song* lastSong_ = nullptr;
     RichText lastContext_;

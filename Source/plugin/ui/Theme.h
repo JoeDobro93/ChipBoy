@@ -115,9 +115,14 @@ public:
     juce::Font getAlertWindowFont() override;
 };
 
-/// Window sizes at 100 % (UI_DESIGN sections 2 and 8).
+/// Window sizes at 100 % (UI_DESIGN sections 2 and 8). The main window is
+/// fixed in width and stretches in height: kMainHeight is the default and
+/// the smallest height, the one the Instrument tab's tallest content (a
+/// Pulse instrument, every card) fits into without a scrollbar --
+/// header 54 + mixer row 378 + tab bar 34 + editor pane 826 + status 26.
 constexpr int kMainWidth = 1180;
-constexpr int kMainHeight = 760;
+constexpr int kMainHeight = 1318;
+constexpr int kMainMaxHeight = 2400;   ///< as tall as a screen is ever likely to be at 100 %
 constexpr int kVoiceWidth = 560;
 constexpr int kVoiceHeight = 420;
 

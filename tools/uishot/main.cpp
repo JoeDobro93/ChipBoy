@@ -1,6 +1,8 @@
 // chipboy_uishot -- open the two editors off-screen, play a little through
 // the main one so the scopes have something to show, and save PNG snapshots
-// of every tab and of the Voice window. Needs a display (Xvfb will do).
+// of every tab, of the main window stretched 200 px taller, and of the Voice
+// window. Every shot reports its scrolling panes, so a run says plainly
+// whether a tab fits the window. Needs a display (Xvfb will do).
 //
 //   chipboy_uishot <output folder>
 #include "plugin/main/ChipBoyProcessor.h"
@@ -21,6 +23,20 @@ void save(juce::Component& c, const juce::File& f)
     juce::FileOutputStream out(f);
     if (out.openedOk()) { out.setPosition(0); out.truncate(); juce::PNGImageFormat().writeImageToStream(img, out); }
     std::printf("wrote %s (%d x %d)\n", f.getFullPathName().toRawUTF8(), img.getWidth(), img.getHeight());
+}
+
+/// Every scrolling pane on the visible tab: what it is showing, and whether
+/// it had to put a scrollbar up. The Instrument tab must fit at the default
+/// size (UI_DESIGN section 2).
+void reportPanes(juce::Component& c, const char* what)
+{
+    if (auto* v = dynamic_cast<juce::Viewport*>(&c)) {
+        const auto* held = v->getViewedComponent();
+        std::printf("  %s: pane %d x %d holds %d -- %s\n", what, v->getWidth(), v->getHeight(),
+                    held != nullptr ? held->getHeight() : 0, v->getVerticalScrollBar().isVisible() ? "SCROLLS" : "fits");
+    }
+    for (int i = 0; i < c.getNumChildComponents(); ++i)
+        if (auto* k = c.getChildComponent(i); k->isVisible()) reportPanes(*k, what);
 }
 
 template <typename T>
@@ -108,6 +124,7 @@ int main(int argc, char** argv)
     pump(600);
     play(proc, ph, 40); pump(300);
     save(*ed, outDir.getChildFile("main_instrument.png"));
+    reportPanes(*ed, "instrument");
 
     if (auto* bar = findChild<juce::TabbedButtonBar>(ed.get())) {
         const char* names[] = { "instrument", "tables", "waves", "kits", "phrases", "link", "hardware" };
@@ -116,9 +133,19 @@ int main(int argc, char** argv)
             pump(300);
             play(proc, ph, 20); pump(200);
             save(*ed, outDir.getChildFile(juce::String("main_") + names[i] + ".png"));
+            reportPanes(*ed, names[i]);
         }
         bar->setCurrentTabIndex(0);
+        pump(200);
     } else std::printf("no tab bar found\n");
+
+    // The window stretches in height: the top stays where it is and the
+    // extra 200 px are the editor pane's (UI_DESIGN section 2).
+    ed->setSize(ed->getWidth(), ed->getHeight() + 200);
+    pump(300);
+    play(proc, ph, 20); pump(200);
+    save(*ed, outDir.getChildFile("main_instrument_tall.png"));
+    reportPanes(*ed, "instrument tall");
 
     // The Voice window, linked to the main instance.
     proc.apvts.getParameter(ids::linkMode)->setValueNotifyingHost(1.0f);
@@ -137,6 +164,7 @@ int main(int argc, char** argv)
     pump(600);
     play(proc, ph, 20); pump(300);
     save(*ved, outDir.getChildFile("voice.png"));
+    reportPanes(*ved, "voice");
 
     ved.reset();
     ed.reset();

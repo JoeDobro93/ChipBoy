@@ -17,7 +17,7 @@ using namespace chipboy::ui;
 
 namespace {
 constexpr int kTabsHeight = 34, kEditorPad = 12, kTabBarWidth = 640;
-const Identifier kScaleProp("ui_scale");
+const Identifier kScaleProp("ui_scale"), kHeightProp("ui_height");
 const char* kTabNames[] = { "Instrument", "Tables", "Waves", "Kits", "Phrases", "Link", "Hardware" };
 }
 
@@ -97,9 +97,12 @@ ChipBoyEditor::ChipBoyEditor(ChipBoyProcessor& p)
     lastCorner_ = analogCornerHz(processor_);
     mixer_.setAnalogCornerHz(lastCorner_);
 
+    // What the project remembered: the scale, and how tall the window was
+    // dragged. The width never changes, so the corner only moves vertically.
     const double stored = double(processor_.apvts.state.getProperty(kScaleProp, 1.0));
     const float f = std::abs(stored - 1.25) < 0.01 ? 1.25f : std::abs(stored - 1.5) < 0.01 ? 1.5f : 1.0f;
-    setResizable(false, false);
+    height_ = std::clamp(int(processor_.apvts.state.getProperty(kHeightProp, kMainHeight)), kMainHeight, kMainMaxHeight);
+    setResizable(true, true);
     setWantsKeyboardFocus(true);
     setScale(f);
 
@@ -138,13 +141,18 @@ void ChipBoyEditor::showTab(int tab)
     refreshContext();
 }
 
+/// The scale multiplies the whole window, the height it is at included, and
+/// with it the limits the resizer works to.
 void ChipBoyEditor::setScale(float factor)
 {
     scale_ = std::abs(factor - 1.25f) < 0.01f ? 1.25f : std::abs(factor - 1.5f) < 0.01f ? 1.5f : 1.0f;
     header_.setScale(scale_);
     processor_.apvts.state.setProperty(kScaleProp, double(scale_), nullptr);
     content_.setTransform(AffineTransform::scale(scale_));
-    setSize(roundToInt(kMainWidth * scale_), roundToInt(kMainHeight * scale_));
+    const ScopedValueSetter<bool> guard(rescaling_, true);
+    const int w = roundToInt(kMainWidth * scale_);
+    setResizeLimits(w, roundToInt(kMainHeight * scale_), w, roundToInt(kMainMaxHeight * scale_));
+    setSize(w, roundToInt(height_ * scale_));
 }
 
 void ChipBoyEditor::refreshContext()
@@ -212,13 +220,22 @@ void ChipBoyEditor::paint(Graphics& g)
 
 void ChipBoyEditor::resized()
 {
-    content_.setBounds(0, 0, kMainWidth, kMainHeight);
+    // A resize the user (or the host) made is the height to remember; the
+    // one setScale causes is the same window in different pixels.
+    if (!rescaling_) {
+        const int h = std::clamp(roundToInt(getHeight() / scale_), kMainHeight, kMainMaxHeight);
+        if (h != height_) { height_ = h; processor_.apvts.state.setProperty(kHeightProp, height_, nullptr); }
+    }
+    content_.setBounds(0, 0, kMainWidth, height_);
     layoutContent();
 }
 
+/// Header, mixer row and tabs keep their heights at the top and the status
+/// line stays at the bottom, so every pixel of a taller window is the
+/// editor pane's.
 void ChipBoyEditor::layoutContent()
 {
-    auto area = Rectangle<int>(0, 0, kMainWidth, kMainHeight);
+    auto area = Rectangle<int>(0, 0, kMainWidth, height_);
     header_.setBounds(area.removeFromTop(HeaderBar::kHeight));
     mixer_.setBounds(area.removeFromTop(MixerRow::kHeight));
     tabs_->setBounds(area.removeFromTop(kTabsHeight));
