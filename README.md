@@ -34,8 +34,10 @@ bank (instruments, tables, waves and frames, kits), a driver with its own tick, 
 tracker that follows the host transport and records, two plugins linked through shared
 memory, the Hardware panel's options, and the window from the mockup with its
 visualizer. It has been compiled and tested on Linux (61 core tests, the link
-integration test, VST3 and Standalone builds); the Windows and macOS builds run in CI
-but have not yet been played in a DAW.
+integration test, VST3 and Standalone builds). The Windows and macOS builds are made
+by hand from the same tree (the build section below); CI builds them only when asked
+(Actions → CI → Run workflow) or for a `v*` tag, since the local Linux gate runs
+before every push.
 
 **Revised on 2026-09-07:** the channel is now a visible tracker row — an instrument, a
 table and two command slots — instead of a row of lanes that silently overrode the

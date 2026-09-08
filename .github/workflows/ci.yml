@@ -1,9 +1,26 @@
 name: CI
 
+# Actions minutes are scarce on a private repository (a macOS runner counts
+# ten times, Windows twice), and every gate already runs locally before a
+# push (CLAUDE.md, "Verification runs here"). So a push to main runs only
+# the L1 rule check. The builds run when asked for -- Actions -> CI ->
+# "Run workflow" with the platforms you want, or a v* tag, which builds all.
 on:
   push:
     branches: [main]
-  pull_request:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: Which runners build and test
+        type: choice
+        default: linux
+        options: [linux, windows, macos, all]
+
+# A newer push or dispatch on the same ref cancels the older run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # Spec rule L1: Source/core links nothing and includes nothing but the
@@ -28,13 +45,39 @@ jobs:
           if grep -rEin 'juce' Source/core; then echo "L1 violation: JUCE referenced in Source/core"; bad=1; fi
           exit $bad
 
+  # Which runners this run builds on: the dispatch input, every platform for
+  # a tag, none for an ordinary push.
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        shell: bash
+        env:
+          PLATFORMS: ${{ github.event.inputs.platforms }}
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          p="$PLATFORMS"; [ "$IS_TAG" = "true" ] && p=all
+          case "$p" in
+            linux)   m='["ubuntu-latest"]' ;;
+            windows) m='["windows-latest"]' ;;
+            macos)   m='["macos-latest"]' ;;
+            all)     m='["ubuntu-latest","macos-latest","windows-latest"]' ;;
+            *)       m='[]' ;;
+          esac
+          echo "matrix=$m" >> "$GITHUB_OUTPUT"
+          echo "building on $m"
+
   build-and-test:
     name: ${{ matrix.os }}
-    needs: core-links-nothing
+    needs: [core-links-nothing, plan]
+    if: needs.plan.outputs.matrix != '[]'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -69,11 +112,12 @@ jobs:
 
   plugins:
     name: plugins ${{ matrix.os }}
-    needs: core-links-nothing
+    needs: [core-links-nothing, plan]
+    if: needs.plan.outputs.matrix != '[]'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -81,14 +125,38 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libfreetype6-dev libfontconfig1-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libgl1-mesa-dev libcurl4-openssl-dev
+          sudo apt-get install -y ccache libasound2-dev libfreetype6-dev libfontconfig1-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libgl1-mesa-dev libcurl4-openssl-dev
+      - name: ccache (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ccache
+
+      # JUCE is most of the build; a warm ccache turns the hour into minutes.
+      # Windows/MSVC is left uncached: ccache's MSVC support does not cover
+      # the flags JUCE uses.
+      - name: ccache store
+        if: runner.os != 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.os == 'macOS' && '~/Library/Caches/ccache' || '~/.cache/ccache' }}
+          key: ccache-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
+            ccache-${{ runner.os }}-
+
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCHIPBOY_BUILD_PLUGIN=ON -DCHIPBOY_BUILD_TESTS=OFF
+        shell: bash
+        run: |
+          launcher=""
+          if [ "$RUNNER_OS" != "Windows" ]; then launcher="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"; fi
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCHIPBOY_BUILD_PLUGIN=ON -DCHIPBOY_BUILD_TESTS=OFF $launcher
       - name: Build (VST3, Standalone, tools)
         run: cmake --build build --config Release --parallel --target ChipBoy_VST3 ChipBoyVoice_VST3 ChipBoy_Standalone chipboy_paramdump chipboy_linktest chipboy_recordtest
       - name: Build (AU)
         if: runner.os == 'macOS'
         run: cmake --build build --config Release --parallel --target ChipBoy_AU ChipBoyVoice_AU
+      - name: ccache statistics
+        if: runner.os != 'Windows'
+        run: ccache -s
       - name: Link and record integration tests
         run: ctest --test-dir build -C Release -R "linktest|recordtest" --output-on-failure
       - name: Link test stages (on failure)
