@@ -60,6 +60,8 @@ void pump(int ms) { juce::MessageManager::getInstance()->runDispatchLoopUntil(ms
 /// executable is given (1 MB by default), so the frame faulted in the
 /// prologue, before the first line of the test had run.
 std::unique_ptr<ChipBoyProcessor> machine() { return std::make_unique<ChipBoyProcessor>(); }
+/// And a whole song is 83 KB, for the same reason.
+std::unique_ptr<chipboy::tracker::Song> song() { return std::make_unique<chipboy::tracker::Song>(); }
 
 float peak(const juce::AudioBuffer<float>& b)
 {
@@ -215,11 +217,13 @@ int main()
               "a cell command's revert form round-trips");
         check(s && !chipboy::bank::isRevert(s->phrases[0].steps[0].cmd2) && s->phrases[0].steps[0].cmd2.a == 4,
               "a cell command with a value does not come back as a revert");
-        chipboy::tracker::Song old;
+        const auto oldOwned = song();
+        auto& old = *oldOwned;
         const bool read = songFromJson("{\"format\":\"chipboy-song\",\"grooves\":[[7,5]]}", old);
         check(read && old.grooves[0].length() == 2 && old.grooves[0].at(0) == 7 && old.grooves[0].at(1) == 5, "the old two-entry groove form still reads");
         // A file written before the field existed reads as a plain command.
-        chipboy::tracker::Song noC;
+        const auto noCOwned = song();
+        auto& noC = *noCOwned;
         const bool readOld = songFromJson("{\"format\":\"chipboy-song\",\"phrases\":[{\"slot\":1,\"steps\":[{\"c1\":{\"c\":\"E\",\"a\":9,\"b\":3}}]}]}", noC);
         check(readOld && noC.phrases[0].steps[0].cmd1.c == 0 && noC.phrases[0].steps[0].cmd1.a == 9,
               "a cell command written before the revert field reads as a value");
@@ -227,7 +231,8 @@ int main()
 
     /* ---- the Song tempo parameter is the song's base tempo (section 4) - */
     {
-        ChipBoyProcessor p;
+        const auto pOwned = machine();
+        auto& p = *pOwned;
         p.prepareToPlay(48000.0, 512);
         FakePlayHead head;
         p.setPlayHead(&head);
@@ -245,11 +250,13 @@ int main()
         // A song saved from here carries that tempo, and one loaded brings its own back.
         juce::MemoryBlock state;
         p.getStateInformation(state);
-        chipboy::tracker::Song written;
+        const auto writtenOwned = song();
+        auto& written = *writtenOwned;
         const auto tree = juce::ValueTree::readFromData(state.getData(), state.getSize());
         check(tree.isValid() && songFromJson(tree["song"].toString(), written) && std::abs(written.tempoBpm - 150.0) < 1e-6,
               "the saved song carries the Song tempo parameter's value");
-        ChipBoyProcessor q;
+        const auto qOwned = machine();
+        auto& q = *qOwned;
         q.setStateInformation(state.getData(), int(state.getSize()));
         const auto reopened = q.song();
         check(reopened && std::abs(reopened->tempoBpm - 150.0) < 1e-6, "a saved song opens at its own tempo");
