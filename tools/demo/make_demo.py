@@ -73,6 +73,10 @@ MANUFACTURER_CODE = 0x43687062   # 'Chpb'
 PLUGIN_CODE = 0x43686279         # 'Chby'
 VST3_CID = "ABCDEF01" + "9182FAEB" + "%08X%08X" % (MANUFACTURER_CODE, PLUGIN_CODE)
 
+# Reaper writes a plugin's state as base64 lines of this length and joins
+# them again when it reads the project.
+RPP_BASE64_COLS = 128
+
 # A fixed project timestamp, so the output never changes between runs.
 PROJECT_TIMESTAMP = 1788825600   # 2026-09-07 00:00:00 UTC
 
@@ -670,21 +674,35 @@ def fmt(x):
     return s if s else "0"
 
 
-def vst_chunk_lines():
-    """Reaper's state chunk for a VST3 with no inputs and a stereo output, and
-    no saved plugin state (the plugin loads its defaults; the envelopes set
-    everything the demo needs). Layout: id, magic 0xFEED5EEE, input count and
-    masks, output count and masks, state size, 1, 0x10FFFF; then the empty
-    program and preset names and the terminator."""
+def vst_chunk_lines(state=b""):
+    """Reaper's state chunk for a VST3 with no inputs and a stereo output.
+    Layout: id, magic 0xFEED5EEE, input count and masks, output count and
+    masks, **the state's size**, 1, 0x10FFFF; then that many bytes of plugin
+    state; then the empty program and preset names and the terminator.
+
+    With no state (the first two projects) the size is zero and nothing sits
+    between the header and the terminator: the plugin loads its defaults and
+    the envelopes set everything the demo needs. The hybrid project passes the
+    bytes `chipboy_recordtest --write-state` wrote, which carry the song, its
+    bank and the four Hybrid channels (section 20).
+
+    Reaper reads a chunk as base64 lines and joins what they decode to, so the
+    header, the state and the terminator are separate lines and the state is
+    split at RPP_BASE64_COLS characters -- a multiple of four, so every line
+    is whole bytes wherever the join happens."""
     number = reaper_vst3_number(VST3_CID)
     header = struct.pack("<IIII", number, 0xFEED5EEE, 0, 2)
     header += struct.pack("<QQ", 1, 2)
-    header += struct.pack("<III", 0, 1, 0x0010FFFF)
+    header += struct.pack("<III", len(state), 1, 0x0010FFFF)
     trailer = bytes([0, 0]) + struct.pack("<I", 0x10)
-    return [base64.b64encode(header).decode("ascii"), base64.b64encode(trailer).decode("ascii")]
+    lines = [base64.b64encode(header).decode("ascii")]
+    encoded = base64.b64encode(state).decode("ascii")
+    lines += [encoded[i:i + RPP_BASE64_COLS] for i in range(0, len(encoded), RPP_BASE64_COLS)]
+    lines.append(base64.b64encode(trailer).decode("ascii"))
+    return lines
 
 
-def write_rpp(path, song, envelopes, table, tag=""):
+def write_rpp(path, song, envelopes, table, tag="", state=b""):
     # tag keeps the two projects' GUIDs apart while the derivation stays the
     # same: uuid5 of the fixed namespace over "chipboy-demo/" + the name.
     g = lambda name: guid(tag + name)
@@ -759,7 +777,7 @@ def write_rpp(path, song, envelopes, table, tag=""):
     w('      DOCKED 0')
     w('      BYPASS 0 0 0')
     w('      <VST "VST3i: ChipBoy (ChipBoy)" ChipBoy.vst3 0 "" %d{%s} ""' % (number, VST3_CID))
-    for line in vst_chunk_lines():
+    for line in vst_chunk_lines(state):
         w('        ' + line)
     w('      >')
     w('      FLOATPOS 0 0 0 0')
@@ -1036,12 +1054,26 @@ def main():
     write_midi(os.path.join(out, "chipboy_demo.mid"), song)
     write_rpp(os.path.join(out, "ChipBoy Demo.rpp"), song, envelopes, table)
     write_rpp(os.path.join(out, "ChipBoy Demo (song tempo).rpp"), song, song_tempo_envelopes, table, "song-tempo/")
+    # The hybrid project (docs/COMMANDS_AND_TEMPO.md section 20): the same MIDI
+    # item, the plugin's saved state instead of the automation -- the demo song
+    # in a tab with its own bank and all four channels on Hybrid -- and only
+    # the two lanes that are not tracker-level, the model and De-click.
+    state_path = os.path.join(out, "chipboy_demo_hybrid.state")
+    hybrid_written = os.path.isfile(state_path)
+    if hybrid_written:
+        with open(state_path, "rb") as f:
+            state = f.read()
+        write_rpp(os.path.join(out, "ChipBoy Demo (hybrid).rpp"), song, hardware, table, "hybrid/", state)
+    else:
+        print("no plugin state at %s: the hybrid project is not written."
+              " Write it with chipboy_recordtest --write-state" % state_path, file=sys.stderr)
     write_parameters_md(os.path.join(out, "PARAMETERS.md"), table, envelopes, song_tempo_envelopes)
     write_automation_json(os.path.join(out, "chipboy_demo_automation.json"), table, statics, lanes, hardware)
     n = len(song.events)
-    print("wrote %s: %d MIDI events, %d + %d envelopes, %d parameters"
-          % (out, n, len(envelopes), len(song_tempo_envelopes), len(table)))
-    ok = True
+    print("wrote %s: %d MIDI events, %d + %d envelopes, %d parameters%s"
+          % (out, n, len(envelopes), len(song_tempo_envelopes), len(table),
+             ", hybrid state %d bytes" % len(state) if hybrid_written else ""))
+    ok = hybrid_written
     if args.paramdump:
         ok = check_against_paramdump(args.paramdump, table)
     return 0 if ok else 1
