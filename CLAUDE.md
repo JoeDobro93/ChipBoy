@@ -1,41 +1,37 @@
 
-## Working agreement: who does what
+## Working agreement: the session model does the work
 
-The session model is hands-on. It plans, writes briefs, reviews results,
-integrates, and does the small and medium work itself: merges, integration
-glue, one-file fixes, reviews of diffs and screenshots, documentation edits.
-It hands out only the large, self-contained implementation stages — and
-fewer, bigger ones rather than many small ones, so each stage carries its
-own build and tests once.
+The session model does the work itself — design, code, tests, docs, the
+merge and the push — in the main checkout, with incremental builds and one
+full gate per change (see below). That is the default; it proved faster and
+cheaper on the 5-hour limit than orchestrating subagents, which pay for a
+cold context, a brief, a full rebuild in a worktree, a merge and a second
+gate for every stage.
 
-- **Opus** (`model: "opus"`) takes the demanding stages: audio engine, driver,
-  tracker, layout work, anything that needs judgement across many files.
-- **Sonnet** (`model: "sonnet"`) takes well-specified mechanical work:
-  documentation sync, screenshots, renames, generated files, lookups.
-- A subagent on the session model's own model needs the user's permission
-  first, with the reason. `.claude/settings.json` enforces this with a
-  PreToolUse hook on the Agent tool (`.claude/hooks/subagent_model_guard.py`);
-  the same rule belongs in `~/.claude/settings.json` for other projects.
+Subagents are the exception, used only when they clearly pay:
 
-Stages run **one at a time, in the main checkout**, so builds stay
-incremental and there is nothing to merge; two stages in parallel only when
-the wall-clock gain is worth two worktrees, two full rebuilds and a merge.
-A brief carries a **budget** — a scope that fits in about an hour of agent
-time — and the agent reports at the budget with what is left, rather than
-iterating on: no open-ended fitting, tuning or "try another model" loops;
-measured numbers go in as lookup tables. The full test suite runs once at
-the end of a stage; during the work only the tests of the touched area. The
-orchestrator re-runs the gate only after a true merge (a fast-forward of a
-tree the agent already verified is not re-verified).
+- a **bounded Sonnet task** (`model: "sonnet"`) that can run while the
+  session model codes and touches files it is not editing: a documentation
+  sync, screenshot regeneration, a mechanical rename, a demo regeneration;
+- a **measurement or research run** with a fixed budget (about an hour) and
+  a rule against open-ended fitting or tuning — measured numbers go in as
+  lookup tables, and the agent reports at the budget with what is left;
+- **Opus** (`model: "opus"`) only for a self-contained piece the session
+  model would otherwise have to serialise behind other work, with the same
+  budget and never two in parallel.
 
-Briefs to subagents say what to build, which files they own, how to verify,
-and that they must not poll a build in a loop: run a build in the foreground
-with a generous timeout and read its result. Never start a background
-`until grep … sleep` watcher, a Monitor on a build log, or any process that
-outlives the step — a superseded watcher waits forever and shows up as a
-hung task. Before reporting, a subagent kills anything it started in the
-background and says so; the orchestrator checks `pgrep -af "until grep|sleep"`
-after each stage and ends what is left.
+A subagent on the session model's own model needs the user's permission
+first, with the reason; `.claude/settings.json` enforces this with a
+PreToolUse hook on the Agent tool (`.claude/hooks/subagent_model_guard.py`).
+No subagent starts a background watcher (`until grep … sleep`, a Monitor on a
+build log) or leaves a process behind; builds run in the foreground with a
+timeout; the session model checks `pgrep -af "until grep|sleep"` after a
+stage and ends what is left.
+
+Sessions stay short: `docs/HANDOFF.md` carries the project's state, the open
+questions and the exact verification commands, and is updated at the end of
+every change, so a new chat starts from this file and that one rather than
+from a long transcript.
 
 ## Verification runs here, not in Actions
 
