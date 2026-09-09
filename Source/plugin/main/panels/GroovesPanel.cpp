@@ -41,15 +41,12 @@ GroovesPanel::GroovesPanel(ChipBoyProcessor& p)
     // The stepper in the editor's head and the list are one selection.
     editor_.onSlotChange = [this](int slot) { slot_ = slot; list_.setSelected(slot, dontSendNotification); contextChanged(); };
 
-    const String em = String(CharPointer_UTF8("\xe2\x80\x94"));
+    // Three lines, not an essay (docs/COMMANDS_AND_TEMPO.md section 30).
     RichText h;
-    h.bold("A groove").plain(" is sixteen tick counts. Step ").bold("i").plain(" of a phrase lasts ").bold("ticks[i mod length]")
-     .plain(" ticks, so two entries swing, three make triplets, and one holds every step the same. Straight is six ticks a step, and a 4/4 bar of sixteen steps is 96.")
-     .plain("\n\nEach row's bar is drawn against the longest entry, so the swing shows without arithmetic; the number on the right is the tick that step starts on, in the warn colour when it falls at or past the end of the bar and the step never fires.")
-     .plain("\n\nThe head has the slot on show " + em + " 0 is straight and cannot be edited " + em + " the total against the bar's ticks, the swing the first pair makes, and a ")
-     .bold("nudge").plain(" that moves one tick between the entries of every pair: 6 6, 7 5, 8 4.")
-     .plain("\n\nGrooves serve tables as well as phrases. Which one a phrase runs on is the chip in the lane's head, over in the Tracker tab; a ")
-     .bold("G").plain(" in a cell or a command slot overrides it.");
+    h.bold("A groove").plain(" is sixteen tick counts: step ").bold("i").plain(" lasts ").bold("ticks[i mod length]").plain(".\n\n")
+     .plain("Two entries swing, three make triplets; straight is six a step, and sixteen straight steps are 96 ticks.\n\n")
+     .plain("Grooves serve tables as well as phrases. A phrase's own is the chip in the Tracker tab's head; a ")
+     .bold("G").plain(" overrides it.");
     help_.setText(h);
 
     editor_.setSong(processor.song());

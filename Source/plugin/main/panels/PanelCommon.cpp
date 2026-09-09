@@ -180,6 +180,70 @@ int FlowGrid::layout(int width, bool apply)
 int FlowGrid::preferredHeight(int width) { return layout(width, false); }
 void FlowGrid::resized() { layout(getWidth(), true); }
 
+/* ------------------------------------------------------------- form */
+
+FormRow::FormRow(const String& label, std::unique_ptr<Component> control, int controlWidth, int controlHeight, int labelWidth)
+    : label_(label), control_(std::move(control)), controlW_(controlWidth), controlH_(controlHeight), labelW_(labelWidth)
+{
+    addAndMakeVisible(*control_);
+}
+FormRow::~FormRow() = default;
+
+int FormRow::preferredHeight(int) { return std::max(FormGroup::kRow, controlH_ + 2); }
+
+void FormRow::resized()
+{
+    const int w = controlW_ > 0 ? std::min(controlW_, std::max(20, getWidth() - labelW_)) : std::max(20, getWidth() - labelW_);
+    control_->setBounds(labelW_, (getHeight() - controlH_) / 2, w, controlH_);
+}
+
+void FormRow::paint(Graphics& g)
+{
+    g.setFont(ui::Fonts::sans(12.0f));
+    g.setColour(ui::colours::textMute);
+    g.drawText(label_, 0, 0, labelW_ - 8, getHeight(), Justification::centredLeft, false);
+}
+
+FormGroup::FormGroup(const String& caption, int labelWidth) : caption_(caption), labelWidth_(labelWidth) {}
+FormGroup::~FormGroup() = default;
+
+void FormGroup::addRow(std::unique_ptr<FormRow> row, const String& tip)
+{
+    if (tip.isNotEmpty()) row->setTooltip(tip);
+    addAndMakeVisible(*row);
+    rows_.push_back(std::move(row));
+}
+
+void FormGroup::addWide(std::unique_ptr<Block> b)
+{
+    addAndMakeVisible(*b);
+    rows_.push_back(std::move(b));
+}
+
+int FormGroup::preferredHeight(int width)
+{
+    int h = kCaption;
+    for (auto& r : rows_) h += r->preferredHeight(width);
+    return h;
+}
+
+void FormGroup::resized()
+{
+    int y = kCaption;
+    for (auto& r : rows_) {
+        const int h = r->preferredHeight(getWidth());
+        r->setBounds(0, y, getWidth(), h);
+        y += h;
+    }
+}
+
+void FormGroup::paint(Graphics& g)
+{
+    ui::draw::caption(g, caption_, { 0, 0, getWidth(), kCaption - 5 }, Justification::centredLeft, ui::colours::textDim, 10.0f);
+    g.setColour(ui::colours::lineSoft);
+    g.fillRect(0, kCaption - 5, getWidth(), 1);
+}
+
 Card::Card(const String& heading, std::unique_ptr<Block> content, const String& note)
     : heading_(heading), note_(note), content_(std::move(content))
 {

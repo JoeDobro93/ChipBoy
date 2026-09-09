@@ -86,15 +86,16 @@ private:
 
 /* ------------------------------------------------------------- rows */
 
-/// A switch row: the Toggle carries the title and the fact line as its
-/// description; the explanation sits under it (the mockup's .toggle-row).
+/// A switch row: the Toggle carries the title and the measured fact, and
+/// what the switch does is its tooltip -- a label and a line, not a
+/// paragraph (docs/COMMANDS_AND_TEMPO.md section 30).
 class HardwarePanel::ToggleRow : public Block {
 public:
-    ToggleRow(const String& title, const String& desc, const String& fact) : toggle(title), desc_(RichText(desc)), fact_(fact)
+    ToggleRow(const String& title, const String& desc, const String& fact) : toggle(title), fact_(fact)
     {
         toggle.setDescription(fact);
+        toggle.setTooltip(desc);
         addAndMakeVisible(toggle);
-        addAndMakeVisible(desc_);
     }
     void setFact(const String& f)
     {
@@ -117,37 +118,33 @@ public:
         if (extra_) extra_->setEnabled(!d);
     }
     int toggleWidth(int width) const { return width - 2 * kRowInset - (extra_ ? extraW_ + 10 : 0); }
-    int preferredHeight(int width) override
-    {
-        return kRowPad + toggle.preferredHeight(toggleWidth(width)) + 2 + desc_.preferredHeight(width - 2 * kRowInset) + kRowPad;
-    }
+    int preferredHeight(int width) override { return kRowPad + toggle.preferredHeight(toggleWidth(width)) + kRowPad; }
     void resized() override
     {
         const int tw = toggleWidth(getWidth());
         const int th = toggle.preferredHeight(tw);
         toggle.setBounds(kRowInset, kRowPad, tw, th);
         if (extra_) extra_->setBounds(getWidth() - kRowInset - extraW_, kRowPad, extraW_, Stepper::kHeight);
-        desc_.setBounds(kRowInset, kRowPad + th + 2, getWidth() - 2 * kRowInset, std::max(0, getHeight() - th - 2 * kRowPad - 2));
     }
     void paint(Graphics& g) override { draw::panel(g, getLocalBounds(), colours::well, colours::lineSoft, 4.0f); }
     Toggle toggle;
 private:
-    HelpText desc_;
     String fact_;
     std::unique_ptr<Component> extra_;
     int extraW_ = 0;
     bool dimmed_ = false;
 };
 
-/// A row with a Segmented at the right: title, explanation, fact line.
+/// A row with a Segmented at the right: the title and the measured fact,
+/// with what the choice does in the tooltip (section 30).
 class HardwarePanel::ChoiceRow : public Block {
 public:
     ChoiceRow(const String& title, const String& desc, const String& fact, const StringArray& options)
-        : seg(options), title_(title), desc_(RichText(desc)), fact_(fact)
+        : seg(options), title_(title), fact_(fact)
     {
         seg.setMini(true);
+        seg.setTooltip(desc);
         addAndMakeVisible(seg);
-        addAndMakeVisible(desc_);
     }
     void setFact(const String& f) { if (f == fact_) return; fact_ = f; repaint(); }
     void setDimmed(bool d)
@@ -158,16 +155,11 @@ public:
         seg.setEnabled(!d);
     }
     int textWidth(int width) const { return width - 2 * kRowInset - seg.preferredWidth() - 12; }
-    int preferredHeight(int width) override
-    {
-        return kRowPad + 18 + desc_.preferredHeight(textWidth(width)) + (fact_.isNotEmpty() ? 15 : 0) + kRowPad;
-    }
+    int preferredHeight(int) override { return kRowPad + 18 + (fact_.isNotEmpty() ? 15 : 0) + kRowPad; }
     void resized() override
     {
         const int sw = seg.preferredWidth(), sh = seg.preferredHeight();
         seg.setBounds(getWidth() - kRowInset - sw, (getHeight() - sh) / 2, sw, sh);
-        const int tw = textWidth(getWidth());
-        desc_.setBounds(kRowInset, kRowPad + 18, tw, desc_.preferredHeight(tw));
     }
     void paint(Graphics& g) override
     {
@@ -183,7 +175,7 @@ public:
     }
     Segmented seg;
 private:
-    String title_; HelpText desc_; String fact_; bool dimmed_ = false;
+    String title_; String fact_; bool dimmed_ = false;
 };
 
 /* ------------------------------------------------------------ panel */
@@ -215,13 +207,13 @@ HardwarePanel::HardwarePanel(ChipBoyProcessor& p) : EditorPanel(p)
     // --- hardware states -------------------------------------------------------
     auto states = std::make_unique<Stack>(8);
     {
-        auto r = std::make_unique<ToggleRow>("Headphone Noise", "The broadband hiss and the 59.7 Hz frame hum, at the measured levels. The display's line has its own switch.", "");
+        auto r = std::make_unique<ToggleRow>("Headphone Noise", "The hiss and the 59.7 Hz frame hum, at the measured levels.", "");
         r->toggle.attach(param(processor, ids::noise));
         noise_ = r.get();
         states->add(std::move(r));
     }
     {
-        auto r = std::make_unique<ToggleRow>("LCD Whine", "The 9198 Hz line the display puts into the headphones, and its harmonic. Off removes it the way switching the display off does; it is independent of Headphone Noise. \"Disable the whine\" is this.", "");
+        auto r = std::make_unique<ToggleRow>("LCD Whine", "The 9198 Hz line the display puts into the headphones, on its own switch.", "");
         r->toggle.attach(param(processor, ids::lcd));
         lcd_ = r.get();
         states->add(std::move(r));
@@ -230,14 +222,14 @@ HardwarePanel::HardwarePanel(ChipBoyProcessor& p) : EditorPanel(p)
         // Section 26: a program on the Game Boy cannot wait for a pulse's low
         // half, so neither does ChipBoy. The switch has no effect and stays
         // only so that a saved project's parameter list is the one it wrote.
-        auto r = std::make_unique<ToggleRow>("Volume writes at edges", "No effect. Level changes are zombie-mode NRx2 writes now, which a driver on the hardware can really make; waiting for the pulse's low half is something no program on the console can do.",
+        auto r = std::make_unique<ToggleRow>("Volume writes at edges", "No effect: level changes are zombie-mode NRx2 writes now (section 26).",
                                              "no effect");
         r->toggle.attach(param(processor, ids::volEdges));
         edges_ = r.get();
         states->add(std::move(r));
     }
     {
-        auto r = std::make_unique<ChoiceRow>("CGB bass mod", "The common capacitor swap on the output. Corner scales with the capacitor. Approximation " + emdash() + " no modded unit measured.",
+        auto r = std::make_unique<ChoiceRow>("CGB bass mod", "The common capacitor swap on the output; no modded unit measured.",
                                              "stock 338 Hz" + middot() + times() + "10 " + arrow() + " 34 Hz" + middot() + times() + "47 " + arrow() + " 7 Hz",
                                              StringArray{ "stock", times() + "10", times() + "47" });
         r->seg.attach(param(processor, ids::bassMod));
@@ -256,7 +248,7 @@ HardwarePanel::HardwarePanel(ChipBoyProcessor& p) : EditorPanel(p)
     auto right = std::make_unique<Stack>(12);
     auto departures = std::make_unique<Stack>(8);
     {
-        auto r = std::make_unique<ToggleRow>("Tame DAC clicks", "Crossfades each DAC-on step instead of stepping it. Not what any Game Boy does.", "");
+        auto r = std::make_unique<ToggleRow>("Tame DAC clicks", "Crossfades each DAC-on step instead of stepping it.", "");
         r->toggle.attach(param(processor, ids::declick));
         auto ms = std::make_unique<Stepper>();
         ms->setTooltip("Crossfade length, 0.5-5 ms");
@@ -267,12 +259,12 @@ HardwarePanel::HardwarePanel(ChipBoyProcessor& p) : EditorPanel(p)
         departures->add(std::move(r));
     }
     {
-        auto r = std::make_unique<ToggleRow>("Soften master pops", "Ramps NR50 changes instead of stepping the DC offset the held DACs sit on.", "");
+        auto r = std::make_unique<ToggleRow>("Soften master pops", "Ramps NR50 changes instead of stepping the DC offset.", "");
         r->toggle.attach(param(processor, ids::soften));
         soften_ = r.get();
         departures->add(std::move(r));
     }
-    right->add(std::make_unique<Card>("Departures " + emdash() + " not what any Game Boy does; the header reads MODIFIED while one is on", std::move(departures)));
+    right->add(std::make_unique<Card>("Departures " + emdash() + " the header reads MODIFIED", std::move(departures)));
 
     auto display = std::make_unique<Stack>(8);
     {
@@ -284,7 +276,7 @@ HardwarePanel::HardwarePanel(ChipBoyProcessor& p) : EditorPanel(p)
         display->add(std::move(r));
     }
     {
-        auto r = std::make_unique<ChoiceRow>("Periods shown", "How many periods of the channel's own frequency register fill a scope, so a held note is a still picture. Noise uses a fixed window.", "", StringArray{ "1", "2", "4", "8" });
+        auto r = std::make_unique<ChoiceRow>("Periods shown", "How many periods of the channel's own register fill a scope. Noise uses a fixed window.", "", StringArray{ "1", "2", "4", "8" });
         const int pv = storedPeriods(processor);
         r->seg.setSelected(pv == 1 ? 0 : pv == 2 ? 1 : pv == 4 ? 2 : 3, dontSendNotification);
         r->seg.onChange = [this](int i) { processor.apvts.state.setProperty(kPeriodsProp, i == 0 ? 1 : i == 1 ? 2 : i == 2 ? 4 : 8, nullptr); announceDisplay(); };

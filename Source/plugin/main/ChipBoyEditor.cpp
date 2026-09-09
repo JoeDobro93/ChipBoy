@@ -158,6 +158,7 @@ void ChipBoyEditor::openSlot(SlotKind kind, int slot)
     const int tab = kind == SlotKind::Instrument ? Instrument
                   : kind == SlotKind::Table     ? Tables
                   : kind == SlotKind::Wave      ? Waves
+                  : kind == SlotKind::Kit       ? Kits
                                                 : Grooves;
     showTab(tab);
     if (panels_[size_t(tab)]) panels_[size_t(tab)]->selectSlot(slot);

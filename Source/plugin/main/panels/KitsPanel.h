@@ -10,6 +10,7 @@ namespace chipboy::plugin {
 class KitsPanel : public EditorPanel {
 public:
     explicit KitsPanel(ChipBoyProcessor& p);
+    void selectSlot(int slot) override { showSlot(slot); }
     ~KitsPanel() override;
 
     RichText contextLine() const override;

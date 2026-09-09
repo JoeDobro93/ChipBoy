@@ -3,6 +3,7 @@
 #include "plugin/shared/Presets.h"
 
 #include <cmath>
+#include <vector>
 
 namespace chipboy::plugin {
 
@@ -15,6 +16,16 @@ constexpr int kOpenFlags = FileBrowserComponent::openMode | FileBrowserComponent
 constexpr int kSaveFlags = FileBrowserComponent::saveMode | FileBrowserComponent::canSelectFiles | FileBrowserComponent::warnAboutOverwriting;
 String ellipsis() { return String(CharPointer_UTF8("\xe2\x80\xa6")); }
 String arrow() { return String(CharPointer_UTF8(" \xe2\x86\x92 ")); }
+String middot() { return String(CharPointer_UTF8(" \xc2\xb7 ")); }
+String utf8(const char* s) { return String(CharPointer_UTF8(s)); }
+
+/// The form (docs/COMMANDS_AND_TEMPO.md section 29): labels down the left,
+/// controls down the right, a thin caption over each group and no card
+/// chrome anywhere. Two columns of groups fill the pane.
+constexpr int kGroupGap = 10, kColumnGap = 20;
+/// The envelope picture over its fields. It is the one thing on the tab that
+/// is not a label and a value, because an envelope is a shape.
+constexpr int kGraphHeight = 66;
 
 /// What placing a preset did, in one line: "Pluck -> slot 3; table 5 -> 9
 /// (renumbered); wave 2 reused" (docs/COMMANDS_AND_TEMPO.md section 15).
@@ -30,18 +41,8 @@ String placeText(const bank::PlaceReport& r, const String& name)
     }
     return s;
 }
-/// The cards go two to a row. The right column is fixed at the width two
-/// 150 px field columns need with the card's padding; the left column takes
-/// the rest, which is three of them. Keeping the tab down to two card rows
-/// is what lets the window fit a 1080p screen (UI_DESIGN section 2).
-constexpr int kNarrowCard = 380;
-/// One second of envelope. It reads at this width, and at this width the
-/// Result sits beside the Rate knob instead of taking a row of its own.
-constexpr int kEnvPreview = 90;
 
-String envMsText(int rate) { return rate > 0 ? String(rate * 15.625, 1) + " ms/step" : String("hold"); }
-String dash() { return String(CharPointer_UTF8("\xe2\x80\x93")); }
-String middot() { return String(CharPointer_UTF8(" \xc2\xb7 ")); }
+String envMsText(int rate) { return rate > 0 ? String(rate * 15.625, 1) + " ms" : String("hold"); }
 
 String dutySeqText(const bank::Instrument& i)
 {
@@ -63,55 +64,35 @@ void parseDutySeq(const String& text, bank::Instrument& i)
 int panIndex(bank::Pan p) { return p == bank::Pan::Off ? 0 : p == bank::Pan::Left ? 1 : p == bank::Pan::Both ? 2 : 3; }
 bank::Pan panFromIndex(int i) { return i == 0 ? bank::Pan::Off : i == 1 ? bank::Pan::Left : i == 2 ? bank::Pan::Both : bank::Pan::Right; }
 
-String utf8(const char* s) { return String(CharPointer_UTF8(s)); }
-String minus() { return utf8("\xe2\x88\x92"); }
-
-/* --- what the pitch fields are worth, for the hints (COMMANDS_AND_TEMPO 7) --- */
+/* --- what the pitch fields are worth, on the control (COMMANDS_AND_TEMPO 7) --- */
 
 /// V's y as semitones: LSDj's table, 0 = an eighth of a semitone, 15 = eight.
-/// Written as the command slots write it, so a card and a strip agree.
 String vibDepthText(int depth)
 {
     static const char* const st[16] = { "1/8", "1/4", "3/8", "1/2", "3/4", "1", "1 1/2", "2",
                                         "2 1/2", "3", "3 1/2", "4", "5", "6", "7", "8" };
     return String(st[std::clamp(depth, 0, 15)]) + " st";
 }
-
-/// The same for the instrument's own depth, where 0 is no vibrato at all
-/// (Bank.h) rather than the table's eighth of a semitone.
+/// The same for the instrument's own depth, where 0 is no vibrato at all.
 String vibDepthHint(int depth) { return depth == 0 ? String("off") : vibDepthText(depth); }
 
 /// V's x: one cycle every 720/x pitch updates (x/2 Hz) in Fast, Step and
 /// Drum, or 96/x ticks in Tick -- x cycles every four beats, with the tempo.
 String vibSpeedText(int speed, bank::PitchSpeed ps)
 {
-    if (ps == bank::PitchSpeed::Tick) return String(speed) + " cycles/4 beats";
+    if (ps == bank::PitchSpeed::Tick) return String(speed) + " cyc/4b";
     return (speed % 2 == 0 ? String(speed / 2) : String(speed * 0.5, 1)) + " Hz";
 }
 
-/// What the chosen pitch speed does, short enough for a field caption.
-String pitchSpeedHint(bank::PitchSpeed ps)
-{
-    switch (ps) {
-        case bank::PitchSpeed::Fast: return "360 Hz";
-        case bank::PitchSpeed::Tick: return "per tick";
-        case bank::PitchSpeed::Step: return "P jumps";
-        case bank::PitchSpeed::Drum: return "semitones";
-    }
-    return "360 Hz";
-}
+String cmdRateText(int rate) { return rate == 0 ? String("every tick") : "every " + String(rate + 1); }
+String tickText(int t) { return String(t) + " t"; }
 
-String cmdRateText(int rate) { return rate == 0 ? String("every tick") : "every " + String(rate + 1) + " ticks"; }
-String tableModeHint(bank::TableMode m) { return m == bank::TableMode::Tick ? "row per tick" : "row per note"; }
-String overlapHint(bank::Overlap o) { return o == bank::Overlap::Legato ? "only the pitch" : "starts it again"; }
-String vibDirHint(bank::VibDir d) { return "to note " + (d == bank::VibDir::Up ? String("+") : minus()) + " depth"; }
-
-/// Two small controls in one field cell, each at its own width: the mockup
-/// pairs values this way, and it is what keeps the cards down to two rows.
+/// Two small controls in one cell, each at its own width: the vibrato's
+/// shape and direction, and a segment's ticks beside its curve.
 class Pair : public Component {
 public:
-    Pair(std::unique_ptr<Component> a, int aw, std::unique_ptr<Component> b, int bw, int gap = 8)
-        : a_(std::move(a)), b_(std::move(b)), aw_(aw), bw_(bw), gap_(gap)
+    Pair(std::unique_ptr<Component> a, int aw, int ah, std::unique_ptr<Component> b, int bw, int bh, int gap = 8)
+        : a_(std::move(a)), b_(std::move(b)), aw_(aw), bw_(bw), ah_(ah), bh_(bh), gap_(gap)
     {
         addAndMakeVisible(*a_);
         addAndMakeVisible(*b_);
@@ -124,23 +105,44 @@ public:
             aw = std::max(1, aw - (over * aw_ + width() / 2) / std::max(1, aw_ + bw_));
             bw = std::max(1, getWidth() - gap_ - aw);
         }
-        a_->setBounds(0, 0, aw, getHeight());
-        b_->setBounds(aw + gap_, 0, bw, getHeight());
+        a_->setBounds(0, (getHeight() - ah_) / 2, aw, ah_);
+        b_->setBounds(aw + gap_, (getHeight() - bh_) / 2, bw, bh_);
     }
 private:
     std::unique_ptr<Component> a_, b_;
-    int aw_, bw_, gap_;
+    int aw_, bw_, ah_, bh_, gap_;
+};
+
+/// A block that holds one component at a fixed height: the graph.
+class GraphHold : public Block {
+public:
+    GraphHold(std::unique_ptr<Component> c, int height) : c_(std::move(c)), h_(height) { addAndMakeVisible(*c_); }
+    int preferredHeight(int) override { return h_ + 6; }
+    void resized() override { c_->setBounds(0, 3, getWidth(), h_); }
+private:
+    std::unique_ptr<Component> c_;
+    int h_;
 };
 } // namespace
 
 /* ------------------------------------------------------- sub-widgets */
 
-class InstrumentPanel::EnvPreview : public Component {
+/// The envelope, drawn from the fields (section 29): the chip's NRx2 ramp
+/// over a second, or the shaped ADSR with its curves -- rendered through
+/// bank::envSegmentLevel, so the picture is the level list the driver really
+/// writes (section 27).
+class InstrumentPanel::EnvPreview : public Component, public SettableTooltipClient {
 public:
-    void set(int vol, bool up, int rate, Colour c)
+    void set(const bank::Instrument& i, Colour c, bool fourLevels)
     {
-        if (vol == vol_ && up == up_ && rate == rate_ && c == colour_) return;
-        vol_ = vol; up_ = up; rate_ = rate; colour_ = c;
+        if (i.env.mode == mode_ && c == colour_ && fourLevels == four_ && sameFields(i)) return;
+        env_ = i.env;
+        mode_ = i.env.mode;
+        vol_ = i.envVol; up_ = i.envDir == bank::EnvDir::Up; rate_ = i.envRate;
+        colour_ = c; four_ = fourLevels;
+        setTooltip(mode_ == bank::EnvMode::Shaped
+                       ? String("Attack to the peak, decay to the sustain, which is held while the note is, then the release. Each segment has its own curve.")
+                       : String("The chip's own envelope: one NRx2 write, then it runs -- a start level, a direction and one of seven rates."));
         repaint();
     }
     void paint(Graphics& g) override
@@ -150,33 +152,76 @@ public:
         g.setColour(colours::lcdGrid);
         for (int i = 0; i <= 15; i += 5) g.drawHorizontalLine(int(3.0f + std::round((H - 6.0f) * (1.0f - float(i) / 15.0f))), 0.0f, W);
         Path path;
-        const double stepS = rate_ > 0 ? rate_ * 0.015625 : 0.0;
-        for (int x = 0; x < int(W); ++x) {
-            const double t = x / double(W);
-            const int steps = stepS > 0.0 ? int(t / stepS) : 0;
-            const int lv = std::clamp(vol_ + (up_ ? steps : -steps), 0, 15);
-            const float y = 3.0f + (H - 6.0f) * (1.0f - float(lv) / 15.0f);
-            if (x == 0) path.startNewSubPath(0.0f, y); else path.lineTo(float(x), y);
+        std::vector<Point<float>> pts;
+        const int top = four_ ? 3 : 15;
+        auto point = [&](float x, int lv) {
+            const float y = 3.0f + (H - 6.0f) * (1.0f - float(std::clamp(lv, 0, top)) / float(top));
+            if (path.isEmpty()) path.startNewSubPath(x, y); else path.lineTo(x, y);
+            pts.push_back({ x, y });
+        };
+        String right;
+        if (mode_ == bank::EnvMode::Shaped) {
+            const int peak = std::clamp<int>(env_.peak, 0, top), sus = std::clamp<int>(env_.sustain, 0, top);
+            const int a = env_.attackTicks, d = env_.decayTicks, r = env_.releaseTicks;
+            const int hold = std::max(6, (a + d + r) / 3);
+            const int total = std::max(1, a + d + hold + r);
+            const auto x = [&](int t) { return W * float(t) / float(total); };
+            for (int t = 0; t <= a; ++t) point(x(t), bank::envSegmentLevel(0, peak, a, t, env_.attackCurve));
+            for (int t = 0; t <= d; ++t) point(x(a + t), bank::envSegmentLevel(peak, sus, d, t, env_.decayCurve));
+            point(x(a + d + hold), sus);
+            for (int t = 0; t <= r; ++t) point(x(a + d + hold + t), bank::envSegmentLevel(sus, 0, r, t, env_.releaseCurve));
+            right = String(a + d + r) + " t";
+        } else {
+            const double stepS = rate_ > 0 ? rate_ * 0.015625 : 0.0;
+            for (int px = 0; px < int(W); ++px) {
+                const double t = px / double(W);
+                const int steps = stepS > 0.0 ? int(t / stepS) : 0;
+                point(float(px), std::clamp(vol_ + (up_ ? steps : -steps), 0, 15));
+            }
+            right = "1 s";
+        }
+        // The area under the line, softly: a level of 13 held for a second is
+        // a thin line near the top, and a picture reads better than a line.
+        if (pts.size() > 1) {
+            Path fill;
+            fill.startNewSubPath(pts.front().x, H - 3.0f);
+            for (const auto& p : pts) fill.lineTo(p.x, p.y);
+            fill.lineTo(pts.back().x, H - 3.0f);
+            fill.closeSubPath();
+            g.setColour(colour_.withAlpha(0.16f));
+            g.fillPath(fill);
         }
         g.setColour(colour_);
         g.strokePath(path, PathStrokeType(1.5f));
         g.setColour(colours::textDim);
         g.setFont(Fonts::mono(10.0f));
-        g.drawText("0", 3, int(H) - 14, 20, 12, Justification::centredLeft, false);
-        g.drawText("1 s", int(W) - 27, int(H) - 14, 24, 12, Justification::centredRight, false);
+        g.drawText("0", 3, int(H) - 14, 24, 12, Justification::centredLeft, false);
+        g.drawText(right, int(W) - 48, int(H) - 14, 44, 12, Justification::centredRight, false);
         g.setColour(colours::scopeBorder);
         g.drawRect(getLocalBounds());
     }
 private:
-    int vol_ = 15; bool up_ = false; int rate_ = 0; Colour colour_ = colours::pu1;
+    bool sameFields(const bank::Instrument& i) const
+    {
+        return i.envVol == vol_ && (i.envDir == bank::EnvDir::Up) == up_ && i.envRate == rate_
+               && i.env.attackTicks == env_.attackTicks && i.env.peak == env_.peak && i.env.decayTicks == env_.decayTicks
+               && i.env.sustain == env_.sustain && i.env.releaseTicks == env_.releaseTicks
+               && i.env.attackCurve == env_.attackCurve && i.env.decayCurve == env_.decayCurve && i.env.releaseCurve == env_.releaseCurve;
+    }
+    bank::Envelope env_;
+    bank::EnvMode mode_ = bank::EnvMode::Chip;
+    int vol_ = 15; bool up_ = false; int rate_ = 0;
+    Colour colour_ = colours::pu1;
+    bool four_ = false;
 };
 
+/// The name, the type and where the instrument is used, on one row.
 class InstrumentPanel::HeadRow : public Block {
 public:
     HeadRow() : type({ "Pulse", "Wave", "Kit", "Noise" }), usedOn({}, Fonts::sans(12.0f), colours::textDim)
     {
         type.setMini(true);
-        type.setTooltip("The instrument's type. Switching resets it to that type's defaults, keeping the name.");
+        type.setTooltip("The instrument's type. Every type's fields are kept, so switching back finds them as they were.");
         addAndMakeVisible(name);
         addAndMakeVisible(type);
         addAndMakeVisible(usedOn);
@@ -196,17 +241,23 @@ public:
 
 struct InstrumentPanel::Widgets {
     HeadRow* head = nullptr;
-    Segmented* duty = nullptr; NameField* dutySeq = nullptr; Knob* sweepRate = nullptr; Segmented* sweepDir = nullptr; Knob* sweepShift = nullptr;
-    Stepper* wave = nullptr; Knob* frameAdv = nullptr; Segmented* frameLoop = nullptr; Segmented* waveLevel = nullptr;
+    // sound
+    Segmented* duty = nullptr; NameField* dutySeq = nullptr; Stepper* sweepRate = nullptr; Segmented* sweepDir = nullptr; Stepper* sweepShift = nullptr;
+    Stepper* wave = nullptr; Stepper* frameAdv = nullptr; Segmented* frameLoop = nullptr; Segmented* waveLevel = nullptr;
     Stepper* kit = nullptr; Segmented* kitLoop = nullptr; TextLine* kitRate = nullptr;
-    Segmented* lfsr = nullptr; Segmented* pitchMode = nullptr; Knob* shift = nullptr; Knob* divisor = nullptr; Knob* noiseSweep = nullptr;
-    Knob* envVol = nullptr; Segmented* envDir = nullptr; Knob* envRate = nullptr; Field* envResult = nullptr; EnvPreview* envPreview = nullptr;
-    Segmented* vibShape = nullptr; Segmented* vibDir = nullptr; Knob* vibSpeed = nullptr; Knob* vibDepth = nullptr; Stepper* vibDelay = nullptr;
+    Segmented* lfsr = nullptr; Segmented* pitchMode = nullptr; Stepper* shift = nullptr; Stepper* divisor = nullptr; Stepper* noiseSweep = nullptr;
+    Segmented* pan = nullptr;
+    // envelope (section 27)
+    EnvPreview* graph = nullptr;
+    Segmented* envMode = nullptr;
+    Stepper* envVol = nullptr; Segmented* envDir = nullptr; Stepper* envRate = nullptr;
+    Stepper* attack = nullptr; Stepper* peak = nullptr; Stepper* decay = nullptr; Stepper* sustain = nullptr; Stepper* release = nullptr;
+    Segmented* attackCurve = nullptr; Segmented* decayCurve = nullptr; Segmented* releaseCurve = nullptr;
+    // pitch and modulation
+    Segmented* vibShape = nullptr; Segmented* vibDir = nullptr; Stepper* vibSpeed = nullptr; Stepper* vibDepth = nullptr; Stepper* vibDelay = nullptr;
     Segmented* pitchSpeed = nullptr; Stepper* cmdRate = nullptr; Segmented* tableMode = nullptr;
-    Stepper* table = nullptr; Segmented* transpose = nullptr; Segmented* noteOff = nullptr; Segmented* overlap = nullptr; Stepper* length = nullptr; Segmented* pan = nullptr;
-    /// The fields whose hint says what the value is worth, refreshed on every edit.
-    Field* vibF = nullptr; Field* vibSpeedF = nullptr; Field* vibDepthF = nullptr;
-    Field* pitchSpeedF = nullptr; Field* cmdRateF = nullptr; Field* tableModeF = nullptr; Field* overlapF = nullptr;
+    // table and note behaviour
+    Stepper* table = nullptr; Segmented* transpose = nullptr; Segmented* noteOff = nullptr; Segmented* overlap = nullptr; Stepper* length = nullptr;
 };
 
 /* ------------------------------------------------------------ panel */
@@ -243,18 +294,16 @@ InstrumentPanel::InstrumentPanel(ChipBoyProcessor& p)
         rebuildList();
         contextChanged();
     };
-    newBtn_.setTooltip("New instrument in the first empty slot (or the selected empty slot), of the current channel's type");
+    newBtn_.setTooltip("New instrument in the first empty slot, of this channel's type");
     newBtn_.onClick = [this] { newInstrument(); };
     dupBtn_.setTooltip("Duplicate the selected instrument into the first empty slot");
     dupBtn_.onClick = [this] { duplicate(); };
     assignBtn_.onClick = [this] { assignSlot(slot_); };
     // A preset is the instrument and everything it references, as a file
     // (docs/COMMANDS_AND_TEMPO.md section 15).
-    savePresetBtn_.setTooltip("Write the selected instrument to a .cbi file with every table, wave and kit it uses " + String(CharPointer_UTF8("\xe2\x80\x94"))
-                              + " a table its A command starts comes too.");
+    savePresetBtn_.setTooltip("Write this instrument to a .cbi with every table, wave and kit it uses.");
     savePresetBtn_.onClick = [this] { savePreset(); };
-    loadPresetBtn_.setTooltip("Read a .cbi into the selected slot. Its tables, waves and kit take the first free slots of their kind unless the bank already holds an identical one, "
-                              "and every reference is renumbered to match; the status line says what went where.");
+    loadPresetBtn_.setTooltip("Read a .cbi into this slot; its tables, waves and kit take free slots and every reference is renumbered.");
     loadPresetBtn_.onClick = [this] { loadPreset(); };
 
     const int v = paramValue(processor, channelParamId(channel, ids::instrument));
@@ -291,7 +340,10 @@ void InstrumentPanel::bankChanged()
     rebuildList();
     if (!b) return;
     const auto& inst = b->instruments[size_t(slot_ - 1)];
-    if (inst.used != builtUsed_ || (inst.used && int(inst.type) != builtType_) || slot_ != builtSlot_) rebuildEditor();
+    // The envelope's mode changes which fields the group holds, so it is one
+    // of the things a rebuild watches (section 27).
+    if (inst.used != builtUsed_ || (inst.used && int(inst.type) != builtType_) || slot_ != builtSlot_
+        || (inst.used && int(inst.env.mode) != builtEnvMode_)) rebuildEditor();
     else if (b.get() != selfBank_) syncValues();
     refreshAssignButton();
     updateUsedOn();
@@ -530,54 +582,66 @@ void InstrumentPanel::rebuildEditor()
     const bank::Instrument& inst = b->instruments[size_t(slot_ - 1)];
     builtUsed_ = inst.used;
     builtType_ = inst.used ? int(inst.type) : -1;
+    builtEnvMode_ = inst.used ? int(inst.env.mode) : -1;
 
     if (!inst.used) {
         RichText t;
-        t.plain("Slot ").bold(ValueFormat::number(slot_)).plain(" is empty. ").bold("New").plain(" puts a " + instrumentTypeName(channelInstrumentType(channel)) + " instrument here, the current channel's type; ")
-         .bold("Dup").plain(" copies the selected instrument into the first empty slot. Double-click a row to name it into being.");
+        t.plain("Slot ").bold(ValueFormat::number(slot_)).plain(" is empty. ").bold("New").plain(" puts a " + instrumentTypeName(channelInstrumentType(channel)) + " instrument here; ")
+         .bold("Dup").plain(" copies the selected one. Double-click a row to name it into being.");
         stack->add(std::make_unique<HelpText>(t, 12.5f));
         scroll_.setContent(std::move(stack));
         return;
     }
 
-    const Colour accent = colours::channel(channel);
-    auto knob = [this, accent](FlowGrid& g, const String& label, const String& hint, int lo, int hi, int def, std::function<void(bank::Instrument&, int)> set, std::function<String(int)> text = {}, Field** field = nullptr) {
-        auto k = std::make_unique<Knob>();
-        k->setRange(lo, hi, def);
-        k->setAccent(accent);
-        const auto show = text;
-        if (text) k->setTextFunction(std::move(text));
-        k->onChange = [this, set, label, show](int v) { edit(label + " " + (show ? show(v) : ValueFormat::number(v)), [set, v](bank::Instrument& i) { set(i, v); }); };
-        Knob* raw = k.get();
-        Field* f = g.add(std::make_unique<Field>(label, hint, std::move(k), Knob::kHeight, Knob::kWidth));
-        if (field) *field = f;
-        return raw;
-    };
-    // seg and stepper hand back the Field as well as the control: the fields
-    // whose hint says what the value is worth have to reach it again.
-    auto seg = [this](FlowGrid& g, const String& label, const String& hint, const StringArray& opts, std::function<void(bank::Instrument&, int)> set, int columns = 1, Field** field = nullptr) {
-        auto s = std::make_unique<Segmented>(opts);
-        s->setMini(true);
-        s->onChange = [this, set, label, opts](int v) { edit(label + " " + opts[std::clamp(v, 0, opts.size() - 1)], [set, v](bank::Instrument& i) { set(i, v); }); };
-        Segmented* raw = s.get();
-        const int h = s->preferredHeight(), w = s->preferredWidth();
-        Field* f = g.add(std::make_unique<Field>(label, hint, std::move(s), h, w, columns));
-        if (field) *field = f;
-        return raw;
-    };
-    auto stepper = [this](FlowGrid& g, const String& label, const String& hint, int lo, int hi, int def, std::function<String(int)> text, std::function<void(bank::Instrument&, int)> set, int width, Field** field = nullptr) {
+    const auto type = inst.type;
+    const bool fourLevels = type == bank::InstrumentType::Wave || type == bank::InstrumentType::Kit;
+
+    // --- the two makers every row uses ------------------------------------
+    auto stepper = [this](FormGroup& g, const String& label, const String& tip, int lo, int hi, int def,
+                          std::function<String(int)> text, std::function<void(bank::Instrument&, int)> set, int width = 92) {
         auto s = std::make_unique<Stepper>();
         s->setRange(lo, hi, def);
         const auto show = text;
         if (text) s->setTextFunction(std::move(text));
         s->onChange = [this, set, label, show](int v) { edit(label + " " + (show ? show(v) : ValueFormat::number(v)), [set, v](bank::Instrument& i) { set(i, v); }); };
-        Stepper* raw = s.get();
-        Field* f = g.add(std::make_unique<Field>(label, hint, std::move(s), Stepper::kHeight, width));
-        if (field) *field = f;
-        return raw;
+        if (tip.isNotEmpty()) s->setTooltip(tip);
+        return g.add(label, std::move(s), width, Stepper::kHeight, tip);
+    };
+    auto seg = [this](FormGroup& g, const String& label, const String& tip, const StringArray& opts,
+                      std::function<void(bank::Instrument&, int)> set) {
+        auto s = std::make_unique<Segmented>(opts);
+        s->setMini(true);
+        s->onChange = [this, set, label, opts](int v) { edit(label + " " + opts[std::clamp(v, 0, opts.size() - 1)], [set, v](bank::Instrument& i) { set(i, v); }); };
+        if (tip.isNotEmpty()) s->setTooltip(tip);
+        const int w = s->preferredWidth(), h = s->preferredHeight();
+        return g.add(label, std::move(s), w, h, tip);
+    };
+    /// A segment's ticks beside its curve: one row for each of A, D and R.
+    auto segmentRow = [this](FormGroup& g, const String& label, const String& tip,
+                             std::function<void(bank::Instrument&, int)> setTicks,
+                             std::function<void(bank::Instrument&, bank::EnvCurve)> setCurve,
+                             Stepper** outTicks, Segmented** outCurve) {
+        auto ticks = std::make_unique<Stepper>();
+        ticks->setRange(0, 255, 0);
+        ticks->setTextFunction([](int v) { return tickText(v); });
+        ticks->setTooltip(tip);
+        ticks->onChange = [this, setTicks, label](int v) { edit(label + " " + tickText(v), [setTicks, v](bank::Instrument& i) { setTicks(i, v); }); };
+        auto curve = std::make_unique<Segmented>(StringArray{ "Lin", "Exp", "Log" });
+        curve->setMini(true);
+        curve->setTooltip("The shape of the segment: even, fast at the start, or slow at it.");
+        curve->onChange = [this, setCurve, label](int v) {
+            const auto c = bank::EnvCurve(std::clamp(v, 0, 2));
+            edit(label + " curve", [setCurve, c](bank::Instrument& i) { setCurve(i, c); });
+        };
+        *outTicks = ticks.get();
+        *outCurve = curve.get();
+        const int cw = curve->preferredWidth(), chh = curve->preferredHeight();
+        auto pair = std::make_unique<Pair>(std::move(ticks), 84, Stepper::kHeight, std::move(curve), cw, chh);
+        const int pw = pair->width();
+        g.add(label, std::move(pair), pw, Stepper::kHeight, tip);
     };
 
-    // --- head: name, type, where it is used --------------------------------
+    // --- head -------------------------------------------------------------
     auto head = std::make_unique<HeadRow>();
     w_->head = head.get();
     head->name.onChange = [this](const String& n) { edit("named " + n, [n](bank::Instrument& i) { i.name = n.toStdString(); }); };
@@ -589,91 +653,111 @@ void InstrumentPanel::rebuildEditor()
     };
     stack->add(std::move(head));
 
-    // --- sound ------------------------------------------------------------
-    auto sound = std::make_unique<FlowGrid>();
-    const auto type = inst.type;
+    // --- SOUND ------------------------------------------------------------
+    auto sound = std::make_unique<FormGroup>("Sound");
     if (type == bank::InstrumentType::Pulse) {
-        w_->duty = seg(*sound, "Duty", "NRx1 7-6", { "12.5", "25", "50", "75" }, [](bank::Instrument& i, int v) { i.duty = uint8_t(v); });
+        w_->duty = seg(*sound, "Duty", "NRx1 bits 7-6: the pulse width.", { "12.5", "25", "50", "75" }, [](bank::Instrument& i, int v) { i.duty = uint8_t(v); });
         auto f = std::make_unique<NameField>();
         f->onChange = [this](const String& t) { edit("duty sequence " + t, [t](bank::Instrument& i) { parseDutySeq(t, i); }); };
-        w_->dutySeq = sound->addField("Duty sequence", "one NRx1 write per tick, looped", std::move(f), NameField::kHeight, 0, 2);
-        w_->sweepRate = knob(*sound, "Sweep rate", "NR10 6-4" + middot() + "PU1 only", 0, 7, 0, [](bank::Instrument& i, int v) { i.sweepRate = uint8_t(v); });
-        w_->sweepDir = seg(*sound, "Sweep dir", "NR10 bit 3", { "Up", "Down" }, [](bank::Instrument& i, int v) { i.sweepDown = v == 1; });
-        w_->sweepShift = knob(*sound, "Sweep shift", "NR10 2-0", 0, 7, 0, [](bank::Instrument& i, int v) { i.sweepShift = uint8_t(v); });
+        w_->dutySeq = sound->add("Duty sequence", std::move(f), 150, NameField::kHeight, "One NRx1 write per tick, looped. Digits 0-3.");
+        w_->sweepRate = stepper(*sound, "Sweep rate", "NR10 bits 6-4. PU1 only.", 0, 7, 0, {}, [](bank::Instrument& i, int v) { i.sweepRate = uint8_t(v); });
+        w_->sweepDir = seg(*sound, "Sweep dir", "NR10 bit 3.", { "Up", "Down" }, [](bank::Instrument& i, int v) { i.sweepDown = v == 1; });
+        w_->sweepShift = stepper(*sound, "Sweep shift", "NR10 bits 2-0.", 0, 7, 0, {}, [](bank::Instrument& i, int v) { i.sweepShift = uint8_t(v); });
     } else if (type == bank::InstrumentType::Wave) {
-        w_->wave = stepper(*sound, "Wave", "the wave RAM source" + middot() + "W overrides", 1, bank::kWaveSlots, 1,
-                           [this](int v) { const auto bk = processor.bank(); const bank::Wave* wv = bk ? bk->wave(v) : nullptr; return wv ? slotAndName(v, wv->name) + middot() + String(int(wv->frames.size())) + " fr" : slotAndName(v, "empty"); },
-                           [](bank::Instrument& i, int v) { i.wave = uint8_t(v); }, 0);
-        w_->frameAdv = knob(*sound, "Frame advance", "ticks per frame; 0 holds", 0, 15, 0, [](bank::Instrument& i, int v) { i.frameAdvance = uint8_t(v); });
-        // three long words: it takes two field columns rather than squeeze
-        w_->frameLoop = seg(*sound, "Frame loop", "how the frames run", { "Loop", "One-shot", "Ping-pong" }, [](bank::Instrument& i, int v) { i.frameLoop = bank::FrameLoop(std::clamp(v, 0, 2)); }, 2);
-        w_->waveLevel = seg(*sound, "Volume", "NR32 6-5" + middot() + "no envelope here", { "mute", "25", "50", "100" }, [](bank::Instrument& i, int v) { i.waveLevel = uint8_t(v); });
+        w_->wave = stepper(*sound, "Wave", "The wave RAM source; a W command overrides it. Right-click lists the bank, double-click opens it.", 1, bank::kWaveSlots, 1,
+                           [this](int v) { const auto bk = processor.bank(); const bank::Wave* wv = bk ? bk->wave(v) : nullptr; return wv ? slotAndName(v, wv->name) : slotAndName(v, "empty"); },
+                           [](bank::Instrument& i, int v) { i.wave = uint8_t(v); }, 190);
+        w_->wave->onList = [this] { showWaveMenu(); };
+        w_->wave->onOpen = [this] { openSlot(ui::SlotKind::Wave, w_ && w_->wave ? w_->wave->value() : 0); };
+        w_->frameAdv = stepper(*sound, "Frame advance", "Ticks per frame; 0 holds the frame.", 0, 15, 0, {}, [](bank::Instrument& i, int v) { i.frameAdvance = uint8_t(v); });
+        w_->frameLoop = seg(*sound, "Frame loop", "How the frames run.", { "Loop", "One-shot", "Ping-pong" }, [](bank::Instrument& i, int v) { i.frameLoop = bank::FrameLoop(std::clamp(v, 0, 2)); });
+        w_->waveLevel = seg(*sound, "Level", "NR32 bits 6-5: four levels, and no envelope unit on this channel.", { "mute", "25", "50", "100" }, [](bank::Instrument& i, int v) { i.waveLevel = uint8_t(v); });
     } else if (type == bank::InstrumentType::Kit) {
-        w_->kit = stepper(*sound, "Kit", "streamed through wave RAM", 1, bank::kKitSlots, 1,
-                          [this](int v) { const auto bk = processor.bank(); const bank::Kit* k = bk ? bk->kit(v) : nullptr; return k ? slotAndName(v, k->name) + middot() + String(int(k->samples.size())) + " samples" : slotAndName(v, "empty"); },
-                          [](bank::Instrument& i, int v) { i.kit = uint8_t(v); }, 0);
-        // three long words, as the wave's frame loop: two field columns
-        w_->kitLoop = seg(*sound, "Loop", "per note", { "One-shot", "Loop", "Loop from point" }, [](bank::Instrument& i, int v) { i.kitLoop = bank::KitLoop(std::clamp(v, 0, 2)); }, 2);
+        w_->kit = stepper(*sound, "Kit", "Streamed through wave RAM. Right-click lists the bank, double-click opens it.", 1, bank::kKitSlots, 1,
+                          [this](int v) { const auto bk = processor.bank(); const bank::Kit* k = bk ? bk->kit(v) : nullptr; return k ? slotAndName(v, k->name) : slotAndName(v, "empty"); },
+                          [](bank::Instrument& i, int v) { i.kit = uint8_t(v); }, 190);
+        w_->kit->onList = [this] { showKitMenu(); };
+        w_->kit->onOpen = [this] { openSlot(ui::SlotKind::Kit, w_ && w_->kit ? w_->kit->value() : 0); };
+        w_->kitLoop = seg(*sound, "Loop", "Per note.", { "One-shot", "Loop", "From point" }, [](bank::Instrument& i, int v) { i.kitLoop = bank::KitLoop(std::clamp(v, 0, 2)); });
         auto rate = std::make_unique<TextLine>(String(), Fonts::mono(12.0f), colours::text);
-        w_->kitRate = sound->addField("Rate", "NR33/34" + middot() + "one register does pitch and rate", std::move(rate), Stepper::kHeight, 0, 2);
+        w_->kitRate = sound->add("Rate", std::move(rate), 190, Stepper::kHeight, "NR33/34: one register does the pitch and the rate.");
     } else {
-        w_->lfsr = seg(*sound, "LFSR width", "NR43 bit 3", { "15-bit noise", "7-bit metallic" }, [](bank::Instrument& i, int v) { i.lfsr7 = v == 1; });
-        w_->pitchMode = seg(*sound, "Pitch", "the noise grid is coarse; the map picks the nearest pair per note", { "Note map", "Manual" }, [](bank::Instrument& i, int v) { i.noiseManual = v == 1; });
-        w_->shift = knob(*sound, "Clock shift", "NR43 7-4 (manual)", 0, 13, 5, [](bank::Instrument& i, int v) { i.noiseShift = uint8_t(v); });
-        w_->divisor = knob(*sound, "Divisor", "NR43 2-0 (manual)", 0, 7, 1, [](bank::Instrument& i, int v) { i.noiseDivisor = uint8_t(v); });
-        w_->noiseSweep = knob(*sound, "Noise sweep", "shift steps per tick, repeated NR43 writes", -7, 7, 0, [](bank::Instrument& i, int v) { i.noiseSweep = int8_t(v); },
-                              [](int v) { return ValueFormat::signedNumber(v); });
+        w_->lfsr = seg(*sound, "LFSR width", "NR43 bit 3.", { "15-bit", "7-bit" }, [](bank::Instrument& i, int v) { i.lfsr7 = v == 1; });
+        w_->pitchMode = seg(*sound, "Pitch", "The noise grid is coarse; the map picks the nearest pair per note.", { "Note map", "Manual" }, [](bank::Instrument& i, int v) { i.noiseManual = v == 1; });
+        w_->shift = stepper(*sound, "Clock shift", "NR43 bits 7-4, in Manual.", 0, 13, 5, {}, [](bank::Instrument& i, int v) { i.noiseShift = uint8_t(v); });
+        w_->divisor = stepper(*sound, "Divisor", "NR43 bits 2-0, in Manual.", 0, 7, 1, {}, [](bank::Instrument& i, int v) { i.noiseDivisor = uint8_t(v); });
+        w_->noiseSweep = stepper(*sound, "Noise sweep", "Shift steps per tick: repeated NR43 writes.", -7, 7, 0,
+                                 [](int v) { return ValueFormat::signedNumber(v); }, [](bank::Instrument& i, int v) { i.noiseSweep = int8_t(v); });
     }
-    // Pan is NR51, so it belongs with the other registers, and the row it
-    // leaves behind is what the table card's new mode field takes.
-    w_->pan = seg(*sound, "Pan", "NR51 default for this instrument", { dash(), "L", "LR", "R" }, [](bank::Instrument& i, int v) { i.pan = panFromIndex(v); });
-    std::vector<std::unique_ptr<Block>> cards;
-    cards.push_back(std::make_unique<Card>("Sound", std::move(sound)));
+    // Pan is NR51, so it belongs with the other registers.
+    w_->pan = seg(*sound, "Pan", "The NR51 default for this instrument. There is no pan law.", { utf8("\xe2\x80\x93"), "L", "LR", "R" }, [](bank::Instrument& i, int v) { i.pan = panFromIndex(v); });
 
-    // --- envelope ---------------------------------------------------------
-    const bool hasEnvelope = type == bank::InstrumentType::Pulse || type == bank::InstrumentType::Noise;
-    if (hasEnvelope) {
-        const String nr = type == bank::InstrumentType::Noise ? "NR42" : "NR12/22";
-        auto env = std::make_unique<FlowGrid>();
-        w_->envVol = knob(*env, "Volume", nr + " 7-4", 0, 15, 15, [](bank::Instrument& i, int v) { i.envVol = uint8_t(v); });
-        w_->envDir = seg(*env, "Direction", nr + " bit 3", { String(CharPointer_UTF8("\xe2\x86\x93")), String(CharPointer_UTF8("\xe2\x86\x91")) }, [](bank::Instrument& i, int v) { i.envDir = v == 1 ? bank::EnvDir::Up : bank::EnvDir::Down; });
-        w_->envRate = knob(*env, "Rate", nr + " 2-0: 0 = hold, 1-7 = n x 15.6 ms", 0, 7, 0, [](bank::Instrument& i, int v) { i.envRate = uint8_t(v); });
-        auto preview = std::make_unique<EnvPreview>();
-        w_->envPreview = preview.get();
-        w_->envResult = env->add(std::make_unique<Field>("Result", envMsText(inst.envRate), std::move(preview), 64, kEnvPreview));
-        cards.push_back(std::make_unique<Card>("Envelope", std::move(env), String(CharPointer_UTF8("\xe2\x80\x94")) + " one " + nr + " write, then the chip runs it"));
-    }
-
-    // --- pitch and modulation ---------------------------------------------
-    // One group: the vibrato's shape and direction share a cell, then its
-    // three numbers, then the two fields that set how fast everything steps.
-    auto mod = std::make_unique<FlowGrid>();
+    // --- ENVELOPE (section 27) --------------------------------------------
+    auto env = std::make_unique<FormGroup>("Envelope");
     {
-        auto shape = std::make_unique<Segmented>(StringArray { "Tri", "Saw", "Sq" });
+        auto graph = std::make_unique<EnvPreview>();
+        w_->graph = graph.get();
+        env->addWide(std::make_unique<GraphHold>(std::move(graph), kGraphHeight));
+    }
+    w_->envMode = seg(*env, "Mode", "Chip is the chip's own NRx2 envelope; Shaped is an ADSR the driver renders a level a tick and writes through zombie mode.",
+                      { "Chip", "Shaped" }, [](bank::Instrument& i, int v) { i.env.mode = v == 1 ? bank::EnvMode::Shaped : bank::EnvMode::Chip; });
+    w_->envMode->onChange = [this](int v) {
+        edit(v == 1 ? String("envelope Shaped") : String("envelope Chip"), [v](bank::Instrument& i) { i.env.mode = v == 1 ? bank::EnvMode::Shaped : bank::EnvMode::Chip; });
+        rebuildEditor();
+    };
+    const int topLevel = fourLevels ? 3 : 15;
+    if (inst.env.mode == bank::EnvMode::Shaped) {
+        segmentRow(*env, "Attack", "Ticks from silence to the peak.",
+                   [](bank::Instrument& i, int v) { i.env.attackTicks = uint8_t(std::clamp(v, 0, 255)); },
+                   [](bank::Instrument& i, bank::EnvCurve c) { i.env.attackCurve = c; }, &w_->attack, &w_->attackCurve);
+        w_->peak = stepper(*env, "Peak", fourLevels ? "The level the attack reaches, of the four NR32 levels." : "The level the attack reaches, 0-15.",
+                           0, topLevel, topLevel, {}, [topLevel](bank::Instrument& i, int v) { i.env.peak = uint8_t(std::clamp(v, 0, topLevel)); });
+        segmentRow(*env, "Decay", "Ticks from the peak to the sustain.",
+                   [](bank::Instrument& i, int v) { i.env.decayTicks = uint8_t(std::clamp(v, 0, 255)); },
+                   [](bank::Instrument& i, bank::EnvCurve c) { i.env.decayCurve = c; }, &w_->decay, &w_->decayCurve);
+        w_->sustain = stepper(*env, "Sustain", "The level held while the note is held.", 0, topLevel, topLevel, {},
+                              [topLevel](bank::Instrument& i, int v) { i.env.sustain = uint8_t(std::clamp(v, 0, topLevel)); });
+        segmentRow(*env, "Release", "Ticks from the level at note-off to silence, when Note-off is Release.",
+                   [](bank::Instrument& i, int v) { i.env.releaseTicks = uint8_t(std::clamp(v, 0, 255)); },
+                   [](bank::Instrument& i, bank::EnvCurve c) { i.env.releaseCurve = c; }, &w_->release, &w_->releaseCurve);
+    } else if (!fourLevels) {
+        const String nr = type == bank::InstrumentType::Noise ? "NR42" : "NR12/22";
+        w_->envVol = stepper(*env, "Volume", nr + " bits 7-4: the level the note starts at.", 0, 15, 15, {}, [](bank::Instrument& i, int v) { i.envVol = uint8_t(v); });
+        w_->envDir = seg(*env, "Direction", nr + " bit 3.", { utf8("\xe2\x86\x93"), utf8("\xe2\x86\x91") }, [](bank::Instrument& i, int v) { i.envDir = v == 1 ? bank::EnvDir::Up : bank::EnvDir::Down; });
+        w_->envRate = stepper(*env, "Rate", nr + " bits 2-0: 0 holds, 1-7 step every n x 15.6 ms.", 0, 7, 0,
+                              [](int v) { return envMsText(v); }, [](bank::Instrument& i, int v) { i.envRate = uint8_t(v); }, 110);
+    } else {
+        auto note = std::make_unique<TextLine>("the Level in Sound", Fonts::sans(12.0f), colours::textDim);
+        env->add("Level", std::move(note), 190, Stepper::kHeight, "This channel has no envelope unit: Chip holds the NR32 level in Sound, and Shaped renders one instead.");
+    }
+
+    // --- PITCH & MODULATION -----------------------------------------------
+    auto mod = std::make_unique<FormGroup>("Pitch & modulation");
+    {
+        auto shape = std::make_unique<Segmented>(StringArray{ "Tri", "Saw", "Sq" });
         shape->setMini(true);
         shape->setTooltip("The waveform of V and of the instrument's own vibrato.");
         shape->onChange = [this](int v) { edit("vibrato shape", [v](bank::Instrument& i) { i.vib.shape = bank::VibShape(std::clamp(v, 0, 2)); }); };
-        auto dir = std::make_unique<Segmented>(StringArray { utf8("\xe2\x86\x93"), utf8("\xe2\x86\x91") });
+        auto dir = std::make_unique<Segmented>(StringArray{ utf8("\xe2\x86\x93"), utf8("\xe2\x86\x91") });
         dir->setMini(true);
-        dir->setTooltip("Down swings between the note and the note minus the depth; up, between the note and the note plus it.");
+        dir->setTooltip("Down swings between the note and the note minus the depth; up, between it and the note plus it.");
         dir->onChange = [this](int v) { edit("vibrato direction", [v](bank::Instrument& i) { i.vib.dir = v == 1 ? bank::VibDir::Up : bank::VibDir::Down; }); };
         w_->vibShape = shape.get();
         w_->vibDir = dir.get();
         const int sw = shape->preferredWidth(), dw = dir->preferredWidth(), h = shape->preferredHeight();
-        auto pair = std::make_unique<Pair>(std::move(shape), sw, std::move(dir), dw);
+        auto pair = std::make_unique<Pair>(std::move(shape), sw, h, std::move(dir), dw, h);
         const int pw = pair->width();
-        w_->vibF = mod->add(std::make_unique<Field>("Vibrato", vibDirHint(inst.vib.dir), std::move(pair), h, pw));
+        mod->add("Vibrato", std::move(pair), pw, h, "The shape the vibrato swings in, and which way it goes.");
     }
-    w_->vibSpeed = knob(*mod, "Speed", vibSpeedText(inst.vib.speed, inst.pitchSpeed), 1, 15, 8, [](bank::Instrument& i, int v) { i.vib.speed = uint8_t(v); }, {}, &w_->vibSpeedF);
-    w_->vibSpeed->setTooltip("V's x, 1-15: one cycle every 720/x pitch updates -- x/2 Hz in Fast, Step and Drum -- or every 96/x ticks in Tick, which is x cycles every four beats and follows the tempo.");
-    w_->vibDepth = knob(*mod, "Depth", vibDepthHint(inst.vib.depth), 0, 15, 0, [](bank::Instrument& i, int v) { i.vib.depth = uint8_t(v); }, {}, &w_->vibDepthF);
-    w_->vibDepth->setTooltip("V's y: LSDj's semitone table, a quarter of a semitone at 1 up to eight semitones at 15. 0 leaves the instrument without a vibrato of its own.");
-    w_->vibDelay = stepper(*mod, "Delay", "ticks before it starts", 0, 255, 0, {}, [](bank::Instrument& i, int v) { i.vib.delay = uint8_t(v); }, 100);
-    w_->vibDelay->setTooltip("Ticks after the note before the vibrato starts.");
+    w_->vibSpeed = stepper(*mod, "Speed", "V's x, 1-15: one cycle every 720/x pitch updates -- x/2 Hz in Fast, Step and Drum -- or every 96/x ticks in Tick.",
+                           1, 15, 8, [ps = inst.pitchSpeed](int v) { return vibSpeedText(v, ps); }, [](bank::Instrument& i, int v) { i.vib.speed = uint8_t(v); }, 106);
+    w_->vibDepth = stepper(*mod, "Depth", "V's y: LSDj's semitone table, an eighth of a semitone at 0 up to eight at 15. 0 leaves the instrument without a vibrato of its own.",
+                           0, 15, 0, [](int v) { return vibDepthHint(v); }, [](bank::Instrument& i, int v) { i.vib.depth = uint8_t(v); }, 106);
+    w_->vibDelay = stepper(*mod, "Delay", "Ticks after the note before the vibrato starts.", 0, 255, 0,
+                           [](int v) { return tickText(v); }, [](bank::Instrument& i, int v) { i.vib.delay = uint8_t(v); });
     if (type != bank::InstrumentType::Noise) {
-        w_->pitchSpeed = seg(*mod, "Pitch speed", pitchSpeedHint(inst.pitchSpeed), { "Fast", "Tick", "Step", "Drum" },
-                             [](bank::Instrument& i, int v) { i.pitchSpeed = bank::PitchSpeed(std::clamp(v, 0, 3)); }, 1, &w_->pitchSpeedF);
-        w_->pitchSpeed->setTooltip("How P, L and V move.");
+        w_->pitchSpeed = seg(*mod, "Pitch speed", "How P, L and V move.", { "Fast", "Tick", "Step", "Drum" },
+                             [](bank::Instrument& i, int v) { i.pitchSpeed = bank::PitchSpeed(std::clamp(v, 0, 3)); });
         w_->pitchSpeed->setOptionTooltip(0, "Fast: 360 updates a second, tempo-independent.");
         w_->pitchSpeed->setOptionTooltip(1, "Tick: one update per tracker tick (24 a beat), so the effect follows the tempo.");
         w_->pitchSpeed->setOptionTooltip(2, "Step: as Fast, except P is an immediate offset instead of a bend.");
@@ -681,43 +765,104 @@ void InstrumentPanel::rebuildEditor()
                                                                              : "Drum: as Fast, but P and L move in semitones, so a P kick falls logarithmically.");
         if (type == bank::InstrumentType::Kit) w_->pitchSpeed->setOptionEnabled(3, false);
     }
-    w_->cmdRate = stepper(*mod, "Cmd rate", cmdRateText(inst.cmdRate), 0, 15, 0, {}, [](bank::Instrument& i, int v) { i.cmdRate = uint8_t(v); }, 80, &w_->cmdRateF);
-    w_->cmdRate->setTooltip("0-15: C and R step every rate + 1 ticks, and so do P and V when the pitch speed is Tick. Nothing else is slowed.");
-    cards.push_back(std::make_unique<Card>("Pitch & modulation", std::move(mod), utf8("\xe2\x80\x94") + " how fast the pitch effects step"));
+    w_->cmdRate = stepper(*mod, "Cmd rate", "0-15: C and R step every rate + 1 ticks, and so do P and V when the pitch speed is Tick.",
+                          0, 15, 0, [](int v) { return cmdRateText(v); }, [](bank::Instrument& i, int v) { i.cmdRate = uint8_t(v); }, 120);
 
-    // --- table & note behaviour -------------------------------------------
-    auto tab = std::make_unique<FlowGrid>();
-    w_->table = stepper(*tab, "Table", "runs from note-on", 0, bank::kTableSlots, 0,
+    // --- TABLE & NOTE BEHAVIOUR -------------------------------------------
+    auto tab = std::make_unique<FormGroup>("Table & note behaviour");
+    w_->table = stepper(*tab, "Table", "The table this instrument runs from note-on, unless an A overrides it. Right-click lists the bank, double-click opens it.",
+                        0, bank::kTableSlots, 0,
                         [this](int v) { if (v == 0) return String("none"); const auto bk = processor.bank(); const bank::Table* t = bk ? bk->table(v) : nullptr; return t ? slotAndName(v, t->name) : slotAndName(v, "empty"); },
-                        [](bank::Instrument& i, int v) { i.table = uint8_t(v); }, 0);
-    w_->table->setTooltip("The table this instrument runs from note-on, unless an A command overrides it.");
-    w_->tableMode = seg(*tab, "Table mode", tableModeHint(inst.tableMode), { "Tick", "Step" },
-                        [](bank::Instrument& i, int v) { i.tableMode = v == 1 ? bank::TableMode::Step : bank::TableMode::Tick; }, 1, &w_->tableModeF);
-    w_->tableMode->setTooltip("Tick: the table runs one row per tick, or per its own G. Step: it advances one row every time the instrument is triggered.");
-    w_->transpose = seg(*tab, "Transpose", "whether the table's transpose column applies", { "On", "Off" }, [](bank::Instrument& i, int v) { i.transpose = v == 0; });
-    w_->noteOff = seg(*tab, "Note-off", "Kill clears the DAC; on this hardware that holds the level", { "Kill", "Release", "Ignore" }, [](bank::Instrument& i, int v) { i.noteOff = bank::NoteOff(std::clamp(v, 0, 2)); });
-    w_->overlap = seg(*tab, "Overlap", overlapHint(inst.overlap), { "Legato", "Retrig" },
-                      [](bank::Instrument& i, int v) { i.overlap = v == 1 ? bank::Overlap::Retrig : bank::Overlap::Legato; }, 1, &w_->overlapF);
-    w_->overlap->setTooltip("A note arriving over a held one: legato writes only the period, so the envelope and the table keep running; retrig starts the instrument again.");
+                        [](bank::Instrument& i, int v) { i.table = uint8_t(v); }, 190);
+    w_->table->onList = [this] { showTableMenu(); };
+    w_->table->onOpen = [this] { openSlot(ui::SlotKind::Table, w_ && w_->table ? w_->table->value() : 0); };
+    w_->tableMode = seg(*tab, "Table mode", "Tick: one row a tick, or per its own G. Step: one row every time the instrument is triggered.",
+                        { "Tick", "Step" }, [](bank::Instrument& i, int v) { i.tableMode = v == 1 ? bank::TableMode::Step : bank::TableMode::Tick; });
+    w_->transpose = seg(*tab, "Transpose", "Whether the table's transpose column applies.", { "On", "Off" }, [](bank::Instrument& i, int v) { i.transpose = v == 0; });
+    w_->noteOff = seg(*tab, "Note-off", "Kill clears the DAC, which holds the level on this hardware; Release runs the shaped release.",
+                      { "Kill", "Release", "Ignore" }, [](bank::Instrument& i, int v) { i.noteOff = bank::NoteOff(std::clamp(v, 0, 2)); });
+    w_->overlap = seg(*tab, "Overlap", "A note over a held one: legato writes only the period; retrig starts the instrument again.",
+                      { "Legato", "Retrig" }, [](bank::Instrument& i, int v) { i.overlap = v == 1 ? bank::Overlap::Retrig : bank::Overlap::Legato; });
     const bool longLength = type == bank::InstrumentType::Wave || type == bank::InstrumentType::Kit;
-    w_->length = stepper(*tab, "Length", longLength ? "NR31" + middot() + "off or 1-256" : "NRx1 5-0" + middot() + "off or 1-64", 0, longLength ? 256 : 64, 0,
-                         [](int v) { return v == 0 ? String("off") : ValueFormat::number(v); }, [](bank::Instrument& i, int v) { i.length = uint16_t(v); }, 100);
-    cards.push_back(std::make_unique<Card>("Table & note behaviour", std::move(tab)));
+    w_->length = stepper(*tab, "Length", longLength ? "NR31: off, or 1-256." : "NRx1 bits 5-0: off, or 1-64.", 0, longLength ? 256 : 64, 0,
+                         [](int v) { return v == 0 ? String("off") : ValueFormat::number(v); }, [](bank::Instrument& i, int v) { i.length = uint16_t(v); });
 
-    // Two cards to a row, each row as tall as the taller of its two: Sound
-    // beside Envelope, Modulation beside Table, and the whole tab fits.
-    for (size_t i = 0; i < cards.size(); i += 2) {
-        auto row = std::make_unique<Columns>(12);
-        row->setWidths({ 0, kNarrowCard });
-        row->add(std::move(cards[i]));
-        if (i + 1 < cards.size()) row->add(std::move(cards[i + 1]));
-        else row->add(std::make_unique<Space>(1));
-        stack->add(std::move(row));
-    }
+    // Two columns of groups: Sound over Pitch, Envelope over Table. The
+    // envelope's picture is what makes the right column the taller one, and
+    // the whole form fits the pane without scrolling (section 29).
+    auto columns = std::make_unique<Columns>(kColumnGap);
+    auto left = std::make_unique<Stack>(kGroupGap);
+    left->add(std::move(sound));
+    left->add(std::move(mod));
+    auto right = std::make_unique<Stack>(kGroupGap);
+    right->add(std::move(env));
+    right->add(std::move(tab));
+    columns->add(std::move(left));
+    columns->add(std::move(right));
+    stack->add(std::move(columns));
 
     scroll_.setContent(std::move(stack));
     syncValues();
 }
+
+/* ------------------------------------------------------- slot lists */
+
+void InstrumentPanel::showTableMenu()
+{
+    const auto b = processor.bank();
+    if (!b || !w_ || w_->table == nullptr) return;
+    PopupMenu m;
+    m.addSectionHeader("Table");
+    const int current = w_->table->value();
+    m.addItem(1, utf8("\xe2\x80\x93") + "   none", true, current == 0);
+    for (int slot = 1; slot <= bank::kTableSlots; ++slot)
+        if (const auto* t = b->table(slot)) m.addItem(slot + 1, slotAndName(slot, t->name), true, slot == current);
+    Component::SafePointer<InstrumentPanel> safe(this);
+    m.showMenuAsync(PopupMenu::Options().withTargetComponent(w_->table), [safe](int r) {
+        if (safe == nullptr || r < 1 || safe->w_ == nullptr || safe->w_->table == nullptr) return;
+        safe->w_->table->setValue(r - 1);
+    });
+}
+
+void InstrumentPanel::showWaveMenu()
+{
+    const auto b = processor.bank();
+    if (!b || !w_ || w_->wave == nullptr) return;
+    PopupMenu m;
+    m.addSectionHeader("Wave");
+    const int current = w_->wave->value();
+    for (int slot = 1; slot <= bank::kWaveSlots; ++slot)
+        if (const auto* wv = b->wave(slot)) {
+            PopupMenu::Item item(slotAndName(slot, wv->name));
+            item.itemID = slot;
+            item.isTicked = slot == current;
+            item.shortcutKeyDescription = String(int(wv->frames.size())) + " fr";
+            m.addItem(std::move(item));
+        }
+    Component::SafePointer<InstrumentPanel> safe(this);
+    m.showMenuAsync(PopupMenu::Options().withTargetComponent(w_->wave), [safe](int r) {
+        if (safe == nullptr || r < 1 || safe->w_ == nullptr || safe->w_->wave == nullptr) return;
+        safe->w_->wave->setValue(r);
+    });
+}
+
+void InstrumentPanel::showKitMenu()
+{
+    const auto b = processor.bank();
+    if (!b || !w_ || w_->kit == nullptr) return;
+    PopupMenu m;
+    m.addSectionHeader("Kit");
+    const int current = w_->kit->value();
+    for (int slot = 1; slot <= bank::kKitSlots; ++slot)
+        if (const auto* k = b->kit(slot)) m.addItem(slot, slotAndName(slot, k->name), true, slot == current);
+    Component::SafePointer<InstrumentPanel> safe(this);
+    m.showMenuAsync(PopupMenu::Options().withTargetComponent(w_->kit), [safe](int r) {
+        if (safe == nullptr || r < 1 || safe->w_ == nullptr || safe->w_->kit == nullptr) return;
+        safe->w_->kit->setValue(r);
+    });
+}
+
+/* ------------------------------------------------------------- sync */
 
 void InstrumentPanel::syncValues()
 {
@@ -727,7 +872,6 @@ void InstrumentPanel::syncValues()
     const auto& i = b->instruments[size_t(slot_ - 1)];
     if (!i.used) return;
     auto& w = *w_;
-    auto K = [](Knob* k, int v) { if (k) k->setValue(v, dontSendNotification); };
     auto S = [](Segmented* s, int v) { if (s) s->setSelected(v, dontSendNotification); };
     auto T = [](Stepper* s, int v) { if (s) s->setValue(v, dontSendNotification); };
     if (w.head) {
@@ -736,20 +880,21 @@ void InstrumentPanel::syncValues()
     }
     S(w.duty, i.duty);
     if (w.dutySeq && w.dutySeq->text() != dutySeqText(i)) w.dutySeq->setText(dutySeqText(i));
-    K(w.sweepRate, i.sweepRate); S(w.sweepDir, i.sweepDown ? 1 : 0); K(w.sweepShift, i.sweepShift);
-    T(w.wave, i.wave); K(w.frameAdv, i.frameAdvance); S(w.frameLoop, int(i.frameLoop)); S(w.waveLevel, i.waveLevel);
+    T(w.sweepRate, i.sweepRate); S(w.sweepDir, i.sweepDown ? 1 : 0); T(w.sweepShift, i.sweepShift);
+    T(w.wave, i.wave); T(w.frameAdv, i.frameAdvance); S(w.frameLoop, int(i.frameLoop)); S(w.waveLevel, i.waveLevel);
     T(w.kit, i.kit); S(w.kitLoop, int(i.kitLoop));
     if (w.kitRate) {
         const bank::Kit* k = b->kit(i.kit);
         const uint16_t period = k ? k->period : uint16_t(1865);
-        w.kitRate->setText(withThousands(int(std::lround(bank::sampleRateForPeriod(period)))) + " Hz (period " + String(int(period)) + ")");
+        w.kitRate->setText(withThousands(int(std::lround(bank::sampleRateForPeriod(period)))) + " Hz");
     }
     S(w.lfsr, i.lfsr7 ? 1 : 0); S(w.pitchMode, i.noiseManual ? 1 : 0);
-    K(w.shift, i.noiseShift); K(w.divisor, i.noiseDivisor); K(w.noiseSweep, i.noiseSweep);
-    if (w.shift) w.shift->setEnabled(i.noiseManual);
-    if (w.divisor) w.divisor->setEnabled(i.noiseManual);
-    K(w.envVol, i.envVol); S(w.envDir, int(i.envDir)); K(w.envRate, i.envRate);
-    S(w.vibShape, int(i.vib.shape)); S(w.vibDir, int(i.vib.dir)); K(w.vibSpeed, i.vib.speed); K(w.vibDepth, i.vib.depth); T(w.vibDelay, i.vib.delay);
+    T(w.shift, i.noiseShift); T(w.divisor, i.noiseDivisor); T(w.noiseSweep, i.noiseSweep);
+    S(w.envMode, int(i.env.mode));
+    T(w.envVol, i.envVol); S(w.envDir, int(i.envDir)); T(w.envRate, i.envRate);
+    T(w.attack, i.env.attackTicks); T(w.peak, i.env.peak); T(w.decay, i.env.decayTicks); T(w.sustain, i.env.sustain); T(w.release, i.env.releaseTicks);
+    S(w.attackCurve, int(i.env.attackCurve)); S(w.decayCurve, int(i.env.decayCurve)); S(w.releaseCurve, int(i.env.releaseCurve));
+    S(w.vibShape, int(i.vib.shape)); S(w.vibDir, int(i.vib.dir)); T(w.vibSpeed, i.vib.speed); T(w.vibDepth, i.vib.depth); T(w.vibDelay, i.vib.delay);
     S(w.pitchSpeed, int(i.pitchSpeed)); T(w.cmdRate, i.cmdRate); S(w.tableMode, int(i.tableMode));
     T(w.table, i.table); S(w.transpose, i.transpose ? 0 : 1); S(w.noteOff, int(i.noteOff)); S(w.overlap, i.overlap == bank::Overlap::Retrig ? 1 : 0);
     T(w.length, i.length); S(w.pan, panIndex(i.pan));
@@ -758,8 +903,8 @@ void InstrumentPanel::syncValues()
 }
 
 /// Everything the editor shows that is computed from a field rather than
-/// held in one: the envelope picture, and the hints that say what a value is
-/// worth (the vibrato in Hz and semitones, the rates in ticks).
+/// held in one: the envelope picture, the readouts that say what a value is
+/// worth, and the fields a mode greys out.
 void InstrumentPanel::refreshDerived()
 {
     if (!w_) return;
@@ -767,17 +912,15 @@ void InstrumentPanel::refreshDerived()
     if (!b) return;
     const auto& i = b->instruments[size_t(slot_ - 1)];
     auto& w = *w_;
-    if (w.envPreview) w.envPreview->set(i.envVol, i.envDir == bank::EnvDir::Up, i.envRate, colours::channel(channel));
-    if (w.envResult) w.envResult->setHint(envMsText(i.envRate));
+    const bool fourLevels = i.type == bank::InstrumentType::Wave || i.type == bank::InstrumentType::Kit;
+    if (w.graph) w.graph->set(i, colours::channel(channel), fourLevels);
     if (w.shift) w.shift->setEnabled(i.noiseManual);
     if (w.divisor) w.divisor->setEnabled(i.noiseManual);
-    if (w.vibF) w.vibF->setHint(vibDirHint(i.vib.dir));
-    if (w.vibSpeedF) w.vibSpeedF->setHint(vibSpeedText(i.vib.speed, i.pitchSpeed));
-    if (w.vibDepthF) w.vibDepthF->setHint(vibDepthHint(i.vib.depth));
-    if (w.pitchSpeedF) w.pitchSpeedF->setHint(pitchSpeedHint(i.pitchSpeed));
-    if (w.cmdRateF) w.cmdRateF->setHint(cmdRateText(i.cmdRate));
-    if (w.tableModeF) w.tableModeF->setHint(tableModeHint(i.tableMode));
-    if (w.overlapF) w.overlapF->setHint(overlapHint(i.overlap));
+    // The vibrato speed reads in Hz or in cycles a bar, with the pitch speed.
+    if (w.vibSpeed) {
+        const auto ps = i.pitchSpeed;
+        w.vibSpeed->setTextFunction([ps](int v) { return vibSpeedText(v, ps); });
+    }
 }
 
 void InstrumentPanel::updateUsedOn()

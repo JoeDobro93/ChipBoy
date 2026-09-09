@@ -16,7 +16,7 @@ public:
     EndRow()
         : label("At the end", Fonts::caption(10.0f), colours::textDim),
           end({ "Loop", "Hop to step", "Stop and hold" }),
-          help(RichText("Type a value to set it, Backspace to blank it. Volume 0-15, transpose " + String(CharPointer_UTF8("\xc2\xb1")) + "60 semitones, commands from the palette."))
+          help(RichText("Type a value; Backspace blanks it."))
     {
         label.setUpperCase(true);
         end.setMini(true);
@@ -30,17 +30,17 @@ public:
     }
     int preferredHeight(int width) override
     {
-        const int helpW = std::min(430, std::max(120, width - 340));
+        const int helpW = std::min(300, std::max(120, width - 380));
         return std::max(26, help.preferredHeight(helpW));
     }
     void resized() override
     {
         const int h = getHeight();
-        label.setBounds(0, 0, 70, 26);
-        end.setBounds(76, (26 - end.preferredHeight()) / 2, end.preferredWidth(), end.preferredHeight());
-        const int hx = 76 + end.preferredWidth() + 10;
+        label.setBounds(0, 0, 84, 26);
+        end.setBounds(90, (26 - end.preferredHeight()) / 2, end.preferredWidth(), end.preferredHeight());
+        const int hx = 90 + end.preferredWidth() + 10;
         hop.setBounds(hx, 1, hop.preferredWidth(), Stepper::kHeight);
-        const int helpW = std::min(430, std::max(120, getWidth() - 340));
+        const int helpW = std::min(300, std::max(120, getWidth() - 380));
         help.setBounds(getWidth() - helpW, 0, helpW, h);
     }
     TextLine label;
@@ -165,9 +165,12 @@ void TablesPanel::syncFromBank(bool pushToGrid)
     const String n = t.used ? String(t.name) : String();
     if (name_.text() != n) name_.setText(n);
     const int uses = usedBy(*b, slot_);
-    used_.setText(!t.used ? String("Empty slot. Editing it creates the table.")
+    String line = !t.used ? String("Empty slot. Editing it creates the table.")
                           : uses == 0 ? String("Not used yet.")
-                                      : "Used by " + String(uses) + (uses == 1 ? " instrument" : " instruments") + String(CharPointer_UTF8(" \xe2\x80\x94 editing changes all of them.")));
+                                      : "Used by " + String(uses) + (uses == 1 ? " instrument" : " instruments");
+    // Which channel's run the lit row belongs to (section 32).
+    if (playingChannel_ >= 0) line += middot() + String(colours::channelName(playingChannel_)) + " is running it";
+    used_.setText(line);
     if (pushToGrid) grid_.setTable(t);
     if (endRow_) {
         endRow_->end.setSelected(int(t.end), dontSendNotification);
@@ -207,9 +210,26 @@ void TablesPanel::hexChanged()
     repaint();
 }
 
+/// The running row of the table on view (docs/COMMANDS_AND_TEMPO.md 32).
+/// Two channels can run the same table; the newer run wins, and the serial
+/// wraps, so "newer" is a signed difference rather than a comparison.
 void TablesPanel::tick()
 {
     stepRate_.setText(stepRateText());
+    int row = -1, from = -1;
+    uint32_t newest = 0;
+    for (int ch = 0; ch < 4; ++ch) {
+        int slot = 0, r = -1;
+        uint32_t run = 0;
+        unpackTableRun(processor.scopes().tableRun[size_t(ch)].load(std::memory_order_relaxed), slot, r, run);
+        if (r < 0 || slot != slot_) continue;
+        if (from < 0 || int16_t(uint16_t(run) - uint16_t(newest)) > 0) { newest = run; row = r; from = ch; }
+    }
+    if (row == playingRow_ && from == playingChannel_) return;
+    playingRow_ = row;
+    playingChannel_ = from;
+    grid_.setPlayingStep(row);
+    syncFromBank(false);
 }
 
 void TablesPanel::resized()

@@ -143,6 +143,60 @@ void tableFromVarImpl(const var& v, Table& t)
         }
 }
 
+/// The synth behind a run (docs/COMMANDS_AND_TEMPO.md section 33). Written
+/// only when the run was generated, so a hand-drawn wave reads as it always
+/// did; the frames themselves are still what the exporter ships.
+var synthStateToVar(const SynthState& st)
+{
+    auto* o = new DynamicObject();
+    o->setProperty("width", int(st.width));
+    Array<var> partials;
+    for (auto v : st.partials) partials.add(int(v));
+    o->setProperty("partials", partials);
+    Array<var> amount, resonance;
+    for (auto v : st.amount) amount.add(int(v));
+    for (auto v : st.resonance) resonance.add(int(v));
+    o->setProperty("amount", amount);
+    o->setProperty("resonance", resonance);
+    return var(o);
+}
+void synthStateFromVar(const var& v, SynthState& st)
+{
+    auto* o = v.getDynamicObject(); if (!o) return;
+    st.width = uint8_t(std::clamp(getOr(o, "width", 16), 1, 31));
+    if (auto* p = o->getProperty("partials").getArray())
+        for (int k = 0; k < std::min(kSynthPartials, p->size()); ++k) st.partials[size_t(k)] = uint8_t(std::clamp(int((*p)[k]), 0, 15));
+    if (auto* a = o->getProperty("amount").getArray())
+        for (int k = 0; k < std::min(kSynthStages, a->size()); ++k) st.amount[size_t(k)] = int8_t(std::clamp(int((*a)[k]), -15, 15));
+    if (auto* r = o->getProperty("resonance").getArray())
+        for (int k = 0; k < std::min(kSynthStages, r->size()); ++k) st.resonance[size_t(k)] = uint8_t(std::clamp(int((*r)[k]), 0, 15));
+}
+var synthToVar(const Synth& sy)
+{
+    auto* o = new DynamicObject();
+    o->setProperty("source", int(sy.source));
+    Array<var> chain;
+    for (auto c : sy.chain) chain.add(int(c));
+    o->setProperty("chain", chain);
+    o->setProperty("start", synthStateToVar(sy.start));
+    o->setProperty("end", synthStateToVar(sy.end));
+    o->setProperty("frames", int(sy.frames));
+    o->setProperty("seed", int(sy.seed));
+    return var(o);
+}
+void synthFromVar(const var& v, Synth& sy)
+{
+    auto* o = v.getDynamicObject(); if (!o) return;
+    sy.used = true;
+    sy.source = SynthSource(std::clamp(getOr(o, "source", 0), 0, kSynthSourceCount - 1));
+    if (auto* c = o->getProperty("chain").getArray())
+        for (int k = 0; k < std::min(kSynthStages, c->size()); ++k) sy.chain[size_t(k)] = SynthShaper(std::clamp(int((*c)[k]), 0, kSynthShaperCount - 1));
+    synthStateFromVar(o->getProperty("start"), sy.start);
+    synthStateFromVar(o->getProperty("end"), sy.end);
+    sy.frames = uint8_t(std::clamp(getOr(o, "frames", 1), 1, kMaxFrames));
+    sy.seed = uint8_t(std::clamp(getOr(o, "seed", 1), 0, 255));
+}
+
 var waveToVarImpl(const Wave& w, int slot)
 {
     auto* o = new DynamicObject();
@@ -150,12 +204,14 @@ var waveToVarImpl(const Wave& w, int slot)
     Array<var> frames;
     for (const auto& f : w.frames) { Array<var> s; for (auto v : f.s) s.add(int(v)); frames.add(s); }
     o->setProperty("frames", frames);
+    if (w.synth.used) o->setProperty("synth", synthToVar(w.synth));
     return var(o);
 }
 void waveFromVarImpl(const var& v, Wave& w)
 {
     auto* o = v.getDynamicObject(); if (!o) return;
     w.used = true; w.name = o->getProperty("name").toString().toStdString(); w.frames.clear();
+    w.synth = Synth{};
     if (auto* frames = o->getProperty("frames").getArray())
         for (const auto& fv : *frames) {
             if (w.frames.size() >= size_t(kMaxFrames)) break;
@@ -163,6 +219,7 @@ void waveFromVarImpl(const var& v, Wave& w)
             w.frames.push_back(f);
         }
     if (w.frames.empty()) w.frames.push_back(Frame{});
+    if (o->hasProperty("synth")) synthFromVar(o->getProperty("synth"), w.synth);
 }
 
 var kitToVarImpl(const Kit& k, int slot)

@@ -21,8 +21,7 @@ const char* kTransposeTip = "Semitones added to every note on this channel, befo
 const String kDot = String(CharPointer_UTF8(" \xc2\xb7 "));
 /// Why Instrument, Table and the two slots are greyed on a Hybrid channel
 /// (docs/COMMANDS_AND_TEMPO.md section 20).
-const char* kHybridTip = "The tracker's cells drive this channel: it is on Hybrid, so its notes come from MIDI and its instrument, table and commands come "
-                         "from the song's cells at their steps. Level, Pan, Transpose and the Velocity mode still apply.";
+const char* kHybridTip = "The tracker's cells drive this channel: it is on Hybrid.";
 /// The reserved octave is one below the channel's playable floor.
 juce::String keyswitchTip(int ch)
 {
@@ -413,11 +412,11 @@ MasterStrip::MasterStrip(ChipBoyProcessor& p)
     volLAtt_->sendInitialUpdate();
     volRAtt_->sendInitialUpdate();
 
-    noise_.setTooltip("The hiss and the frame hum, as measured. The display's 9198 Hz line is LCD Whine, the switch under this one.");
+    noise_.setTooltip("The hiss and the frame hum, as measured.");
     noise_.attach(param(processor_, ids::noise));
-    lcd_.setTooltip("The 9198 Hz line the display puts into the headphones, and its harmonic. Independent of Headphone Noise: off removes it the way switching the display off does.");
+    lcd_.setTooltip("The 9198 Hz line the display puts into the headphones, on its own switch.");
     lcd_.attach(param(processor_, ids::lcd));
-    declick_.setTooltip("Crossfades each DAC-on step over a few milliseconds. Not what a Game Boy does: the header reads MODIFIED while it is on. Also in the Hardware tab.");
+    declick_.setTooltip("Crossfades each DAC-on step. A departure: the header reads MODIFIED while it is on.");
     declick_.attach(param(processor_, ids::declick));
     trim_.setTooltip("The one continuous control in the product: a fader after the analog stage, outside the chip");
     trim_.attach(param(processor_, ids::trim));
@@ -432,9 +431,8 @@ void MasterStrip::refreshVol()
 {
     vol_.setValue(volL_, dontSendNotification);
     vol_.setTooltip(volL_ == volR_
-                        ? String("NR50: the master volume both sides, 0 = 1/8, not mute. One step here writes bits 6-4 and 2-0 together.")
-                        : "NR50: left " + String(volL_) + ", right " + String(volR_) + " " + String(CharPointer_UTF8("\xe2\x80\x94"))
-                              + " something has moved them apart (an M command, or automation). A step here sets both to the same value.");
+                        ? String("NR50: the master volume both sides. 0 is 1/8, not mute.")
+                        : "NR50: left " + String(volL_) + ", right " + String(volR_) + " " + String(CharPointer_UTF8("\xe2\x80\x94")) + " a step here sets both.");
     vol_.repaint();
 }
 

@@ -5,7 +5,7 @@
 // whether a tab fits the window. Needs a display (Xvfb will do).
 //
 //   chipboy_uishot <output folder> [--desktop] [--song <file.cbsong>]
-//                  [--hybrid] [--scope-check] [--tab-switch]
+//                  [--hybrid] [--shaped] [--scope-check] [--tab-switch]
 //
 // --song opens a .cbsong in a tab of its own before the editor opens and
 // leaves the processor without a play head, so the plugin owns the transport
@@ -15,8 +15,13 @@
 // and the one that was opened (section 18).
 //
 // --hybrid puts two of the song's channels on Hybrid, so a shot shows the
-// three-way PLAYS switch and the strip controls a Hybrid channel does not
+// three-way playback switch and the strip controls a Hybrid channel does not
 // read (section 20).
+//
+// --shaped gives the first instrument a shaped envelope, so the Instrument
+// tab's shot shows the ADSR graph and its curves rather than the chip's ramp
+// (section 27); it is also the tallest the tab gets, so the pane report says
+// whether the form still fits.
 //
 // --tab-switch checks that the other tabs follow the active song tab
 // (section 18): with two songs open it shots the Grooves, Instrument,
@@ -146,6 +151,37 @@ void play(ChipBoyProcessor& p, FakePlayHead& ph, int blocks)
     }
 }
 
+/// Select, in the visible tab's slot list, a table a channel is running, so
+/// the shot shows the playhead of section 32. Silent when none is.
+void showRunningTable(ChipBoyProcessor& proc, FakePlayHead& ph, juce::Component& editor)
+{
+    // A table runs for as long as its rows last, so the song is played on in
+    // small steps until one is under way.
+    int slot = 0;
+    for (int attempt = 0; attempt < 40 && slot == 0; ++attempt) {
+        for (int ch = 0; ch < 4; ++ch) {
+            int s = 0, row = -1;
+            uint32_t run = 0;
+            chipboy::plugin::unpackTableRun(proc.scopes().tableRun[size_t(ch)].load(), s, row, run);
+            if (row >= 0 && s > 0) { slot = s; break; }
+        }
+        if (slot == 0) { play(proc, ph, 2); pump(40); }
+    }
+    if (slot == 0) { std::printf("  tables: no channel is running a table\n"); return; }
+    // The editor is off the desktop here, so isShowing() is false for every
+    // component: the visible tab is the one whose chain is all setVisible.
+    const auto onScreen = [](const juce::Component* c) {
+        for (; c != nullptr; c = c->getParentComponent()) if (!c->isVisible()) return false;
+        return true;
+    };
+    std::vector<chipboy::ui::SlotList*> lists;
+    collect<chipboy::ui::SlotList>(&editor, lists);
+    for (auto* l : lists)
+        if (onScreen(l)) { l->setSelected(slot); break; }
+    pump(200);
+    std::printf("  tables: showing table %d, which a channel is running\n", slot);
+}
+
 /// One note per channel, held: the steady tone the scopes must hold still on.
 void playSteady(ChipBoyProcessor& p, FakePlayHead& ph, int blocks, int64_t& frame)
 {
@@ -169,11 +205,12 @@ int main(int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI init;
     juce::String out = "shots", songPath;
     bool desktop = false;                       // a real window: the scopes' timers run
-    bool hybrid = false, scopeCheck = false, tabSwitch = false;
+    bool hybrid = false, shaped = false, scopeCheck = false, tabSwitch = false;
     for (int i = 1; i < argc; ++i) {
         const juce::String a(argv[i]);
         if (a == "--desktop") desktop = true;
         else if (a == "--hybrid") hybrid = true;
+        else if (a == "--shaped") shaped = true;
         else if (a == "--scope-check") scopeCheck = true;
         else if (a == "--tab-switch") tabSwitch = true;
         else if (a == "--song" && i + 1 < argc) songPath = argv[++i];
@@ -289,6 +326,20 @@ int main(int argc, char** argv)
         return stuck == 0 ? 0 : 1;
     }
 
+    // A shaped envelope on the first instrument: the graph then draws an
+    // ADSR with its curves, and the form is at its tallest (section 27).
+    if (shaped)
+        proc.editBank("Shaped envelope", [](chipboy::bank::Bank& b) {
+            auto& i = b.instruments[0];
+            i.env.mode = chipboy::bank::EnvMode::Shaped;
+            i.env.attackTicks = 10; i.env.peak = 15;
+            i.env.decayTicks = 26; i.env.sustain = 8;
+            i.env.releaseTicks = 40;
+            i.env.attackCurve = chipboy::bank::EnvCurve::Exponential;
+            i.env.decayCurve = chipboy::bank::EnvCurve::Logarithmic;
+            i.env.releaseCurve = chipboy::bank::EnvCurve::Linear;
+        });
+
     setCommands(proc);
     play(proc, ph, 200);
 
@@ -307,6 +358,9 @@ int main(int argc, char** argv)
             bar->setCurrentTabIndex(i);
             pump(300);
             play(proc, ph, 20); pump(200);
+            // The Tables tab shows a table's running row (section 32), so the
+            // shot lands on a table a channel is really running.
+            if (juce::String(names[i]) == "tables") showRunningTable(proc, ph, *ed);
             save(*ed, outDir.getChildFile(juce::String("main_") + names[i] + ".png"));
             reportPanes(*ed, names[i]);
         }

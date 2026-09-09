@@ -133,6 +133,49 @@ private:
     std::vector<std::unique_ptr<Field>> fields_;
 };
 
+/// One line of a form: the label on the left, the control on the right, and
+/// the row's tooltip is what the field means -- so the panel itself stays
+/// labels and values (docs/COMMANDS_AND_TEMPO.md section 29). Owns the
+/// control.
+class FormRow : public Block, public juce::SettableTooltipClient {
+public:
+    FormRow(const juce::String& label, std::unique_ptr<juce::Component> control, int controlWidth, int controlHeight, int labelWidth);
+    ~FormRow() override;
+    juce::Component& control() { return *control_; }
+    int preferredHeight(int) override;
+    void resized() override;
+    void paint(juce::Graphics&) override;
+private:
+    juce::String label_;
+    std::unique_ptr<juce::Component> control_;
+    int controlW_, controlH_, labelW_;
+};
+
+/// A thin caption over a run of form rows: a group with no box around it.
+class FormGroup : public Block {
+public:
+    static constexpr int kCaption = 18, kRow = 26, kLabel = 100;
+    explicit FormGroup(const juce::String& caption, int labelWidth = kLabel);
+    ~FormGroup() override;
+    template <typename W>
+    W* add(const juce::String& label, std::unique_ptr<W> control, int width, int height, const juce::String& tip = {})
+    {
+        W* raw = control.get();
+        addRow(std::make_unique<FormRow>(label, std::move(control), width, height, labelWidth_), tip);
+        return raw;
+    }
+    /// A block that takes the whole width of the group: a picture.
+    void addWide(std::unique_ptr<Block> b);
+    int preferredHeight(int width) override;
+    void resized() override;
+    void paint(juce::Graphics&) override;
+private:
+    void addRow(std::unique_ptr<FormRow> row, const juce::String& tip);
+    juce::String caption_;
+    int labelWidth_;
+    std::vector<std::unique_ptr<Block>> rows_;
+};
+
 /// A titled box (the mockup's .card) around one block.
 class Card : public Block {
 public:

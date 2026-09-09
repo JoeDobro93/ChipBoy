@@ -57,7 +57,7 @@ struct GrooveEditor::Impl {
     explicit Impl(GrooveEditor& o) : owner(o)
     {
         slotStepper.setRange(0, 16, 0);
-        slotStepper.setTooltip("Which groove the editor is showing: 0 is straight and cannot be edited, 1-16 are the song's. It follows the selected channel's phrase until you browse.");
+        slotStepper.setTooltip("Which groove the editor shows: 0 is straight, 1-16 are the song's.");
         slotStepper.setTextFunction([](int v) { return v == 0 ? juce::String("0 str") : ValueFormat::number(v); });
         slotStepper.onChange = [this](int v) {
             slot = juce::jlimit(0, 16, v);

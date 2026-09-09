@@ -1,6 +1,10 @@
-// ChipBoy -- the Instrument tab (UI_DESIGN section 6, the mockup's
-// instEditor): the 128 slots on the left, the field groups of the selected
-// instrument's type on the right, every field naming the register it lands in.
+// ChipBoy -- the Instrument tab (UI_DESIGN section 6,
+// docs/COMMANDS_AND_TEMPO.md section 29): the 128 slots on the left and a
+// compact form on the right -- labels down one column, controls down the
+// other, a thin caption over each group and no card chrome. The envelope is
+// a small graph over its fields, the chip's ramp or the shaped ADSR with its
+// curves; what a field means is its tooltip, so the panel itself is labels
+// and values.
 #pragma once
 
 #include "plugin/main/panels/PanelCommon.h"
@@ -43,6 +47,11 @@ private:
     void edit(const juce::String& what, const std::function<void(bank::Instrument&)>& fn);
     void newInstrument();
     void duplicate();
+    /// The bank's slots by name, for the right click every slot field takes
+    /// (UI_DESIGN section 2.1).
+    void showTableMenu();
+    void showWaveMenu();
+    void showKitMenu();
     /// The instrument with every table, wave and kit it uses, as a .cbi file
     /// (docs/COMMANDS_AND_TEMPO.md section 15).
     void savePreset();
@@ -57,7 +66,7 @@ private:
     ScrollBlock scroll_;
     std::unique_ptr<Widgets> w_;
     int slot_ = 1;
-    int builtSlot_ = -1, builtType_ = -1, builtChannel_ = -1;
+    int builtSlot_ = -1, builtType_ = -1, builtChannel_ = -1, builtEnvMode_ = -1;
     bool builtUsed_ = false;
     const bank::Bank* selfBank_ = nullptr;
     std::array<int, 4> lastChannelInst_{ { -1, -1, -1, -1 } };

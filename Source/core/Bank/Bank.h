@@ -226,7 +226,9 @@ struct SynthState {
 /// frames themselves stay the wave's -- this is what made them.
 struct Synth {
     bool used = false;                 ///< false = the frames were drawn, not generated
-    SynthSource source = SynthSource::Sine;
+    /// Drawn by default, so a fresh synth is the wave that is already there
+    /// and every shaper starts from it.
+    SynthSource source = SynthSource::Drawn;
     std::array<SynthShaper, kSynthStages> chain{};
     SynthState start, end;
     uint8_t frames = 1;                ///< 1-16, the run Generate writes

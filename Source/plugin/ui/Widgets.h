@@ -172,7 +172,7 @@ private:
 /// window obeys one convention (UI_DESIGN section 2.1): a click selects the
 /// field and types into it, a right click lists the slots by name, and a
 /// double click opens that item's own tab.
-enum class SlotKind { Instrument, Table, Wave, Groove };
+enum class SlotKind { Instrument, Table, Wave, Kit, Groove };
 
 /// One row of a bank list: "01 . Square lead".
 struct SlotRow {

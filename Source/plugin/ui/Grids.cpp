@@ -588,9 +588,9 @@ struct TableGrid::Impl {
     {
         auto& cols = core.cols;
         cols.clear();
-        const int widths[5] = { 34, 52, 76, 74, 74 };
+        const int widths[5] = { 38, 52, 72, 74, 74 };
         const Kind kinds[5] = { Kind::Step, Kind::Vol, Kind::Transpose, Kind::Cmd, Kind::Cmd };
-        const char* titles[5] = { "Step", "Vol", "Transpose", "Cmd 1", "Cmd 2" };
+        const char* titles[5] = { "Step", "Vol", "Trans", "Cmd 1", "Cmd 2" };
         int x = 0;
         for (int i = 0; i < 5; ++i) { cols.push_back({ kinds[i], i == 4 ? 1 : 0, x, widths[i], titles[i] }); x += widths[i]; }
         if (width - x >= 70) cols.push_back({ Kind::Info, 0, x, width - x, juce::String::charToString(0x2192) + " written as" });
@@ -796,7 +796,7 @@ struct PhraseGrid::Impl {
     /// the phrase's LEN and its groove chip, all inside the 26 px name row.
     /// The "PLAYS" caption went with the rest of the window's spare words
     /// (docs/COMMANDS_AND_TEMPO.md section 30); the switch's tooltip says it.
-    static constexpr int kArm = 14, kHead1 = 26, kLenWidth = 42;
+    static constexpr int kArm = 14, kHead1 = 26, kLenWidth = 44;
 
     PhraseGrid& owner;
     std::shared_ptr<const tracker::Song> song;
@@ -890,21 +890,21 @@ struct PhraseGrid::Impl {
     /// what is left (UI_DESIGN section 7).
     void layoutHeader(int ch, int x, int w)
     {
-        int cx = x + 4;
+        int cx = x + 3;
         armRects[size_t(ch)] = { cx, (kHead1 - kArm) / 2, kArm, kArm };
-        cx += kArm + 4;
-        const int nameW = juce::roundToInt(draw::textWidth(Fonts::pixel(10.0f), colours::channelName(ch))) + 4;
-        cx += nameW + 5;
+        cx += kArm + 3;
+        const int nameW = juce::roundToInt(draw::textWidth(Fonts::pixel(10.0f), colours::channelName(ch))) + 3;
+        cx += nameW + 4;
         auto& seg = source[ch];
         seg.setBounds(cx, 3, seg.preferredWidth(), 20);
-        int gx = seg.getRight() + 5;
-        const int room = juce::jmax(0, x + w - gx - 3);
+        int gx = seg.getRight() + 4;
+        const int room = juce::jmax(0, x + w - gx - 2);
         // LEN first: a phrase's length is what its channel runs on, so it
         // keeps its width and the chip takes the rest (section 25).
         const int lenW = juce::jmin(kLenWidth, room);
         lenRects[size_t(ch)] = { gx, 3, lenW, 20 };
-        gx += lenW + 4;
-        grooveRects[size_t(ch)] = { gx, 3, juce::jmin(64, juce::jmax(0, x + w - gx - 3)), 20 };
+        gx += lenW + 3;
+        grooveRects[size_t(ch)] = { gx, 3, juce::jmin(64, juce::jmax(0, x + w - gx - 2)), 20 };
     }
 
     int cmdSlot(int col) const   // 0: cmd1, 1: cmd2
@@ -1250,12 +1250,13 @@ struct PhraseGrid::Impl {
             const auto lr = lenRects[size_t(ch)];
             if (lr.getWidth() >= 24) {
                 draw::panel(g, lr, hoverLen == ch ? raisedHi : raised, line, 3.0f);
-                g.setFont(Fonts::caption(8.0f));
-                g.setColour(textDim);
-                g.drawText("LEN", lr.withWidth(20).withTrimmedLeft(4), juce::Justification::centredLeft, false);
+                // "LEN 16" in a chip: the caption takes exactly what it needs
+                // and the number takes the rest.
+                const int capW = juce::roundToInt(draw::textWidth(Fonts::caption(8.0f), "LEN")) + 2;
+                draw::caption(g, "LEN", lr.withWidth(capW + 3).withTrimmedLeft(3), juce::Justification::centredLeft, textDim, 8.0f);
                 g.setFont(Fonts::mono(10.5f));
                 g.setColour(hoverLen == ch ? text : textMute);
-                g.drawText(juce::String(length[size_t(ch)]), lr.withTrimmedLeft(20).withTrimmedRight(3), juce::Justification::centredRight, false);
+                g.drawText(juce::String(length[size_t(ch)]), lr.withTrimmedLeft(capW + 4).withTrimmedRight(3), juce::Justification::centredRight, false);
             }
             const auto gr = grooveRects[size_t(ch)];
             if (gr.getWidth() >= 20) {
