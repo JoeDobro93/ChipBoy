@@ -32,20 +32,20 @@ GroovesPanel::GroovesPanel(ChipBoyProcessor& p)
     list_.onRename = [this](int slot, const String& n) {
         if (slot < 1 || slot > kSlots) return;
         const String name = n.trim().substring(0, 15);
-        processor.editSong("Groove " + ValueFormat::number(slot) + " named " + name, [slot, name](tracker::Song& s) {
+        processor.editSong("Groove " + ValueFormat::slot(slot) + " named " + name, [slot, name](tracker::Song& s) {
             if (slot >= 1 && slot <= int(s.grooves.size())) s.grooves[size_t(slot - 1)].setName(name.toRawUTF8());
         });
         rebuildList();
         contextChanged();
     };
     editor_.onChange = [this](int slot, const tracker::Groove& g) {
-        processor.editSong("Groove " + ValueFormat::number(slot), [slot, g](tracker::Song& s) { if (slot >= 1 && slot <= int(s.grooves.size())) s.grooves[size_t(slot - 1)] = g; });
+        processor.editSong("Groove " + ValueFormat::slot(slot), [slot, g](tracker::Song& s) { if (slot >= 1 && slot <= int(s.grooves.size())) s.grooves[size_t(slot - 1)] = g; });
         rebuildList();
         contextChanged();
     };
     // A drag down one cell, or a value typed into it, is one undo.
     editor_.onGesture = [this](bool begin) {
-        if (begin) processor.history().beginGesture("Groove " + ValueFormat::number(slot_));
+        if (begin) processor.history().beginGesture("Groove " + ValueFormat::slot(slot_));
         else processor.history().endGesture();
     };
     // The stepper in the editor's head and the list are one selection.
@@ -157,7 +157,7 @@ RichText GroovesPanel::contextLine() const
     RichText r;
     const auto sg = processor.song();
     const bool named = slot_ > 0 && sg && sg->grooves[size_t(slot_ - 1)].named();
-    r.plain("Editing groove ").bold(slot_ == 0 ? String("0 straight") : ValueFormat::number(slot_) + (named ? " " + String(CharPointer_UTF8(sg->grooves[size_t(slot_ - 1)].nameOf())) : String()));
+    r.plain("Editing groove ").bold(slot_ == 0 ? String("0 straight") : ValueFormat::slot(slot_) + (named ? " " + String(CharPointer_UTF8(sg->grooves[size_t(slot_ - 1)].nameOf())) : String()));
     if (slot_ > 0) r.plain(middot()).bold(ticksText(slot_)).plain(" ticks a step");
     else r.plain(" " + String(CharPointer_UTF8("\xe2\x80\x94")) + " six ticks a step, and not editable");
     return r;

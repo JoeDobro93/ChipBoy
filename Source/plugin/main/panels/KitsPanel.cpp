@@ -115,7 +115,7 @@ KitsPanel::KitsPanel(ChipBoyProcessor& p)
     list_.onSelect = [this](int slot) { showSlot(slot); };
     list_.onRename = [this](int slot, const String& n) {
         const int s = std::clamp(slot, 1, bank::kKitSlots);
-        processor.editBank("Kit " + ValueFormat::number(s) + " named " + n, [s, n](bank::Bank& b) { auto& k = b.kits[size_t(s - 1)]; k.used = true; k.name = n.toStdString(); });
+        processor.editBank("Kit " + ValueFormat::slot(s) + " named " + n, [s, n](bank::Bank& b) { auto& k = b.kits[size_t(s - 1)]; k.used = true; k.name = n.toStdString(); });
         selfBank_ = processor.bank().get();
         rebuildList();
         contextChanged();
@@ -283,7 +283,7 @@ void KitsPanel::syncValues()
 void KitsPanel::editKit(const String& what, const std::function<void(bank::Kit&)>& fn)
 {
     const int slot = slot_;
-    processor.editBank("Kit " + ValueFormat::number(slot) + " " + what, [&fn, slot](bank::Bank& b) {
+    processor.editBank("Kit " + ValueFormat::slot(slot) + " " + what, [&fn, slot](bank::Bank& b) {
         auto& k = b.kits[size_t(slot - 1)];
         if (!k.used) { k.used = true; if (k.name.empty()) k.name = ("Kit " + String(slot)).toStdString(); }
         fn(k);
@@ -316,7 +316,7 @@ void KitsPanel::appendSample(int slot, const bank::KitSample& sample)
         AlertWindow::showMessageBoxAsync(MessageBoxIconType::InfoIcon, "ChipBoy", "A kit holds 32 samples; this one is full.");
         return;
     }
-    processor.editBank("Kit " + ValueFormat::number(slot) + " sample " + String(sample.name), [slot, sample](bank::Bank& bk) {
+    processor.editBank("Kit " + ValueFormat::slot(slot) + " sample " + String(sample.name), [slot, sample](bank::Bank& bk) {
         auto& k = bk.kits[size_t(slot - 1)];
         if (!k.used) { k.used = true; if (k.name.empty()) k.name = ("Kit " + String(slot)).toStdString(); }
         if (k.samples.size() >= size_t(bank::kMaxKitSamples)) return;

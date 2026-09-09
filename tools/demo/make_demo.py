@@ -172,7 +172,7 @@ def parameter_table():
     integer("song_tempo", "Song Tempo", 40, 255, 120, "BPM; the Song source's base tempo")
     boolean("notes_on_tick", "Quantize Notes To Ticks", False)
     boolean("link", "Link Mode", False)
-    boolean("hex", "Hex Display", False)
+    boolean("hex", "Hex Display", True)
 
     # addChannelParameters, channels 1-4 with withSource = true. A channel is a
     # tracker row (section 3): an instrument, a table, the four performance

@@ -164,6 +164,7 @@ struct ScopeView::Impl : juce::Timer {
     /// no live atomic, so one snapshot always draws one picture.
     double endCycle = 0.0;
     bool active = false;
+    bool audible = true;          ///< the mix lets the channel through (section 53)
     int period = 0;
     juce::Path digital, analog;
 
@@ -237,9 +238,15 @@ struct ScopeView::Impl : juce::Timer {
         endCycle = double(std::max(newLatest, newestCycle));
         driver::VoiceView v;
         link::unpackState(packed, v);
-        active = v.active;
+        // NR51 with both of the channel's bits clear is silence whatever the
+        // DAC does (section 53); an unpowered mix word says nothing.
+        const uint32_t mix = src.mix != nullptr ? src.mix->load(std::memory_order_relaxed) : 0;
+        const bool newAudible = !(mix & (1u << 16)) || (((mix >> 8) & ((1u << ch) | (1u << (ch + 4)))) != 0);
+        const bool audibleChanged = newAudible != audible;
+        audible = newAudible;
+        active = v.active && audible;
         period = v.period;
-        if (changed) owner.repaint();
+        if (changed || audibleChanged) owner.repaint();
     }
 
     // --- the picture ----------------------------------------------------
@@ -260,7 +267,14 @@ struct ScopeView::Impl : juce::Timer {
             g.fillRect(float(area.getX()), std::round(toY(lv)) - 0.5f, float(W), 1.0f);
         }
 
-        if (n > 0) buildAndDraw(g, area, toY);
+        if (n > 0 && audible) buildAndDraw(g, area, toY);
+        else if (n > 0) {
+            // Silenced by the mix: the off baseline, as a channel with its DAC off draws.
+            const float dashes[2] = { 3.0f, 3.0f };
+            const float yBase = std::round(toY(0.0)) - 0.5f;
+            g.setColour(colours::channel(ch).withAlpha(0.4f));
+            g.drawDashedLine({ float(area.getX()), yBase, float(area.getRight()), yBase }, dashes, 2, 1.0f);
+        }
 
         if (idleDim && !active) { g.setColour(ground.withAlpha(0.4f)); g.fillRoundedRectangle(bounds.toFloat(), 3.0f); }
     }
@@ -341,7 +355,8 @@ struct ScopeView::Impl : juce::Timer {
                 const double t = start + len * double(sIdx) / double(subs);
                 while (j + 1 < int(n) && double(s[j + 1].cycle) <= t) ++j;
                 if (j < i0) { openA = false; continue; }
-                const double v = 7.5 + capState[size_t(j)] * std::exp(-(t - double(s[j].cycle)) / tau);
+                // Clamped to the DAC's sixteen levels: the capacitor's overshoot stays in the grid (section 53).
+                const double v = juce::jlimit(0.0, 16.0, 7.5 + capState[size_t(j)] * std::exp(-(t - double(s[j].cycle)) / tau));
                 const float px = x0 + float(sIdx) * 0.25f, py = toY(v);
                 if (!openA) { analog.startNewSubPath(px, py); openA = true; }
                 else analog.lineTo(px, py);

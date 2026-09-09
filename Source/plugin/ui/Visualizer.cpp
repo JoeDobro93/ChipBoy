@@ -49,7 +49,7 @@ struct VisualizerWindow::Impl {
                 s.setChrome(false);
                 s.setPeriods(8);
                 s.setIdleDim(false);
-                s.setSource({ &buffers.channels[size_t(ch)], &buffers.state[size_t(ch)], &buffers.latestCycle });
+                s.setSource({ &buffers.channels[size_t(ch)], &buffers.state[size_t(ch)], &buffers.latestCycle, &buffers.mix });
                 addAndMakeVisible(s);
             }
             master.setSource(&buffers.master);

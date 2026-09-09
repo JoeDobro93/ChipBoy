@@ -92,6 +92,19 @@ juce::String ValueFormat::signedNumber(int v)
     if (v < 0) return "-" + hexDigits(-v);
     return "00";
 }
+juce::String ValueFormat::slot(int slot)
+{
+    if (!gHex) return juce::String(slot);
+    return slot >= 1 ? hexDigits(slot - 1) : hexDigits(0);
+}
+juce::String ValueFormat::index(int zeroBased)
+{
+    return gHex ? hexDigits(std::max(0, zeroBased)) : juce::String(zeroBased + 1);
+}
+juce::String ValueFormat::transpose(int v)
+{
+    return gHex ? byte(v) : signedNumber(v);
+}
 juce::String ValueFormat::byte(int v)
 {
     return juce::String::toHexString(v & 0xFF).toUpperCase().paddedLeft('0', 2);

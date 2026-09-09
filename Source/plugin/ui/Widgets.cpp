@@ -366,6 +366,7 @@ struct Stepper::Impl {
     std::function<juce::String(int)> entryToText;
     std::function<bool(const juce::String&, int&)> entryFromText;
     bool wraps = false;
+    bool slotNumbering = false, transposeNumbering = false;   ///< section 52
     bool typed = true;                ///< every number is typeable (UI_DESIGN 2.1)
     int hover = -1;   ///< 0 minus, 1 plus
     bool stepping = false;
@@ -388,6 +389,16 @@ struct Stepper::Impl {
         else if (base() == 16 && ch >= 'A' && ch <= 'F') d = int(ch - 'A') + 10;
         if (d < 0) return -1;
         const int v = acc * base() + d;
+        if (base() == 16 && transposeNumbering) {          // a byte, read two's complement (section 52)
+            if (v > 255) return -2;
+            acc = v; ++count;
+            return juce::jlimit(bind.lo, bind.hi, int(int8_t(uint8_t(v))));
+        }
+        if (base() == 16 && slotNumbering) {               // typed from 00: one less than the slot
+            if (v > bind.hi - 1) return -2;
+            acc = v; ++count;
+            return juce::jmax(bind.lo, v + 1);
+        }
         if (v > bind.hi) return -2;
         acc = v;
         ++count;
@@ -398,21 +409,34 @@ struct Stepper::Impl {
     int popDigit()
     {
         if (count > 0) { acc /= base(); --count; }
-        return count > 0 ? juce::jmax(bind.lo, acc) : juce::jlimit(bind.lo, bind.hi, 0);
+        if (count == 0) return juce::jlimit(bind.lo, bind.hi, 0);
+        if (base() == 16 && transposeNumbering) return juce::jlimit(bind.lo, bind.hi, int(int8_t(uint8_t(acc))));
+        if (base() == 16 && slotNumbering) return juce::jmax(bind.lo, acc + 1);
+        return juce::jmax(bind.lo, acc);
     }
 
     juce::String text() const
     {
         if (textFn) return textFn(value);
+        if (slotNumbering && value >= 1) return ValueFormat::slot(value);
+        if (transposeNumbering) return ValueFormat::transpose(value);
         if (bind.attached()) return bind.text(value);
         return ValueFormat::number(value);
     }
     /// What the inline box starts with: the field's own units, not the
     /// decorated readout ("120", not "120 BPM").
-    juce::String entryText() const { return entryToText ? entryToText(value) : ValueFormat::number(value); }
+    juce::String entryText() const
+    {
+        if (entryToText) return entryToText(value);
+        if (slotNumbering && value >= 1) return ValueFormat::slot(value);
+        if (transposeNumbering) return ValueFormat::transpose(value);
+        return ValueFormat::number(value);
+    }
     bool parseEntry(const juce::String& text, int& out) const
     {
         if (entryFromText) return entryFromText(text, out);
+        if (slotNumbering) return detail::parseSlotTyped(text, bind.hi, out);
+        if (transposeNumbering) return detail::parseTransposeTyped(text, bind.lo, bind.hi, out);
         return parseTypedInt(text, bind.lo, bind.hi, out);
     }
     int stepped(int delta) const
@@ -457,6 +481,8 @@ void Stepper::setValue(int v, juce::NotificationType n)
 int Stepper::value() const { return impl_->value; }
 void Stepper::setTextFunction(std::function<juce::String(int)> fn) { impl_->textFn = std::move(fn); repaint(); }
 void Stepper::setWraps(bool wraps) { impl_->wraps = wraps; }
+void Stepper::setSlotNumbering(bool on) { impl_->slotNumbering = on; repaint(); }
+void Stepper::setTransposeNumbering(bool on) { impl_->transposeNumbering = on; repaint(); }
 void Stepper::setTyped(bool typed) { impl_->typed = typed; }
 void Stepper::setEntryFormat(std::function<juce::String(int)> toText, std::function<bool(const juce::String&, int&)> fromText)
 {
@@ -901,7 +927,7 @@ struct SlotList::Impl {
             else if (hov) { g.setColour(raised); g.fillRect(b); }
             auto inner = b.reduced(8, 0);
             g.setFont(slotFont); g.setColour(textDim);
-            g.drawText(ValueFormat::number(row.slot), inner.removeFromLeft(26), juce::Justification::centredLeft, false);
+            g.drawText(ValueFormat::slot(row.slot), inner.removeFromLeft(26), juce::Justification::centredLeft, false);
             if (row.kind >= 0) {
                 static const char* kinds[] = { "pulse", "wave", "kit", "noise" };
                 const juce::String chip = row.kind < 4 ? kinds[row.kind] : "?";

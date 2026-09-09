@@ -56,6 +56,15 @@ design-log section the change touches. Update this file at the end of every chan
   `pu2Transpose` and F on PU2 sets it; the JSON reader folds a negative P into its byte;
   grid values wrap on a nudge; the Tracker head has **Follow**; the chain is 236 px with a
   TSP cell beside each phrase. Tests: four driver cases, two tracker cases.
+- Round 9 (§51–§53, D-UI-18–21): LSDj 9's three-stage envelope measured on the ROM (a
+  format-22 probe under `tools/lsdjref`'s save writer, patched to version 0x16) and the
+  shaped envelope given a **Start** level and a **Fade** stage (`Envelope::start`,
+  `fadeTicks`, `fadeTo`, `fadeCurve`; `envStart`, `envFade`, `envFadeTo`, `envFadeCurve`
+  in the JSON); Hex is the default and counts like LSDj (`ValueFormat::slot`, `index`,
+  `transpose`; `Stepper::setSlotNumbering` / `setTransposeNumbering`; typed slots from 00,
+  typed transposes as bytes); scopes take the NR51 mix word and draw a silenced channel as
+  off, the analog trace clamped; the chain has an 8 px gap after each TSP (264 px) and the
+  window is 1280 wide. Demo state, parameter table and screenshots regenerated.
 - The parity harness runs here now: RGBDS was built from source into `/usr/local`, the
   ROM sits at `/root/lsdj/lsdj9_3_9.gb` (container only), `build-ref/` holds the build.
   `f_table_speed` is a new case; only it and `i_kill_delay_chord` were traced on 9.3.9.
@@ -78,6 +87,9 @@ design-log section the change touches. Update this file at the end of every chan
   note-on at the same sample — but was not reproduced here; the user confirms in FL. The
   tracker's own dropped first note at a DAW loop (§47) is likewise fixed on reasoning: the
   Player fires the step a jump lands in; the user confirms in the DAW.
+- §7's envelope-speed numbers (6, 11, 15, 20, 27 for speeds 1–5) were the hardware
+  envelope's, measured on version-0 saves; §51 has the 9.x software table. `LSDJ_PARITY.md`
+  should be re-read against it when the harness writes format 22 (below).
 - From the LSDj recreation, open by decision: an **LSDj-shaped noise map** as an
   instrument option (its map runs into 7-bit values above A-6 and retriggers on such a
   row; ChipBoy's transposed noise rows land near LSDj's pitches, not on them); the table

@@ -348,7 +348,7 @@ void VoiceEditor::refreshInstruments(bool force)
     for (int slot = 1; slot <= bank::kInstrumentSlots; ++slot) {
         const String name = client.instrumentName(slot);
         const bool empty = linked && client.instrumentType(slot) < 0;
-        String text = ValueFormat::number(slot);
+        String text = ValueFormat::slot(slot);
         if (name.isNotEmpty()) text << dot() << name;
         else if (empty) text << dot() << "empty";
         PopupMenu::Item item(text);

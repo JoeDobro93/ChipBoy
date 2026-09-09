@@ -1137,10 +1137,12 @@ uint8_t Driver::shapedLevel(const Voice& v) const
     const Envelope& e = v.inst.env;
     auto clamp15 = [](int x) { return uint8_t(std::clamp(x, 0, 15)); };
     if (v.shapedRelease) return clamp15(envSegmentLevel(v.shapedFrom, 0, e.releaseTicks, int(v.shapedTick), e.releaseCurve));
-    const int a = e.attackTicks, d = e.decayTicks, t = int(v.shapedTick);
-    if (t < a) return clamp15(envSegmentLevel(0, e.peak, a, t, e.attackCurve));
+    const int a = e.attackTicks, d = e.decayTicks, f = e.fadeTicks, t = int(v.shapedTick);
+    if (t < a) return clamp15(envSegmentLevel(e.start, e.peak, a, t, e.attackCurve));
     if (t < a + d) return clamp15(envSegmentLevel(e.peak, e.sustain, d, t - a, e.decayCurve));
-    return clamp15(e.sustain);
+    // The third stage (section 51): the sustain fades to a level and holds there.
+    if (f > 0 && t < a + d + f) return clamp15(envSegmentLevel(e.sustain, e.fadeTo, f, t - a - d, e.fadeCurve));
+    return clamp15(f > 0 ? e.fadeTo : e.sustain);
 }
 
 void Driver::stepShaped(int ch)

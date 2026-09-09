@@ -618,7 +618,7 @@ String withThousands(int v)
 
 String slotAndName(int slot, const std::string& name)
 {
-    return ValueFormat::number(slot).paddedLeft('0', 2) + " " + String(name);
+    return ValueFormat::slot(slot).paddedLeft('0', 2) + " " + String(name);
 }
 
 } // namespace chipboy::plugin

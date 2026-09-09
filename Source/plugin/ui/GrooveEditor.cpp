@@ -58,7 +58,8 @@ struct GrooveEditor::Impl {
     {
         slotStepper.setRange(0, 16, 0);
         slotStepper.setTooltip("Which groove the editor shows: 0 is straight, 1-16 are the song's.");
-        slotStepper.setTextFunction([](int v) { return v == 0 ? juce::String("0 str") : ValueFormat::number(v); });
+        slotStepper.setTextFunction([](int v) { return v == 0 ? juce::String("0 str") : ValueFormat::slot(v); });
+        slotStepper.setSlotNumbering(true);
         slotStepper.onChange = [this](int v) {
             slot = juce::jlimit(0, 16, v);
             entry.reset();
@@ -270,7 +271,7 @@ juce::String GrooveEditor::getTooltip()
         if (!im.editable()) return "Groove 0 is straight, six ticks a step, and cannot be edited. Browse to 1-16 to edit one of the song's.";
         const auto g = im.groove();
         const int row = im.hover;
-        juce::String s = "How many ticks step " + ValueFormat::number(row + 1) + " lasts, 1-48. ";
+        juce::String s = "How many ticks step " + ValueFormat::index(row) + " lasts, 1-48. ";
         s += row < g.length() ? juce::String("Type two digits, or use the wheel, a drag, or + and -; Backspace ends the groove here.")
                               : "Blank: the groove is " + juce::String(g.length()) + " entries long and repeats from the top here.";
         return s;

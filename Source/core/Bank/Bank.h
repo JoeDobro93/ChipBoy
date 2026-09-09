@@ -122,13 +122,17 @@ struct Vibrato {
 /// levels), so a playback ROM can replay it from a list.
 struct Envelope {
     EnvMode  mode = EnvMode::Chip;
+    uint8_t  start = 0;            ///< 0-15, where the attack begins (section 51); 0 is silence
     uint8_t  attackTicks = 0;      ///< 0-255; 0 starts at the peak
     uint8_t  peak = 15;            ///< 0-15
     uint8_t  decayTicks = 0;       ///< 0-255; 0 drops to the sustain at once
-    uint8_t  sustain = 15;         ///< 0-15, held while the note is held
+    uint8_t  sustain = 15;         ///< 0-15, held while the note is held -- or faded from
+    uint8_t  fadeTicks = 0;        ///< 0-255; 0 is no fade (section 51), else ticks from the sustain to fadeTo
+    uint8_t  fadeTo = 0;           ///< 0-15, held once the fade reaches it
     uint8_t  releaseTicks = 0;     ///< 0-255; 0 is silent at once
     EnvCurve attackCurve = EnvCurve::Linear;
     EnvCurve decayCurve = EnvCurve::Linear;
+    EnvCurve fadeCurve = EnvCurve::Linear;
     EnvCurve releaseCurve = EnvCurve::Linear;
 };
 
@@ -190,7 +194,7 @@ struct Instrument : InstrumentCore {
 struct TableStep {
     int8_t  vol = -1;                ///< -1 blank, else 0-15
     bool    hasTranspose = false;
-    int8_t  transpose = 0;           ///< -60..60
+    int8_t  transpose = 0;           ///< -128..127, the byte LSDj shows (section 52)
     Command cmd1, cmd2;
 };
 struct Table {

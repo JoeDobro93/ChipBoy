@@ -27,18 +27,18 @@ String utf8(const char* s) { return String(CharPointer_UTF8(s)); }
 constexpr int kGroupGap = 10, kColumnGap = 20;
 /// The envelope picture over its fields. It is the one thing on the tab that
 /// is not a label and a value, because an envelope is a shape.
-constexpr int kGraphHeight = 66;
+constexpr int kGraphHeight = 50;
 
 /// What placing a preset did, in one line: "Pluck -> slot 3; table 5 -> 9
 /// (renumbered); wave 2 reused" (docs/COMMANDS_AND_TEMPO.md section 15).
 String placeText(const bank::PlaceReport& r, const String& name)
 {
     if (!r.ok) return "Preset not placed: " + String(r.error != nullptr ? r.error : "something is full");
-    String s = name + arrow() + "slot " + ValueFormat::number(r.instrumentSlot);
+    String s = name + arrow() + "slot " + ValueFormat::slot(r.instrumentSlot);
     for (const auto& m : r.moves) {
         const char* kind = m.kind == bank::PlaceReport::Kind::Table ? "table" : m.kind == bank::PlaceReport::Kind::Wave ? "wave" : "kit";
-        s += "; " + String(kind) + " " + ValueFormat::number(m.from);
-        if (m.to != m.from) s += arrow() + ValueFormat::number(m.to) + (m.reused ? " (reused)" : " (renumbered)");
+        s += "; " + String(kind) + " " + ValueFormat::slot(m.from);
+        if (m.to != m.from) s += arrow() + ValueFormat::slot(m.to) + (m.reused ? " (reused)" : " (renumbered)");
         else if (m.reused) s += " reused";
     }
     return s;
@@ -143,7 +143,7 @@ public:
         vol_ = i.envVol; up_ = i.envDir == bank::EnvDir::Up; rate_ = i.envRate;
         colour_ = c; four_ = fourLevels;
         setTooltip(mode_ == bank::EnvMode::Shaped
-                       ? String("Attack to the peak, decay to the sustain, which is held while the note is, then the release. Each segment has its own curve.")
+                       ? String("From the start level, attack to the peak, decay to the sustain, a fade to its level if one is set, held while the note is, then the release. Each segment has its own curve.")
                        : String("The chip's own envelope: one NRx2 write, then it runs -- a start level, a direction and one of seven rates."));
         repaint();
     }
@@ -163,16 +163,19 @@ public:
         };
         String right;
         if (mode_ == bank::EnvMode::Shaped) {
-            const int peak = std::clamp<int>(env_.peak, 0, top), sus = std::clamp<int>(env_.sustain, 0, top);
-            const int a = env_.attackTicks, d = env_.decayTicks, r = env_.releaseTicks;
-            const int hold = std::max(6, (a + d + r) / 3);
-            const int total = std::max(1, a + d + hold + r);
+            const int start = std::clamp<int>(env_.start, 0, top), peak = std::clamp<int>(env_.peak, 0, top), sus = std::clamp<int>(env_.sustain, 0, top);
+            const int fadeTo = std::clamp<int>(env_.fadeTo, 0, top);
+            const int a = env_.attackTicks, d = env_.decayTicks, f = env_.fadeTicks, r = env_.releaseTicks;
+            const int held = f > 0 ? fadeTo : sus;
+            const int hold = std::max(6, (a + d + f + r) / 3);
+            const int total = std::max(1, a + d + f + hold + r);
             const auto x = [&](int t) { return W * float(t) / float(total); };
-            for (int t = 0; t <= a; ++t) point(x(t), bank::envSegmentLevel(0, peak, a, t, env_.attackCurve));
+            for (int t = 0; t <= a; ++t) point(x(t), bank::envSegmentLevel(start, peak, a, t, env_.attackCurve));
             for (int t = 0; t <= d; ++t) point(x(a + t), bank::envSegmentLevel(peak, sus, d, t, env_.decayCurve));
-            point(x(a + d + hold), sus);
-            for (int t = 0; t <= r; ++t) point(x(a + d + hold + t), bank::envSegmentLevel(sus, 0, r, t, env_.releaseCurve));
-            right = String(a + d + r) + " t";
+            for (int t = 0; t <= f; ++t) point(x(a + d + t), bank::envSegmentLevel(sus, held, f, t, env_.fadeCurve));
+            point(x(a + d + f + hold), held);
+            for (int t = 0; t <= r; ++t) point(x(a + d + f + hold + t), bank::envSegmentLevel(held, 0, r, t, env_.releaseCurve));
+            right = String(a + d + f + r) + " t";
         } else {
             const double stepS = rate_ > 0 ? rate_ * 0.015625 : 0.0;
             for (int px = 0; px < int(W); ++px) {
@@ -208,6 +211,7 @@ private:
         return i.envVol == vol_ && (i.envDir == bank::EnvDir::Up) == up_ && i.envRate == rate_
                && i.env.attackTicks == env_.attackTicks && i.env.peak == env_.peak && i.env.decayTicks == env_.decayTicks
                && i.env.sustain == env_.sustain && i.env.releaseTicks == env_.releaseTicks
+               && i.env.start == env_.start && i.env.fadeTicks == env_.fadeTicks && i.env.fadeTo == env_.fadeTo && i.env.fadeCurve == env_.fadeCurve
                && i.env.attackCurve == env_.attackCurve && i.env.decayCurve == env_.decayCurve && i.env.releaseCurve == env_.releaseCurve;
     }
     bank::Envelope env_;
@@ -255,7 +259,8 @@ struct InstrumentPanel::Widgets {
     Segmented* envMode = nullptr;
     Stepper* envVol = nullptr; Segmented* envDir = nullptr; Stepper* envRate = nullptr;
     Stepper* attack = nullptr; Stepper* peak = nullptr; Stepper* decay = nullptr; Stepper* sustain = nullptr; Stepper* release = nullptr;
-    Segmented* attackCurve = nullptr; Segmented* decayCurve = nullptr; Segmented* releaseCurve = nullptr;
+    Stepper* start = nullptr; Stepper* fade = nullptr; Stepper* fadeTo = nullptr;   // section 51
+    Segmented* attackCurve = nullptr; Segmented* decayCurve = nullptr; Segmented* releaseCurve = nullptr; Segmented* fadeCurve = nullptr;
     // pitch and modulation
     Segmented* vibShape = nullptr; Segmented* vibDir = nullptr; Stepper* vibSpeed = nullptr; Stepper* vibDepth = nullptr; Stepper* vibDelay = nullptr;
     Segmented* pitchSpeed = nullptr; Stepper* cmdRate = nullptr; Stepper* chordRate = nullptr; Segmented* tableMode = nullptr;
@@ -287,7 +292,7 @@ InstrumentPanel::InstrumentPanel(ChipBoyProcessor& p)
     list_.onRename = [this](int slot, const String& name) {
         const int s = std::clamp(slot, 1, bank::kInstrumentSlots);
         const int ch = channel;
-        processor.editBank("Instrument " + ValueFormat::number(s) + " named " + name, [s, ch, name](bank::Bank& b) {
+        processor.editBank("Instrument " + ValueFormat::slot(s) + " named " + name, [s, ch, name](bank::Bank& b) {
             auto& i = b.instruments[size_t(s - 1)];
             if (!i.used) i = bank::Instrument::defaults(channelInstrumentType(ch), "");
             i.name = name.toStdString();
@@ -333,7 +338,7 @@ RichText InstrumentPanel::contextLine() const
     const auto b = processor.bank();
     const bank::Instrument* inst = b ? b->instrument(slot_) : nullptr;
     if (inst) r.plain("instrument ").bold(slotAndName(slot_, inst->name));
-    else r.plain("slot ").bold(ValueFormat::number(slot_)).plain(" is empty");
+    else r.plain("slot ").bold(ValueFormat::slot(slot_)).plain(" is empty");
     return r;
 }
 
@@ -474,7 +479,7 @@ void InstrumentPanel::refreshAssignButton()
     const bank::Instrument* inst = b ? b->instrument(slot_) : nullptr;
     const bool fits = inst != nullptr && instrumentFitsChannel(inst->type, channel);
     assignBtn_.setEnabled(fits);
-    assignBtn_.setTooltip(fits ? "Give slot " + ValueFormat::number(slot_) + " to " + ch + ". Double-clicking the row does the same."
+    assignBtn_.setTooltip(fits ? "Give slot " + ValueFormat::slot(slot_) + " to " + ch + ". Double-clicking the row does the same."
                                : inst == nullptr ? "The selected slot is empty" : "A " + instrumentTypeName(inst->type) + " instrument does not fit " + ch);
 }
 
@@ -486,7 +491,7 @@ void InstrumentPanel::newInstrument()
     if (slot == 0) return;
     const bank::InstrumentType t = channelInstrumentType(channel);
     const String name = instrumentTypeName(t) + " " + String(slot);
-    processor.editBank("New instrument " + ValueFormat::number(slot), [slot, t, name](bank::Bank& bk) { bk.instruments[size_t(slot - 1)] = bank::Instrument::defaults(t, name.toRawUTF8()); });
+    processor.editBank("New instrument " + ValueFormat::slot(slot), [slot, t, name](bank::Bank& bk) { bk.instruments[size_t(slot - 1)] = bank::Instrument::defaults(t, name.toRawUTF8()); });
     selfBank_ = processor.bank().get();
     rebuildList();
     assignSlot(slot);
@@ -502,7 +507,7 @@ void InstrumentPanel::duplicate()
     if (slot == 0) return;
     bank::Instrument copy = src;
     copy.name += " copy";
-    processor.editBank("Duplicate into instrument " + ValueFormat::number(slot), [slot, copy](bank::Bank& bk) { bk.instruments[size_t(slot - 1)] = copy; });
+    processor.editBank("Duplicate into instrument " + ValueFormat::slot(slot), [slot, copy](bank::Bank& bk) { bk.instruments[size_t(slot - 1)] = copy; });
     selfBank_ = processor.bank().get();
     rebuildList();
     showSlot(slot);
@@ -515,7 +520,7 @@ void InstrumentPanel::savePreset()
     const auto b = processor.bank();
     if (!b) return;
     const bank::Instrument* inst = b->instrument(slot_);
-    if (inst == nullptr) { message("Slot " + ValueFormat::number(slot_) + " is empty: nothing to save."); return; }
+    if (inst == nullptr) { message("Slot " + ValueFormat::slot(slot_) + " is empty: nothing to save."); return; }
     const String name = File::createLegalFileName(String(inst->name).trim());
     auto preset = std::make_shared<bank::Preset>(bank::collectPreset(*b, slot_));
     chooser_ = std::make_unique<FileChooser>("Save instrument preset",
@@ -544,7 +549,7 @@ void InstrumentPanel::loadPreset()
         InstrumentPanel& panel = *safe;
         const int slot = panel.slot_;
         bank::PlaceReport report;
-        panel.processor.editBank("Preset " + String(preset->instrument.name) + " into slot " + ValueFormat::number(slot),
+        panel.processor.editBank("Preset " + String(preset->instrument.name) + " into slot " + ValueFormat::slot(slot),
                                  [&preset, slot, &report](bank::Bank& b) { bank::placePreset(b, *preset, slot, report); });
         panel.selfBank_ = panel.processor.bank().get();
         panel.rebuildList();
@@ -562,7 +567,7 @@ void InstrumentPanel::edit(const String& what, const std::function<void(bank::In
 {
     const int slot = slot_;
     const int ch = channel;
-    processor.editBank("Instrument " + ValueFormat::number(slot) + middot() + what, [&fn, slot, ch](bank::Bank& b) {
+    processor.editBank("Instrument " + ValueFormat::slot(slot) + middot() + what, [&fn, slot, ch](bank::Bank& b) {
         auto& i = b.instruments[size_t(slot - 1)];
         if (!i.used) i = bank::Instrument::defaults(channelInstrumentType(ch), ("Inst " + String(slot)).toRawUTF8());
         fn(i);
@@ -589,7 +594,7 @@ void InstrumentPanel::rebuildEditor()
 
     if (!inst.used) {
         RichText t;
-        t.plain("Slot ").bold(ValueFormat::number(slot_)).plain(" is empty. ").bold("New").plain(" puts a " + instrumentTypeName(channelInstrumentType(channel)) + " instrument here; ")
+        t.plain("Slot ").bold(ValueFormat::slot(slot_)).plain(" is empty. ").bold("New").plain(" puts a " + instrumentTypeName(channelInstrumentType(channel)) + " instrument here; ")
          .bold("Dup").plain(" copies the selected one. Double-click a row to name it into being.");
         stack->add(std::make_unique<HelpText>(t, 12.5f));
         scroll_.setContent(std::move(stack));
@@ -669,11 +674,13 @@ void InstrumentPanel::rebuildEditor()
         // LSDj's PU2 TSP (docs/COMMANDS_AND_TEMPO.md section 49): the detune
         // behind a phasing lead, applied on the second pulse only.
         w_->pu2Transpose = stepper(*sound, "PU2 transpose", "Semitones added when this instrument plays on PU2 and nowhere else -- LSDj's PU2 TSP. An F on PU2 sets it for the note in progress.",
-                                   -128, 127, 0, [](int v) { return ValueFormat::signedNumber(v); }, [](bank::Instrument& i, int v) { i.pu2Transpose = int8_t(v); });
+                                   -128, 127, 0, {}, [](bank::Instrument& i, int v) { i.pu2Transpose = int8_t(v); });
+        w_->pu2Transpose->setTransposeNumbering(true);   // signed, or the byte in Hex (section 52)
     } else if (type == bank::InstrumentType::Wave) {
         w_->wave = stepper(*sound, "Wave", "The wave RAM source; a W command overrides it. Right-click lists the bank, double-click opens it.", 1, bank::kWaveSlots, 1,
                            [this](int v) { const auto bk = processor.bank(); const bank::Wave* wv = bk ? bk->wave(v) : nullptr; return wv ? slotAndName(v, wv->name) : slotAndName(v, "empty"); },
                            [](bank::Instrument& i, int v) { i.wave = uint8_t(v); }, 190);
+        w_->wave->setSlotNumbering(true);   // section 52
         w_->wave->onList = [this] { showWaveMenu(); };
         w_->wave->onOpen = [this] { if (w_ && w_->wave) { if (w_->wave->value() > 0) openSlot(ui::SlotKind::Wave, w_->wave->value()); else w_->wave->beginTypedEntry(); } };
         w_->frameAdv = stepper(*sound, "Frame advance", "Ticks per frame; 0 holds the frame.", 0, 15, 0, {}, [](bank::Instrument& i, int v) { i.frameAdvance = uint8_t(v); });
@@ -683,6 +690,7 @@ void InstrumentPanel::rebuildEditor()
         w_->kit = stepper(*sound, "Kit", "Streamed through wave RAM. Right-click lists the bank, double-click opens it.", 1, bank::kKitSlots, 1,
                           [this](int v) { const auto bk = processor.bank(); const bank::Kit* k = bk ? bk->kit(v) : nullptr; return k ? slotAndName(v, k->name) : slotAndName(v, "empty"); },
                           [](bank::Instrument& i, int v) { i.kit = uint8_t(v); }, 190);
+        w_->kit->setSlotNumbering(true);   // section 52
         w_->kit->onList = [this] { showKitMenu(); };
         w_->kit->onOpen = [this] { if (w_ && w_->kit) { if (w_->kit->value() > 0) openSlot(ui::SlotKind::Kit, w_->kit->value()); else w_->kit->beginTypedEntry(); } };
         w_->kitLoop = seg(*sound, "Loop", "Per note.", { "One-shot", "Loop", "From point" }, [](bank::Instrument& i, int v) { i.kitLoop = bank::KitLoop(std::clamp(v, 0, 2)); });
@@ -706,7 +714,7 @@ void InstrumentPanel::rebuildEditor()
         w_->graph = graph.get();
         env->addWide(std::make_unique<GraphHold>(std::move(graph), kGraphHeight));
     }
-    w_->envMode = seg(*env, "Mode", "Chip is the chip's own NRx2 envelope; Shaped is an ADSR the driver renders a level a tick and writes through zombie mode.",
+    w_->envMode = seg(*env, "Mode", "Chip is the chip's own NRx2 envelope: one level, one direction, one rate. Shaped is rendered by the driver a level a tick: Start, Attack to Peak, Decay to Sustain, a Fade, then Release -- LSDj's three-stage ENV maps onto it (section 51).",
                       { "Chip", "Shaped" }, [](bank::Instrument& i, int v) { i.env.mode = v == 1 ? bank::EnvMode::Shaped : bank::EnvMode::Chip; });
     w_->envMode->onChange = [this](int v) {
         edit(v == 1 ? String("envelope Shaped") : String("envelope Chip"), [v](bank::Instrument& i) { i.env.mode = v == 1 ? bank::EnvMode::Shaped : bank::EnvMode::Chip; });
@@ -714,7 +722,9 @@ void InstrumentPanel::rebuildEditor()
     };
     const int topLevel = fourLevels ? 3 : 15;
     if (inst.env.mode == bank::EnvMode::Shaped) {
-        segmentRow(*env, "Attack", "Ticks from silence to the peak.",
+        w_->start = stepper(*env, "Start", "The level the attack begins at: 0 is silence; LSDj's first amplitude otherwise (section 51).", 0, topLevel, 0, {},
+                            [topLevel](bank::Instrument& i, int v) { i.env.start = uint8_t(std::clamp(v, 0, topLevel)); });
+        segmentRow(*env, "Attack", "Ticks from the start level to the peak, up or down.",
                    [](bank::Instrument& i, int v) { i.env.attackTicks = uint8_t(std::clamp(v, 0, 255)); },
                    [](bank::Instrument& i, bank::EnvCurve c) { i.env.attackCurve = c; }, &w_->attack, &w_->attackCurve);
         w_->peak = stepper(*env, "Peak", fourLevels ? "The level the attack reaches, of the four NR32 levels." : "The level the attack reaches, 0-15.",
@@ -722,8 +732,13 @@ void InstrumentPanel::rebuildEditor()
         segmentRow(*env, "Decay", "Ticks from the peak to the sustain.",
                    [](bank::Instrument& i, int v) { i.env.decayTicks = uint8_t(std::clamp(v, 0, 255)); },
                    [](bank::Instrument& i, bank::EnvCurve c) { i.env.decayCurve = c; }, &w_->decay, &w_->decayCurve);
-        w_->sustain = stepper(*env, "Sustain", "The level held while the note is held.", 0, topLevel, topLevel, {},
+        w_->sustain = stepper(*env, "Sustain", "The level held while the note is held -- or faded from, when Fade is set.", 0, topLevel, topLevel, {},
                               [topLevel](bank::Instrument& i, int v) { i.env.sustain = uint8_t(std::clamp(v, 0, topLevel)); });
+        segmentRow(*env, "Fade", "Ticks from the sustain to the Fade-to level, which is then held; 0 is no fade (section 51).",
+                   [](bank::Instrument& i, int v) { i.env.fadeTicks = uint8_t(std::clamp(v, 0, 255)); },
+                   [](bank::Instrument& i, bank::EnvCurve c) { i.env.fadeCurve = c; }, &w_->fade, &w_->fadeCurve);
+        w_->fadeTo = stepper(*env, "Fade to", "Where the fade ends and holds: 0 for LSDj's third stage, which fades to silence.", 0, topLevel, 0, {},
+                             [topLevel](bank::Instrument& i, int v) { i.env.fadeTo = uint8_t(std::clamp(v, 0, topLevel)); });
         segmentRow(*env, "Release", "Ticks from the level at note-off to silence, when Note-off is Release.",
                    [](bank::Instrument& i, int v) { i.env.releaseTicks = uint8_t(std::clamp(v, 0, 255)); },
                    [](bank::Instrument& i, bank::EnvCurve c) { i.env.releaseCurve = c; }, &w_->release, &w_->releaseCurve);
@@ -785,6 +800,7 @@ void InstrumentPanel::rebuildEditor()
                         0, bank::kTableSlots, 0,
                         [this](int v) { if (v == 0) return String("none"); const auto bk = processor.bank(); const bank::Table* t = bk ? bk->table(v) : nullptr; return t ? slotAndName(v, t->name) : slotAndName(v, "empty"); },
                         [](bank::Instrument& i, int v) { i.table = uint8_t(v); }, 190);
+    w_->table->setSlotNumbering(true);   // section 52
     w_->table->onList = [this] { showTableMenu(); };
     w_->table->onOpen = [this] { if (w_ && w_->table) { if (w_->table->value() > 0) openSlot(ui::SlotKind::Table, w_->table->value()); else w_->table->beginTypedEntry(); } };
     w_->tableMode = seg(*tab, "Table mode", "Tick: one row a tick, or per its own G. Step: one row every time the instrument is triggered.",
@@ -828,7 +844,7 @@ void InstrumentPanel::showTableMenu()
     // The item's own tab, first (docs/COMMANDS_AND_TEMPO.md section 35).
     if (current > 0) {
         const auto* cur = b->table(current);
-        m.addItem(kMenuOpen, "Open table " + (cur ? slotAndName(current, cur->name) : ValueFormat::number(current)) + " in its tab");
+        m.addItem(kMenuOpen, "Open table " + (cur ? slotAndName(current, cur->name) : ValueFormat::slot(current)) + " in its tab");
         m.addSeparator();
     }
     m.addItem(1, utf8("\xe2\x80\x93") + "   none", true, current == 0);
@@ -921,7 +937,8 @@ void InstrumentPanel::syncValues()
     S(w.envMode, int(i.env.mode));
     T(w.envVol, i.envVol); S(w.envDir, int(i.envDir)); T(w.envRate, i.envRate);
     T(w.attack, i.env.attackTicks); T(w.peak, i.env.peak); T(w.decay, i.env.decayTicks); T(w.sustain, i.env.sustain); T(w.release, i.env.releaseTicks);
-    S(w.attackCurve, int(i.env.attackCurve)); S(w.decayCurve, int(i.env.decayCurve)); S(w.releaseCurve, int(i.env.releaseCurve));
+    T(w.start, i.env.start); T(w.fade, i.env.fadeTicks); T(w.fadeTo, i.env.fadeTo);
+    S(w.attackCurve, int(i.env.attackCurve)); S(w.decayCurve, int(i.env.decayCurve)); S(w.releaseCurve, int(i.env.releaseCurve)); S(w.fadeCurve, int(i.env.fadeCurve));
     S(w.vibShape, int(i.vib.shape)); S(w.vibDir, int(i.vib.dir)); T(w.vibSpeed, i.vib.speed); T(w.vibDepth, i.vib.depth); T(w.vibDelay, i.vib.delay);
     S(w.pitchSpeed, int(i.pitchSpeed)); T(w.cmdRate, i.cmdRate); T(w.chordRate, i.chordRate); S(w.tableMode, int(i.tableMode));
     T(w.table, i.table); S(w.transpose, i.transpose ? 0 : 1); S(w.noteOff, int(i.noteOff)); S(w.overlap, i.overlap == bank::Overlap::Retrig ? 1 : 0);
@@ -957,7 +974,7 @@ void InstrumentPanel::updateUsedOn()
     String on;
     for (int ch = 0; ch < 4; ++ch)
         if (paramValue(processor, channelParamId(ch, ids::instrument)) == slot_) { if (on.isNotEmpty()) on += ", "; on += colours::channelName(ch); }
-    w_->head->usedOn.setText("slot " + ValueFormat::number(slot_) + middot() + "used on " + (on.isEmpty() ? String("no channel") : on));
+    w_->head->usedOn.setText("slot " + ValueFormat::slot(slot_) + middot() + "used on " + (on.isEmpty() ? String("no channel") : on));
 }
 
 } // namespace chipboy::plugin

@@ -99,6 +99,11 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     songStart_.setRange(0, kStartMax, 0);
     songStart_.setTooltip("Where tick 0 of the song sits on the host's timeline, in seconds");
     songStart_.setTextFunction([](int v) { return String(double(v) / kStartSteps, 1) + " s"; });
+    // The tempo is BPM, decimal in either display -- LSDj shows it so too;
+    // only its T byte is hex (section 52).
+    tempo_.setTextFunction([](int v) { return String(v); });
+    tempo_.setEntryFormat([](int v) { return String(v); },
+                          [](const String& t, int& out) { const String d = t.trim(); if (d.isEmpty() || !d.containsOnly("0123456789")) return false; out = d.getIntValue(); return true; });
     songStart_.onChange = [this](int v) { editSong("Song start", [v](tracker::Song& s) { s.songStartSeconds = double(v) / kStartSteps; }); };
     tempoWatch_ = std::make_unique<ParamWatch>(param(processor, ids::tempoSource), [this](float v) {
         songMode_ = v > 0.5f || processor.ownsTransport();
@@ -181,7 +186,7 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     grid_.onOpenSlot = [this](ui::SlotKind kind, int slot) { openSlot(kind, slot); };
     grid_.onGrooveChange = [this](int ch, int groove) {
         const int bar = bar_;
-        editSong(String(colours::channelName(ch)) + " phrase groove " + ValueFormat::number(groove), [ch, bar, groove](tracker::Song& s) {
+        editSong(String(colours::channelName(ch)) + " phrase groove " + ValueFormat::slot(groove), [ch, bar, groove](tracker::Song& s) {
             const uint8_t slot = ensurePhrase(s, ch, bar);
             if (slot) s.phrases[size_t(slot - 1)].groove = uint8_t(std::clamp(groove, 0, 16));
         });
@@ -224,10 +229,10 @@ RichText TrackerPanel::contextLine() const
 {
     RichText r;
     r.bold(processor.tabName(processor.activeTab())).plain(middot());
-    r.plain("Row ").bold(String(bar_ + 1)).plain(middot()).bold(colours::channelName(channel));
+    r.plain("Row ").bold(ValueFormat::index(bar_)).plain(middot()).bold(colours::channelName(channel));
     const auto s = processor.song();
     const int slot = s ? s->phraseAt(channel, bar_) : 0;
-    if (slot) r.plain(" plays phrase ").bold(ValueFormat::number(slot));
+    if (slot) r.plain(" plays phrase ").bold(ValueFormat::slot(slot));
     else r.plain(" has no phrase here " + String(CharPointer_UTF8("\xe2\x80\x94")) + " it just plays its notes");
     if (s) r.plain(middot() + String(s->stepsOfRow(channel, bar_)) + " steps");
     return r;

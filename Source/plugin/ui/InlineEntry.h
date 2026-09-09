@@ -43,6 +43,30 @@ inline bool parseTypedInt(const juce::String& text, int lo, int hi, int& out)
     return true;
 }
 
+/// A typed slot number: in Hex the display counts from 00, so what is typed
+/// is one less than the slot (section 52); Decimal types the slot itself.
+inline bool parseSlotTyped(const juce::String& text, int hiSlot, int& out)
+{
+    if (!ValueFormat::hex()) return parseTypedInt(text, 0, hiSlot, out);
+    int shown = 0;
+    if (!parseTypedInt(text, 0, hiSlot - 1, shown)) return false;
+    out = shown + 1;
+    return true;
+}
+/// A typed transpose: in Hex an unsigned byte read two's complement (E0 is
+/// -32), a signed number otherwise; a sign in Hex still reads as a sign.
+inline bool parseTransposeTyped(const juce::String& text, int lo, int hi, int& out)
+{
+    const juce::String t = text.trim();
+    if (ValueFormat::hex() && t.isNotEmpty() && t[0] != '-' && t[0] != '+' && t[0] != juce::juce_wchar(0x2212)) {
+        int b = 0;
+        if (!parseTypedInt(t, 0, 255, b)) return false;
+        out = juce::jlimit(lo, hi, int(int8_t(uint8_t(b))));
+        return true;
+    }
+    return parseTypedInt(t, lo, hi, out);
+}
+
 /// The same for the one continuous control: a decimal number, always base
 /// ten -- decibels are not a register.
 inline bool parseTypedFloat(const juce::String& text, float lo, float hi, float& out)

@@ -2092,3 +2092,33 @@ TEST_CASE("an instrument's PU2 transpose applies on the second pulse only, and F
     r.block({ e }, 200);
     CHECK(r.drv.view(0).period == plain60);
 }
+
+TEST_CASE("a shaped envelope can start above silence and fade past its sustain", "[driver][shaped]")
+{
+    // Section 51: LSDj's three stages -- a1 to a2, a2 to a3, a3 to silence --
+    // are Start, Attack to Peak, Decay to Sustain and the Fade to a level.
+    Rig r;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    { ChannelParams p; p.instrument = 21; for (int ch = 0; ch < 4; ++ch) r.drv.setParams(ch, p); }
+    auto& i = r.bank.instruments[20]; i = Instrument::defaults(InstrumentType::Pulse, "stages");   // slot 21
+    i.env.mode = EnvMode::Shaped;
+    i.env.start = 10; i.env.attackTicks = 5; i.env.peak = 5;          // A to 5, one level a tick
+    i.env.decayTicks = 8; i.env.sustain = 13;                          // 5 up to D
+    i.env.fadeTicks = 13; i.env.fadeTo = 0;                            // D down to silence, then held
+    auto w = r.block({ cellOn(0, 60, 21) }, 200);
+    bool first = true;
+    for (const auto& x : w) if (x.addr == 0xFF12 && first) { CHECK((x.value >> 4) == 10); first = false; }   // the start level, not the peak
+    CHECK_FALSE(first);
+    // The block's own tick took the first step; each block after it is one more.
+    std::vector<int> levels;
+    for (int t = 0; t < 30; ++t) { r.block({}, 200); levels.push_back(int(r.drv.view(0).envVol)); }
+    CHECK(levels[3] == 5);                                             // the attack reached the peak at tick 5
+    CHECK(levels[11] == 13);                                           // the decay reached the sustain at tick 13
+    CHECK(levels[24] == 0);                                            // the fade reached its level at tick 26
+    CHECK(levels[29] == 0);                                            // ... and holds there
+    // Without a fade the sustain holds, as it always did.
+    i.env.fadeTicks = 0;
+    r.block({ cellOn(0, 60, 21) }, 200);
+    for (int t = 0; t < 30; ++t) r.block({}, 200);
+    CHECK(r.drv.view(0).envVol == 13);
+}

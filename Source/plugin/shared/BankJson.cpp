@@ -82,6 +82,10 @@ var instrumentToVarSlot(const Instrument& i, int slot)
         o->setProperty("envAttack", int(i.env.attackTicks)); o->setProperty("envPeak", int(i.env.peak));
         o->setProperty("envDecay", int(i.env.decayTicks)); o->setProperty("envSustain", int(i.env.sustain));
         o->setProperty("envRelease", int(i.env.releaseTicks));
+        // The start level and the fade stage (section 51), only when set, so
+        // an envelope without them reads as it was written.
+        if (i.env.start) o->setProperty("envStart", int(i.env.start));
+        if (i.env.fadeTicks) { o->setProperty("envFade", int(i.env.fadeTicks)); o->setProperty("envFadeTo", int(i.env.fadeTo)); o->setProperty("envFadeCurve", int(i.env.fadeCurve)); }
         o->setProperty("envAttackCurve", int(i.env.attackCurve)); o->setProperty("envDecayCurve", int(i.env.decayCurve));
         o->setProperty("envReleaseCurve", int(i.env.releaseCurve));
     }
@@ -134,6 +138,10 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.env.decayTicks = uint8_t(std::clamp(getOr(o, "envDecay", 0), 0, 255));
     i.env.sustain = uint8_t(std::clamp(getOr(o, "envSustain", 15), 0, 15));
     i.env.releaseTicks = uint8_t(std::clamp(getOr(o, "envRelease", 0), 0, 255));
+    i.env.start = uint8_t(std::clamp(getOr(o, "envStart", 0), 0, 15));
+    i.env.fadeTicks = uint8_t(std::clamp(getOr(o, "envFade", 0), 0, 255));
+    i.env.fadeTo = uint8_t(std::clamp(getOr(o, "envFadeTo", 0), 0, 15));
+    i.env.fadeCurve = EnvCurve(std::clamp(getOr(o, "envFadeCurve", 0), 0, 2));
     i.env.attackCurve = EnvCurve(std::clamp(getOr(o, "envAttackCurve", 0), 0, 2));
     i.env.decayCurve = EnvCurve(std::clamp(getOr(o, "envDecayCurve", 0), 0, 2));
     i.env.releaseCurve = EnvCurve(std::clamp(getOr(o, "envReleaseCurve", 0), 0, 2));
@@ -168,7 +176,7 @@ void tableFromVarImpl(const var& v, Table& t)
             auto* so = (*steps)[k].getDynamicObject(); if (!so) continue;
             auto& s = t.steps[size_t(k)];
             s.vol = int8_t(std::clamp(getOr(so, "vol", -1), -1, 15));
-            s.hasTranspose = so->hasProperty("trn"); s.transpose = int8_t(std::clamp(getOr(so, "trn", 0), -60, 60));
+            s.hasTranspose = so->hasProperty("trn"); s.transpose = int8_t(std::clamp(getOr(so, "trn", 0), -128, 127));
             s.cmd1 = cmdFromVar(so->getProperty("c1")); s.cmd2 = cmdFromVar(so->getProperty("c2"));
         }
 }

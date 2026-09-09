@@ -67,6 +67,12 @@ struct ValueFormat {
     static void setHex(bool on);
     static juce::String number(int v);            ///< "12" or "0C"
     static juce::String signedNumber(int v);      ///< "+3", "-12", "0"
+    /// Hex counts like LSDj (docs/COMMANDS_AND_TEMPO.md section 52): a slot
+    /// shows from 00, a row or step from 00, a transpose as its two's
+    /// complement byte. Decimal stays 1-based and signed.
+    static juce::String slot(int slot);           ///< slot 1: "1" in Decimal, "00" in Hex
+    static juce::String index(int zeroBased);     ///< row 0: "1" in Decimal, "00" in Hex
+    static juce::String transpose(int v);         ///< "-32" in Decimal, "E0" in Hex
     static juce::String byte(int v);              ///< always two hex digits, for register lines
     static juce::String noteName(int midiNote);   ///< "C-4", "F#3"; 255 -> "OFF", 0 -> "---"
 };
@@ -122,7 +128,7 @@ public:
 /// The pane is 512 and its 2 x 12 padding: 512 is what the Phrases lane's
 /// sixteen steps need under its head (512), with the Instrument tab's tallest
 /// content (a Pulse instrument, every card: 474) inside it.
-constexpr int kMainWidth = 1180;
+constexpr int kMainWidth = 1280;   // UI_DESIGN D-UI-19
 constexpr int kMainHeight = 1020;
 constexpr int kMainMaxHeight = 2400;   ///< as tall as a screen is ever likely to be at 100 %
 constexpr int kVoiceWidth = 560;

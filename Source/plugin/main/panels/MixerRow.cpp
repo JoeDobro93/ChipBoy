@@ -70,6 +70,7 @@ ChannelStrip::ChannelStrip(ChipBoyProcessor& p, int ch)
     src.ring = &processor_.scopes().channels[size_t(ch_)];
     src.state = &processor_.scopes().state[size_t(ch_)];
     src.latestCycle = &processor_.scopes().latestCycle;
+    src.mix = &processor_.scopes().mix;             // a channel the mix silences draws as off (section 53)
     scope_.setSource(src);
     scope_.setChannel(ch_);
     scope_.setChrome(false);
@@ -83,15 +84,17 @@ ChannelStrip::ChannelStrip(ChipBoyProcessor& p, int ch)
     // a double click opens that item's own tab.
     instrument_.setTooltip(kInstTip);
     instrument_.attach(param(processor_, channelParamId(ch_, ids::instrument)));
+    instrument_.setSlotNumbering(true);
     instrument_.onList = [this] { showInstrumentMenu(); };
     instrument_.onOpen = [this] { if (onOpenSlot && instrument_.value() > 0) onOpenSlot(SlotKind::Instrument, instrument_.value()); else instrument_.beginTypedEntry(); };
     table_.setTooltip(kTableTip);
     table_.attach(param(processor_, channelParamId(ch_, ids::table)));
+    table_.setSlotNumbering(true);
     table_.onList = [this] { showTableMenu(); };
     table_.onOpen = [this] { if (onOpenSlot && table_.value() > 0) onOpenSlot(SlotKind::Table, table_.value()); else table_.beginTypedEntry(); };
     transpose_.setTooltip(kTransposeTip);
     transpose_.attach(param(processor_, channelParamId(ch_, ids::transpose)));
-    transpose_.setTextFunction([](int v) { return (v > 0 ? "+" : "") + String(v); });
+    transpose_.setTransposeNumbering(true);        // signed, or the byte in Hex (section 52)
     cmd1_.attach(param(processor_, channelParamId(ch_, ids::cmd1Type)), param(processor_, channelParamId(ch_, ids::cmd1X)), param(processor_, channelParamId(ch_, ids::cmd1Y)));
     cmd2_.attach(param(processor_, channelParamId(ch_, ids::cmd2Type)), param(processor_, channelParamId(ch_, ids::cmd2X)), param(processor_, channelParamId(ch_, ids::cmd2Y)));
 
@@ -193,7 +196,7 @@ void ChannelStrip::refreshInstrumentName()
     // The slot is named when the driver is playing something the stepper does
     // not say, so the two never disagree silently.
     const bool elsewhere = loaded > 0 && loaded != paramValue(processor_, channelParamId(ch_, ids::instrument));
-    instrumentName_.setText(elsewhere ? ValueFormat::number(slot) + " " + String(inst->name) : String(inst->name));
+    instrumentName_.setText(elsewhere ? ValueFormat::slot(slot) + " " + String(inst->name) : String(inst->name));
     const Colour c = instrumentFitsChannel(inst->type, ch_) ? instrumentKindColour(int(inst->type)) : colours::warn;
     instrumentName_.setColour(hybridShown_ == 1 && !elsewhere ? c.withMultipliedAlpha(0.45f) : c);
 }
@@ -209,7 +212,7 @@ void ChannelStrip::showInstrumentMenu()
     // The item's own tab, first (docs/COMMANDS_AND_TEMPO.md section 35).
     if (current > 0) {
         const auto* cur = b->instrument(current);
-        m.addItem(kMenuOpen, "Open instrument " + (cur ? slotAndName(current, cur->name) : ValueFormat::number(current)) + " in its tab");
+        m.addItem(kMenuOpen, "Open instrument " + (cur ? slotAndName(current, cur->name) : ValueFormat::slot(current)) + " in its tab");
         m.addSeparator();
     }
     m.addItem(1, String(CharPointer_UTF8("\xe2\x80\x93   none")), true, current == 0);
@@ -240,7 +243,7 @@ void ChannelStrip::showTableMenu()
     const int current = table_.value();
     if (current > 0) {
         const auto* cur = b->table(current);
-        m.addItem(kMenuOpen, "Open table " + (cur ? slotAndName(current, cur->name) : ValueFormat::number(current)) + " in its tab");
+        m.addItem(kMenuOpen, "Open table " + (cur ? slotAndName(current, cur->name) : ValueFormat::slot(current)) + " in its tab");
         m.addSeparator();
     }
     m.addItem(1, String(CharPointer_UTF8("\xe2\x80\x93   the instrument's")), true, current == 0);

@@ -37,7 +37,7 @@ and the plugin rounds to the nearest step when it reads it back.
 | 12 | `song_tempo` | Song Tempo | 40-255 (BPM; the Song source's base tempo) | 120 | 448506737 |
 | 13 | `notes_on_tick` | Quantize Notes To Ticks | 0-1 (off, on) | 0 | 53834879 |
 | 14 | `link` | Link Mode | 0-1 (off, on) | 0 | 3321850 |
-| 15 | `hex` | Hex Display | 0-1 (off, on) | 0 | 103195 |
+| 15 | `hex` | Hex Display | 0-1 (off, on) | 1 | 103195 |
 | 16 | `ch1_source` | PU1 Source | 0-17 (Omni, MIDI 1, MIDI 2, MIDI 3, MIDI 4, MIDI 5, MIDI 6, MIDI 7, MIDI 8, MIDI 9, MIDI 10, MIDI 11, MIDI 12, MIDI 13, MIDI 14, MIDI 15, MIDI 16, Off) | 0 (Omni) | 38654798 |
 | 17 | `ch1_instrument` | PU1 Instrument | 0-128 (0 = none) | 1 | 1259077018 |
 | 18 | `ch1_table` | PU1 Table | 0-64 (0 = the instrument's) | 0 | 1387208251 |

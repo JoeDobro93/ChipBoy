@@ -315,7 +315,7 @@ WavesPanel::WavesPanel(ChipBoyProcessor& p)
     list_.onSelect = [this](int slot) { showSlot(slot); };
     list_.onRename = [this](int slot, const String& n) {
         const int s = std::clamp(slot, 1, bank::kWaveSlots);
-        processor.editBank("Wave " + ValueFormat::number(s) + " named " + n, [s, n](bank::Bank& b) { auto& w = b.waves[size_t(s - 1)]; w.used = true; if (w.frames.empty()) w.frames.push_back(bank::Frame{}); w.name = n.toStdString(); });
+        processor.editBank("Wave " + ValueFormat::slot(s) + " named " + n, [s, n](bank::Bank& b) { auto& w = b.waves[size_t(s - 1)]; w.used = true; if (w.frames.empty()) w.frames.push_back(bank::Frame{}); w.name = n.toStdString(); });
         selfBank_ = processor.bank().get();
         if (s == slot_) name_.setText(n);
         rebuildList();
@@ -328,7 +328,7 @@ WavesPanel::WavesPanel(ChipBoyProcessor& p)
         int slot = 0;
         for (int k = 0; k < bank::kWaveSlots; ++k) if (!b->waves[size_t(k)].used) { slot = k + 1; break; }
         if (slot == 0) return;
-        processor.editBank("New wave " + ValueFormat::number(slot), [slot](bank::Bank& bk) { auto& w = bk.waves[size_t(slot - 1)]; w.used = true; w.name = ("Wave " + String(slot)).toStdString(); w.frames = { bank::frameTriangle() }; });
+        processor.editBank("New wave " + ValueFormat::slot(slot), [slot](bank::Bank& bk) { auto& w = bk.waves[size_t(slot - 1)]; w.used = true; w.name = ("Wave " + String(slot)).toStdString(); w.frames = { bank::frameTriangle() }; });
         selfBank_ = processor.bank().get();
         rebuildList();
         showSlot(slot);
@@ -466,7 +466,7 @@ void WavesPanel::syncFromBank(bool pushToGrid)
 void WavesPanel::editWave(const String& what, const std::function<void(bank::Wave&)>& fn, bool pushToGrid)
 {
     const int slot = slot_;
-    processor.editBank("Wave " + ValueFormat::number(slot) + " " + what, [&fn, slot](bank::Bank& b) {
+    processor.editBank("Wave " + ValueFormat::slot(slot) + " " + what, [&fn, slot](bank::Bank& b) {
         auto& w = b.waves[size_t(slot - 1)];
         if (!w.used) { w.used = true; if (w.name.empty()) w.name = ("Wave " + String(slot)).toStdString(); }
         if (w.frames.empty()) w.frames.push_back(bank::Frame{});
@@ -782,7 +782,7 @@ void WavesPanel::runSynth()
     editWave("generated " + where, [&run, &sy](bank::Wave& w) { bank::synthWriteRun(sy, run, w); w.synth.used = true; }, true);
     frame_ = first;
     syncFromBank(true);
-    message("Generated " + where + " of wave " + ValueFormat::number(slot_));
+    message("Generated " + where + " of wave " + ValueFormat::slot(slot_));
 }
 
 void WavesPanel::resized()

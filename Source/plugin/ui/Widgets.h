@@ -89,6 +89,11 @@ public:
     int value() const;
     void setTextFunction(std::function<juce::String(int)> fn);
     void setWraps(bool wraps);
+    /// The readout counts like LSDj in Hex (docs/COMMANDS_AND_TEMPO.md
+    /// section 52): a slot field shows slot 1 as 00 and reads a typed 00 as
+    /// slot 1; a transpose field shows and reads the two's-complement byte.
+    void setSlotNumbering(bool on);
+    void setTransposeNumbering(bool on);
     /// Digits typed straight at the readout, the grids' convention: they
     /// build a value and Backspace takes the last one back. On everywhere;
     /// turning it off leaves a stepper that only steps and only takes the
@@ -360,8 +365,8 @@ public:
     std::function<void(int ch, int bar, int semis)> onChainTransposeChange;   ///< the row's transpose on that channel (section 48)
     std::function<void(int row, int steps)> onRowLengthChange;            ///< the length of the phrases in that row (section 25)
     juce::String getTooltip() override;
-    /// 236 wide and the lane's rhythm: a 48 px head over 22 px rows.
-    static constexpr int kRowHeight = 22, kHeaderHeight = 48, kWidth = 236;
+    /// 264 wide and the lane's rhythm: a 48 px head over 22 px rows.
+    static constexpr int kRowHeight = 22, kHeaderHeight = 48, kWidth = 264;
     void resized() override; void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override;
@@ -402,6 +407,7 @@ public:
         const link::ScopeRing* ring = nullptr;
         const std::atomic<uint64_t>* state = nullptr;        ///< link::packState, for the period
         const std::atomic<uint64_t>* latestCycle = nullptr;  ///< optional; else the newest sample's cycle
+        const std::atomic<uint32_t>* mix = nullptr;          ///< optional: NR50 | NR51 << 8 | powered << 16, so a channel the mix silences draws as off (section 53)
     };
     ScopeView();
     ~ScopeView() override;

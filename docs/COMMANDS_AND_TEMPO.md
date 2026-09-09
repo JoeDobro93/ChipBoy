@@ -611,7 +611,7 @@ the factory bank.
   still only steps. The 112 px head is two 26 px tool rows — Play/Stop/Loop, the playing
   readout, Rec, Steps/bar; then Start, Beats, Save song…, Load song…, Export .gb — over a
   48 px line naming the song and what the last file action did; sixteen steps still fit
-  the 1180 × 1020 window exactly, so it does not grow.
+  the 1280 × 1020 window exactly, so it does not grow.
 - A **Grooves tab** (after Tables) takes the groove editor: the sixteen slots on the left,
   the sixteen-cell editor with total, swing and nudge on the right — grooves serve tables
   as well as phrases. The grid's per-phrase groove chip stays. *As built:* the list reads
@@ -802,7 +802,7 @@ the position readout — 328 px) and RECORD (*Rec* 62); row two is SONG (*Tempo*
 song…* 104, *Export .gb* 96), each pair separated by a 16 px gap with a hairline down
 the middle. The budget is unchanged and asserted in the source: 12 px caption + 26 px
 controls, 4, the same again, 6, and the 26 px tab strip — 112 exactly — so the lane
-keeps its 400 px and the tab still asks for no scrolling at 1180 × 1020. What a file did
+keeps its 400 px and the tab still asks for no scrolling at 1280 × 1020. What a file did
 still goes to the status bar; the head has no line of its own any more.
 
 ## 24. More demo songs
@@ -1446,3 +1446,68 @@ The two's-complement byte P carries (§34) is what a file holds; a file written 
 signed value instead — a converter did — clamped to 0 in the driver and the bend was
 gone. The JSON reader now folds a negative `a` on a P into its byte, so both spellings
 play the same. Nothing written by ChipBoy changes.
+
+## 51. LSDj 9's envelope, measured, and the shaped envelope's third stage
+
+The snare of a recreated 9.3.9 song rang five times too long. §7's envelope speeds had been
+measured on the harness's saves, which carry **format version 0**, so LSDj ran them as the
+hardware envelope; a 9.x song's instrument carries a **three-stage software envelope**
+instead. Traced on the ROM with a format-22 probe (one noise note, the envelope byte
+patched through every speed, then the later stages):
+
+- **Three stages, from the note-on**: amplitude `a1` moves to `a2` at speed `s1`, then to
+  `a3` at speed `s2`, then to silence at speed `s3`. A speed of 0 **holds** the level
+  reached, for ever. Bytes 1, 9 and 10 of the instrument hold `a1 s1`, `a2 s2`, `a3 s3`;
+  byte 14 is not part of it. A stage may rise or fall.
+- **The speed table**, one level per this many pitch-clock periods (11712 cycles,
+  2.79 ms): `1 2 3 4 6 8 11 15 20 27 36 48 64 86 115` for speeds 1–F. Speed 5 is one
+  level a frame; the chip's slowest rate (7, 109 ms) sits between B and C.
+- Every level is a zombie-mode step (`09 11 18` down, `08` up, §26), never a trigger.
+
+ChipBoy's **Chip** envelope is the hardware's — one NRx2 write: a level, a direction, a
+rate of 15.6 ms × n — and cannot follow this: its fastest rate is speed 5–6 and it has one
+stage. The **Shaped** envelope (§27) rendered one level a tick from Attack → Peak → Decay →
+Sustain, held, then Release, and lacked two things. **Now:**
+
+- a **Start** level (0–15, 0 by default): the attack begins there instead of at silence,
+  so `a1 → a2` is Start `a1`, Attack to Peak `a2`, whichever way it goes;
+- a **Fade** stage after the sustain: `Fade` ticks to `Fade to` (a level, 0 by default),
+  then held — 0 ticks means no fade, which is the old envelope exactly. `a2 → a3` is the
+  Decay to Sustain `a3`; `a3 → silence` is the Fade to 0.
+
+Times are ticks at the song's tempo: `|Δlevel| × period(speed) × 2.79 ms`, so a 165 BPM
+snare's `A → 0` at speed 5 (167 ms) is an 11-tick attack from A to 0. A stage faster than
+a tick a level (speeds 1–4) is quantised to the tick; LSDj's envelope is tempo-free and
+ChipBoy's Shaped one follows the tempo — the trade §27 made for a replayable list of
+levels, kept. A converter reads the three stages into Shaped; an instrument with a single
+falling stage at speeds 5–B may also be written as Chip at the nearest rate (5 → 1, 7 → 2,
+8 → 3, 9 → 4, A → 5, B → 6). *As built:* `Envelope::start`, `fadeTicks`, `fadeTo`,
+`fadeCurve`; `Driver::shapedLevel`; `envStart`, `envFade`, `envFadeTo`, `envFadeCurve` in
+the JSON, absent reads as before.
+
+## 52. Hex mode counts like LSDj
+
+With the display in Hex, an LSDj user reads the same numbers as on the machine:
+
+- **Slots count from 00**: instrument, table, phrase, groove, wave and kit numbers show
+  slot 1 as `00`, and typing `00` selects slot 1; the row and step numbers of the lane, the
+  chain, a table and the groove editor start at `00` too. In Decimal they stay 1-based:
+  `1` is the first slot and the first row, as the window always said.
+- **Transposes are two's-complement bytes**: a table row's transpose, the chain's TSP, an
+  instrument's PU2 transpose show `E0` for −32 and `07` for +7, and are typed as the byte.
+  Decimal keeps the signed form (`-32`, `+7`), typed with a sign. The table's transpose
+  column takes the whole byte, −128..127, where it stopped at ±60.
+- **Hex is the default** for a new instance; the Hex Display parameter is still saved
+  with the state, so a project keeps whichever it had.
+
+*As built:* `ValueFormat::slot`, `index`, `transpose`; `Stepper::setSlotNumbering` and
+`setTransposeNumbering`; the grids' typed entry adds one to a typed slot in Hex.
+
+## 53. A scope shows what is audible
+
+The LSDj song silenced its wave channel between notes through NR51, as LSDj does, and the
+scope kept drawing the wave RAM cycling: the trace was the DAC's, not the mix's. **Now** a
+channel whose two NR51 bits are both clear draws as off — the dashed baseline — in the
+mixer and the visualizer alike, from the mix word the processor already publishes. The
+analog trace is clamped to the DAC's sixteen levels, so the coupling capacitor's overshoot
+on a DMG step stays inside the scope's grid instead of running through its border.
