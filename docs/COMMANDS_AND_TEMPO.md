@@ -848,3 +848,31 @@ channel moves to its next phrase when its own phrase ends.** Bars leave the mode
   behaviour only; no code or data from the ROM enters ChipBoy. Its tests skip when the
   ROM is absent. Findings are written to `docs/LSDJ_PARITY.md` and turned into driver
   changes with tests, one letter at a time.
+
+## 32. A running table shows where it is
+
+The Tables tab highlights the row a table is on while it runs, following it down the
+steps and through hops and loops. The driver publishes, per channel, the table slot,
+its current row and a **run serial** that increments at every table start; the panel
+follows, for the table on view, the channel whose run started **last**, so two channels
+running the same table show the newer run. When no channel runs it, nothing is lit.
+
+## 33. Wave shaping
+
+The Waves tab gains a **synth**, in the spirit of LSDj's and beyond it, that writes
+frames into a run of wave slots from parameters the bank keeps (`bank::Synth`: a source
+and a chain of shapers, a start and an end state, and the number of frames to morph
+between them), so a run can be regenerated after an edit and the exporter still only
+ships frames:
+
+- **Sources**: sine, triangle, saw, square with a pulse width, harmonic additive (eight
+  partial levels), noise, and the drawn wave.
+- **Shapers**, in order and each with its amount: low-pass, high-pass, band-pass and
+  all-pass filters with resonance; drive with clip, fold and wrap; phase rotate; vertical
+  shift; invert; reverse; smooth; bit-crush (levels below the 16 the chip has); quantise
+  to a step; normalise. LSDj's synth is a subset of this.
+- **Morph**: the run's frames interpolate the parameters from the start state to the end
+  state (LSDj's start/end waves), so a frame run sweeps a filter or a pulse width.
+- The generator is core code (`bank::synthesize`, no JUCE), deterministic and tested; the
+  panel edits the parameters, shows the start and end waves and the run, and offers
+  drawing with the mouse on any frame as today.
