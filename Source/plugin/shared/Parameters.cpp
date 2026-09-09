@@ -139,7 +139,7 @@ constexpr CommandInfo kCmdInfo[bank::kCmdCount] = {
     { 'E', "Envelope",      "vol, y 0/8 hold, 1-7 down, 9-15 up", 2, { 0, 0 }, { 15, 15 }, { 12, 3 }, CmdShape::Nibbles },
     { 'F', "Frame",         "1-16",                      1, { 1, 0 }, { 16, 0 },   { 2, 0 },   CmdShape::Small },
     { 'G', "Groove",        "slot 1-16, 0 straight",     1, { 0, 0 }, { 16, 0 },   { 1, 0 },   CmdShape::Small },
-    { 'H', "Hop",           "times (0 forever), row 1-16", 2, { 0, 1 }, { 15, 16 }, { 0, 1 },  CmdShape::Nibbles },
+    { 'H', "Hop",           "times (0 forever), row 1-16", 2, { 0, 1 }, { 15, 16 }, { 1, 1 },  CmdShape::Nibbles },
     { 'K', "Kill",          "after ticks",               1, { 0, 0 }, { 255, 0 },  { 4, 0 },   CmdShape::Byte },
     { 'L', "Slide",         "duration, 0 instant",       1, { 0, 0 }, { 255, 0 },  { 60, 0 },  CmdShape::Byte },
     { 'M', "Master vol",    "0-7, 8 keeps, 9-15 relative", 2, { 0, 0 }, { 15, 15 }, { 5, 5 },  CmdShape::Nibbles },

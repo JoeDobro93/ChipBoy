@@ -19,12 +19,127 @@ intended product rather than a progress report.
 | M4 — bank + driver | **done** 2026-09-07 — the bank with a factory set, the driver on its own tick, 11 driver tests. **2026-09-08**: the instrument carries the pitch (Pitch speed, vibrato shape/direction, Command rate, Table mode, Overlap); a note without an instrument only changes pitch (bare notes); four note-hang paths closed (all-notes-off, kill, event ordering, keyswitch-clear). Then: an instrument saves and loads on its own as a `.cbi` **preset** (`bank::collectPreset` / `bank::placePreset`), its tables, waves and kit carried along and renumbered into place. **2026-09-08 (third)**: **song file format 5** embeds the whole bank — instruments, tables, waves and kits with their samples — so a song file is complete on its own; a format-4 file still loads the song alone, against a copy of the active bank, with the name-difference report as before |
 | M5 — Voice plugin + link | **done** 2026-09-07 — region files, claims, one-block timing, push/pull; `chipboy_linktest` passes 16 checks |
 | M6 — tracker, waves, frames, kits | **done** 2026-09-07 — tracker player on the host transport, record arm, kit import (resample + 4-bit dither), bank/song files. **2026-09-08**: grooves are sixteen tick counts, cells carry velocity, the Player flushes a channel with All notes off on stop/locate/source change, and the recorder follows §9.4; `chipboy_recordtest` (record/replay parity) and the tracker-shaped demo are done, next to the link test. Then: **steps per bar** is a number, 1–64, with a per-bar override (`Song::barSteps`) for any bar, tracked through a prefix table (`Song::barStartSteps`) so a locate lands on the right step; a cell's two commands fire **once**, at their step, instead of occupying a slot; per-channel **record arms** gate an armed channel's recording whatever its playback source; **song files** (`.cbsong`) and the plugin's **own transport** (`transportPlay`/`transportStop`/`setLoop`) round out the Standalone; `Demo/ChipBoy Demo.cbsong` is the recorded demo, checked byte for byte by `demo_song_matches`. **2026-09-08 (third)**: the Tracker tab becomes a **tab strip**, one tab per open song, each owning its own bank — only the active tab plays, records, and is shown in every other tab; undo steps carry the tab they belong to. **Hybrid** joins MIDI and Trkr as a third playback source: notes come from MIDI, everything else (instrument, table, commands) from the song's cells. The host's time signature no longer reaches the tracker — bar ticks are always the song's own beats per bar (§11 amended), in both tempo modes. `tools/demo/make_songs.py` adds six original songs under `Demo/songs` (a groove study, a meter study, a route theme, a platformer tune, a modern track, a wave-manipulation track), each checked by the CTest `demo_songs_load`; `Demo/ChipBoy Demo (hybrid).rpp` carries the plugin's saved state, checked by `demo_state_matches`, reproducing the recorded demo under Hybrid |
-| M7 — interface | **done** 2026-09-07 — the window from the mockup: header, mixer with period-locked scopes, seven tabs, status bar, visualizer window, Voice window. **2026-09-08**: the Phrases tab gained a groove editor and a VEL column, the Instrument tab gained the pitch fields, and the window was resized to fit a 1080p screen with tempo moved to the header; then the Phrases tab became the **Tracker** tab with the transport, the song files and the chain rotated beside the lane, a **Grooves** tab took the groove editor, and the Instrument tab gained preset files. Then a quality-of-life round: every number typeable, the wheel scrolling only, command cells split into letter and values with right-click slot lists, and undo / redo over every hand edit. **2026-09-08 (third)**: the song tab strip sits above the lane; the header's tempo becomes a **readout** — host or song, in force — with the song's own master tempo typed in the Tracker head, now two rows of grouped tools (TRANSPORT · RECORD · SONG · FILE); the master strip gains **LCD Whine** as a third, independent switch and one **VOL** stepper for both sides; PLAYS gains **Hybrid**; and the channel scopes lock to an edge chosen by the waveform's shape rather than the last edge before the window, holding still on a wave channel under vibrato |
+| M7 — interface | **done** 2026-09-07 — the window from the mockup: header, mixer with period-locked scopes, seven tabs, status bar, visualizer window, Voice window. **2026-09-08**: the Phrases tab gained a groove editor and a VEL column, the Instrument tab gained the pitch fields, and the window was resized to fit a 1080p screen with tempo moved to the header; then the Phrases tab became the **Tracker** tab with the transport, the song files and the chain rotated beside the lane, a **Grooves** tab took the groove editor, and the Instrument tab gained preset files. Then a quality-of-life round: every number typeable, the wheel scrolling only, command cells split into letter and values with right-click slot lists, and undo / redo over every hand edit. **2026-09-08 (third)**: the song tab strip sits above the lane; the header's tempo becomes a **readout** — host or song, in force — with the song's own master tempo typed in the Tracker head, now two rows of grouped tools (TRANSPORT · RECORD · SONG · FILE); the master strip gains **LCD Whine** as a third, independent switch and one **VOL** stepper for both sides; PLAYS gains **Hybrid**; and the channel scopes lock to an edge chosen by the waveform's shape rather than the last edge before the window, holding still on a wave channel under vibrato. **2026-09-09**: the Instrument tab becomes a **form** with the shaped envelope drawn from its fields; the tracker gains the note gestures, the phrase's **LEN** in the lane's head and in the chain, and a per-channel playing row; one selector convention (click types, right-click lists, double-click opens the item's tab) covers every slot field; the Tables tab lights a **running table's row**; the Waves tab gains the **synth**; and a command's values are two views of one byte, typed in an inline box |
 | M8 — CGB / RAW / hardware options | **done** 2026-09-07 — CGB chip variant, RAW bypass, headphone noise, LCD line, bass mod, de-click, soften master pops; 61 core tests. **2026-09-09**: the quiet-edge volume writes are gone (§26) — no program on the console can wait for a pulse's low half; the parameter stays as a no-op so the parameter table does not move |
 
 ---
 
 ## Spec revisions
+
+### 2026-09-09 — the Instrument tab, tracker editing, the table playhead, the wave synth, command views (interface)
+
+The fourth addendum's interface side ([`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md)
+§29–§30, §32–§34), on top of the engine round above. The window catches up with the model
+the engine now has: bars are gone from the head and the chain, a phrase's LEN is typed
+where the phrase is, the Instrument tab is a form with the shaped envelope drawn from its
+own fields, a running table shows where it is, waves can be generated, and a command's
+values are finally pleasant to type.
+
+**Changed:**
+
+- **The Instrument tab is a form (§29).** Labels down one column, controls down the
+  other, a thin caption over each group, **no card chrome**: Sound over Pitch &
+  modulation on the left, Envelope over Table & note behaviour on the right. The envelope
+  is **a picture over its fields** — the chip's NRx2 ramp over a second, or the shaped
+  ADSR rendered through `bank::envSegmentLevel`, so what is drawn is the level list the
+  driver will really write — with a **Chip / Shaped** switch, Attack, Decay and Release
+  in ticks each beside its **curve** (Lin / Exp / Log), and Peak and Sustain 0–15, or 0–3
+  on wave and kit, which have only the four NR32 levels. Hints became tooltips; the panel
+  shows labels and values, and the values that mean something else say so on the control
+  ("4 Hz", "3/4 st", "every 3", "15.6 ms"). **The knobs went**, and that is what buys the
+  room: a stepper with a readout is 24 px where a dial with its caption was 70. The
+  tallest type is a Shaped one at **468 px** of the pane's 530 — Pulse 468, Wave 468,
+  Kit 468, Noise 468, against 474 for the old four cards, and every type now sits at the
+  same height because the picture is the tall thing rather than the fields. `FormRow` and
+  `FormGroup` moved into `PanelCommon` so the Waves tab could use them.
+- **Tracker editing (§30).** A note takes **Shift+↑/↓** for a semitone and **Shift+←/→**
+  for an octave, a **vertical drag** for a semitone every six pixels (octaves with
+  Shift, the whole drag one undo), and a **double click** that types it with
+  auto-correction: `a1`, `A 1`, `a#1` and `bb2` are `A-1`, `A-1`, `A#1` and `A#2`, `off`
+  or `-` is a note off, an empty box blanks the cell, Escape cancels and anything else is
+  refused. The lane's head carries the phrase's **LEN**, typed 1–64, beside the groove
+  chip; the *PLAYS* caption went to make room for it and lives in the switch's tooltip.
+  The chain column's fifth cell is the row's **LEN** where the bar override was, and
+  **each channel's own playing row is lit in its own column**, because the channels keep
+  their own time. The head's SONG group loses *Beats* and *Steps / bar*, which left the
+  model with the bars, and the readout is the song's time beside the selected channel's
+  own row·step. Loop is `setLoopRows(0, -1)`: row 1 to the last row of the longest chain.
+- **One convention for every slot field (§30).** A **click** selects it and types, a
+  **right click** lists the slots by *slot · name*, a **double click** opens that item's
+  own tab with it selected. It covers the grid's `ins` and `tbl`, the groove chip, the
+  strips' instrument and table steppers, and the Instrument tab's Table, Wave and Kit
+  fields; `EditorPanel::onOpenSlot` and `selectSlot` carry it to the panel that owns the
+  item. The cost is that a slot stepper's click **focuses** the readout instead of
+  opening its inline box — the box is Enter's — so the double click can be seen at all;
+  typing digits straight at it is unchanged. Considered a delayed open (a double-click
+  timer) and rejected: it makes every click on every slot field feel slow to save one
+  keystroke.
+- **The strips lost their running-state line (§30)** — it repeated the register line
+  above it and the tracker beside it — and their instrument name is now **the instrument
+  the driver last loaded** (`VoiceView::instrument`), so it follows a cell's `ins`
+  column, an `A`, a keyswitch or a Hybrid channel, prefixing the slot number when that
+  differs from the stepper. A strip is 332 px instead of 350 and the editor pane took
+  the 18.
+- **A running table shows where it is (§32).** The Tables tab lights the row the table on
+  view is on, following the channel whose run started **last** through the serial the
+  driver publishes (`ScopeBuffers::tableRun`, compared as a signed difference so the
+  serial can wrap), and the line under the name says which channel it is; nothing is lit
+  when no channel runs it. It follows the panel's own 30 Hz timer.
+- **The wave synth (§33).** `bank::Synth` in core — a **source** (sine, triangle, saw,
+  square with a width, eight additive partials, noise, the drawn wave), a chain of four
+  **shapers** with their amounts (low-, high-, band- and all-pass with resonance, drive
+  as clip, fold and wrap, rotate, shift, invert, reverse, smooth, bit-crush, quantise,
+  normalise), a **start and an end state** and the frames to morph between them — with
+  `bank::synthesize` rendering the run. The filters are **per-harmonic gains of the
+  32-point transform of the cycle** rather than a running filter: a wave is 32 samples
+  and therefore sixteen harmonics, so the transform is exact, perfectly cyclic and the
+  same bytes on every platform, where a running filter's output would depend on where its
+  state started. An amount of 0 is a no-op on every shaper and the sign is the direction
+  where a shaper has one; a synthesised sine, triangle, saw and square are the bank's own
+  generators byte for byte. The Waves tab edits it beside previews of both ends and of
+  the whole run, with **Generate** writing the frames into the slot as one undo; the
+  parameters live in `Wave::synth` and travel in the bank's JSON, so a run can be made
+  again after an edit and the exporter still only ships frames.
+  `Tests/WaveSynthTests.cpp` covers each source, each shaper on a known input, the order
+  of the chain, the morph's ends being the start and end states exactly, and determinism
+  over every source crossed with every shaper.
+- **Command arguments are two views of one byte (§34).** `commandInfo` gains a **shape**
+  — Nibbles, Byte or Small — and the ranges that go with it: C, R, S, Z and M are two
+  nibbles, H in a table is LSDj's `times, row` (0 times = forever), T reaches 295 BPM
+  with the byte wrapping through `00`–`27`, and P is stored two's complement. Decimal
+  shows `x,y`, Hex shows the byte a playback ROM will carry, and `commandByte` /
+  `setCommandByte` are the one encoding both read. **Typing follows the view**: a click on
+  a value opens an inline box holding it, Enter commits, Tab moves to the next argument,
+  Escape cancels, and anything outside the letter's range is refused; in Hex the box is
+  the whole byte and two digits set it; P's box takes `-73`. The strips' `CommandSlot`
+  and the Voice window show the same two views — two steppers in Decimal, one byte in
+  Hex. Digits typed straight at a cell still work, with a comma to move on.
+  `TypedEntry` and its parsing moved to `plugin/ui/InlineEntry.h`, with a Tab hook, so
+  the grids and the widgets share one box.
+- **The spare words are gone (§30).** The Hardware rows are a label and their measured
+  fact with the explanation in the tooltip, and the tab stopped scrolling; the Grooves
+  help column is three lines; the paragraph tooltips on the strips, the master volume,
+  the wave tools and the groove stepper are one line each.
+- **Screenshots and the tool.** `chipboy_uishot` gains `--shaped`, which gives the first
+  instrument a shaped envelope so the Instrument tab is shot at its tallest, and it now
+  selects a table a channel is really running before shooting the Tables tab. The docs
+  carry `main-instrument.png`, `main-instrument-shaped.png`, `main-tables.png`,
+  `main-waves.png`, `main-tracker.png`, `main-grooves.png`, `main-hardware.png` and
+  `voice.png`, all regenerated; no tab scrolls at 1180 × 1020 but the bank lists, which
+  are meant to.
+
+**What the driver still owes §34.** The window now stores and shows three of the
+letters the way §34 defines them, and the driver reads two of them the old way; these are
+the three lines the engine side has to move, and until it does, those letters mean what
+the driver says and not what the window shows:
+
+- **P** is stored two's complement (`FE` = −2); `Driver.cpp` still reads it as offset
+  binary (`c.a - 128`).
+- **S**'s `y` is NR10's low nibble, direction in bit 3; the driver still takes the
+  direction from `c.a & 128` and the shift from `c.b & 7`.
+- **H** in a table is `times, row`; the driver still hops to `c.a` and counts nothing.
+  A fresh H is `1, 1` so that it means the same under both readings -- once, to row 1
+  under §34, and a hop to step 1 under the driver as it stands.
 
 ### 2026-09-09 — channels on their own time, zombie-mode levels, shaped envelopes (engine)
 
