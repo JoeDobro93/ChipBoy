@@ -17,6 +17,17 @@ own build and tests once.
   PreToolUse hook on the Agent tool (`.claude/hooks/subagent_model_guard.py`);
   the same rule belongs in `~/.claude/settings.json` for other projects.
 
+Stages run **one at a time, in the main checkout**, so builds stay
+incremental and there is nothing to merge; two stages in parallel only when
+the wall-clock gain is worth two worktrees, two full rebuilds and a merge.
+A brief carries a **budget** — a scope that fits in about an hour of agent
+time — and the agent reports at the budget with what is left, rather than
+iterating on: no open-ended fitting, tuning or "try another model" loops;
+measured numbers go in as lookup tables. The full test suite runs once at
+the end of a stage; during the work only the tests of the touched area. The
+orchestrator re-runs the gate only after a true merge (a fast-forward of a
+tree the agent already verified is not re-verified).
+
 Briefs to subagents say what to build, which files they own, how to verify,
 and that they must not poll a build in a loop: run a build in the foreground
 with a generous timeout and read its result. Never start a background
