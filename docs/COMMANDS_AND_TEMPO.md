@@ -830,3 +830,21 @@ channel moves to its next phrase when its own phrase ends.** Bars leave the mode
   channel's row·step and the song's time.
 - Verbose descriptions across the window (Hardware rows, panel captions, tooltips that
   read as paragraphs) are cut to a label and a one-line tooltip.
+
+## 31. Two rules from the P kick, and the LSDj reference
+
+- **A table's first row fires with the note-on**, in the same event, never at the next
+  tick: a wave kick whose table drops the pitch must start dropping at once, or the raw
+  note is heard for up to a tick — sometimes, depending on where the note fell between
+  ticks. Rows after the first step on the ticks as before.
+- **A repeated pitch is never legato.** A MIDI note-on at the *same pitch* as the note
+  sounding is plain even under Overlap = legato — legato is for moving between pitches,
+  and a drum hit in succession is a retrigger. (§8 amended.)
+- **The LSDj reference.** An LSDj 9.2 ROM the user owns lives outside the repository
+  (`/root/lsdj/`, never committed, never in CI: `*.gb`, `*.sav` are ignored). A parity
+  harness under `tools/lsdjref/` authors test songs into an LSDj save, runs the ROM in an
+  emulator core with a write log on the APU registers, plays the same songs through
+  ChipBoy's driver, and diffs the two register streams per command. It observes
+  behaviour only; no code or data from the ROM enters ChipBoy. Its tests skip when the
+  ROM is absent. Findings are written to `docs/LSDJ_PARITY.md` and turned into driver
+  changes with tests, one letter at a time.

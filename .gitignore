@@ -55,3 +55,9 @@ venv/
 # Interface screenshots are kept
 !docs/screenshots/*.png
 chipboy_linktest.stages.txt
+
+# Game Boy ROMs and saves never enter the repository (rule L3): the LSDj
+# reference lives outside the tree and the tools take its path.
+*.gb
+*.gbc
+*.sav
