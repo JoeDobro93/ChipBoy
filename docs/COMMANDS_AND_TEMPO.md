@@ -727,3 +727,106 @@ a written step past the bar's end. `chipboy_recordtest --play-song FILE [bars]` 
 the RMS of every bar of every channel, mix and solo, which is what caught a note below
 the channel's lowest period going silently absent and a bar with no phrase leaving a
 stacked note sounding instead of stopping the channel.
+
+---
+
+# Addendum, 2026-09-09: channels on their own time, honest volume, shaped envelopes
+
+Agreed after playing the fifth round. Binding. §25 supersedes §11 and §18's bar model;
+§26 changes how every level change reaches the chip; §27 adds to §7's instrument.
+
+## 25. Every channel keeps its own time
+
+LSDj's rule, adopted whole: **a phrase lasts as long as its groove makes it, and each
+channel moves to its next phrase when its own phrase ends.** Bars leave the model.
+
+- A phrase has its own **length**, `Phrase::steps` 1–64 (default 16), and its groove. A
+  step is **6 ticks at the straight groove, always**; groove entries are ticks per step,
+  as LSDj. Sixteen straight steps are 96 ticks = four beats; a 3/4 phrase is 12 steps; a
+  1/32 grid is a `3 3` groove.
+- The chain is per channel as now, one **row** after another. Row *r* of a channel starts
+  at the sum of the durations of that channel's rows before it; an empty row lasts 96
+  ticks with a note-off at its start. Channels whose phrases differ in length drift apart
+  by design; the chain column highlights each channel's own playing row, so one channel
+  can show a row ahead of another. H hops within the channel as before.
+- Position ↔ (row, step) per channel goes through a prefix table over that channel's row
+  durations, rebuilt on publish; locate is exact; T cells sit at their channel's ticks;
+  the recorder quantises to the channel's own grid.
+- `Song::stepsPerBar`, `barSteps` and `beatsPerBar` go. Song file **format 6** carries
+  `steps` per phrase. Loading format 5 or older: every used phrase takes the file's steps
+  per bar as its length, and a bar override becomes the length of the phrase in that
+  bar (a phrase used with two different overrides is duplicated).
+- The plugin's own transport loops the longest channel; the readout shows the song's
+  time and, for the selected channel, its row·step. The host's bars stay a ruler (§19).
+
+## 26. Level changes are zombie-mode writes, never a retrigger
+
+- On pulse and noise, a level change on a running channel — a table's volume column, an
+  E that keeps the envelope's direction and rate, a shaped envelope's step (§27), CC7,
+  the Level lane, a Release fade — is made the way the hardware allows without a trigger:
+  **zombie-mode NRx2 writes** (DMG: a write with envelope period 0 adds one to the volume,
+  flipping the direction bit maps the volume to 16 − v; the driver issues the shortest
+  sequence to the target on the selected console, and the APU emulates each console's
+  own behaviour). No NRx4 trigger, no phase reset.
+- The **"volume writes at edges"** option and the driver's quiet-edge marker go: a
+  program on the Game Boy cannot wait for a pulse's low half, so neither does ChipBoy.
+- A trigger happens only where a driver needs one: a plain note-on, R, and an E that
+  changes the envelope's direction or rate. Wave levels stay NR32 writes.
+- The demo song and state files are regenerated (their register streams change); the
+  record test, the demo checks and the six songs stay green.
+
+## 27. Shaped envelopes
+
+- The instrument's envelope has a **mode**: **Chip** — NRx2 initial volume, direction and
+  rate, as today — or **Shaped**: Attack (ticks, from silence to Peak), Peak (0–15),
+  Decay (ticks, to Sustain), Sustain (0–15, held while the note is), Release (ticks, from
+  the level at note-off to silence), each segment with a **curve**: linear, exponential
+  (fast start) or logarithmic (slow start). Wave instruments use the four NR32 levels.
+- A shaped envelope is rendered as one level per tick and reaches the chip through §26 —
+  one write when the level changes, none while it holds — so a playback ROM can replay
+  it from a per-tick list. A note-off on a Shaped instrument starts the Release when the
+  Note-off mode is Release; Kill cuts as before.
+- A table's volume column or an E that fires during a shaped envelope takes over: the
+  remaining segments stop until the next plain note-on, and the table or E shapes the
+  sound.
+
+## 28. Hardware honesty, and the road to a ROM
+
+- `docs/HARDWARE_DRIVER_AUDIT.md` lists every driver behaviour with the way a Game Boy
+  driver realises it — register writes at ticks, the timer-driven 360 Hz pitch clock,
+  zombie-mode levels, wave RAM rewrites with the channel off on DMG, kit streaming — and
+  marks what is **plugin-only** (MIDI input and its sample-accurate notes, Hybrid's live
+  notes, the Voice link). It ends with the data a playback ROM needs: song format 6 with
+  its bank, as a compact binary. Anything emulator-only found on the way is fixed (§26)
+  or listed with a reason.
+- Stability: a `chipboy_fuzz` CTest plays random songs — random cells, letters with
+  random arguments, grooves, phrase lengths, tempo and mode changes, locates — on every
+  channel for 64 rows and fails on NaN/inf, a hang (bounded time per block), or sound
+  after all-notes-off; each run prints its seed.
+
+## 29. The Instrument tab
+
+- A compact revamp: a form with labels left and controls right, thin captions for the
+  groups, no card chrome per knob; the envelope as a small graph drawn from the fields
+  (Chip: the ramp; Shaped: the ADSR with its curves), with the fields beneath it.
+- Hints under fields become tooltips; the panel shows labels and values only.
+- The Table field: right-click lists the tables; double-click opens the Tables tab on
+  that table.
+
+## 30. Tracker editing and navigation
+
+- **Notes**: Shift+Up/Down a semitone, Shift+Left/Right an octave; a vertical click-drag
+  on a note moves it a semitone per six pixels (Shift: octaves); double-click types with
+  auto-correction — `a1`, `A 1`, `a#1`, `bb2` → `A-1`, `A#1`, `A#2`; `off` or `-` → OFF;
+  Escape cancels. The other columns keep their typed entry.
+- **One convention for every slot field** — the grid's INS and TBL, the groove chip, the
+  strips' instrument and table steppers, the Instrument tab's Table field: single click
+  selects and types; right-click lists; **double-click opens that item's settings** (the
+  Instrument, Tables or Grooves tab with the item selected).
+- The strip's running-state line goes; the strip's instrument name shows the instrument
+  the driver last loaded, so it follows the tracker.
+- The grid head shows the phrase's **LEN** (typed) beside the groove chip; the chain
+  column highlights each channel's own playing row; the head readout shows the selected
+  channel's row·step and the song's time.
+- Verbose descriptions across the window (Hardware rows, panel captions, tooltips that
+  read as paragraphs) are cut to a label and a one-line tooltip.
