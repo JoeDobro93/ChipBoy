@@ -33,6 +33,7 @@ add_library(chipboy_core STATIC
     Source/core/Render/Reference.cpp
     Source/core/Bank/Bank.cpp
     Source/core/Bank/Preset.cpp
+    Source/core/Bank/WaveSynth.cpp
     Source/core/Driver/Clock.cpp
     Source/core/Driver/Driver.cpp
     Source/core/Tracker/Player.cpp
@@ -80,6 +81,7 @@ if(CHIPBOY_BUILD_TESTS)
         Tests/ClockTests.cpp
         Tests/TrackerTests.cpp
         Tests/PresetTests.cpp
+        Tests/WaveSynthTests.cpp
         Tests/LinkTests.cpp
         Tests/HardwareTests.cpp)
     target_link_libraries(chipboy_tests PRIVATE chipboy_core chipboy_harness Catch2::Catch2WithMain)

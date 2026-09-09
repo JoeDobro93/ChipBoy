@@ -189,11 +189,56 @@ struct Table {
     uint8_t     hopStep = 1;         ///< 1-16, for End::Hop
 };
 
+/* --------------------------------------------------------- the synth */
+// docs/COMMANDS_AND_TEMPO.md section 33. A wave's frames can be generated
+// from parameters the bank keeps, so a run can be regenerated after an edit
+// and the exporter still only ships frames. Rendering is `synthesize()` in
+// WaveSynth.h -- deterministic, integer in, integer out.
+
+/// Where a frame starts before the shapers touch it.
+enum class SynthSource : uint8_t {
+    Sine = 0, Triangle, Saw, Square, Additive, Noise, Drawn
+};
+constexpr int kSynthSourceCount = 7;
+
+/// One link of the shaper chain. None is a no-op, and so is any stage whose
+/// amount is 0, so an empty chain and a chain of zeros are the same wave.
+enum class SynthShaper : uint8_t {
+    None = 0, LowPass, HighPass, BandPass, AllPass,
+    Clip, Fold, Wrap, Rotate, Shift, Invert, Reverse, Smooth, Crush, Quantise, Normalise
+};
+constexpr int kSynthShaperCount = 16;
+constexpr int kSynthStages = 4;        ///< shapers in the chain, applied in order
+constexpr int kSynthPartials = 8;      ///< the additive source's harmonics
+
+/// One end of the morph: every number the shape is made from. The kinds --
+/// the source and the chain's shapers -- are the Synth's; only the values
+/// move between the start and the end (section 33).
+struct SynthState {
+    uint8_t width = 16;                                  ///< Square: samples high, 1-31
+    std::array<uint8_t, kSynthPartials> partials{ { 15, 0, 0, 0, 0, 0, 0, 0 } };   ///< Additive: 0-15 each
+    std::array<int8_t, kSynthStages> amount{};           ///< -15..15 per stage; 0 is a no-op
+    std::array<uint8_t, kSynthStages> resonance{};       ///< 0-15, the filters' Q
+};
+
+/// The synth behind one wave slot's frame run: a source, a chain of shapers,
+/// a start and an end state, and how many frames to morph between them. The
+/// frames themselves stay the wave's -- this is what made them.
+struct Synth {
+    bool used = false;                 ///< false = the frames were drawn, not generated
+    SynthSource source = SynthSource::Sine;
+    std::array<SynthShaper, kSynthStages> chain{};
+    SynthState start, end;
+    uint8_t frames = 1;                ///< 1-16, the run Generate writes
+    uint8_t seed = 1;                  ///< the Noise source, so a run is repeatable
+};
+
 struct Frame { std::array<uint8_t, 32> s{}; };   ///< 32 samples, 0-15
 struct Wave {
     bool        used = false;
     std::string name;
     std::vector<Frame> frames;       ///< 1-16
+    Synth       synth;               ///< what generated the run, when it was generated (section 33)
 };
 
 struct KitSample {
