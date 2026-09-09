@@ -337,6 +337,9 @@ void VoiceEditor::refreshInstruments(bool force)
     const bool linked = client.region() != nullptr;
     if (!force && serial == instrumentSerial_ && target == instrumentTarget_ && hex == instrumentHex_ && linked == instrumentLinked_) return;
     if (instrumentBox_.isPopupActive()) return;   // next tick
+    // The two slots show the arguments in Decimal and the one byte a
+    // playback ROM carries in Hex (docs/COMMANDS_AND_TEMPO.md section 34).
+    if (hex != instrumentHex_) { cmd1_.hexChanged(); cmd2_.hexChanged(); }
     instrumentSerial_ = serial; instrumentTarget_ = target; instrumentHex_ = hex; instrumentLinked_ = linked;
 
     instrumentBox_.clear(dontSendNotification);

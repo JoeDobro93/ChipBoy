@@ -82,8 +82,10 @@ ChipBoyEditor::ChipBoyEditor(ChipBoyProcessor& p)
         panel->onContextChanged = [this] { refreshContext(); };
         panel->onSelectChannel = [this](int ch) { selectChannel(ch); };
         panel->onMessage = [this](const String& text) { status_.setMessage(text); };
+        panel->onOpenSlot = [this](SlotKind kind, int slot) { openSlot(kind, slot); };
         content_.addChildComponent(*panel);
     }
+    mixer_.onOpenSlot = [this](SlotKind kind, int slot) { openSlot(kind, slot); };
 
     header_.onScale = [this](float f) { setScale(f); };
     header_.onToggleVisualizer = [this] { toggleVisualizer(); };
@@ -145,6 +147,20 @@ void ChipBoyEditor::showTab(int tab)
     }
     tab_ = t;
     tabs_->setCurrent(t);
+    refreshContext();
+}
+
+/// One convention for every slot field (UI_DESIGN section 2.1): a double
+/// click on a grid cell, a stepper or a chip opens the tab that item lives
+/// in, with it selected.
+void ChipBoyEditor::openSlot(SlotKind kind, int slot)
+{
+    const int tab = kind == SlotKind::Instrument ? Instrument
+                  : kind == SlotKind::Table     ? Tables
+                  : kind == SlotKind::Wave      ? Waves
+                                                : Grooves;
+    showTab(tab);
+    if (panels_[size_t(tab)]) panels_[size_t(tab)]->selectSlot(slot);
     refreshContext();
 }
 

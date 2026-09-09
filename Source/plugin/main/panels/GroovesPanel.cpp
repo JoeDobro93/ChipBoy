@@ -134,6 +134,7 @@ void GroovesPanel::showSlot(int slot)
 {
     slot_ = std::clamp(slot, 0, kSlots);
     editor_.setSlot(slot_);
+    if (list_.selected() != slot_) list_.setSelected(slot_, juce::dontSendNotification);
     contextChanged();
 }
 

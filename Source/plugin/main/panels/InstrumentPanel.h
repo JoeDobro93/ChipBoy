@@ -16,6 +16,7 @@ public:
     ~InstrumentPanel() override;
 
     void setChannel(int ch) override;
+    void selectSlot(int slot) override { showSlot(slot); }
     RichText contextLine() const override;
     void bankChanged() override;
     void songChanged() override;

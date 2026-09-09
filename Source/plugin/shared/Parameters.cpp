@@ -77,6 +77,8 @@ String retrigStepText(int x)
     if (n == 0 || n == 8) return {};
     return n < 8 ? "vol +" + String(n) : "vol " + String(CharPointer_UTF8("\xe2\x88\x92")) + String(n - 8);
 }
+/// A byte read as two's complement: 0xFE is -2 (section 34).
+int signedByte(int v) { const int b = v & 255; return b >= 128 ? b - 256 : b; }
 /// What a letter's revert form puts back (docs/COMMANDS_AND_TEMPO.md 3).
 String commandRevertText(bank::Cmd c)
 {
@@ -111,15 +113,15 @@ String commandArgText(const bank::Command& c)
         case bank::Cmd::E:    return "vol " + String(x) + dot + ((y & 7) == 0 ? String("hold") : ((y & 8) ? "up " : "down ") + String(y & 7));
         case bank::Cmd::F:    return "frame " + String(x);
         case bank::Cmd::G:    return x == 0 ? String("straight") : "groove " + String(x);
-        case bank::Cmd::H:    return x == 0 ? String("stop") : "step " + String(x);
+        case bank::Cmd::H:    return (x == 0 ? String("forever") : String(x) + (x == 1 ? " time" : " times")) + dot + "row " + String(y);
         case bank::Cmd::K:    return "after " + String(x);
         case bank::Cmd::L:    return x == 0 ? String("instant") : "over " + String(x);
         case bank::Cmd::M:    return "L " + masterSideText(x) + dot + "R " + masterSideText(y);
         case bank::Cmd::O:    { static const char* n[] = { "off", "L", "R", "both" }; return n[x & 3]; }
-        case bank::Cmd::P:    { const int v = x - 128; return v == 0 ? String("hold") : (v > 0 ? "+" : "") + String(v); }
+        case bank::Cmd::P:    { const int v = signedByte(x); return v == 0 ? String("hold") : (v > 0 ? "+" : "") + String(v); }
         case bank::Cmd::R:    { const String v = retrigStepText(x); return (y == 0 ? String("once") : "every " + String(y)) + (v.isEmpty() ? String() : dot + v); }
-        case bank::Cmd::S:    return "rate " + String(x & 7) + dot + "shift " + String(y & 7) + ((x & 128) ? String(" down") : String());
-        case bank::Cmd::T:    return String(x) + " BPM";
+        case bank::Cmd::S:    return "rate " + String(x & 7) + dot + "shift " + String(y & 7) + ((y & 8) ? String(" down") : String(" up"));
+        case bank::Cmd::T:    return String(x) + " BPM";   // 40-295, the byte wraps (section 34)
         case bank::Cmd::V:    return x == 0 ? String("off") : "speed " + String(x) + dot + vibDepthText(y);
         case bank::Cmd::W:    return "duty/wave " + String(x);
         case bank::Cmd::Z:    return "add 0-" + String(x) + (y ? dot + "0-" + String(y) : String());
@@ -128,27 +130,27 @@ String commandArgText(const bank::Command& c)
 }
 
 namespace {
-/// In the enum's order, H included: the ranges every editor of a command
-/// obeys (docs/COMMANDS_AND_TEMPO.md section 2).
+/// In the enum's order, H included: the ranges and the shape every editor of
+/// a command obeys (docs/COMMANDS_AND_TEMPO.md sections 2 and 34).
 constexpr CommandInfo kCmdInfo[bank::kCmdCount] = {
-    { 'A', "Table",         "slot 1-64, 0 stops",        1, { 0, 0 }, { 64, 0 },    { 1, 0 } },
-    { 'C', "Chord",         "x, y semitones",            2, { 0, 0 }, { 60, 60 },   { 3, 7 } },
-    { 'D', "Delay",         "ticks",                     1, { 0, 0 }, { 255, 0 },   { 3, 0 } },
-    { 'E', "Envelope",      "vol, y 0/8 hold, 1-7 down, 9-15 up", 2, { 0, 0 }, { 15, 15 }, { 12, 3 } },
-    { 'F', "Frame",         "1-16",                      1, { 1, 0 }, { 16, 0 },    { 2, 0 } },
-    { 'G', "Groove",        "slot 1-16, 0 straight",     1, { 0, 0 }, { 16, 0 },    { 1, 0 } },
-    { 'H', "Hop",           "step 1-16, 0 stops",        1, { 0, 0 }, { 16, 0 },    { 1, 0 } },
-    { 'K', "Kill",          "after ticks",               1, { 0, 0 }, { 255, 0 },   { 4, 0 } },
-    { 'L', "Slide",         "duration, 0 instant",       1, { 0, 0 }, { 255, 0 },   { 60, 0 } },
-    { 'M', "Master vol",    "0-7, 8 keeps, 9-15 relative", 2, { 0, 0 }, { 15, 15 }, { 5, 5 } },
-    { 'O', "Pan",           "off / L / R / LR",          1, { 0, 0 }, { 3, 0 },     { 1, 0 } },
-    { 'P', "Pitch bend",    "speed, 128 holds",          1, { 0, 0 }, { 255, 0 },   { 116, 0 } },
-    { 'R', "Retrigger",     "vol 1-7 up / 9-15 down, every y", 2, { 0, 0 }, { 15, 255 }, { 0, 3 } },
-    { 'S', "Sweep",         "rate, shift (x>=128 down)", 2, { 0, 0 }, { 255, 7 },   { 2, 2 } },
-    { 'T', "Tempo",         "BPM 40-255",                1, { 40, 0 }, { 255, 0 },  { 120, 0 } },
-    { 'V', "Vibrato",       "speed 1-15, depth in semitones", 2, { 0, 0 }, { 15, 15 }, { 8, 4 } },
-    { 'W', "Wave",          "duty 0-3, or wave 1-64",    1, { 0, 0 }, { 64, 0 },    { 1, 0 } },
-    { 'Z', "Random add",    "0..x on x, 0..y on y",      2, { 0, 0 }, { 255, 255 }, { 15, 0 } },
+    { 'A', "Table",         "slot 1-64, 0 stops",        1, { 0, 0 }, { 64, 0 },   { 1, 0 },   CmdShape::Small },
+    { 'C', "Chord",         "x, y semitones 0-15",       2, { 0, 0 }, { 15, 15 },  { 3, 7 },   CmdShape::Nibbles },
+    { 'D', "Delay",         "ticks",                     1, { 0, 0 }, { 255, 0 },  { 3, 0 },   CmdShape::Byte },
+    { 'E', "Envelope",      "vol, y 0/8 hold, 1-7 down, 9-15 up", 2, { 0, 0 }, { 15, 15 }, { 12, 3 }, CmdShape::Nibbles },
+    { 'F', "Frame",         "1-16",                      1, { 1, 0 }, { 16, 0 },   { 2, 0 },   CmdShape::Small },
+    { 'G', "Groove",        "slot 1-16, 0 straight",     1, { 0, 0 }, { 16, 0 },   { 1, 0 },   CmdShape::Small },
+    { 'H', "Hop",           "times (0 forever), row 1-16", 2, { 0, 1 }, { 15, 16 }, { 0, 1 },  CmdShape::Nibbles },
+    { 'K', "Kill",          "after ticks",               1, { 0, 0 }, { 255, 0 },  { 4, 0 },   CmdShape::Byte },
+    { 'L', "Slide",         "duration, 0 instant",       1, { 0, 0 }, { 255, 0 },  { 60, 0 },  CmdShape::Byte },
+    { 'M', "Master vol",    "0-7, 8 keeps, 9-15 relative", 2, { 0, 0 }, { 15, 15 }, { 5, 5 },  CmdShape::Nibbles },
+    { 'O', "Pan",           "off / L / R / LR",          1, { 0, 0 }, { 3, 0 },    { 1, 0 },   CmdShape::Small },
+    { 'P', "Pitch bend",    "speed, signed; 0 holds",    1, { 0, 0 }, { 255, 0 },  { 244, 0 }, CmdShape::Byte },
+    { 'R', "Retrigger",     "vol 1-7 up / 9-15 down, every y", 2, { 0, 0 }, { 15, 15 }, { 0, 3 }, CmdShape::Nibbles },
+    { 'S', "Sweep",         "rate 0-7, NR10's low nibble (8-15 down)", 2, { 0, 0 }, { 7, 15 }, { 2, 2 }, CmdShape::Nibbles },
+    { 'T', "Tempo",         "BPM 40-295",                1, { 40, 0 }, { 295, 0 }, { 120, 0 }, CmdShape::Byte },
+    { 'V', "Vibrato",       "speed 1-15, depth in semitones", 2, { 0, 0 }, { 15, 15 }, { 8, 4 }, CmdShape::Nibbles },
+    { 'W', "Wave",          "duty 0-3, or wave 1-64",    1, { 0, 0 }, { 64, 0 },   { 1, 0 },   CmdShape::Small },
+    { 'Z', "Random add",    "0..x on x, 0..y on y",      2, { 0, 0 }, { 15, 15 },  { 15, 0 },  CmdShape::Nibbles },
 };
 } // namespace
 
@@ -164,6 +166,112 @@ bank::Command defaultCommand(bank::Cmd c)
     out.cmd = c;
     if (const auto* info = commandInfo(c)) { out.a = int16_t(info->def[0]); out.b = int16_t(info->def[1]); }
     return out;
+}
+
+/* ------- the two views of one byte (COMMANDS_AND_TEMPO.md section 34) ------- */
+
+namespace {
+/// The nibble H's row lands in: ChipBoy counts a table's rows from one and
+/// the register counts from zero, so the byte carries row - 1.
+int hopRowNibble(int row) { return std::clamp(row, 1, 16) - 1; }
+}
+
+int commandByte(const bank::Command& c)
+{
+    const auto* info = commandInfo(c.cmd);
+    if (info == nullptr) return 0;
+    switch (info->shape) {
+        case CmdShape::Nibbles: {
+            const int y = c.cmd == bank::Cmd::H ? hopRowNibble(c.b) : (c.b & 15);
+            return ((c.a & 15) << 4) | (y & 15);
+        }
+        case CmdShape::Byte:
+            // T wraps the way LSDj's does: 40-255 is 0x28-0xFF and 256-295
+            // runs on through 0x00-0x27. Everything else is already a byte.
+            return c.cmd == bank::Cmd::T ? (int(c.a) & 255) : (int(c.a) & 255);
+        case CmdShape::Small:
+            return int(c.a) & 255;
+    }
+    return 0;
+}
+
+bool setCommandByte(bank::Command& c, int byte)
+{
+    const auto* info = commandInfo(c.cmd);
+    if (info == nullptr || byte < 0 || byte > 255) return false;
+    switch (info->shape) {
+        case CmdShape::Nibbles: {
+            const int x = (byte >> 4) & 15;
+            const int y = c.cmd == bank::Cmd::H ? (byte & 15) + 1 : (byte & 15);
+            if (x < info->lo[0] || x > info->hi[0] || y < info->lo[1] || y > info->hi[1]) return false;
+            c.a = int16_t(x); c.b = int16_t(y); c.c = 0;
+            return true;
+        }
+        case CmdShape::Byte: {
+            int v = byte;
+            if (c.cmd == bank::Cmd::T) v = byte >= 40 ? byte : byte + 256;   // the wrap, back again
+            if (v < info->lo[0] || v > info->hi[0]) return false;
+            c.a = int16_t(v); c.b = 0; c.c = 0;
+            return true;
+        }
+        case CmdShape::Small:
+            if (byte < info->lo[0] || byte > info->hi[0]) return false;
+            c.a = int16_t(byte); c.b = 0; c.c = 0;
+            return true;
+    }
+    return false;
+}
+
+int commandShownValue(const bank::Command& c, int arg)
+{
+    const int v = arg == 0 ? int(c.a) : int(c.b);
+    return c.cmd == bank::Cmd::P && arg == 0 ? signedByte(v) : v;
+}
+
+void commandShownRange(bank::Cmd cmd, int arg, int& lo, int& hi)
+{
+    const auto* info = commandInfo(cmd);
+    const int a = std::clamp(arg, 0, 1);
+    lo = info != nullptr ? info->lo[a] : 0;
+    hi = info != nullptr ? info->hi[a] : 0;
+    if (cmd == bank::Cmd::P && a == 0) { lo = -128; hi = 127; }   // the byte, read signed
+}
+
+bool setCommandShownValue(bank::Command& c, int arg, int shown)
+{
+    const auto* info = commandInfo(c.cmd);
+    if (info == nullptr) return false;
+    const int a = std::clamp(arg, 0, info->nargs - 1);
+    int lo = 0, hi = 0;
+    commandShownRange(c.cmd, a, lo, hi);
+    if (shown < lo || shown > hi) return false;              // refused, not clamped
+    const int stored = c.cmd == bank::Cmd::P && a == 0 ? (shown & 255) : shown;
+    if (a == 0) c.a = int16_t(stored); else c.b = int16_t(stored);
+    c.c = 0;                                                 // naming a value leaves the revert form
+    return true;
+}
+
+String commandEntryText(const bank::Command& c, int arg)
+{
+    return String(commandShownValue(c, std::clamp(arg, 0, 1)));
+}
+
+String commandValueText(const bank::Command& c, bool hex)
+{
+    const auto* info = commandInfo(c.cmd);
+    if (info == nullptr) return {};
+    // Hex is the byte a playback ROM will carry -- one encoding, one export.
+    if (hex) {
+        const int b = commandByte(c);
+        return String::toHexString(b).paddedLeft('0', 2).toUpperCase();
+    }
+    if (c.cmd == bank::Cmd::O) { static const char* n[] = { "\xe2\x80\x93", "L", "R", "LR" }; return String(CharPointer_UTF8(n[c.a & 3])); }
+    String s;
+    for (int i = 0; i < info->nargs; ++i) {
+        if (i > 0) s += ",";
+        s += String(commandShownValue(c, i));
+    }
+    return s;
 }
 
 bool commandAppliesTo(bank::Cmd c, ChannelKind kind)

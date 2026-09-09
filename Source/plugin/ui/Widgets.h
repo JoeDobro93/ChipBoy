@@ -96,6 +96,12 @@ public:
     /// Open the inline box on the readout, as a click on it does.
     void beginTypedEntry();
     std::function<void(int)> onChange;
+    /// A slot stepper follows the one selector convention (UI_DESIGN 2.1):
+    /// a right click lists the slots by name and a double click opens that
+    /// item's own tab. Where onOpen is set the readout's click focuses the
+    /// field for typing rather than opening the box, so the double click can
+    /// be seen; Enter still opens the box.
+    std::function<void()> onList, onOpen;
     static constexpr int kHeight = 24;
     int preferredWidth() const;           ///< 80: two 22 px buttons and a 34 px readout
     void resized() override; void paint(juce::Graphics&) override;
@@ -162,7 +168,13 @@ private:
     bool on_ = false; juce::Colour colour_ = colours::ok;
 };
 
-/// One row of a bank list: "01 · Square lead".
+/// Which of the bank's lists a slot field names. Every selector in the
+/// window obeys one convention (UI_DESIGN section 2.1): a click selects the
+/// field and types into it, a right click lists the slots by name, and a
+/// double click opens that item's own tab.
+enum class SlotKind { Instrument, Table, Wave, Groove };
+
+/// One row of a bank list: "01 . Square lead".
 struct SlotRow {
     int slot = 0;                 ///< 1-based
     juce::String name;
@@ -263,15 +275,15 @@ private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
 
-/// The tracker lane: four channels side by side, the bar's own step count
-/// of note, velocity, instrument, table and two commands (UI_DESIGN
-/// section 7). Each channel's head carries its record arm, the PLAYS switch
-/// (MIDI / Trkr / Hyb, docs/COMMANDS_AND_TEMPO.md section 20) and the
-/// phrase's groove chip; the groove itself is edited in the Grooves tab.
+/// The tracker lane: four channels side by side, the row's steps of note,
+/// velocity, instrument, table and two commands (UI_DESIGN section 7). Each
+/// channel's head carries its record arm, the playback switch (MIDI / Trkr /
+/// Hyb, docs/COMMANDS_AND_TEMPO.md section 20), its phrase's LEN and its
+/// groove chip; the groove itself is edited in the Grooves tab.
 ///
-/// The rows are the bar's steps, one to sixty-four
-/// (docs/COMMANDS_AND_TEMPO.md section 11): the grid is as tall as they ask
-/// and scrolls inside its pane past sixteen.
+/// The rows are the phrase's steps, one to sixty-four
+/// (docs/COMMANDS_AND_TEMPO.md section 25): the grid is as tall as the
+/// longest phrase in the row asks and scrolls inside its pane past sixteen.
 class PhraseGrid : public juce::Component, public juce::TooltipClient {
 public:
     PhraseGrid();
@@ -291,8 +303,14 @@ public:
     std::function<void()> onEntryEnd;
     std::function<void(int ch, tracker::NoteSource)> onSourceChange;
     std::function<void(int ch, int groove)> onGrooveChange;    ///< per-phrase groove slot, 0 straight
+    /// The LEN in this channel's head: the length of the phrase it plays in
+    /// the row on show, 1-64 (docs/COMMANDS_AND_TEMPO.md section 25).
+    std::function<void(int ch, int steps)> onLengthChange;
     std::function<void(int ch, bool armed)> onArmChange;       ///< the channel's record arm (section 14)
     std::function<void(int row)> onCursorRow;                  ///< the cursor moved: keep this row in view
+    /// A double click on a slot field: open that item's own tab with it
+    /// selected (UI_DESIGN section 2.1).
+    std::function<void(SlotKind, int slot)> onOpenSlot;
     juce::String getTooltip() override;   ///< the hovered cell: what the column is, and what the command says
     static constexpr int kRowHeight = 22, kHeaderHeight = 48, kVisibleSteps = 16;
     /// How tall the grid is for a bar of `steps` steps; sixteen is what the
@@ -304,22 +322,27 @@ public:
     static constexpr int preferredHeight() { return heightForSteps(kVisibleSteps); }
     void resized() override; void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override; void mouseUp(const juce::MouseEvent&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override;
     bool keyPressed(const juce::KeyPress&) override; void focusGained(FocusChangeType) override; void focusLost(FocusChangeType) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
 
-/// The chain, rotated (UI_DESIGN section 7): one row per bar, numbered
-/// 1, 2, 3 down the left with the lowest at the top, and five cells across
-/// -- the four channels' phrase slots and the bar's own step count (blank =
-/// the song's). It stands in the column right of the lane, row for row with
-/// the lane's steps, scrolls with the song and follows the playing bar.
+/// The chain, rotated (UI_DESIGN section 7): one row per row of the song,
+/// numbered 1, 2, 3 down the left with the lowest at the top, and five cells
+/// across -- the four channels' phrase slots and the row's LEN, the length
+/// of the phrases in it (section 25). It stands in the column right of the
+/// lane, row for row with the lane's steps, and scrolls with the song.
+/// Channels keep their own time, so each one's playing row is lit in its own
+/// column and two channels can be a row apart.
 class ChainColumn : public juce::Component, public juce::TooltipClient {
 public:
     ChainColumn();
     ~ChainColumn() override;
-    void setSong(std::shared_ptr<const tracker::Song> song, int selectedBar, int playingBar);
+    /// `playingRow` is one row per channel, -1 where the channel is not
+    /// playing its cells (docs/COMMANDS_AND_TEMPO.md section 25).
+    void setSong(std::shared_ptr<const tracker::Song> song, int selectedRow, const int playingRow[4]);
     std::function<void(int bar)> onSelectBar;
     /// A run of edits the cursor keeps inside is one undo, so the panel is
     /// told when a typed value is finished with (a click, a cursor move).

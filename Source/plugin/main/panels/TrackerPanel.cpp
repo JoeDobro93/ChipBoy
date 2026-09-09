@@ -36,21 +36,19 @@ String ellipsis() { return String(CharPointer_UTF8("\xe2\x80\xa6")); }
 TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     : EditorPanel(p),
       playText_("stopped", Fonts::sans(12.0f), colours::textMute),
-      pos_("1.1.1", Fonts::mono(12.0f), colours::text),
-      stepsLabel_("Steps / bar", Fonts::caption(10.0f), colours::textDim),
+      pos_("1" + String(CharPointer_UTF8("\xc2\xb7")) + "1   0.0 b", Fonts::mono(12.0f), colours::text),
       startLabel_("Start", Fonts::caption(10.0f), colours::textDim),
-      beatsLabel_("Beats", Fonts::caption(10.0f), colours::textDim),
       tempoLabel_("Tempo", Fonts::caption(10.0f), colours::textDim),
       play_(String(CharPointer_UTF8("\xe2\x96\xb6 Play"))), stop_(String(CharPointer_UTF8("\xe2\x96\xa0 Stop"))), loop_("Loop"),
       rec_(String(CharPointer_UTF8("\xe2\x97\x8f Rec"))),
       saveSong_("Save song" + ellipsis()), loadSong_("Load song" + ellipsis()),
       export_("Export .gb" + ellipsis())
 {
-    for (auto* l : { &stepsLabel_, &startLabel_, &beatsLabel_, &tempoLabel_ }) l->setUpperCase(true);
+    for (auto* l : { &startLabel_, &tempoLabel_ }) l->setUpperCase(true);
     playLed_.setColour(colours::ok);
     playLed_.setInterceptsMouseClicks(false, false);
-    for (auto* c : std::initializer_list<Component*>{ &play_, &stop_, &loop_, &playLed_, &playText_, &pos_, &rec_, &stepsLabel_, &steps_,
-                                                     &tempoLabel_, &tempo_, &startLabel_, &songStart_, &beatsLabel_, &beats_,
+    for (auto* c : std::initializer_list<Component*>{ &play_, &stop_, &loop_, &playLed_, &playText_, &pos_, &rec_,
+                                                     &tempoLabel_, &tempo_, &startLabel_, &songStart_,
                                                      &saveSong_, &loadSong_, &export_, &tabs_, &scroll_, &chain_ }) addAndMakeVisible(c);
 
     // The transport (docs/COMMANDS_AND_TEMPO.md section 16). With no host
@@ -66,39 +64,19 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
         processor.setLoop(loop_.getToggleState());
     };
 
-    rec_.setTooltip("Record: while the transport runs, the MIDI arriving on an armed channel is written into its cells, whatever that channel plays. "
-                    "The dot beside a channel's name in the lane is its arm.");
+    rec_.setTooltip("Record: the MIDI arriving on an armed channel is written into its cells while the transport runs. The dot beside a channel's name is its arm.");
     rec_.setClickingTogglesState(true);
     rec_.setColour(TextButton::textColourOnId, colours::accentHi);
     rec_.setColour(TextButton::buttonOnColourId, colours::accentSoft);
     rec_.onClick = [this] { processor.setRecordArm(rec_.getToggleState()); };
 
-    // A phrase carries its own length, 1-64 (section 25): this sets it on the
-    // phrases of the row in view. The next stage moves LEN to the grid head.
-    steps_.setRange(1, tracker::kMaxSteps, 16);
-    steps_.setTyped(true);
-    steps_.setTooltip("How many steps the phrases in this row hold, 1-64. A step is six ticks at the straight groove, so sixteen of them are four beats; "
-                      "a phrase of another length moves its channel on sooner or later than the others.");
-    steps_.onChange = [this](int v) {
-        const auto n = uint8_t(std::clamp(v, 1, tracker::kMaxSteps));
-        const int row = bar_;
-        editSong("Phrase length " + String(int(n)), [n, row](tracker::Song& s) {
-            for (int ch = 0; ch < 4; ++ch) {
-                const int slot = s.phraseAt(ch, row);
-                if (slot >= 1 && slot <= tracker::kPhraseSlots) s.phrases[size_t(slot - 1)].steps = n;
-            }
-        });
-    };
-
-    saveSong_.setTooltip("Write the active tab's song -- chains, phrases, grooves, steps, arms, its tempo and the bank it plays through -- to a .cbsong file. "
-                         "A song file is complete, so loading one opens a tab with its own sounds.");
+    saveSong_.setTooltip("Write this song -- chains, phrases, grooves, arms, its tempo and the bank it plays through -- to a .cbsong file.");
     saveSong_.onClick = [this] { saveSong(); };
-    loadSong_.setTooltip("Read a .cbsong file into a tab of its own, with the bank it was written with. A file written before the bank travelled with the song "
-                         "takes a copy of this tab's bank, and the status line says where that bank differs.");
+    loadSong_.setTooltip("Read a .cbsong file into a tab of its own, with the bank it was written with.");
     loadSong_.onClick = [this] { loadSong(); };
 
     export_.setEnabled(false);
-    export_.setTooltip("Later: compile this song " + String(CharPointer_UTF8("\xe2\x80\x94")) + " tracker, bank, waves, kits " + String(CharPointer_UTF8("\xe2\x80\x94")) + " into a playback ROM for real hardware. The tracker is kept self-contained for it.");
+    export_.setTooltip("Later: compile this song into a playback ROM for real hardware.");
 
     // The song's own tempo and timeline (sections 4 and 19). Whose beat the
     // ticks follow is the header's Tempo group, which only reads the tempo
@@ -106,19 +84,12 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     // song and the window can hold several.
     tempo_.setRange(40, 255, 120);
     tempo_.setTyped(true);
-    tempo_.setTooltip("This song's master tempo, 40-255 BPM: the base its T commands move from, and what the header reads while the tempo source is Song. "
-                      "Every song carries its own; the active one is mirrored into the automatable Song tempo parameter.");
+    tempo_.setTooltip("This song's master tempo, 40-255 BPM: the base its T commands move from, and what the header reads in Song mode.");
     tempo_.onChange = [this](int v) { processor.setMasterTempo(double(v)); refreshViews(); contextChanged(); };
     songStart_.setRange(0, kStartMax, 0);
     songStart_.setTooltip("Where tick 0 of the song sits on the host's timeline, in seconds");
     songStart_.setTextFunction([](int v) { return String(double(v) / kStartSteps, 1) + " s"; });
     songStart_.onChange = [this](int v) { editSong("Song start", [v](tracker::Song& s) { s.songStartSeconds = double(v) / kStartSteps; }); };
-    // Beats per bar went with the bars (section 25): a phrase's length and its
-    // groove say how long it lasts. The field stays until the next stage takes
-    // the head apart, showing the straight sixteen a step grid counts in.
-    beats_.setRange(1, 16, 4);
-    beats_.setEnabled(false);
-    beats_.setTooltip("Bars have left the song: a phrase lasts as long as its length and its groove make it, and each channel moves on when its own phrase ends.");
     tempoWatch_ = std::make_unique<ParamWatch>(param(processor, ids::tempoSource), [this](float v) {
         songMode_ = v > 0.5f || processor.ownsTransport();
         songStart_.setEnabled(songMode_);
@@ -147,7 +118,7 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
 
     chain_.onSelectBar = [this](int bar) { bar_ = std::max(0, bar); refreshViews(); contextChanged(); };
     chain_.onChainChange = [this](int ch, int bar, int slot) {
-        editSong("Chain: " + String(colours::channelName(ch)) + " bar " + String(bar + 1), [ch, bar, slot](tracker::Song& s) {
+        editSong("Chain: " + String(colours::channelName(ch)) + " row " + String(bar + 1), [ch, bar, slot](tracker::Song& s) {
             if (bar < 0 || bar > 4095) return;
             auto& chain = s.chain[size_t(ch & 3)];
             if (int(chain.size()) <= bar) chain.resize(size_t(bar) + 1, 0);
@@ -155,12 +126,11 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
             if (slot >= 1 && slot <= tracker::kPhraseSlots) s.phrases[size_t(slot - 1)].used = true;
         });
     };
-    // A phrase carries its own length now (section 25). The column sets it on
-    // every phrase this row holds, which is what the bar's step count did; the
-    // next stage moves LEN to the grid head, where one phrase is in view.
+    // The chain's last column is the row's LEN: it sets the length of every
+    // phrase the row holds (section 25). The lane's head does one channel.
     chain_.onRowLengthChange = [this](int row, int steps) {
         if (steps <= 0) return;
-        editSong("Chain: row " + String(row + 1) + " length", [row, steps](tracker::Song& s) {
+        editSong("Chain: row " + String(row + 1) + " LEN", [row, steps](tracker::Song& s) {
             if (row < 0 || row > 4095) return;
             for (int ch = 0; ch < 4; ++ch) {
                 const int slot = s.phraseAt(ch, row);
@@ -170,7 +140,7 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     };
     grid_.onCellChange = [this](int ch, int step, const tracker::Cell& cell) {
         const int bar = bar_;
-        editSong("Tracker: " + String(colours::channelName(ch)) + " bar " + String(bar + 1) + " step " + String(step + 1),
+        editSong("Tracker: " + String(colours::channelName(ch)) + " row " + String(bar + 1) + " step " + String(step + 1),
                  [ch, step, bar, cell](tracker::Song& s) {
             const uint8_t slot = ensurePhrase(s, ch, bar);
             if (slot == 0 || step < 0 || step >= tracker::kMaxSteps) return;
@@ -183,6 +153,15 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
                  [ch, src](tracker::Song& s) { s.noteSource[size_t(ch & 3)] = src; });
     };
     grid_.onArmChange = [this](int ch, bool on) { processor.setChannelArm(ch, on); refreshViews(); };
+    // The head's LEN: this channel's own phrase, in the row on show.
+    grid_.onLengthChange = [this](int ch, int steps) {
+        const int row = bar_;
+        editSong(String(colours::channelName(ch)) + " phrase length " + String(steps), [ch, row, steps](tracker::Song& s) {
+            const int slot = s.phraseAt(ch, row);
+            if (slot >= 1 && slot <= tracker::kPhraseSlots) s.phrases[size_t(slot - 1)].steps = uint8_t(std::clamp(steps, 1, tracker::kMaxSteps));
+        });
+    };
+    grid_.onOpenSlot = [this](ui::SlotKind kind, int slot) { openSlot(kind, slot); };
     grid_.onGrooveChange = [this](int ch, int groove) {
         const int bar = bar_;
         editSong(String(colours::channelName(ch)) + " phrase groove " + ValueFormat::number(groove), [ch, bar, groove](tracker::Song& s) {
@@ -228,11 +207,11 @@ RichText TrackerPanel::contextLine() const
 {
     RichText r;
     r.bold(processor.tabName(processor.activeTab())).plain(middot());
-    r.plain("Bar ").bold(String(bar_ + 1)).plain(middot()).bold(colours::channelName(channel));
+    r.plain("Row ").bold(String(bar_ + 1)).plain(middot()).bold(colours::channelName(channel));
     const auto s = processor.song();
     const int slot = s ? s->phraseAt(channel, bar_) : 0;
     if (slot) r.plain(" plays phrase ").bold(ValueFormat::number(slot));
-    else r.plain(" has no phrase this bar " + String(CharPointer_UTF8("\xe2\x80\x94")) + " it just plays its notes");
+    else r.plain(" has no phrase here " + String(CharPointer_UTF8("\xe2\x80\x94")) + " it just plays its notes");
     if (s) r.plain(middot() + String(s->stepsOfRow(channel, bar_)) + " steps");
     return r;
 }
@@ -240,19 +219,20 @@ RichText TrackerPanel::contextLine() const
 void TrackerPanel::refreshViews()
 {
     const auto s = processor.song();
-    chain_.setSong(s, bar_, playingBar_);
+    chain_.setSong(s, bar_, playingRow_.data());
     grid_.setBank(processor.bank());
     grid_.setSong(s, bar_);
+    // The lane is as tall as the longest phrase in the row, so every cell it
+    // holds can be reached; each head's LEN says how far its channel runs.
     int spb = 16;
     if (s) { spb = 1; for (int ch = 0; ch < 4; ++ch) spb = std::max(spb, s->stepsOfRow(ch, bar_)); }
-    steps_.setValue(spb, dontSendNotification);
     if (spb != gridSteps_) { gridSteps_ = spb; syncGridHeight(); }
     syncSongTime();
     syncTabs();
 }
 
-/// The lane is as tall as the bar's steps ask; past sixteen the tab's pane
-/// scrolls (docs/COMMANDS_AND_TEMPO.md section 11).
+/// The lane is as tall as the longest phrase in the row asks; past sixteen
+/// the tab's pane scrolls (docs/COMMANDS_AND_TEMPO.md section 25).
 void TrackerPanel::syncGridHeight()
 {
     if (laneHold_ == nullptr) return;
@@ -260,9 +240,9 @@ void TrackerPanel::syncGridHeight()
     scroll_.relayout();
 }
 
-/// The three fields that live in the song rather than in a parameter: its
-/// master tempo (section 19), where it starts and how long its bar is. Read
-/// back after every edit, after a tab switch and after a recording.
+/// The two fields that live in the song rather than in a parameter: its
+/// master tempo (section 19) and where it starts. Read back after every
+/// edit, after a tab switch and after a recording.
 void TrackerPanel::syncSongTime()
 {
     const auto s = processor.song();
@@ -441,7 +421,8 @@ void TrackerPanel::tick()
     // The song's time, and the selected channel's own row and step (25).
     const int bar = at.row[channel & 3], inBar = at.inRow[channel & 3];
     const int step = s ? playingStepOf(processor, *s, channel & 3, bar, inBar) : -1;
-    pos_.setText(String(bar + 1) + "." + String(step + 1) + "  "
+    // The song's time, and the selected channel's own row and step (25).
+    pos_.setText(String(bar + 1) + String(CharPointer_UTF8("\xc2\xb7")) + String(step + 1) + "   "
                  + String(double(at.tick) / double(driver::kTicksPerBeat), 1) + " b");
     playLed_.setOn(playing);
     playText_.setText(playing ? "playing" : "stopped");
@@ -449,9 +430,12 @@ void TrackerPanel::tick()
     syncTransport(false);
     syncTabs();
 
-    const int pb = playing ? bar : -1;
+    // Every channel's own row, for the chain column's per-channel highlight.
     bool views = false;
-    if (pb != playingBar_) { playingBar_ = pb; views = true; }
+    for (int ch = 0; ch < 4; ++ch) {
+        const int row = playing ? at.row[size_t(ch)] : -1;
+        if (row != playingRow_[size_t(ch)]) { playingRow_[size_t(ch)] = row; views = true; }
+    }
     if (playing && bar != bar_) { bar_ = bar; views = true; contextChanged(); }   // the view follows the transport
     if (views) refreshViews();
 
@@ -522,15 +506,15 @@ void TrackerPanel::resized()
     place(row1, playLed_, 8, 8);
     row1.removeFromLeft(6);
     place(row1, playText_, 54, kToolRow);
-    place(row1, pos_, 62, kToolRow);
+    place(row1, pos_, 110, kToolRow);
     close(0, row1, from);
     row1.removeFromLeft(kGroupGap);
     from = row1.getX();
     place(row1, rec_, 62, 24);
     close(1, row1, from);
 
-    // row 2: SONG -- its tempo and the shape of its bar (sections 11 and 19)
-    // -- then FILE
+    // row 2: SONG -- its tempo and where it starts, the two things that are
+    // still the song's own (sections 19 and 25) -- then FILE
     from = row2.getX();
     label(row2, tempoLabel_);
     row2.removeFromLeft(kLabelGap);
@@ -539,14 +523,6 @@ void TrackerPanel::resized()
     label(row2, startLabel_);
     row2.removeFromLeft(kLabelGap);
     place(row2, songStart_, 84, Stepper::kHeight);
-    row2.removeFromLeft(kFieldGap);
-    label(row2, beatsLabel_);
-    row2.removeFromLeft(kLabelGap);
-    place(row2, beats_, 62, Stepper::kHeight);
-    row2.removeFromLeft(kFieldGap);
-    label(row2, stepsLabel_);
-    row2.removeFromLeft(kLabelGap);
-    place(row2, steps_, 80, Stepper::kHeight);
     close(2, row2, from);
     row2.removeFromLeft(kGroupGap);
     from = row2.getX();

@@ -4,6 +4,8 @@
 // .name-input).
 #include "plugin/ui/Widgets.h"
 
+#include "plugin/ui/InlineEntry.h"
+
 #include <cmath>
 
 namespace chipboy::ui {
@@ -40,103 +42,9 @@ struct Binding {
     int span() const { return juce::jmax(1, hi - lo); }
 };
 
-/// A typed whole number, in the display's base. A leading minus is only a
-/// number where the range goes below zero; anything else is refused and the
-/// field keeps what it had (UI_DESIGN section 2.1).
-bool parseTypedInt(const juce::String& text, int lo, int hi, int& out)
-{
-    const juce::String t = text.trim().removeCharacters(" ");
-    if (t.isEmpty()) return false;
-    const bool hex = ValueFormat::hex();
-    int i = 0;
-    bool negative = false;
-    const auto first = t[0];
-    if (first == '-' || first == juce::juce_wchar(0x2212)) { if (lo >= 0) return false; negative = true; i = 1; }
-    else if (first == '+') i = 1;
-    if (i >= t.length()) return false;
-    int64_t v = 0;
-    for (; i < t.length(); ++i) {
-        const auto c = t[i];
-        int d = -1;
-        if (c >= '0' && c <= '9') d = int(c - '0');
-        else if (hex && c >= 'a' && c <= 'f') d = int(c - 'a') + 10;
-        else if (hex && c >= 'A' && c <= 'F') d = int(c - 'A') + 10;
-        if (d < 0) return false;
-        v = v * (hex ? 16 : 10) + int64_t(d);
-        if (v > 1000000) v = 1000000;              // a long paste cannot overflow
-    }
-    out = juce::jlimit(lo, hi, int(negative ? -v : v));
-    return true;
-}
-
-/// The same for the one continuous control: a decimal number, always base
-/// ten -- decibels are not a register.
-bool parseTypedFloat(const juce::String& text, float lo, float hi, float& out)
-{
-    juce::String t = text.trim().removeCharacters(" ").replaceCharacter(juce::juce_wchar(0x2212), '-').replaceCharacter(',', '.');
-    t = t.upToFirstOccurrenceOf("dB", false, true).trim();
-    if (t.isEmpty()) return false;
-    int i = (t[0] == '-' || t[0] == '+') ? 1 : 0;
-    if (i >= t.length()) return false;
-    int dots = 0;
-    for (int k = i; k < t.length(); ++k) {
-        const auto c = t[k];
-        if (c == '.') { if (++dots > 1) return false; continue; }
-        if (c < '0' || c > '9') return false;
-    }
-    out = juce::jlimit(lo, hi, t.getFloatValue());
-    return true;
-}
-
-/// The inline box a number opens: click or double-click into the value,
-/// Enter commits, Escape cancels, focus loss commits. One per control, kept
-/// alive and hidden, so committing from inside its own focus callback is
-/// safe (UI_DESIGN section 2.1).
-struct TypedEntry {
-    std::unique_ptr<juce::TextEditor> editor;
-    std::function<void(const juce::String&)> commit;
-    bool open = false;
-
-    void begin(juce::Component& owner, juce::Rectangle<int> area, const juce::String& text,
-               juce::Justification j, std::function<void(const juce::String&)> onCommit)
-    {
-        if (area.getWidth() < 8 || area.getHeight() < 8) return;
-        if (editor == nullptr) {
-            editor = std::make_unique<juce::TextEditor>();
-            editor->setFont(Fonts::mono(12.0f));
-            editor->setBorder(juce::BorderSize<int>(0));
-            editor->setIndents(3, 1);
-            editor->setSelectAllWhenFocused(true);
-            editor->setPopupMenuEnabled(false);
-            editor->onReturnKey = [this] { finish(true, true); };
-            editor->onEscapeKey = [this] { finish(false, true); };
-            editor->onFocusLost = [this] { finish(true, false); };
-            owner.addChildComponent(*editor);
-        }
-        owner_ = &owner;
-        editor->setJustification(j);
-        commit = std::move(onCommit);
-        editor->setText(text, false);
-        editor->setBounds(area);
-        editor->setVisible(true);
-        open = true;
-        editor->grabKeyboardFocus();
-        editor->selectAll();
-    }
-
-    void finish(bool doCommit, bool returnFocus)
-    {
-        if (!open || editor == nullptr) return;
-        open = false;
-        const auto text = editor->getText().trim();
-        editor->setVisible(false);
-        if (returnFocus && owner_ != nullptr) owner_->grabKeyboardFocus();
-        if (doCommit && commit) commit(text);
-    }
-
-private:
-    juce::Component* owner_ = nullptr;
-};
+using detail::parseTypedInt;
+using detail::parseTypedFloat;
+using detail::TypedEntry;
 
 juce::Colour contrastText(juce::Colour fill)
 {
@@ -587,8 +495,12 @@ void Stepper::mouseDown(const juce::MouseEvent& e)
     if (!isEnabled()) return;
     grabKeyboardFocus();
     impl_->resetEntry();
+    if (e.mods.isPopupMenu() && onList) { onList(); return; }
     const bool onButton = e.x < 23 || e.x >= getWidth() - 23;
-    if (!onButton) { beginTypedEntry(); return; }
+    // A slot field keeps its double click for opening the item, so the
+    // readout's click only takes the focus -- digits type straight at it and
+    // Enter opens the box (UI_DESIGN section 2.1).
+    if (!onButton) { if (!onOpen) beginTypedEntry(); return; }
     // Press and hold is one undo, however many steps it makes.
     impl_->stepping = true;
     if (auto* history = historyFor(*this))
@@ -603,7 +515,8 @@ void Stepper::mouseUp(const juce::MouseEvent&)
 }
 void Stepper::mouseDoubleClick(const juce::MouseEvent& e)
 {
-    if (e.x >= 23 && e.x < getWidth() - 23) beginTypedEntry();
+    if (e.x < 23 || e.x >= getWidth() - 23) return;
+    if (onOpen) onOpen(); else beginTypedEntry();
 }
 bool Stepper::keyPressed(const juce::KeyPress& k)
 {

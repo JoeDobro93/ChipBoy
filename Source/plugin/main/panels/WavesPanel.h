@@ -12,6 +12,7 @@ public:
     ~WavesPanel() override;
 
     RichText contextLine() const override;
+    void selectSlot(int slot) override { showSlot(slot); }
     void bankChanged() override;
     void hexChanged() override;
     void resized() override;

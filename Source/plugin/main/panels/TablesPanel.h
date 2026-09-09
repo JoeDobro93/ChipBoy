@@ -13,6 +13,7 @@ public:
     ~TablesPanel() override;
 
     RichText contextLine() const override;
+    void selectSlot(int slot) override { showSlot(slot); }
     void bankChanged() override;
     void hexChanged() override;
     void tick() override;

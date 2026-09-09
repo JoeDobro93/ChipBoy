@@ -32,6 +32,9 @@ public:
 
     void selectChannel(int ch);      ///< the editing context: strip highlight, panels, context line
     void showTab(int tab);
+    /// The double click every slot field takes: open that item's own tab
+    /// with it selected (UI_DESIGN section 2.1).
+    void openSlot(ui::SlotKind kind, int slot);
     void setScale(float factor);     ///< 1.0, 1.25 or 1.5, remembered as apvts.state "ui_scale"
 
     /// Every control in this window writes its edits here (UI_DESIGN 2.1).

@@ -297,10 +297,16 @@ public:
     virtual void shown(bool) {}
     std::function<void()> onContextChanged;
     std::function<void(int)> onSelectChannel;
+    /// A double click on a slot field anywhere: open that item's own tab
+    /// with it selected (UI_DESIGN section 2.1, the one selector convention).
+    std::function<void(ui::SlotKind, int slot)> onOpenSlot;
+    /// The window is opening this panel on one of its slots.
+    virtual void selectSlot(int) {}
     /// A line for the status bar: what a file did, what a preset went where.
     std::function<void(const juce::String&)> onMessage;
 protected:
     void contextChanged() { if (onContextChanged) onContextChanged(); }
+    void openSlot(ui::SlotKind kind, int slot) { if (onOpenSlot && slot > 0) onOpenSlot(kind, slot); }
     void message(const juce::String& text) { if (onMessage) onMessage(text); }
     ChipBoyProcessor& processor;
     int channel = 0;

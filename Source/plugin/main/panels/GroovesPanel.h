@@ -19,6 +19,7 @@ public:
     ~GroovesPanel() override;
 
     RichText contextLine() const override;
+    void selectSlot(int slot) override { showSlot(slot); }
     void setChannel(int ch) override;
     void songChanged() override;
     void hexChanged() override;

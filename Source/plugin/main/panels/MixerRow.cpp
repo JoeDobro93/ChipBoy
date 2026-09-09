@@ -1,5 +1,6 @@
 #include "plugin/main/panels/MixerRow.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace chipboy::plugin {
@@ -9,15 +10,15 @@ using namespace chipboy::ui;
 
 namespace {
 constexpr int kPad = 8, kGap = 6, kTightGap = 4;
-constexpr int kHead = 20, kScope = 60, kRegs = 14, kRow = 24, kQuick = 70, kSeg = 22, kCaption = 10, kState = 14;
+constexpr int kHead = 20, kScope = 60, kRegs = 14, kRow = 24, kQuick = 70, kSeg = 22, kCaption = 10;
 constexpr int kButton = 26, kButtonH = 20;
 const char* kMuteTip = "NR51 gate off. Pops like the hardware.";
 const char* kSoloTip = "Gates the other three off (NR51). Pops like the hardware.";
 const char* kPanTip = "NR51: off, left, both, right, or the instrument's own. There is no pan law.";
-const char* kTableTip = "Table override for this channel; inst = the instrument's own table";
-const char* kInstTip = "The instrument this channel's notes latch at note-on; automate it to switch per note";
+const char* kTableTip = "Table override for this channel; inst = the instrument's own. Right-click lists the bank, double-click opens it.";
+const char* kInstTip = "The instrument this channel's notes latch at note-on. Right-click lists the bank, double-click opens it.";
 const char* kTransposeTip = "Semitones added to every note on this channel, before the period is worked out";
-const char* kStateTip = "What the driver is doing right now: the instrument, its table and the two command slots, resolved. The vibrato reads speed / depth, the depth in semitones.";
+const String kDot = String(CharPointer_UTF8(" \xc2\xb7 "));
 /// Why Instrument, Table and the two slots are greyed on a Hybrid channel
 /// (docs/COMMANDS_AND_TEMPO.md section 20).
 const char* kHybridTip = "The tracker's cells drive this channel: it is on Hybrid, so its notes come from MIDI and its instrument, table and commands come "
@@ -30,55 +31,6 @@ juce::String keyswitchTip(int ch)
          + " select instrument slots 1" + juce::String(CharPointer_UTF8("\xe2\x80\x93")) + "12 and never sound";
 }
 
-const String kDot = String(CharPointer_UTF8(" \xc2\xb7 "));
-
-/// V's y as the semitones LSDj's table means (section 7), so the line says
-/// what the depth is worth rather than which row of the table it is. The
-/// command slot above spells them "3/4 st"; this line has barely 200 px for
-/// everything the driver is doing, so it uses the one-glyph fractions and
-/// leaves the unit to the tooltip -- the same width the raw index took.
-String vibDepthText(int y)
-{
-    static const char* const n[16] = { "\xe2\x85\x9b", "\xc2\xbc", "\xe2\x85\x9c", "\xc2\xbd", "\xc2\xbe", "1", "1\xc2\xbd", "2",
-                                       "2\xc2\xbd", "3", "3\xc2\xbd", "4", "5", "6", "7", "8" };
-    return String(CharPointer_UTF8(n[std::clamp(y, 0, 15)]));
-}
-
-/// "6/6": the groove in force on this channel, resolved through the song --
-/// a G slot, else the phrase's own, else straight. A groove is a list of tick
-/// counts (section 9.2), so the line prints the ones it uses.
-String grooveText(const tracker::Song* s, int ch, int bar, uint8_t slot)
-{
-    if (slot == tracker::kGrooveNone) {
-        const tracker::Phrase* p = s != nullptr ? s->phrase(s->phraseAt(ch, bar)) : nullptr;
-        slot = p != nullptr ? p->groove : 0;
-    }
-    if (s == nullptr || slot < 1 || slot > 16) return "6/6";
-    const auto& g = s->grooves[size_t(slot - 1)];
-    String t;
-    for (int i = 0; i < g.length(); ++i) t += (i ? "/" : "") + String(g.at(i));
-    return t;
-}
-
-/// The line under the two slots: what the driver has in force, in the
-/// fields that mean something on this channel (section 3).
-String stateText(int ch, const driver::VoiceView& v, const tracker::Song* song, int bar)
-{
-    const bool pulse = ch == 0 || ch == 1, wave = ch == 2;
-    String s;
-    auto add = [&s](const String& t) { if (s.isNotEmpty()) s += kDot; s += t; };
-    if (pulse) { static const char* duty[] = { "12.5%", "25%", "50%", "75%" }; add("duty " + String(duty[v.duty & 3])); }
-    else if (wave) { static const char* lvl[] = { "mute", "25%", "50%", "100%" }; add("lvl " + String(lvl[v.volume & 3])); add("frm " + String(v.frame)); }
-    if (!wave) add("env " + String(v.envVol) + String::charToString(v.envDir ? 0x2191 : 0x2193) + String(v.envRate));
-    if (pulse || wave) {
-        if (v.vibDepth) add("vib " + String(v.vibSpeed) + "/" + vibDepthText(v.vibDepth));
-        if (v.pitchOffset) add("P " + String(v.pitchOffset > 0 ? "+" : "") + String(v.pitchOffset));
-    }
-    { static const char* pan[] = { "off", "L", "R", "LR" }; add(String(pan[v.pan & 3])); }
-    if (v.tableSlot) add("tbl " + ValueFormat::number(v.tableSlot) + ":" + ValueFormat::number(v.tableStep + 1));
-    add("grv " + grooveText(song, ch, bar, v.groove));
-    return s;
-}
 }
 
 /* ------------------------------------------------------ ChannelStrip */
@@ -92,8 +44,7 @@ ChannelStrip::ChannelStrip(ChipBoyProcessor& p, int ch)
       transposeLabel_("Transpose", Fonts::caption(10.0f), colours::textDim),
       pan_({ String(CharPointer_UTF8("\xe2\x80\x93")), "L", "LR", "R", "inst" }),
       mute_("M"), solo_("S"), keyswitch_("KS"),
-      cmd1_("CMD1", ChipBoyProcessor::kindOf(ch)), cmd2_("CMD2", ChipBoyProcessor::kindOf(ch)),
-      state_({}, Fonts::mono(10.0f), colours::textDim), stateBox_(state_)
+      cmd1_("CMD1", ChipBoyProcessor::kindOf(ch)), cmd2_("CMD2", ChipBoyProcessor::kindOf(ch))
 {
     led_.setColour(colours::channel(ch));
     led_.setInterceptsMouseClicks(false, false);
@@ -101,7 +52,7 @@ ChannelStrip::ChannelStrip(ChipBoyProcessor& p, int ch)
     transposeLabel_.setUpperCase(true);
     for (auto* c : std::initializer_list<Component*>{ &led_, &name_, &sourceBox_, &scope_, &regs_, &instrument_, &instrumentName_,
                                                      &tableLabel_, &table_, &transposeLabel_, &transpose_, &pan_,
-                                                     &mute_, &solo_, &keyswitch_, &cmd1_, &cmd2_, &stateBox_ })
+                                                     &mute_, &solo_, &keyswitch_, &cmd1_, &cmd2_ })
         addAndMakeVisible(c);
     // Only while the song has this channel on Hybrid (section 20).
     addChildComponent(hybridBox_);
@@ -126,16 +77,22 @@ ChannelStrip::ChannelStrip(ChipBoyProcessor& p, int ch)
     regs_.setChannel(ch_);
 
     // the tracker row: instrument, table, transpose, then the two slots
+    // The one selector convention (UI_DESIGN section 2.1): the click focuses
+    // the field for typing, a right click lists the bank's slots by name and
+    // a double click opens that item's own tab.
     instrument_.setTooltip(kInstTip);
     instrument_.attach(param(processor_, channelParamId(ch_, ids::instrument)));
+    instrument_.onList = [this] { showInstrumentMenu(); };
+    instrument_.onOpen = [this] { if (onOpenSlot && instrument_.value() > 0) onOpenSlot(SlotKind::Instrument, instrument_.value()); };
     table_.setTooltip(kTableTip);
     table_.attach(param(processor_, channelParamId(ch_, ids::table)));
+    table_.onList = [this] { showTableMenu(); };
+    table_.onOpen = [this] { if (onOpenSlot && table_.value() > 0) onOpenSlot(SlotKind::Table, table_.value()); };
     transpose_.setTooltip(kTransposeTip);
     transpose_.attach(param(processor_, channelParamId(ch_, ids::transpose)));
     transpose_.setTextFunction([](int v) { return (v > 0 ? "+" : "") + String(v); });
     cmd1_.attach(param(processor_, channelParamId(ch_, ids::cmd1Type)), param(processor_, channelParamId(ch_, ids::cmd1X)), param(processor_, channelParamId(ch_, ids::cmd1Y)));
     cmd2_.attach(param(processor_, channelParamId(ch_, ids::cmd2Type)), param(processor_, channelParamId(ch_, ids::cmd2X)), param(processor_, channelParamId(ch_, ids::cmd2Y)));
-    stateBox_.setTooltip(kStateTip);
 
     // quick controls by channel type
     const bool wave = ch_ == 2;
@@ -175,7 +132,6 @@ ChannelStrip::ChannelStrip(ChipBoyProcessor& p, int ch)
     panParam_ = std::make_unique<SegmentedParam>(pan_, param(processor_, channelParamId(ch_, ids::pan)), std::vector<int>{ 0, 1, 3, 2, 4 });
 
     refreshInstrumentName();
-    refreshState();
     refreshHybrid();
 }
 
@@ -215,58 +171,79 @@ void ChannelStrip::showSourceMenu()
     });
 }
 
+/// The name beside the stepper is the instrument the **driver** last loaded,
+/// not the one the parameter names (docs/COMMANDS_AND_TEMPO.md section 30):
+/// a cell's INS column, an A, a Hybrid channel or a keyswitch all change what
+/// is really playing, and the strip follows it.
 void ChannelStrip::refreshInstrumentName()
 {
     const auto b = processor_.bank();
-    const int slot = paramValue(processor_, channelParamId(ch_, ids::instrument));
-    if (b.get() == namesFor_ && slot == instrumentShown_) return;
+    driver::VoiceView v;
+    link::unpackState(processor_.scopes().state[size_t(ch_)].load(std::memory_order_relaxed), v);
+    const int loaded = int(v.instrument);
+    const int slot = loaded > 0 ? loaded : paramValue(processor_, channelParamId(ch_, ids::instrument));
+    if (b.get() == namesFor_ && slot == instrumentShown_ && loaded == loadedInstrument_) return;
     namesFor_ = b.get();
     instrumentShown_ = slot;
+    loadedInstrument_ = loaded;
     if (slot <= 0) { instrumentName_.setText("no instrument"); instrumentName_.setColour(colours::textDim); return; }
     const bank::Instrument* inst = b ? b->instrument(slot) : nullptr;
     if (!inst) { instrumentName_.setText(String(CharPointer_UTF8("\xe2\x80\x94 empty \xe2\x80\x94"))); instrumentName_.setColour(colours::textDim); return; }
-    instrumentName_.setText(String(inst->name));
-    // A Hybrid channel never loads this one: the cells say which instrument
-    // the next note takes (section 20), so the name greys out with its
-    // stepper rather than claiming to be what is playing.
+    // The slot is named when the driver is playing something the stepper does
+    // not say, so the two never disagree silently.
+    const bool elsewhere = loaded > 0 && loaded != paramValue(processor_, channelParamId(ch_, ids::instrument));
+    instrumentName_.setText(elsewhere ? ValueFormat::number(slot) + " " + String(inst->name) : String(inst->name));
     const Colour c = instrumentFitsChannel(inst->type, ch_) ? instrumentKindColour(int(inst->type)) : colours::warn;
-    instrumentName_.setColour(hybridShown_ == 1 ? c.withMultipliedAlpha(0.45f) : c);
+    instrumentName_.setColour(hybridShown_ == 1 && !elsewhere ? c.withMultipliedAlpha(0.45f) : c);
 }
 
-/// The running state the driver publishes next to the registers: rebuilt
-/// only when the packed word (or the groove it resolves through) changes, so
-/// the timer costs a comparison in the common case.
-void ChannelStrip::refreshState()
+/// The bank's slots by name, the list every slot field's right click opens.
+void ChannelStrip::showInstrumentMenu()
 {
-    const uint64_t packed = processor_.scopes().state2[size_t(ch_)].load(std::memory_order_acquire);
-    const auto song = processor_.song();
-    // The channel's own row: which phrase's groove the line resolves through
-    // (section 25).
-    const int bar = std::max(0, processor_.channelRow(ch_));
-    const int width = stateBox_.getWidth();
-    if (packed == stateShown_ && bar == stateBar_ && width == stateWidth_) return;
-    stateShown_ = packed;
-    stateBar_ = bar;
-    stateWidth_ = width;
-    driver::VoiceView v;
-    link::unpackState(processor_.scopes().state[size_t(ch_)].load(std::memory_order_acquire), v);
-    link::unpackState2(packed, v);
-    const String text = stateText(ch_, v, song.get(), bar);
-    // Six fields do not fit a strip at 10 px, so the face shrinks rather
-    // than the line being cut -- the register line above does the same.
-    const float avail = float(std::max(1, width));
-    float px = 10.0f;
-    const float wide = draw::textWidth(Fonts::mono(px), text);
-    if (wide > avail) px = std::max(7.5f, px * avail / wide);
-    state_.setFont(Fonts::mono(px));
-    state_.setText(text);
+    const auto b = processor_.bank();
+    if (!b) return;
+    PopupMenu m;
+    m.addSectionHeader("Instrument");
+    const int current = instrument_.value();
+    m.addItem(1, String(CharPointer_UTF8("\xe2\x80\x93   none")), true, current == 0);
+    for (int slot = 1; slot <= bank::kInstrumentSlots; ++slot) {
+        const auto* inst = b->instrument(slot);
+        if (inst == nullptr) continue;
+        PopupMenu::Item item(slotAndName(slot, inst->name));
+        item.itemID = slot + 1;
+        item.isTicked = slot == current;
+        item.isEnabled = instrumentFitsChannel(inst->type, ch_);
+        if (!item.isEnabled) item.shortcutKeyDescription = instrumentTypeName(inst->type);
+        m.addItem(std::move(item));
+    }
+    Component::SafePointer<ChannelStrip> safe(this);
+    m.showMenuAsync(PopupMenu::Options().withTargetComponent(&instrument_), [safe](int r) {
+        if (safe == nullptr || r < 1) return;
+        setParam(*safe, param(safe->processor_, channelParamId(safe->ch_, ids::instrument)), float(r - 1));
+    });
+}
+
+void ChannelStrip::showTableMenu()
+{
+    const auto b = processor_.bank();
+    if (!b) return;
+    PopupMenu m;
+    m.addSectionHeader("Table");
+    const int current = table_.value();
+    m.addItem(1, String(CharPointer_UTF8("\xe2\x80\x93   the instrument's")), true, current == 0);
+    for (int slot = 1; slot <= bank::kTableSlots; ++slot)
+        if (const auto* t = b->table(slot)) m.addItem(slot + 1, slotAndName(slot, t->name), true, slot == current);
+    Component::SafePointer<ChannelStrip> safe(this);
+    m.showMenuAsync(PopupMenu::Options().withTargetComponent(&table_), [safe](int r) {
+        if (safe == nullptr || r < 1) return;
+        setParam(*safe, param(safe->processor_, channelParamId(safe->ch_, ids::table)), float(r - 1));
+    });
 }
 
 void ChannelStrip::tick()
 {
     led_.setOn(processor_.channelLevels[size_t(ch_)].load() >= 0);
     regs_.setState(processor_.scopes().state[size_t(ch_)].load(std::memory_order_acquire));
-    refreshState();
 
     bool owned = false;
     const String text = channelSourceText(processor_, ch_, &owned);
@@ -319,9 +296,12 @@ void ChannelStrip::bankChanged() { refreshInstrumentName(); }
 void ChannelStrip::hexChanged()
 {
     namesFor_ = nullptr;
-    stateShown_ = ~uint64_t(0);
+    instrumentShown_ = -1;
     refreshInstrumentName();
-    refreshState();
+    // The two slots show the arguments in Decimal and the byte in Hex
+    // (docs/COMMANDS_AND_TEMPO.md section 34).
+    cmd1_.hexChanged();
+    cmd2_.hexChanged();
     repaint();
 }
 
@@ -387,14 +367,11 @@ void ChannelStrip::resized()
     pan_.setBounds(x, y, panW, kSeg);
     int bx = x + w - buttons;
     for (auto* b : { &mute_, &solo_, &keyswitch_ }) { b->setBounds(bx, y + (kSeg - kButtonH) / 2, kButton, kButtonH); bx += kButton + 3; }
-    // the two slots and the state line read as one block, so they sit on
-    // the tighter gap
+    // the two slots read as one block, so they sit on the tighter gap
     y += kSeg + kTightGap;
     cmd1_.setBounds(x, y, w, ui::CommandSlot::kHeight);
     y += ui::CommandSlot::kHeight + kTightGap;
     cmd2_.setBounds(x, y, w, ui::CommandSlot::kHeight);
-    y += ui::CommandSlot::kHeight + kTightGap;
-    stateBox_.setBounds(x, y, w, kState);
 }
 
 /* ------------------------------------------------------- MasterStrip */
@@ -528,6 +505,7 @@ MixerRow::MixerRow(ChipBoyProcessor& p) : master_(p)
     for (int ch = 0; ch < 4; ++ch) {
         strips_[size_t(ch)] = std::make_unique<ChannelStrip>(p, ch);
         strips_[size_t(ch)]->onSelect = [this](int c) { if (onSelect) onSelect(c); };
+        strips_[size_t(ch)]->onOpenSlot = [this](SlotKind kind, int slot) { if (onOpenSlot) onOpenSlot(kind, slot); };
         addAndMakeVisible(*strips_[size_t(ch)]);
     }
     addAndMakeVisible(master_);

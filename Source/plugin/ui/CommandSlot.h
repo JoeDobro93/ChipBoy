@@ -1,10 +1,13 @@
 // ChipBoy -- one of a channel's two command slots, as the strip and the
 // Voice window draw it (docs/COMMANDS_AND_TEMPO.md section 3).
 //
-// A letter picker and the two arguments, with the letter's own ranges on the
-// steppers and its meaning -- "vol 12 . down 3", never a packed byte -- in
-// the caption. The three host parameters (type, x, y) are the source of
-// truth; the widget only ever writes complete gestures.
+// A letter picker and its arguments, with the letter's own ranges on the
+// steppers and its meaning -- "vol 12 . down 3" -- in the caption. Decimal
+// shows the arguments one each; Hex shows the one byte a playback ROM will
+// carry, and typing two digits into it sets both
+// (docs/COMMANDS_AND_TEMPO.md section 34). The three host parameters (type,
+// x, y) are the source of truth; the widget only ever writes complete
+// gestures.
 #pragma once
 
 #include "plugin/shared/Parameters.h"
@@ -29,6 +32,8 @@ public:
     /// letter and its arguments grey out and say why, and the parameters
     /// keep their values for when the channel plays MIDI again.
     void setInert(bool inert, const juce::String& why = {});
+    /// Decimal or hex changed: the slot shows the arguments or the byte.
+    void hexChanged();
 
     static constexpr int kCaption = 12, kControls = 22;
     static constexpr int kHeight = kCaption + kControls;

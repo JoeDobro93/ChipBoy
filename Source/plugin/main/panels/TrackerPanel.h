@@ -11,8 +11,10 @@
 // A tab is a song and the bank it plays through, and only the active one is
 // live. Which tempo is in force, and whether notes wait for a tick, is the
 // header bar's group; the song's own master tempo is typed here, beside its
-// start and its beats per bar. A phrase's groove is chosen in the lane's
-// chip and edited in the Grooves tab.
+// start. Bars have left the model (docs/COMMANDS_AND_TEMPO.md section 25),
+// so a phrase's LEN is typed in the lane's head or in the chain's last
+// column, and its groove is chosen in the lane's chip and edited in the
+// Grooves tab.
 #pragma once
 
 #include "plugin/main/panels/PanelCommon.h"
@@ -57,12 +59,11 @@ private:
     static uint8_t ensurePhrase(tracker::Song& s, int ch, int bar);
 
     ui::Led playLed_;
-    TextLine playText_, pos_, stepsLabel_, startLabel_, beatsLabel_, tempoLabel_;
+    TextLine playText_, pos_, startLabel_, tempoLabel_;
     juce::TextButton play_, stop_, loop_, rec_, saveSong_, loadSong_, export_;
-    ui::Stepper steps_;
-    // the song's own timeline: its master tempo (section 19), where its tick
-    // 0 sits on the host's, and how long its bar is. All three are song data.
-    ui::Stepper tempo_, songStart_, beats_;
+    // the song's own timeline: its master tempo (section 19) and where its
+    // tick 0 sits on the host's. Beats and Steps / bar went with the bars.
+    ui::Stepper tempo_, songStart_;
     std::unique_ptr<ParamWatch> tempoWatch_;
     /// The songs open in this window (section 18); the active one is live.
     ui::SongTabStrip tabs_;
@@ -74,7 +75,9 @@ private:
     /// The four head groups as resized() laid them out: their captions go
     /// over them and a hairline stands between them (section 23).
     std::array<juce::Rectangle<int>, 4> groups_{};
-    int bar_ = 0, playingBar_ = -1;
+    int bar_ = 0;
+    /// Each channel's own playing row -- they drift apart by design (25).
+    std::array<int, 4> playingRow_{ { -1, -1, -1, -1 } };
     int gridSteps_ = 0;
     std::array<int, 4> lastRoll_{ { -2, -2, -2, -2 } };
     std::array<int, 4> lastStep_{ { -2, -2, -2, -2 } };

@@ -12,7 +12,8 @@ namespace chipboy::plugin {
 /// One hardware channel, drawn as the tracker row it is
 /// (docs/COMMANDS_AND_TEMPO.md section 3): name, LED, source badge, scope,
 /// register line, instrument, level, table, transpose, pan, the two command
-/// slots, the running state the driver publishes, and M / S / KS.
+/// slots and M / S / KS. The instrument name is the one the driver last
+/// loaded, so it follows the tracker (section 30).
 class ChannelStrip : public juce::Component {
 public:
     ChannelStrip(ChipBoyProcessor& p, int ch);
@@ -26,11 +27,14 @@ public:
     void setScopeSettings(ui::ScopeView::Trace trace, int periods);
     void setAnalogCornerHz(double hz);
     std::function<void(int)> onSelect;
+    /// A double click on the instrument or table stepper opens that item's
+    /// own tab (UI_DESIGN section 2.1).
+    std::function<void(ui::SlotKind, int slot)> onOpenSlot;
 
     /// 8 + 20 head + 60 scope + 14 registers + 24 instrument + 70 level
-    /// + 22 pan + two 34 command slots + 14 running state, with the gaps
-    /// (6 down to the pan row, then 4 through the block at the bottom).
-    static constexpr int kHeight = 350;
+    /// + 22 pan + two 34 command slots, with the gaps (6 down to the pan
+    /// row, then 4 through the block at the bottom).
+    static constexpr int kHeight = 332;
     void paint(juce::Graphics&) override;
     void resized() override;
     void mouseDown(const juce::MouseEvent&) override;
@@ -38,7 +42,9 @@ public:
 private:
     void showSourceMenu();
     void refreshInstrumentName();
-    void refreshState();
+    /// The bank's slots by name, for the right click every slot field takes.
+    void showInstrumentMenu();
+    void showTableMenu();
 
     ChipBoyProcessor& processor_;
     const int ch_;
@@ -68,16 +74,15 @@ private:
     ui::Segmented pan_;
     juce::TextButton mute_, solo_, keyswitch_;
     ui::CommandSlot cmd1_, cmd2_;
-    TextLine state_;
-    TipBox stateBox_;
     std::unique_ptr<SegmentedParam> panParam_;
     std::unique_ptr<ToggleParam> keyswitchAtt_;
     std::unique_ptr<juce::ParameterAttachment> sourceAtt_;
     int sourceValue_ = 0;
     const bank::Bank* namesFor_ = nullptr;
     int instrumentShown_ = -1;
-    uint64_t stateShown_ = ~uint64_t(0);
-    int stateBar_ = -1, stateWidth_ = 0;
+    /// The instrument the driver last loaded on this channel, which is what
+    /// the name shows so it follows the tracker (section 30).
+    int loadedInstrument_ = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChannelStrip)
 };
@@ -131,6 +136,7 @@ public:
     void setScopeSettings(ui::ScopeView::Trace trace, int periods);
     void setAnalogCornerHz(double hz);
     std::function<void(int)> onSelect;
+    std::function<void(ui::SlotKind, int slot)> onOpenSlot;
 
     static constexpr int kHeight = 10 + ChannelStrip::kHeight + 10;
     void paint(juce::Graphics&) override;

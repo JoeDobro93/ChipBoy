@@ -65,20 +65,60 @@ int       choiceFromCmd(bank::Cmd c);
 /// instrument's pitch speed.
 juce::String commandArgText(const bank::Command& c);
 
-/// What a letter's arguments are: how many, the range each one takes and
-/// what a fresh command starts at. One table for the lane's steppers, the
-/// grids' typed entry and the palette (docs/COMMANDS_AND_TEMPO.md section 2).
+/// How a letter's arguments are shown and typed
+/// (docs/COMMANDS_AND_TEMPO.md section 34). Every command is one byte in the
+/// end -- what changes is how the window reads it.
+enum class CmdShape : uint8_t {
+    Nibbles,   ///< two values 0-15: Decimal "4,6", Hex the LSDj byte "46"
+    Byte,      ///< one value that fills the byte: P signed, T in BPM
+    Small      ///< one value with a range of its own, shown as a number
+};
+
+/// What a letter's arguments are: how many, the range each one takes, what a
+/// fresh command starts at and how the window shows them. One table for the
+/// lane's steppers, the grids' typed entry and the palette
+/// (docs/COMMANDS_AND_TEMPO.md sections 2 and 34).
 struct CommandInfo {
     char        letter;
     const char* name;        ///< "Envelope"
     const char* args;        ///< "vol, 0-7 down / 8-15 up"
     int         nargs;       ///< 1 or 2
     int         lo[2], hi[2], def[2];
+    CmdShape    shape;
 };
 /// Every letter, H included; null for Cmd::None.
 const CommandInfo* commandInfo(bank::Cmd c);
 /// A fresh command of this letter, with the arguments a palette would give it.
 bank::Command defaultCommand(bank::Cmd c);
+
+/* --- the two views of one byte (docs/COMMANDS_AND_TEMPO.md section 34) --- */
+
+/// The byte a playback ROM will carry, and what Hex mode shows: the two
+/// nibbles of a Nibbles letter, the value of a Byte or Small one -- P as it
+/// is stored (two's complement), T wrapped the way LSDj wraps it, 40-255 as
+/// 0x28-0xFF and 256-295 as 0x00-0x27. H's row is 1-16 here and 0-15 in the
+/// byte, ChipBoy counting from one where the register counts from zero.
+int commandByte(const bank::Command& c);
+/// The command that byte makes, keeping the letter. False -- and `c` is left
+/// alone -- when the byte is outside what the letter can hold.
+bool setCommandByte(bank::Command& c, int byte);
+
+/// What one argument reads as in Decimal: the number itself, except P, which
+/// is signed (`FE` is -2).
+int  commandShownValue(const bank::Command& c, int arg);
+/// The decimal range that argument accepts, for the inline box.
+void commandShownRange(bank::Cmd c, int arg, int& lo, int& hi);
+/// Store a decimal a musician typed. False -- and `c` is left alone -- when
+/// it falls outside the range, which is what "refused" means (UI_DESIGN 2.1).
+bool setCommandShownValue(bank::Command& c, int arg, int shown);
+
+/// The value part of a cell or a slot: "4,6" in decimal, "46" -- the byte --
+/// in hex. The revert form's own mark is the caller's. `hex` is the window's
+/// display preference; shared code never reads it for itself.
+juce::String commandValueText(const bank::Command& c, bool hex);
+/// One argument on its own, as the inline box opens it and as a stepper
+/// reads it: the decimal, signed where the letter is.
+juce::String commandEntryText(const bank::Command& c, int arg);
 /// Whether a letter does anything on this channel (the table in section 2).
 /// Any -- the Voice plugin, whose channel moves -- takes every letter.
 bool commandAppliesTo(bank::Cmd c, ChannelKind kind);
