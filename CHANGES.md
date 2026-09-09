@@ -150,6 +150,11 @@ one; what is here is the driver's reading of them.
   because one side occasionally fits an update in that the other does not. Its
   verdicts are *identical*, *same values, timing within tolerance*, *same values,
   timing outside tolerance* and *different values*.
+- **Tables, not laws.** Where a formula is still uncertain the driver carries the
+  measured numbers and says so: P's step table (the closed form in LSDJ_PARITY §5
+  is a fit to it, good to a part in a hundred), V's sixteen depths, V's Tick-mode
+  tick counts, Drum's 19.1 period units a semitone, and the software envelope's
+  six rates. LSDJ_PARITY's verdict table marks each of them "table, not law".
 - **What the comparison says now** is `docs/LSDJ_PARITY.md` §16, case by case on
   DMG and CGB, and §17 is what is still different and why: ChipBoy's table rows
   are one tick where LSDj's are two (a tracker law, not a driver one, and ChipBoy's

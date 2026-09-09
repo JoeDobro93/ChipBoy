@@ -41,12 +41,12 @@ python3 tools/lsdjref/lsdjref_measure.py --traces build-ref/lsdjref/trace
 | 2 | Note-on register order | **agrees** | nothing |
 | 3 | NRx2 at a note-on: `F8` vs `F0` | **differed** | **done** — every NRx2 goes out with the low nibble 8, and the driver runs the envelope itself on §7's table |
 | 4 | The pitch clock: 11712 vs 11651 cycles | **differed (0.5 %)** | **done** — 11712 cycles, and **one clock for the driver, free-running**: a note-on no longer restarts it |
-| 5 | V vibrato rate | **differed by 12–22×** | **done** — 64/(x + 1) updates a cycle in Fast/Step/Drum, the measured table of tick counts in Tick |
-| 6 | V vibrato depth and shape | **agreed on depth, differed on centre** | **done** — a symmetric triangle about the note, the depth table confirmed for all sixteen values |
+| 5 | V vibrato rate | **differed by 12–22×** | **done** — 64/(x + 1) updates a cycle in Fast/Step/Drum; in Tick it is a **table, not a law**: the measured tick counts 96, 72, 64, 48, 36, 32, 24, 18, 16, 12, 9, 8, 6, 4½, 4, 3, whose pattern (the period halves every three speeds) has no formula behind it yet |
+| 6 | V vibrato depth and shape | **agreed on depth, differed on centre** | **done** — a symmetric triangle about the note; the depth **table** (⅛ … 8 semitones) is confirmed for all sixteen values, and in Drum one semitone is a measured 19.1 period units, again a number and not a law |
 | 7 | L slide duration and domain | **differed** | **done** — x + 1 updates, linear in semitones, the trigger at the pitch it came from |
-| 8 | P bend rate and domain | **differed by 10–40×** | **done** — the measured step table, Fast/Tick/Step on the note and Drum on the period register, wrapping at 2048 |
+| 8 | P bend rate and domain | **differed by 10–40×** | **done — table, not law**: the measured step table (all 127 values), Fast/Tick/Step on the note and Drum on the period register, wrapping at 2048. The closed form in §5 is a fit to that table, good to a part in a hundred; the table is the fact |
 | 9 | E and a table's volume: zombie vs retrigger | **differed** | **done** — `09 11 18` down and `08` up, byte for byte, and E never triggers |
-| 10 | The envelope's own rate | **differed** | **done** — the measured table of pitch-clock periods, stepped in software |
+| 10 | The envelope's own rate | **differed** | **done — table, not law**: the measured pitch-clock periods 6, 11, 15, 20, 27, 36, 36 for rates 1–7, stepped in software. They are within 11 % of what the chip's own envelope would have given, and no tidier expression fits |
 | 11 | R retrigger interval | **differed** | **done** — y × (rate + 1) + 1 ticks, y = 0 every tick, x = 8 the pitch-clock resync, the whole note-on written again |
 | 12 | K kill | **differed** | **done** — a zombie ramp to zero at the killing tick, the DAC left on |
 | 13 | C chord and its rate | **agreed** | the root now plays on the note's own tick and the chord steps from the one after (measured) |
@@ -575,8 +575,9 @@ behaviour separate them and would otherwise swamp everything that is:
 Inside a note the comparison is strict: register for register, value for value,
 in order. The verdicts are **identical** (same values, same order, every write
 inside the tolerance), **same values, timing within tolerance** (the same, with
-a trailing pitch update put down to the clock's phase), **same values, timing
-outside tolerance** and **different values**.
+a trailing pitch update put down to the clock's phase, or writes past where the
+shorter capture stopped -- both counted and named in the detail), **same values,
+timing outside tolerance** and **different values**.
 
 | case | channel | LSDj writes | ChipBoy writes | DMG | CGB |
 |---|---|---:|---:|---|---|
@@ -618,9 +619,9 @@ outside tolerance** and **different values**.
 | `d_bend_scale_all` | global | 128 | 134 | identical | identical |
 | `d_bend_scale_up` | PU1 | 12641 | 13747 | different values | different values |
 | `d_bend_scale_up` | global | 69 | 75 | identical | identical |
-| `e_env_change` | PU1 | 708 | 876 | different values | same values, timing outside tolerance |
+| `e_env_change` | PU1 | 708 | 876 | same values, timing outside tolerance | same values, timing outside tolerance |
 | `e_env_change` | global | 8 | 9 | identical | identical |
-| `e_env_rates` | PU1 | 708 | 745 | different values | different values |
+| `e_env_rates` | PU1 | 708 | 745 | same values, timing within tolerance | different values |
 | `e_env_rates` | global | 16 | 17 | identical | same values, timing outside tolerance |
 | `f_table_volume` | PU1 | 5036 | 2397 | different values | different values |
 | `f_table_volume` | global | 16 | 18 | identical | identical |

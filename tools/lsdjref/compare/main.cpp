@@ -354,6 +354,7 @@ struct Verdict {
     size_t      lsdjWrites = 0, chipboyWrites = 0;
     size_t      firstDivergence = 0;
     size_t      phaseWrites = 0;      ///< trailing pitch updates put down to the clock's phase
+    size_t      tailWrites = 0;       ///< writes past where the shorter capture stopped
     uint64_t    worstSkew = 0;        ///< the widest gap between a write and its opposite number
     std::string detail;
 };
@@ -500,11 +501,14 @@ Verdict compareStreams(const std::vector<Write>& lsdj, const std::vector<Write>&
                 // else is a real difference.
                 const bool trailing = (li < lEnd ? isPeriodWrite(ls[li]) : isPeriodWrite(cs[ci]));
                 // At the very end of the comparison the two captures simply
-                // stop at different places inside the last note: whatever
-                // pitch updates are left there are the clock's, not a
-                // difference. Inside a note the allowance is one pair.
+                // stop at different places inside the last note -- the runs are
+                // the same length in seconds and the two tempo counters do not
+                // agree to the tick -- so whatever is left over there is
+                // counted and reported, not called a difference. Inside a note
+                // the allowance is one NRx3/NRx4 pair, and a pair only.
                 const bool last = lEnd == ls.size() && cEnd == cs.size();
-                if (trailing && (last || (li >= lEnd ? cEnd - ci : lEnd - li) <= 2)) {
+                if (last) { ++v.tailWrites; if (li < lEnd) ++li; else ++ci; continue; }
+                if (trailing && (li >= lEnd ? cEnd - ci : lEnd - li) <= 2) {
                     ++phase;
                     if (li < lEnd) ++li; else ++ci;
                     continue;
@@ -566,7 +570,7 @@ Verdict compareStreams(const std::vector<Write>& lsdj, const std::vector<Write>&
     }
     v.phaseWrites = phase;
     v.worstSkew = worst;
-    if (values && timing) v.text = phase ? "same values, timing within tolerance" : "identical";
+    if (values && timing) v.text = phase || v.tailWrites ? "same values, timing within tolerance" : "identical";
     else if (values)      v.text = "same values, timing outside tolerance";
     else                  v.text = "different values";
     return v;
@@ -671,7 +675,10 @@ int main(int argc, char** argv)
                   << " | " << v.chipboyWrites << " | " << v.text
                   << " | " << v.worstSkew << " |\n";
             detail << "- **" << kNames[ch] << "**: " << v.text
-                   << " (" << v.lsdjWrites << " vs " << v.chipboyWrites << " writes)";
+                   << " (" << v.lsdjWrites << " vs " << v.chipboyWrites << " writes";
+            if (v.phaseWrites) detail << ", " << v.phaseWrites << " put down to the clock's phase";
+            if (v.tailWrites) detail << ", " << v.tailWrites << " past where the shorter capture stopped";
+            detail << ")";
             if (!v.detail.empty()) detail << " -- first divergence: " << v.detail;
             detail << "\n";
         }
