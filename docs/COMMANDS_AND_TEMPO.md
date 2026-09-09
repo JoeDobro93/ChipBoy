@@ -852,21 +852,44 @@ channel moves to its next phrase when its own phrase ends.** Bars leave the mode
 - A phrase has its own **length**, `Phrase::steps` 1–64 (default 16), and its groove. A
   step is **6 ticks at the straight groove, always**; groove entries are ticks per step,
   as LSDj. Sixteen straight steps are 96 ticks = four beats; a 3/4 phrase is 12 steps; a
-  1/32 grid is a `3 3` groove.
+  1/32 grid is a `3 3` groove. *As built:* cells live in `Phrase::cells`; `Song::stepsPerBar`,
+  `Song::barSteps`, `Song::beatsPerBar`, `Song::barTicks()`, `Song::steps()`,
+  `stepsOfBar()`, the bar table and every `barStartTick`/`barAtTick`/`barLengthTicks` are
+  gone, and so are `ClockConfig::beatsPerBar` and `Clock::barTicks()` — the clock counts
+  ticks and nothing else now.
 - The chain is per channel as now, one **row** after another. Row *r* of a channel starts
   at the sum of the durations of that channel's rows before it; an empty row lasts 96
   ticks with a note-off at its start. Channels whose phrases differ in length drift apart
   by design; the chain column highlights each channel's own playing row, so one channel
-  can show a row ahead of another. H hops within the channel as before.
+  can show a row ahead of another. H hops within the channel as before. *As built:* the
+  chain's fifth column is the row's **LEN**, typed, where the bar override sat, and each
+  channel's own playing row lights in its own column (`ui::ChainColumn`, renamed from
+  `ChainStrip`). A row past a chain's end is 96 ticks with a note-off at its start, same
+  as an empty one; `tools/demo/make_songs.py` writes a channel's rest as a phrase of the
+  section's own width holding a note off rather than an empty row, so a resting channel
+  stays in step with the others instead of drifting by the difference (it cost
+  `meter-study` its alignment before this fix).
 - Position ↔ (row, step) per channel goes through a prefix table over that channel's row
   durations, rebuilt on publish; locate is exact; T cells sit at their channel's ticks;
-  the recorder quantises to the channel's own grid.
+  the recorder quantises to the channel's own grid. *As built:* `Song::rowStartTicks[ch]`
+  is the prefix table, built by `buildRowTables()` when a song is published, read by
+  `rowStartTick()`, `rowAtTick()`, `rowTicks()`, `phraseTicks()` and `songTicks()`;
+  `Player::Position` is `{row, step, phrase}`; `buildTempoMap()` gathers all four
+  channels' T cells and sorts them, the lowest channel winning a tie on equal ticks; the
+  record message's bar field (`RecordMessage::bar`) is now `::row`.
 - `Song::stepsPerBar`, `barSteps` and `beatsPerBar` go. Song file **format 6** carries
   `steps` per phrase. Loading format 5 or older: every used phrase takes the file's steps
   per bar as its length, and a bar override becomes the length of the phrase in that
-  bar (a phrase used with two different overrides is duplicated).
+  bar (a phrase used with two different overrides is duplicated). *As built:*
+  `lengthsFromBars()` in `BankJson.cpp` converts a format-5-or-older file, duplicating an
+  overridden phrase into the first free slot and pointing that bar's chain entry at the
+  copy; the LSDj-exactness round moved the format on again, to **7**, converting a
+  format-6-or-older file's `P`, `S` and `H` arguments to their §34 encoding as it loads.
 - The plugin's own transport loops the longest channel; the readout shows the song's
   time and, for the selected channel, its row·step. The host's bars stay a ruler (§19).
+  *As built:* `setLoopRows(0, -1)` — row 1 to the last row of the longest chain
+  (`loopFirstRow`, `loopLastRow`); the head's SONG group drops *Beats* and *Steps / bar*,
+  which is what leaves the model with no bars at all.
 
 ## 26. Level changes are zombie-mode writes, never a retrigger
 
@@ -876,13 +899,34 @@ channel moves to its next phrase when its own phrase ends.** Bars leave the mode
   **zombie-mode NRx2 writes** (DMG: a write with envelope period 0 adds one to the volume,
   flipping the direction bit maps the volume to 16 − v; the driver issues the shortest
   sequence to the target on the selected console, and the APU emulates each console's
-  own behaviour). No NRx4 trigger, no phase reset.
+  own behaviour). No NRx4 trigger, no phase reset. *As built:* `Driver::setLevel(ch)`
+  first chose its sequence by a breadth-first search over (volume, direction, period) —
+  right by construction, but caught carrying the target level in NRx2's high nibble,
+  which the chip never does until the next trigger and which the parity harness showed
+  LSDj never does either. LSDj's own two primitives replaced it: `09 11 18` for one step
+  down and `08` for one step up, repeated to the target whichever way round is fewer
+  writes, at LSDj's own measured spacing (sixteen cycles inside a down-triple, a hundred
+  and twelve between triples, sixty-eight between ups) — a full ramp from 15 to 0 is
+  about 1700 cycles.
 - The **"volume writes at edges"** option and the driver's quiet-edge marker go: a
   program on the Game Boy cannot wait for a pulse's low half, so neither does ChipBoy.
+  *As built:* `GlobalParams::volumeAtEdges`, `Driver::kAlignToQuietEdge` and the
+  processor's re-sorting of a delayed burst are deleted; the `vol_edges` parameter stays
+  as a no-op so the 76-entry parameter table does not move, and the Hardware tab's row
+  now reads *no effect* and says why.
 - A trigger happens only where a driver needs one: a plain note-on, R, and an E that
-  changes the envelope's direction or rate. Wave levels stay NR32 writes.
+  changes the envelope's direction or rate. Wave levels stay NR32 writes. *As built:* the
+  driver's own envelope model (`Voice::volume`, `hwPeriod`, `hwUp`, `hwRun`, `hwOn`,
+  `hwInitial`) moves at every trigger (`markTrigger()`) and every NRx2 write
+  (`emitNrx2()`), exactly as `Apu::writeSquare` moves the chip's, so the two agree; **E
+  never triggers**, measured (`E 8 0` on a channel sounding at 15 is seven down-triples
+  and nothing else).
 - The demo song and state files are regenerated (their register streams change); the
-  record test, the demo checks and the six songs stay green.
+  record test, the demo checks and the six songs stay green. *As built:* measured with
+  `--play-song`: `neon-grid`'s stabs are where they were (PU2's bars 13–16 read
+  0.09990/0.09895/0.09931/0.09864 before and 0.09996/0.09886/0.09932/0.09854 after, peak
+  0.27010 → 0.26992) — the level changes sound the same and are now writes the hardware
+  would really take.
 
 ## 27. Shaped envelopes
 
@@ -891,13 +935,24 @@ channel moves to its next phrase when its own phrase ends.** Bars leave the mode
   Decay (ticks, to Sustain), Sustain (0–15, held while the note is), Release (ticks, from
   the level at note-off to silence), each segment with a **curve**: linear, exponential
   (fast start) or logarithmic (slow start). Wave instruments use the four NR32 levels.
+  *As built:* `bank::Envelope`'s `envMode` is written to JSON only when it is Shaped, so
+  a factory (Chip) instrument reads exactly as it always did but for one property; the
+  curves are integer arithmetic in `bank::envSegmentLevel` — `t/n`, `1 − (1 − t/n)²` and
+  `(t/n)²`, rounded half away from zero — so the per-tick level list is a constant of the
+  song, not of the machine.
 - A shaped envelope is rendered as one level per tick and reaches the chip through §26 —
   one write when the level changes, none while it holds — so a playback ROM can replay
   it from a per-tick list. A note-off on a Shaped instrument starts the Release when the
-  Note-off mode is Release; Kill cuts as before.
+  Note-off mode is Release; Kill cuts as before. *As built:* a shaped note-on writes NRx2
+  with the level, direction **up** and no rate, so a level of zero still leaves the DAC
+  on and every later step is a plain §26 zombie write; the Instrument tab draws the list
+  as a graph over the fields that produced it (`FormRow`/`FormGroup`, moved into
+  `PanelCommon` so the Waves tab could reuse them).
 - A table's volume column or an E that fires during a shaped envelope takes over: the
   remaining segments stop until the next plain note-on, and the table or E shapes the
-  sound.
+  sound. *As built:* the velocity and the Level lane do **not** set a shaped note's start
+  level — the envelope owns it — which is the one thing this section leaves open, and
+  which `docs/HARDWARE_DRIVER_AUDIT.md` lists rather than resolves.
 
 ## 28. Hardware honesty, and the road to a ROM
 
@@ -907,48 +962,90 @@ channel moves to its next phrase when its own phrase ends.** Bars leave the mode
   marks what is **plugin-only** (MIDI input and its sample-accurate notes, Hybrid's live
   notes, the Voice link). It ends with the data a playback ROM needs: song format 6 with
   its bank, as a compact binary. Anything emulator-only found on the way is fixed (§26)
-  or listed with a reason.
+  or listed with a reason. *As built:* the audit also keeps the approximations that stay,
+  each with the reason it stays — a level change while the chip's own envelope is running
+  (now unreachable, since the driver never writes a non-zero envelope period), the length
+  counter's effect on the *enabled* flag, the 64 Hz envelope phase — and its playback-ROM
+  sketch moved on to **format 7** once the driver-exactness round renumbered it.
 - Stability: a `chipboy_fuzz` CTest plays random songs — random cells, letters with
   random arguments, grooves, phrase lengths, tempo and mode changes, locates — on every
   channel for 64 rows and fails on NaN/inf, a hang (bounded time per block), or sound
-  after all-notes-off; each run prints its seed.
+  after all-notes-off; each run prints its seed. *As built:* `tools/fuzz/main.cpp`;
+  "audible" is the swing inside a block minus the drift across it, since a DAC switched
+  off holds its last level and has no coupling to take that offset away. It found a real
+  bug — a note waiting for its tick under notes-on-tick survived an all-notes-off, because
+  the driver's pending queue was not part of "every internal flush" — fixed by dropping
+  that channel's queued entries in `Driver::allNotesOff`, with a regression test; CTest
+  runs eight fixed seeds, and a hundred and forty seeds have passed since.
 
 ## 29. The Instrument tab
 
 - A compact revamp: a form with labels left and controls right, thin captions for the
   groups, no card chrome per knob; the envelope as a small graph drawn from the fields
   (Chip: the ramp; Shaped: the ADSR with its curves), with the fields beneath it.
-- Hints under fields become tooltips; the panel shows labels and values only.
+  *As built:* Sound over Pitch & modulation on the left, Envelope over Table & note
+  behaviour on the right; the knobs are gone for steppers with a readout — 24 px where a
+  dial and its caption asked 70 — so the tallest type (a Shaped instrument) asks 468 px
+  of the pane's 530, against 474 for the old four cards, and every instrument type now
+  sits at the same height because the picture, not the knobs, is the tall thing.
+- Hints under fields become tooltips; the panel shows labels and values only. *As built:*
+  a value that means something else says so on the control itself ("4 Hz", "¾ st",
+  "every 3", "15.6 ms").
 - The Table field: right-click lists the tables; double-click opens the Tables tab on
-  that table.
+  that table. *As built:* the same click/right-click/double-click convention as every
+  other slot field (§30), carried by `EditorPanel::onOpenSlot` and `selectSlot`.
 
 ## 30. Tracker editing and navigation
 
 - **Notes**: Shift+Up/Down a semitone, Shift+Left/Right an octave; a vertical click-drag
   on a note moves it a semitone per six pixels (Shift: octaves); double-click types with
   auto-correction — `a1`, `A 1`, `a#1`, `bb2` → `A-1`, `A#1`, `A#2`; `off` or `-` → OFF;
-  Escape cancels. The other columns keep their typed entry.
+  Escape cancels. The other columns keep their typed entry. *As built:* an empty box
+  blanks the cell; anything else typed is refused rather than guessed at; a whole drag,
+  however many pixels it crosses, is one undo step.
 - **One convention for every slot field** — the grid's INS and TBL, the groove chip, the
   strips' instrument and table steppers, the Instrument tab's Table field: single click
   selects and types; right-click lists; **double-click opens that item's settings** (the
-  Instrument, Tables or Grooves tab with the item selected).
+  Instrument, Tables or Grooves tab with the item selected). *As built:* the cost is that
+  a slot stepper's click now **focuses** its readout instead of opening the inline box —
+  Enter still opens it — so the double-click can be seen at all; typing digits straight at
+  it is unchanged. A delayed-open (double-click) timer was considered and rejected: it
+  makes every click on every slot field feel slow to save one keystroke.
 - The strip's running-state line goes; the strip's instrument name shows the instrument
-  the driver last loaded, so it follows the tracker.
+  the driver last loaded, so it follows the tracker. *As built:* `VoiceView::instrument`
+  follows a cell's `ins` column, an `A`, a keyswitch or a Hybrid channel, prefixing the
+  slot number when it differs from the stepper; the strip is 332 px instead of 350, and
+  the editor pane took the 18.
 - The grid head shows the phrase's **LEN** (typed) beside the groove chip; the chain
   column highlights each channel's own playing row; the head readout shows the selected
-  channel's row·step and the song's time.
+  channel's row·step and the song's time. *As built:* the *PLAYS* caption moved into the
+  switch's tooltip to make room for LEN; the chain's fifth column is the row's LEN where
+  the bar override sat (`ui::ChainColumn`).
 - Verbose descriptions across the window (Hardware rows, panel captions, tooltips that
-  read as paragraphs) are cut to a label and a one-line tooltip.
+  read as paragraphs) are cut to a label and a one-line tooltip. *As built:* the Hardware
+  rows are a label and their measured fact with the explanation moved into the tooltip;
+  the Grooves help column is three lines; the strips', the master volume's, the wave
+  tools' and the groove stepper's tooltips are one line each.
 
 ## 31. Two rules from the P kick, and the LSDj reference
 
 - **A table's first row fires with the note-on**, in the same event, never at the next
   tick: a wave kick whose table drops the pitch must start dropping at once, or the raw
   note is heard for up to a tick — sometimes, depending on where the note fell between
-  ticks. Rows after the first step on the ticks as before.
+  ticks. Rows after the first step on the ticks as before. *As built:* `startVoice` runs
+  row 0 inside the note's own event, after the instrument loads and before the trigger,
+  for Tick-mode tables as well as Step-mode ones; `Voice::tableJustStarted` keeps the
+  following tick from taking a second row. Firing row 0 *after* the trigger was measured
+  too and rejected — it puts the raw period ahead of the drop in the stream, exactly what
+  this rule forbids. The parity harness confirms the rule against the real thing: LSDj's
+  own table row lands 2932 cycles after the trigger, a thirtieth of a tick.
 - **A repeated pitch is never legato.** A MIDI note-on at the *same pitch* as the note
   sounding is plain even under Overlap = legato — legato is for moving between pitches,
-  and a drum hit in succession is a retrigger. (§8 amended.)
+  and a drum hit in succession is a retrigger. (§8 amended.) *As built:* the note-on
+  order is unchanged and now tested: instrument → table row 0 → command slots → the
+  cell's own commands → the register writes ending in the trigger; the pitch clock
+  restarts at the note and its first update is one full period later, so a bend never
+  doubles the note's own period write; a D delays all of it, row 0 included.
 - **The LSDj reference.** An LSDj 9.2 ROM the user owns lives outside the repository
   (`/root/lsdj/`, never committed, never in CI: `*.gb`, `*.sav` are ignored). A parity
   harness under `tools/lsdjref/` authors test songs into an LSDj save, runs the ROM in an
@@ -956,7 +1053,15 @@ channel moves to its next phrase when its own phrase ends.** Bars leave the mode
   ChipBoy's driver, and diffs the two register streams per command. It observes
   behaviour only; no code or data from the ROM enters ChipBoy. Its tests skip when the
   ROM is absent. Findings are written to `docs/LSDJ_PARITY.md` and turned into driver
-  changes with tests, one letter at a time.
+  changes with tests, one letter at a time. *As built:* `-DCHIPBOY_LSDJREF=ON` fetches
+  SameBoy (MIT) into git-ignored `TestRoms/SameBoy` and builds `lsdjref_trace`, linked
+  nowhere else; the ROM is named by `CHIPBOY_LSDJ_ROM`, and a test that needs it skips
+  (exit 77) when it, the boot ROMs or Python are missing, so a plain checkout and Actions
+  never see one. Twenty-three test songs (`tools/lsdjref/cases.spec`) produced eighteen
+  verdicts — fourteen differences, closed by the driver-exactness round with
+  `docs/COMMANDS_AND_TEMPO.md` §7 rewritten from the measured numbers; see
+  `docs/LSDJ_PARITY.md` §16–17 for the case-by-case account and what is still different
+  by design or left measured but unresolved.
 
 ## 32. A running table shows where it is
 
@@ -965,6 +1070,12 @@ steps and through hops and loops. The driver publishes, per channel, the table s
 its current row and a **run serial** that increments at every table start; the panel
 follows, for the table on view, the channel whose run started **last**, so two channels
 running the same table show the newer run. When no channel runs it, nothing is lit.
+*As built:* `VoiceView` carries `tableRow` (−1 when nothing runs) and the serial,
+`tableRun`; `Driver::beginTableRun()` is the one place a run starts, and the processor
+publishes both as `ScopeBuffers::tableRun` (`packTableRun()`) without touching
+`packState2`, so the link region's layout is unchanged. The panel compares the serial as
+a signed difference so it survives a wraparound, and follows its own 30 Hz timer rather
+than reading the live value every repaint.
 
 ## 33. Wave shaping
 
@@ -972,24 +1083,40 @@ The Waves tab gains a **synth**, in the spirit of LSDj's and beyond it, that wri
 frames into a run of wave slots from parameters the bank keeps (`bank::Synth`: a source
 and a chain of shapers, a start and an end state, and the number of frames to morph
 between them), so a run can be regenerated after an edit and the exporter still only
-ships frames:
+ships frames. *As built:* the shapers' filters are **per-harmonic gains of the wave's own
+32-point transform**, not a running filter — a wave is 32 samples and so sixteen
+harmonics, so the transform is exact, perfectly cyclic and the same bytes on every
+platform, where a running filter's output would depend on where its state started. An
+amount of 0 is a no-op on every shaper and the sign is the direction where a shaper has
+one; a synthesised sine, triangle, saw and square are the bank's own generators byte for
+byte.
 
 - **Sources**: sine, triangle, saw, square with a pulse width, harmonic additive (eight
-  partial levels), noise, and the drawn wave.
+  partial levels), noise, and the drawn wave. *As built:* each covered by its own case in
+  `Tests/WaveSynthTests.cpp`.
 - **Shapers**, in order and each with its amount: low-pass, high-pass, band-pass and
   all-pass filters with resonance; drive with clip, fold and wrap; phase rotate; vertical
   shift; invert; reverse; smooth; bit-crush (levels below the 16 the chip has); quantise
-  to a step; normalise. LSDj's synth is a subset of this.
+  to a step; normalise. LSDj's synth is a subset of this. *As built:* each shaper is
+  tested on a known input, and the chain's order is tested too (`Tests/WaveSynthTests.cpp`).
 - **Morph**: the run's frames interpolate the parameters from the start state to the end
   state (LSDj's start/end waves), so a frame run sweeps a filter or a pulse width.
+  *As built:* tested that the run's ends are the start and end states exactly, and that
+  the whole generator is deterministic over every source crossed with every shaper.
 - The generator is core code (`bank::synthesize`, no JUCE), deterministic and tested; the
   panel edits the parameters, shows the start and end waves and the run, and offers
-  drawing with the mouse on any frame as today.
+  drawing with the mouse on any frame as today. *As built:* **Generate** writes the run
+  into the slot as one undo step; the parameters live in `Wave::synth` and travel in the
+  bank's JSON, so a run can be made again after a hand edit and the exporter still only
+  ships frames.
 
 ## 34. Command arguments: two values, one byte
 
 A command's arguments stay `x` and `y` in the model; what changes is that every letter
-declares its **shape**, and the window shows one of two views of the same byte:
+declares its **shape**, and the window shows one of two views of the same byte.
+*As built:* `commandInfo` carries the shape, and `commandByte()` / `setCommandByte()` are
+the one encoding both views read — shared by the grid, the strips' `CommandSlot` and the
+Voice window, so none of them can show a different byte for the same cell.
 
 - **Nibbles** (V, C, R, M, Z, E, S on pulse, H in tables): `x` and `y` are 0–15 each.
   Decimal mode shows `x,y` (`V 4,6`); Hex mode shows the LSDj byte `xy` (`V46`).
@@ -1004,4 +1131,12 @@ up, 8–15 down) instead of a flag on `x`; P is stored two's complement; H in a 
 LSDj's `times, row` (0 times = forever). The hex byte is exactly what a playback ROM will
 carry, so the exporter reads one encoding. Typing follows the view: in Hex mode a
 two-digit entry sets the byte, in Decimal mode each value is typed on its own with Tab
-between them.
+between them. *As built:* `TypedEntry` and its parsing moved to `plugin/ui/InlineEntry.h`
+with a Tab hook, so the grid and the strips' widgets share one box; a click opens it
+holding the current value, Enter commits, Escape cancels, and anything outside the
+letter's range is refused; digits typed straight at a cell still work, with a comma to
+move on. The driver-exactness round closed what this section had left owed on the engine
+side — `P` is read as two's complement (`Driver.cpp` no longer does `c.a - 128`), `S`'s
+direction comes from `y`'s bit 3 (`c.b & 8`) rather than `x`'s bit 7, and a table's `H`
+is read as `times, row` rather than a bare hop target — so the window and the driver now
+agree on all three.
