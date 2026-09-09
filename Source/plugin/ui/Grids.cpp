@@ -31,8 +31,9 @@
 // A-1, A#1 and A#2, and "off" or "-" is a note off (sections 30 and 35).
 //
 // Every slot field obeys one convention (section 35): a click selects it and
-// types, a double click opens the box, and a right click lists the bank's
-// slots by name with, at the top, the entry that opens that item's own tab.
+// types, a double click opens that item's own tab, and a right click lists
+// the bank's slots by name with the same entry at the top. The box is the
+// double click's everywhere else -- a slot is typed at the selected cell.
 #include "plugin/shared/Parameters.h"
 #include "plugin/ui/InlineEntry.h"
 #include "plugin/ui/Widgets.h"
@@ -1423,7 +1424,7 @@ struct PhraseGrid::Impl {
         if (hoverLen >= 0)
             return juce::String("LEN: the steps this phrase holds, 1-64. Click and type it, or double-click for a box.");
         if (hoverGroove >= 0)
-            return "Groove: the ticks each step lasts. Click and type a slot, double-click for a box, right-click to list them or open the one on show.";
+            return "Groove: the ticks each step lasts. Click and type a slot, double-click to edit the groove in its tab, right-click to list them.";
         const int row = core.hoverRow, col = core.hoverCol;
         if (row < 0 || row >= core.rows || col < 0 || col >= int(core.cols.size())) return {};
         const auto& c = core.cols[size_t(col)];
@@ -1434,8 +1435,8 @@ struct PhraseGrid::Impl {
                        : juce::String("The note the host sent here. Set the channel to Trkr to type notes.");
         if (c.kind == Kind::Note) return "The note this step plays. Shift+arrows move it (left/right a semitone, up/down an octave), a drag moves it, a double click types it; minus is a note off.";
         if (c.kind == Kind::Vel) return "Velocity, 1-127; blank is " + juce::String(int(tracker::kDefaultVelocity)) + ". Type it, double-click for a box, Shift+arrows move it.";
-        if (c.kind == Kind::Inst) return "Instrument at this step. Type it, double-click for a box; right-click lists the bank and opens the one on show.";
-        if (c.kind == Kind::Table) return "Table override at this step. Type it, double-click for a box; right-click lists the bank and opens the one on show.";
+        if (c.kind == Kind::Inst) return "Instrument at this step. Type it, double-click opens it in its tab, right-click lists the bank.";
+        if (c.kind == Kind::Table) return "Table override at this step. Type it, double-click opens it in its tab, right-click lists the bank.";
         if (c.kind == Kind::Cmd) return cmdTooltip(cmdSlot(col) == 0 ? cell.cmd1 : cell.cmd2);
         return {};
     }
@@ -1692,17 +1693,27 @@ void PhraseGrid::mouseDoubleClick(const juce::MouseEvent& e)
 {
     auto& im = *impl_;
     auto& core = im.core;
-    // The double click is the box, everywhere (section 35): a head chip's,
-    // a note's, a number's, a command's values -- or its palette on the
-    // letter and where the slot holds no command.
+    // The double click is the box (section 35) -- LEN's, a note's, a
+    // velocity's, a command's values, or its palette on the letter and where
+    // the slot holds no command -- except on a slot field, where it opens
+    // the item's own tab: a slot is typed at the selected cell already, and
+    // the box would add nothing. An empty slot field opens the box.
     for (int ch = 0; ch < 4; ++ch) {
-        if (im.grooveRects[size_t(ch)].contains(e.getPosition())) { im.openGrooveEntry(ch); return; }
+        if (im.grooveRects[size_t(ch)].contains(e.getPosition())) {
+            if (im.groove[size_t(ch)] > 0) im.openSlot(SlotKind::Groove, im.groove[size_t(ch)]); else im.openGrooveEntry(ch);
+            return;
+        }
         if (im.lenRects[size_t(ch)].contains(e.getPosition())) { im.openLengthEntry(ch); return; }
     }
     int r = 0, c = 0;
     if (!core.cellAt(e.getPosition(), r, c) || !core.editable(c)) return;
     const auto kind = core.cols[size_t(c)].kind;
     if (kind == Kind::Note) { im.openNoteEntry(r, c); return; }
+    if (kind == Kind::Inst || kind == Kind::Table) {
+        const auto& cell = im.cells[size_t(core.cols[size_t(c)].ch)][size_t(r)];
+        const int slot = kind == Kind::Inst ? int(cell.inst) : int(cell.table);
+        if (slot > 0) { im.openSlot(kind == Kind::Inst ? SlotKind::Instrument : SlotKind::Table, slot); return; }
+    }
     if (kind == Kind::Cmd) {
         const bank::Command* cmd = im.commandAt(r, c);
         if (core.onLetter(c, e.x) || cmd == nullptr || cmd->cmd == bank::Cmd::None) im.openPalette(r, c);
@@ -2184,12 +2195,13 @@ void WaveGrid::paint(juce::Graphics& g)
         g.fillRect(float(in.getX()), float(in.getBottom()) - float(im.hoverV + 1) * levelH, float(in.getWidth()), levelH);
     }
     if (points) {
-        const float d = juce::jmax(3.0f, juce::jmin(cellW, levelH) * 0.55f);
+        // Each sample fills its grid box, the way LSDj's wave screen draws
+        // them: one lit cell per column.
         for (int i = 0; i < 32; ++i) {
-            const float cx = float(in.getX()) + (float(i) + 0.5f) * cellW;
-            const float cy = float(in.getBottom()) - (float(im.frame.s[size_t(i)]) + 0.5f) * levelH;
+            const float x = float(in.getX()) + float(i) * cellW;
+            const float y = float(in.getBottom()) - (float(im.frame.s[size_t(i)]) + 1.0f) * levelH;
             g.setColour(i == im.hoverI ? wav : wav.withAlpha(0.9f));
-            g.fillEllipse(cx - d * 0.5f, cy - d * 0.5f, d, d);
+            g.fillRect(x + 1.0f, y + 1.0f, cellW - 1.0f, levelH - 1.0f);
         }
     } else {
         const float colW = (float(in.getWidth()) - 31.0f) / 32.0f;

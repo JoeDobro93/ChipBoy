@@ -670,6 +670,7 @@ void InstrumentPanel::rebuildEditor()
                            [this](int v) { const auto bk = processor.bank(); const bank::Wave* wv = bk ? bk->wave(v) : nullptr; return wv ? slotAndName(v, wv->name) : slotAndName(v, "empty"); },
                            [](bank::Instrument& i, int v) { i.wave = uint8_t(v); }, 190);
         w_->wave->onList = [this] { showWaveMenu(); };
+        w_->wave->onOpen = [this] { if (w_ && w_->wave) { if (w_->wave->value() > 0) openSlot(ui::SlotKind::Wave, w_->wave->value()); else w_->wave->beginTypedEntry(); } };
         w_->frameAdv = stepper(*sound, "Frame advance", "Ticks per frame; 0 holds the frame.", 0, 15, 0, {}, [](bank::Instrument& i, int v) { i.frameAdvance = uint8_t(v); });
         w_->frameLoop = seg(*sound, "Frame loop", "How the frames run.", { "Loop", "One-shot", "Ping-pong" }, [](bank::Instrument& i, int v) { i.frameLoop = bank::FrameLoop(std::clamp(v, 0, 2)); });
         w_->waveLevel = seg(*sound, "Level", "NR32 bits 6-5: four levels, and no envelope unit on this channel.", { "mute", "25", "50", "100" }, [](bank::Instrument& i, int v) { i.waveLevel = uint8_t(v); });
@@ -678,6 +679,7 @@ void InstrumentPanel::rebuildEditor()
                           [this](int v) { const auto bk = processor.bank(); const bank::Kit* k = bk ? bk->kit(v) : nullptr; return k ? slotAndName(v, k->name) : slotAndName(v, "empty"); },
                           [](bank::Instrument& i, int v) { i.kit = uint8_t(v); }, 190);
         w_->kit->onList = [this] { showKitMenu(); };
+        w_->kit->onOpen = [this] { if (w_ && w_->kit) { if (w_->kit->value() > 0) openSlot(ui::SlotKind::Kit, w_->kit->value()); else w_->kit->beginTypedEntry(); } };
         w_->kitLoop = seg(*sound, "Loop", "Per note.", { "One-shot", "Loop", "From point" }, [](bank::Instrument& i, int v) { i.kitLoop = bank::KitLoop(std::clamp(v, 0, 2)); });
         auto rate = std::make_unique<TextLine>(String(), Fonts::mono(12.0f), colours::text);
         w_->kitRate = sound->add("Rate", std::move(rate), 190, Stepper::kHeight, "NR33/34: one register does the pitch and the rate.");
@@ -779,6 +781,7 @@ void InstrumentPanel::rebuildEditor()
                         [this](int v) { if (v == 0) return String("none"); const auto bk = processor.bank(); const bank::Table* t = bk ? bk->table(v) : nullptr; return t ? slotAndName(v, t->name) : slotAndName(v, "empty"); },
                         [](bank::Instrument& i, int v) { i.table = uint8_t(v); }, 190);
     w_->table->onList = [this] { showTableMenu(); };
+    w_->table->onOpen = [this] { if (w_ && w_->table) { if (w_->table->value() > 0) openSlot(ui::SlotKind::Table, w_->table->value()); else w_->table->beginTypedEntry(); } };
     w_->tableMode = seg(*tab, "Table mode", "Tick: one row a tick, or per its own G. Step: one row every time the instrument is triggered.",
                         { "Tick", "Step" }, [](bank::Instrument& i, int v) { i.tableMode = v == 1 ? bank::TableMode::Step : bank::TableMode::Tick; });
     w_->transpose = seg(*tab, "Transpose", "Whether the table's transpose column applies.", { "On", "Off" }, [](bank::Instrument& i, int v) { i.transpose = v == 0; });

@@ -84,9 +84,11 @@ ChannelStrip::ChannelStrip(ChipBoyProcessor& p, int ch)
     instrument_.setTooltip(kInstTip);
     instrument_.attach(param(processor_, channelParamId(ch_, ids::instrument)));
     instrument_.onList = [this] { showInstrumentMenu(); };
+    instrument_.onOpen = [this] { if (onOpenSlot && instrument_.value() > 0) onOpenSlot(SlotKind::Instrument, instrument_.value()); else instrument_.beginTypedEntry(); };
     table_.setTooltip(kTableTip);
     table_.attach(param(processor_, channelParamId(ch_, ids::table)));
     table_.onList = [this] { showTableMenu(); };
+    table_.onOpen = [this] { if (onOpenSlot && table_.value() > 0) onOpenSlot(SlotKind::Table, table_.value()); else table_.beginTypedEntry(); };
     transpose_.setTooltip(kTransposeTip);
     transpose_.attach(param(processor_, channelParamId(ch_, ids::transpose)));
     transpose_.setTextFunction([](int v) { return (v > 0 ? "+" : "") + String(v); });

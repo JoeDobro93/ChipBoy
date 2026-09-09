@@ -179,13 +179,12 @@ gestures apply ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §30):
 | Gesture | What it does |
 |---|---|
 | **Click** | selects the field and lets you type into it — digits at a grid cell, a stepper or a chip |
-| **Right-click** | lists the slots by **slot · name** — only the ones in use, the ones this channel plays first and the rest marked with their type — and picks one; its first entry, **Open … in its tab**, opens the item the field names: Instrument, Tables, Waves, Kits or Grooves |
-| **Double-click** | opens the inline box holding the value, as on every other field |
+| **Right-click** | lists the slots by **slot · name** — only the ones in use, the ones this channel plays first and the rest marked with their type — and picks one; its first entry, **Open … in its tab**, opens the item the field names |
+| **Double-click** | **opens that item's own tab** with it selected: Instrument, Tables, Waves, Kits or Grooves. An empty slot field opens the box instead |
 
-Until §35 the double click opened the item's tab and a slot stepper's click only took
-the focus so the double click could be seen; the tab moved into the list every slot
-field already has, and the double click became the box everywhere. The chain's cells
-have no tab of their own to open, so their list has no such entry.
+A slot is typed at the selected field already, so the double click is free for the tab
+where every other field's opens the box (§35). The chain's cells have no tab of their
+own to open, so a double click there opens the box and their list has no such entry.
 
 **Notes are moved as well as typed** (§7 and [`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md)
 §30, §35). **Shift+←/→** moves the note a semitone, **Shift+↑/↓** an octave — the same
@@ -735,9 +734,9 @@ recorded in `CHANGES.md`.
 |---|---|---|
 | D-UI-7 | Knobs or steppers on the Instrument tab? | **Steppers with readouts.** A knob is 70 px with its caption and says its value on a 50 px dial; a stepper says "4 Hz" in 24. The form fits because of it (§6) |
 | D-UI-8 | Where does the phrase's LEN live? | **Both**: per channel in the lane's head, and per row in the chain's last column. A phrase's length is the channel's business and a row's is the song's (§7) |
-| D-UI-9 | What does a double click on a slot field do? | ~~Opens that item's own tab.~~ **Amended by D-UI-12**: it opens the inline box, like every other field; the tab is the first entry of the field's right-click list (§2.1) |
+| D-UI-9 | What does a double click on a slot field do? | **Opens that item's own tab.** It is the one gesture every selector was missing. Since D-UI-12 the single click selects like any stepper's and the tab is also the first entry of the field's right-click list (§2.1) |
 | D-UI-10 | One field or two for a command's arguments? | **Two in Decimal, one in Hex.** The byte is what a playback ROM carries and what LSDj shows; the two values are what the letter means (§2.1, [`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §34) |
 | D-UI-11 | Does the synth own the wave's frames? | **No.** It writes them on Generate and the frames stay the truth; the parameters ride along so a run can be made again (§6) |
-| D-UI-12 | One grammar for every value field? | **Yes** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §35): click selects, typing edits in place with refusal past the limit and Backspace taking digits back, double-click is the box, right-click is the list, Shift+arrows move by one and by sixteen. The cost is D-UI-9's double click, which moved into the list |
+| D-UI-12 | One grammar for every value field? | **Yes** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §35): click selects, typing edits in place with refusal past the limit and Backspace taking digits back, double-click is the box — the item's tab on a slot field (D-UI-9) — right-click is the list, Shift+arrows move by one and by sixteen |
 | D-UI-13 | Where does the window open? | **Where it was left** (§35): the tab, the channel and each tab's selection are kept in the plugin state as `ui_view`, so a closed and reopened editor — or a reopened project — shows what it did rather than the Instrument tab on slot 1 |
 | D-UI-14 | Can the two ends of a wave morph have different shapes? | **Yes** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §36): the shape moved into the state, the two are rendered and crossfaded before the chain, and the run is placed by From and To frame numbers instead of a count |

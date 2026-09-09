@@ -532,7 +532,7 @@ void Stepper::mouseUp(const juce::MouseEvent&)
 void Stepper::mouseDoubleClick(const juce::MouseEvent& e)
 {
     if (e.x < 23 || e.x >= getWidth() - 23) return;
-    beginTypedEntry();
+    if (onOpen) onOpen(); else beginTypedEntry();
 }
 bool Stepper::keyPressed(const juce::KeyPress& k)
 {

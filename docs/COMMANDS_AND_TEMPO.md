@@ -1160,7 +1160,7 @@ to be learned twice and no field surprises:
 |---|---|
 | **Click** | selects the field (the cursor lands on it) and nothing else |
 | **Type** | edits the selected field in place, without a box (below) |
-| **Double-click** | opens the inline box holding the value — Enter commits, Escape cancels |
+| **Double-click** | opens the inline box holding the value — Enter commits, Escape cancels. On a **slot field** (instrument, table, groove, wave, kit) it opens **that item's own tab** instead: a slot is typed at the selected field already, so the box would add nothing; an empty slot field opens the box |
 | **Right-click** | lists the choices where the field has them: the bank's slots by *slot · name*, the command palette, the phrases, the grooves — and, at the top, **Open in its tab** for the slot the field names |
 | **Shift + arrows** | moves the value: ←/→ by one, ↑/↓ by sixteen (a note: a semitone and an octave) |
 
@@ -1174,19 +1174,21 @@ to be learned twice and no field surprises:
   that starts a fresh entry after a full one is the same rule — it replaces. This
   replaces the old behaviour where an overflowing digit silently started a new value.
   Hex display types hex digits, in the grids and at the steppers alike.
-- **Double-click is the box, everywhere.** A note, a velocity, a slot, a table's volume
-  and transpose, a chain cell, LEN, the groove chip, a stepper's readout. The command
-  cell's double-click opens the box on its values; on the letter, or when the cell holds
-  no command, it opens the palette. Enter on a selected field still opens the box, as
-  before; on a command cell, Shift+Enter still opens the palette.
-- **The item's own tab moves into the right-click menu.** Since §30 a double click on a
-  slot field opened the item's tab. That gesture is now the box, so the menu every slot
-  field already has gains a first entry — *Open instrument 05 · Bass* — that does what the
-  double click did. It covers the lane's INS and TBL, the groove chip, the strips'
-  instrument and table steppers, and the Instrument tab's Table, Wave and Kit fields.
-  D-UI-9 is amended accordingly; `Stepper::onOpen` is called from the menu rather than
-  from the double click, and a slot stepper's single click selects like every other
-  stepper's now.
+- **Double-click is the box** on every value field that has nothing else to open: a
+  note, a velocity, a table's volume and transpose, a chain cell, LEN, a plain stepper's
+  readout. The command cell's double-click opens the box on its values; on the letter, or
+  when the cell holds no command, it opens the palette. Enter on a selected field still
+  opens the box, as before; on a command cell, Shift+Enter still opens the palette.
+- **Double-click on a slot field opens the item's own tab**, as §30 had it: the lane's
+  INS and TBL, the groove chip, the strips' instrument and table steppers, the Instrument
+  tab's Table, Wave and Kit fields. A slot is typed at the selected field already, so a
+  box there would add nothing, and the tab is what the field points at. An empty slot
+  field opens the box. The right-click list also gains the tab as its first entry — *Open
+  instrument 05 · Bass in its tab* — so it is reachable both ways. What changed from §30
+  is only the single click: a slot stepper's click selects like every other stepper's,
+  since the double click can be told apart without it. *(First built as the box on slot
+  fields too, with the tab only in the menu, and put back the same day: the tab was the
+  gesture that had been asked for.)*
 - **Shift with the arrows** was Shift+↑/↓ a semitone and Shift+←/→ an octave on a note;
   it is **swapped**: ↑/↓ move the octave, ←/→ the semitone, left lowering and right
   raising. Every other value field takes the same keys: ←/→ by one, ↑/↓ by sixteen — in
@@ -1225,8 +1227,8 @@ to be learned twice and no field surprises:
   saw / pulse into the frame, **Interpolate** the frames between the first and the last,
   and the **view** switch — so the Interpolate button no longer collides with the shape
   selector in the top row.
-- The drawing grid gains a second **view**, *Points*: each sample is a dot on a 32×16
-  grid instead of a bar. In both views the pointer's column and row are lit softly and a
+- The drawing grid gains a second **view**, *Points*: each sample fills its box on a
+  32×16 grid instead of standing as a bar. In both views the pointer's column and row are lit softly and a
   small caption in the grid's corner reads the sample number and its level, the way
   LSDj's wave screen shows the coordinates, without a tooltip window in the way.
 - Considered and kept out: nothing else of LSDj's synth (its filters are these), and a

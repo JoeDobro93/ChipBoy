@@ -29,8 +29,8 @@ design-log section the change touches. Update this file at the end of every chan
   tab, tracker note gestures, one selector convention, table playhead, wave synth,
   command argument shapes, the hardware audit and the fuzz tool.
 - Round 7 (§35–§37): one editing grammar for every value field (click selects, typing
-  refuses past the limit and Backspace takes digits back, double-click is the box,
-  right-click lists with *Open in its tab* first, Shift+←/→ by one and Shift+↑/↓ by
+  refuses past the limit and Backspace takes digits back, double-click is the box — the
+  item's tab on a slot field — right-click lists with *Open in its tab* first, Shift+←/→ by one and Shift+↑/↓ by
   sixteen — a semitone and an octave on a note); the window remembers its tab, channel
   and each tab's selection (`ui_view` in the plugin state); the Waves tab lays frames
   eight to a row, each morph end has its own shape, the run is placed by From / To

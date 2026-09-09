@@ -49,11 +49,14 @@ forgot, and what the Waves tab made hard to read.
   user's complaint was exactly that the fields differed. The old typed entry, where a
   digit that overflowed silently started a new value, is gone: `typeDigit` refuses and
   `popDigit` is Backspace's.
-- **The item's tab moved into the right-click list.** D-UI-9's double click on a slot
-  field opened the item's tab; the double click is now the box, so every slot list — the
-  lane's INS and TBL, the groove chip, the strips' instrument and table steppers, the
-  Instrument tab's Table, Wave and Kit — gained *Open … in its tab* as its first entry.
-  `Stepper::onOpen` is gone; the panels' menus call `openSlot` themselves.
+- **A slot field's double click still opens the item's tab** (D-UI-9), and every slot
+  list — the lane's INS and TBL, the groove chip, the strips' instrument and table
+  steppers, the Instrument tab's Table, Wave and Kit — gained *Open … in its tab* as its
+  first entry as well. An empty slot field opens the box. *Considered and built first:*
+  the box on slot fields too, with the tab only in the menu — reverted the same day, since
+  a slot is typed at the selected field already and the tab was the gesture asked for.
+- **The Points view** of the wave grid fills each sample's grid box rather than drawing
+  a dot, as LSDj's wave screen does.
 - **Shift with the arrows on a note is swapped**: ←/→ a semitone, ↑/↓ an octave, so the
   vertical pair is the big step on a note as on every other field. The drag is unchanged.
 - **The window remembers where it was (§35, D-UI-13).** Closing and reopening the editor
@@ -72,9 +75,9 @@ forgot, and what the Waves tab made hard to read.
   The section is regrouped — **Shape**, **Chain** (a dim line under each chosen shaper
   says what its amount does; resonance shown only on the filters), **Run**, **Preview**
   — and the shape / interpolate tools moved to a **row under the grid** with the new
-  **Bars / Points view** switch, so Interpolate no longer collided with the shape
-  selector. The grid lights the pointer's column and row and reads the sample and level
-  in a corner. *Considered and kept out:* a per-frame list of shapes — two ends are what
+  **Bars / Points view** switch (each sample a filled grid box), so Interpolate no
+  longer collided with the shape selector. The grid lights the pointer's column and row
+  and reads the sample and level in a corner. *Considered and kept out:* a per-frame list of shapes — two ends are what
   a morph has.
 - **The chord's own rate (§37).** `Instrument::chordRate`, 0–15, default 0: a C steps
   every *chord rate + 1* ticks and the **command rate** keeps R and the Tick-speed P and

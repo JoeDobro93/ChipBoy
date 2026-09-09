@@ -76,8 +76,9 @@ private:
 /// The readout is a typed field with the grids' grammar (UI_DESIGN section
 /// 2.1, docs/COMMANDS_AND_TEMPO.md section 35): a click selects it, digits
 /// typed at it build a value and Backspace takes them back, a double click
-/// or Enter opens the inline box, Shift with the arrows moves it by one and
-/// by sixteen, and the wheel never edits.
+/// or Enter opens the inline box (a slot stepper's double click opens the
+/// item instead), Shift with the arrows moves it by one and by sixteen, and
+/// the wheel never edits.
 class Stepper : public juce::Component, public juce::SettableTooltipClient {
 public:
     Stepper();
@@ -100,10 +101,12 @@ public:
     /// Open the inline box on the readout, as a double click on it does.
     void beginTypedEntry();
     std::function<void(int)> onChange;
-    /// A slot stepper follows the one selector convention (UI_DESIGN 2.1): a
-    /// right click lists the slots by name, and that list carries the entry
-    /// that opens the item's own tab (section 35).
-    std::function<void()> onList;
+    /// A slot stepper follows the one selector convention (UI_DESIGN 2.1,
+    /// section 35): a right click lists the slots by name, with the entry
+    /// that opens the item's own tab at the top, and a double click opens
+    /// that tab too -- where onOpen is set, the double click is the item's
+    /// rather than the box's; Enter still opens the box.
+    std::function<void()> onList, onOpen;
     static constexpr int kHeight = 24;
     int preferredWidth() const;           ///< 80: two 22 px buttons and a 34 px readout
     void resized() override; void paint(juce::Graphics&) override;

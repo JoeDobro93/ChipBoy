@@ -243,8 +243,8 @@ sound still audible 100 ms after all-notes-off, and prints its seed on failure
     pixels, or a double-click that types it with auto-correction (`a1`, `a#1`,
     `bb2` → `A-1`, `A#1`, `A#2`; `off` or `-` is a note off). Every slot field — a
     cell's **INS** and **TBL**, the groove chip, a strip's instrument and table
-    steppers — lists its slots by name on a right-click, with *Open … in its tab* at
-    the top. A cell's two commands
+    steppers — opens its item's own tab on a double-click and lists its slots by name
+    on a right-click, with *Open … in its tab* at the top. A cell's two commands
     fire once, at their step: the persistent letters (`A E F G M O P S T V W`) hold
     until the next note that carries an instrument, same as a slot; the rest
     (`C D K L R Z`) shape only that note. Each lane carries a record **arm** and a
