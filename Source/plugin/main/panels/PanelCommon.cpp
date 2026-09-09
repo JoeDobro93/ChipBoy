@@ -456,25 +456,26 @@ TrackerPosition trackerPosition(const ChipBoyProcessor& p)
     TrackerPosition t;
     t.playing = p.transportPlaying();
     t.tick = std::max<int64_t>(0, p.trackerTick());
-    t.barTicks = std::max(1, p.barTicks());
     const auto s = p.song();
-    // The bars are the song's own, laid end to end through its prefix table:
-    // a bar with its own step count moves the ones after it (section 11).
-    if (s) tracker::barAtTick(*s, t.tick, t.barTicks, t.bar, t.inBar);
-    else { t.bar = int(t.tick / t.barTicks); t.inBar = int(t.tick % t.barTicks); }
+    // Each channel's rows lie end to end on its own prefix table, so two
+    // channels are in different rows at the same tick (section 25).
+    for (int ch = 0; ch < 4; ++ch) {
+        if (s) tracker::rowAtTick(*s, ch, t.tick, t.row[ch], t.inRow[ch]);
+        else { t.row[ch] = int(t.tick / tracker::kEmptyRowTicks); t.inRow[ch] = int(t.tick % tracker::kEmptyRowTicks); }
+    }
     return t;
 }
 
-int playingStepOf(const ChipBoyProcessor& p, const tracker::Song& s, int ch, int bar, int inBar)
+int playingStepOf(const ChipBoyProcessor& p, const tracker::Song& s, int ch, int row, int inRow)
 {
-    const int barTicks = std::max(1, p.barTicks());
-    const int steps = s.stepsOfBar(bar);
+    const tracker::Phrase* phrase = s.phrase(s.phraseAt(ch, row));
+    const int steps = s.stepsOfRow(ch, row);
     int start[tracker::kMaxSteps + 1];
-    tracker::stepStartTicks(s, s.phrase(s.phraseAt(ch, bar)), p.player().groove(ch), start, barTicks, steps);
-    const int length = tracker::barLengthTicks(s, bar, barTicks);
+    tracker::stepStartTicks(s, phrase, p.player().groove(ch), start);
+    const int length = tracker::phraseTicks(s, phrase);
     int step = -1;
     for (int i = 0; i < steps; ++i) {
-        if (start[i] >= length || start[i] > inBar) break;     // that step never fires, or has not come yet
+        if (start[i] >= length || start[i] > inRow) break;     // that step never fires, or has not come yet
         step = i;
     }
     return step;

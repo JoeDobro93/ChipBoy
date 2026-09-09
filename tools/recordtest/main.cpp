@@ -295,7 +295,6 @@ void run(ChipBoyProcessor& p, const Automation& aut, const RunOptions& opt, Capt
     cap.rmsPerBar.assign(bars, 0.0);
     for (size_t i = 0; i < bars; ++i) cap.rmsPerBar[i] = barN[i] > 0.0 ? std::sqrt(barSum[i] / barN[i]) : 0.0;
     for (const auto& w : log) {
-        if (w.addr == driver::Driver::kAlignToQuietEdge) continue;
         const int s = streamOf(w.addr);
         if (s < 0) continue;
         cap.streams[size_t(s)].push_back({ int64_t(std::llround(double(w.cycle) * kSampleRate / double(kCpuHz))), w.cycle, w.addr, w.value });
@@ -327,16 +326,16 @@ void writeCellListing(const juce::File& file, const tracker::Song& song)
 {
     juce::StringArray lines;
     lines.add("# the cells chipboy_recordtest recorded from Demo/chipboy_demo.mid");
-    lines.add("# " + juce::String(song.steps()) + " steps per bar, straight groove");
+    lines.add("# phrases of their own length, straight groove (section 25)");
     lines.add("");
-    lines.add("bar step ch   note        vel inst table  cmd1        cmd2");
+    lines.add("row step ch   note        vel inst table  cmd1        cmd2");
     for (int ch = 0; ch < 4; ++ch) {
         const auto& chain = song.chain[size_t(ch)];
         for (size_t barIndex = 0; barIndex < chain.size(); ++barIndex) {
             const auto* phrase = song.phrase(chain[barIndex]);
             if (phrase == nullptr) continue;
-            for (int step = 0; step < song.steps(); ++step) {
-                const auto& c = phrase->steps[size_t(step)];
+            for (int step = 0; step < phrase->length(); ++step) {
+                const auto& c = phrase->cells[size_t(step)];
                 if (c.note == 0 && c.inst == 0 && c.table == 0 && c.cmd1.cmd == bank::Cmd::None && c.cmd2.cmd == bank::Cmd::None) continue;
                 const bool sounds = c.note != 0 && c.note != tracker::kNoteOff;
                 lines.add(juce::String(int(barIndex) + 1).paddedLeft(' ', 3)
@@ -455,13 +454,13 @@ struct SongRun {
     int    badBlock = -1;
 };
 
-/// Where a song's bars sit, in ticks and in samples. Bars lie end to end from
-/// the song start and a bar may hold its own step count (section 11), so the
-/// boundaries come from the song's own table rather than from arithmetic.
+/// Where a song's rows sit, in ticks and in samples. Every channel keeps its
+/// own time (section 25), so the listing counts in the rows of the longest
+/// chain -- the song's own length -- taken from its prefix table.
 struct SongShape {
-    double  tempo = 120.0, beatsPerBar = 4.0;
-    int     barTicks = 96, steps = 16, songBars = 0;
-    std::vector<int64_t> barStartSample;   ///< bars + 1 entries
+    double  tempo = 120.0;
+    int     steps = 16, songRows = 0, countChannel = 0;
+    std::vector<int64_t> barStartSample;   ///< rows + 1 entries
     int64_t samples = 0;
 };
 
@@ -552,10 +551,9 @@ int playSong(const juce::File& file, int bars)
         const auto song = p.song();
         if (song == nullptr) { std::printf("FAIL %s opened with no song\n", file.getFullPathName().toRawUTF8()); return 1; }
         shape.tempo = std::clamp(song->tempoBpm, 40.0, 255.0);
-        shape.beatsPerBar = song->beatsPerBar;
-        shape.barTicks = song->barTicks();
-        shape.steps = song->steps();
-        shape.songBars = song->bars();
+        shape.countChannel = tracker::longestChain(*song);
+        shape.steps = song->stepsOfRow(shape.countChannel, 0);
+        shape.songRows = song->rows();
         bankName = report.bankName;
         instruments = report.instrumentsUsed;
         for (int i = 0; i < tracker::kPhraseSlots; ++i) if (song->phrases[size_t(i)].used) ++phrases;
@@ -565,18 +563,18 @@ int playSong(const juce::File& file, int bars)
                        + (s == tracker::NoteSource::Tracker ? "Trkr" : s == tracker::NoteSource::Hybrid ? "Hybrid" : "MIDI");
         }
         // Ticks to samples: the tick rate is tempo x 24 / 60 Hz (section 4),
-        // and the bars come from the song's own table, so a bar with its own
-        // step count is the length it really is (section 11).
+        // and a row's ticks come from the song's own prefix table, so a phrase
+        // of any length is as long as it really is (section 25).
         const double samplesPerTick = 60.0 * kSampleRate / (shape.tempo * double(driver::kTicksPerBeat));
         for (int b = 0; b <= bars; ++b)
-            shape.barStartSample.push_back(int64_t(std::llround(double(tracker::barStartTick(*song, b, shape.barTicks)) * samplesPerTick)));
+            shape.barStartSample.push_back(int64_t(std::llround(double(tracker::rowStartTick(*song, shape.countChannel, b)) * samplesPerTick)));
         shape.samples = shape.barStartSample.back();
-        if (shape.samples <= 0) { std::printf("FAIL %s is empty: no bars to play\n", file.getFullPathName().toRawUTF8()); return 1; }
+        if (shape.samples <= 0) { std::printf("FAIL %s is empty: no rows to play\n", file.getFullPathName().toRawUTF8()); return 1; }
     }
-    std::printf("%s: %.0f BPM, %g beats/bar, %d steps/bar, %d bars, %d phrases, %d instrument slots, bank \"%s\"\n",
-                file.getFileNameWithoutExtension().toRawUTF8(), shape.tempo, shape.beatsPerBar,
-                shape.steps, shape.songBars, phrases, instruments, bankName.toRawUTF8());
-    std::printf("plays %s; %d bars = %.2f s at %.0f BPM\n", sources.toRawUTF8(), bars,
+    std::printf("%s: %.0f BPM, %d steps in %s's first phrase, %d rows, %d phrases, %d instrument slots, bank \"%s\"\n",
+                file.getFileNameWithoutExtension().toRawUTF8(), shape.tempo,
+                shape.steps, kStreamName[shape.countChannel], shape.songRows, phrases, instruments, bankName.toRawUTF8());
+    std::printf("plays %s; %d rows = %.2f s at %.0f BPM\n", sources.toRawUTF8(), bars,
                 double(shape.samples) / kSampleRate, shape.tempo);
 
     SongRun mix;
@@ -752,7 +750,7 @@ int main(int argc, char** argv)
         for (int ch = 0; ch < 4; ++ch)
             for (auto slot : song->chain[size_t(ch)])
                 if (const auto* phrase = song->phrase(slot))
-                    for (const auto& c : phrase->steps)
+                    for (const auto& c : phrase->cells)
                         if (c.note || c.inst || c.table || c.cmd1.cmd != bank::Cmd::None || c.cmd2.cmd != bank::Cmd::None) ++cells;
         std::printf("recorded %d cells into %s\n", cells, outDir.getChildFile("recorded_cells.txt").getFullPathName().toRawUTF8());
         if (dump) dumpWrites(outDir.getChildFile("writes_record.txt"), recordPass, aut.bpm);

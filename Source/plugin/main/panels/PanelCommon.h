@@ -250,18 +250,19 @@ private:
 
 /* --------------------------------------------------------- the tracker */
 
-/// Where the transport stands, as the tracker counts it: the tick, the bar
-/// it falls in and how far into that bar (docs/COMMANDS_AND_TEMPO.md 11).
+/// Where the transport stands, as the tracker counts it: the song's tick, and
+/// per channel the row of its own chain it is in and how far into that row --
+/// the channels drift apart by design (docs/COMMANDS_AND_TEMPO.md 25).
 struct TrackerPosition {
     int64_t tick = 0;
-    int barTicks = 96;
-    int bar = 0, inBar = 0;
+    int row[4] = { 0, 0, 0, 0 };
+    int inRow[4] = { 0, 0, 0, 0 };
     bool playing = false;
 };
 TrackerPosition trackerPosition(const ChipBoyProcessor& p);
 /// The step a channel is really playing: its groove says how long each step
 /// lasts, so a swung phrase marks the row that is sounding. -1 for none.
-int playingStepOf(const ChipBoyProcessor& p, const tracker::Song& s, int ch, int bar, int inBar);
+int playingStepOf(const ChipBoyProcessor& p, const tracker::Song& s, int ch, int row, int inRow);
 
 /* ----------------------------------------------------------- lookups */
 

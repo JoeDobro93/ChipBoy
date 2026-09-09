@@ -48,7 +48,7 @@ struct GrooveEditor::Impl {
     Stepper slotStepper;
     int slot = 0;                 ///< 0 straight (read-only), 1-16 the song's
     int rowH = GrooveEditor::kRowHeight;
-    int barTicks = driver::kTicksPerBeat * 4;
+    int rowTicks = tracker::kEmptyRowTicks;   ///< what the groove is measured against: the phrase's straight length
     int playing = -1;
     int cursor = 0, hover = -1, hoverNudge = -1;
     int dragRow = -1, dragFrom = 0;
@@ -69,10 +69,10 @@ struct GrooveEditor::Impl {
     }
 
     bool editable() const { return slot >= 1 && slot <= 16; }
-    int steps() const { return song != nullptr ? std::min(song->steps(), tracker::kGrooveSteps) : tracker::kGrooveSteps; }
-    /// Eight steps per bar doubles every entry, so a groove swings the same
-    /// way whichever the song is set to (section 9.2).
-    int scale() const { return steps() <= 8 ? 2 : 1; }
+    /// The groove's own sixteen entries: a step is its ticks, whatever the
+    /// phrase's length (section 25).
+    int steps() const { return tracker::kGrooveSteps; }
+    int scale() const { return 1; }
 
     tracker::Groove groove() const
     {
@@ -83,7 +83,7 @@ struct GrooveEditor::Impl {
     /// disagree with playback about where a step starts.
     void startTicks(int* start) const
     {
-        if (song != nullptr) { tracker::stepStartTicks(*song, nullptr, uint8_t(slot), start, barTicks); return; }
+        if (song != nullptr) { tracker::stepStartTicks(*song, nullptr, uint8_t(slot), start); return; }
         for (int i = 0; i <= tracker::kGrooveSteps; ++i) start[i] = i * 6;
     }
     int total() const { int start[tracker::kMaxSteps + 1]; startTicks(start); return start[steps()]; }
@@ -149,7 +149,7 @@ struct GrooveEditor::Impl {
         g.fillRect(1, kHeaderHeight - 1, w - 2, 1);
         draw::caption(g, "Groove", { 6, 0, w - 12, kHeadRow }, juce::Justification::centredLeft, textDim, 10.0f);
 
-        const int t = total(), bars = juce::jmax(1, barTicks);
+        const int t = total(), bars = juce::jmax(1, rowTicks);
         g.setFont(Fonts::mono(11.0f));
         g.setColour(t == bars ? ok : warn);
         const juce::String totalText = ValueFormat::number(t) + " / " + ValueFormat::number(bars);
@@ -188,7 +188,7 @@ struct GrooveEditor::Impl {
             g.fillRect(1, y + rowH - 1, w - 2, 1);
 
             const bool inPattern = row < n;
-            const bool plays = row < st && start[row] < barTicks;
+            const bool plays = row < st && start[row] < rowTicks;
             const auto cell = cellRect(row);
             if (hover == row && live) { g.setColour(raised); g.fillRect(cell.withTrimmedBottom(1)); }
             g.setFont(Fonts::mono(12.0f));
@@ -238,11 +238,11 @@ void GrooveEditor::setSlot(int slot)
     repaint();
 }
 int GrooveEditor::slot() const { return impl_->slot; }
-void GrooveEditor::setBarTicks(int ticks)
+void GrooveEditor::setRowTicks(int ticks)
 {
     const int t = juce::jmax(1, ticks);
-    if (t == impl_->barTicks) return;
-    impl_->barTicks = t;
+    if (t == impl_->rowTicks) return;
+    impl_->rowTicks = t;
     repaint();
 }
 int GrooveEditor::preferredHeight() const { return heightForRows(impl_->rowH); }

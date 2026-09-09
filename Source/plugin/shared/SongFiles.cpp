@@ -22,7 +22,7 @@ std::vector<int> instrumentsUsedBy(const tracker::Song& song)
     for (int ch = 0; ch < 4; ++ch)
         for (auto slot : song.chain[size_t(ch)])
             if (const auto* p = song.phrase(slot))
-                for (const auto& c : p->steps)
+                for (const auto& c : p->cells)
                     if (c.inst >= 1 && c.inst <= bank::kInstrumentSlots
                         && std::find(used.begin(), used.end(), int(c.inst)) == used.end())
                         used.push_back(int(c.inst));
@@ -32,12 +32,13 @@ std::vector<int> instrumentsUsedBy(const tracker::Song& song)
 
 String songFileText(const tracker::Song& song, const bank::Bank& bank, const String& bankName)
 {
-    // Format 5 (section 18): the song JSON as the plugin state writes it, the
-    // whole bank it plays through, and what it takes to say whether a bank it
-    // meets later is the bank it was written with.
+    // Format 6 (sections 18 and 25): the song JSON as the plugin state writes
+    // it -- phrases with their own lengths -- the whole bank it plays through,
+    // and what it takes to say whether a bank it meets later is the bank it
+    // was written with.
     auto* o = new DynamicObject();
     o->setProperty("format", "chipboy-song-file");
-    o->setProperty("version", 5);
+    o->setProperty("version", 6);
     o->setProperty("bank", bankName);
     auto* names = new DynamicObject();
     for (int slot : instrumentsUsedBy(song)) {
@@ -67,7 +68,7 @@ bool loadSongText(const String& text, tracker::Song& out, SongReport& report, co
     if (!wrapped && o->getProperty("format").toString() != "chipboy-song") return false;
     if (!songFromVar(wrapped ? o->getProperty("song") : parsed, out)) return false;
 
-    // Format 5 carries the bank with it; the song then plays through that
+    // Formats 5 and 6 carry the bank with them; the song then plays through that
     // bank and there is nothing to report (section 18).
     if (bankOut != nullptr && o->hasProperty("bankData") && bankFromVar(o->getProperty("bankData"), *bankOut)) {
         report.hasBank = true;

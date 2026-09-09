@@ -360,7 +360,7 @@ std::vector<int> InstrumentPanel::computeUses(const bank::Bank& b, const tracker
     if (song)
         for (const auto& ph : song->phrases) {
             if (!ph.used) continue;
-            for (const auto& c : ph.steps) if (c.inst >= 1 && c.inst <= bank::kInstrumentSlots) ++uses[c.inst];
+            for (const auto& c : ph.cells) if (c.inst >= 1 && c.inst <= bank::kInstrumentSlots) ++uses[c.inst];
         }
     return uses;
 }

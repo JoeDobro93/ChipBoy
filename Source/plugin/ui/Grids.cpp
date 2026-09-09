@@ -796,11 +796,15 @@ struct PhraseGrid::Impl {
 
     void refreshFromSong()
     {
-        core.rows = song != nullptr ? song->stepsOfBar(bar) : PhraseGrid::kVisibleSteps;
+        // Each channel's phrase has its own length now (section 25); the grid
+        // shows as many steps as the longest of the four in this row, so every
+        // cell it holds can be reached. The head's LEN is the next stage's.
+        core.rows = PhraseGrid::kVisibleSteps;
+        if (song != nullptr) { int n = 1; for (int ch = 0; ch < 4; ++ch) n = juce::jmax(n, song->stepsOfRow(ch, bar)); core.rows = n; }
         core.curRow = juce::jlimit(0, core.rows - 1, core.curRow);
         for (int ch = 0; ch < 4; ++ch) {
             const auto* p = song != nullptr ? song->phrase(song->phraseAt(ch, bar)) : nullptr;
-            for (int i = 0; i < kMax; ++i) cells[size_t(ch)][size_t(i)] = p != nullptr ? p->steps[size_t(i)] : tracker::Cell{};
+            for (int i = 0; i < kMax; ++i) cells[size_t(ch)][size_t(i)] = p != nullptr ? p->cells[size_t(i)] : tracker::Cell{};
             groove[size_t(ch)] = p != nullptr ? p->groove : 0;
             plays[size_t(ch)] = song != nullptr ? song->noteSource[size_t(ch)] : tracker::NoteSource::PianoRoll;
             trackerSource[size_t(ch)] = plays[size_t(ch)] == tracker::NoteSource::Tracker;
@@ -1181,14 +1185,18 @@ struct ChainColumn::Impl {
     int cellW() const { return juce::jmax(14, (owner.getWidth() - 2 * kPad - kMinGutter - kGap * (kCols - 1)) / kCols); }
     int gutter() const { return juce::jmax(kMinGutter, owner.getWidth() - 2 * kPad - kCols * cellW() - kGap * (kCols - 1)); }
     int visibleBars() const { return juce::jmax(1, (owner.getHeight() - kHeaderHeight) / kRowHeight); }
-    int songBars() const { return song != nullptr ? song->bars() : 0; }
+    int songBars() const { return song != nullptr ? song->rows() : 0; }
     /// One row past the song, so typing there grows it (UI_DESIGN section 7).
     int barCount() const { return juce::jmax(songBars(), juce::jmax(selectedBar, playingBar) + 1) + 1; }
     int slotAt(int ch, int bar) const { return song != nullptr ? song->phraseAt(ch, bar) : 0; }
+    /// The fifth column is the row's phrase length: a phrase carries its own
+    /// now (section 25), so it reads the first phrase this row holds.
     int stepsAt(int bar) const
     {
-        if (song == nullptr || bar < 0 || size_t(bar) >= song->barSteps.size()) return 0;
-        return song->barSteps[size_t(bar)];
+        if (song == nullptr || bar < 0) return 0;
+        for (int ch = 0; ch < 4; ++ch)
+            if (const auto* p = song->phrase(song->phraseAt(ch, bar))) return p->length();
+        return 0;
     }
     int valueAt(int col, int bar) const { return col == kSteps ? stepsAt(bar) : slotAt(col, bar); }
 
@@ -1237,12 +1245,12 @@ struct ChainColumn::Impl {
         if (col < 0 || col > kSteps || bar < 0) return;
         const int v = juce::jlimit(0, col == kSteps ? tracker::kMaxSteps : tracker::kPhraseSlots, value);
         if (v == valueAt(col, bar)) return;
-        if (col == kSteps) { if (owner.onBarStepsChange) owner.onBarStepsChange(bar, v); }
+        if (col == kSteps) { if (owner.onRowLengthChange) owner.onRowLengthChange(bar, v); }
         else if (owner.onChainChange) owner.onChainChange(col, bar, v);
         owner.repaint();
     }
 
-    static const char* colName(int col) { return col == kSteps ? "STP" : colours::channelName(col); }
+    static const char* colName(int col) { return col == kSteps ? "LEN" : colours::channelName(col); }
 
     /// The phrases the song uses, by slot, with how many bars play each:
     /// the list a right click on a chain cell opens (UI_DESIGN section 2.1).

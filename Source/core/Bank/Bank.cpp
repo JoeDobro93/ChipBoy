@@ -5,6 +5,24 @@
 
 namespace chipboy::bank {
 
+int envSegmentLevel(int from, int to, int ticks, int t, EnvCurve curve)
+{
+    // Section 27. The shape is a fraction num / den of the way from `from` to
+    // `to`; integers throughout, so the per-tick list is the same everywhere.
+    if (ticks <= 0) return to;
+    const int64_t n = ticks;
+    const int64_t k = std::clamp<int64_t>(t, 0, n);
+    int64_t num = k, den = n;
+    switch (curve) {
+        case EnvCurve::Exponential: num = n * n - (n - k) * (n - k); den = n * n; break;   // fast start
+        case EnvCurve::Logarithmic: num = k * k;                     den = n * n; break;   // slow start
+        case EnvCurve::Linear: break;
+    }
+    const int64_t d = int64_t(to) - int64_t(from);
+    const int64_t v = (d * num * 2 + (d >= 0 ? den : -den)) / (den * 2);   // round half away from zero
+    return int(int64_t(from) + v);
+}
+
 namespace {
 constexpr double kPi = 3.14159265358979323846;
 uint8_t q4(double x) { return uint8_t(std::clamp(int(std::lround(7.5 + 7.5 * x)), 0, 15)); }

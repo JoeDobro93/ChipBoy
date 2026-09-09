@@ -31,6 +31,7 @@ private:
     /// The groove slot in force on a channel: a G in a slot or a cell, else
     /// the phrase's own (docs/COMMANDS_AND_TEMPO.md section 9.2).
     int grooveInForce(int ch) const;
+    int rowTicks() const;
     /// Which slot the tab opens on: the lowest that is not straight, since a
     /// fresh song's slot 1 is 6 6 and shows nothing.
     int firstSwung() const;

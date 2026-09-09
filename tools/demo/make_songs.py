@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """ChipBoy demo song generator (docs/COMMANDS_AND_TEMPO.md section 24).
 
-Writes six original songs under Demo/songs (or --out), each a **format 5**
+Writes six original songs under Demo/songs (or --out), each a **format 6**
 `.cbsong`: the song *and* the bank it plays through, so opening one brings its
-own sounds with it (section 18).
+own sounds with it (section 18). Every phrase carries its own length and its
+groove, and each channel moves to its next row when its own phrase ends
+(section 25), so the widths a section asks for become phrase lengths.
 
   groove-study.cbsong      7/5 swing, an 8 8 8 triplet section, a G mid-song
   meter-study.cbsong       3/4 at twelve steps, a 7/8 bar, a 5/4 stretch
@@ -508,7 +510,9 @@ STRAIGHT = [6, 6]
 
 class Song:
     """Sections of bars, interned into phrases: the chains, the phrases, the
-    grooves and the bank, ready to be written as format 5."""
+    grooves and the bank, ready to be written as format 6. A bar of text is a
+    phrase of that many steps; two sections of different widths therefore make
+    two phrases, which is section 25's rule at generation time."""
 
     def __init__(self, title, bank, tempo, beats_per_bar=4, steps_per_bar=16,
                  grooves=None, blurb=""):
@@ -530,10 +534,21 @@ class Song:
         self._index = {}
 
     # -- writing the music ------------------------------------------------
+    def row_ticks(self, groove, steps):
+        """How long a phrase of that width under that groove lasts, in ticks:
+        a step is the groove's entry for it, six at the straight groove."""
+        g = self.grooves[groove - 1] if 1 <= groove <= 16 else list(STRAIGHT)
+        return sum(g[i % len(g)] for i in range(steps))
+
     def section(self, bars, groove=0, steps=0, **rows):
         """`bars` bars in which every channel plays its row. A row is one bar
-        of text, a list of that many, or None for a bar with no phrase (which
-        is a note off at its first tick, section 9.1)."""
+        of text, a list of that many, or None for a channel that rests (a note
+        off at its first tick, section 9.1).
+
+        A row with no phrase at all lasts ninety-six ticks -- sixteen straight
+        steps (section 25) -- so where the section's own rows are another
+        length the rest is written as a phrase of that width holding the note
+        off, which sounds the same and keeps the channel with the others."""
         for name in rows:
             if name not in CHANNEL_NAME:
                 raise ValueError("no channel called %r" % name)
@@ -550,6 +565,8 @@ class Song:
                 else:
                     text = row
                 where = "%s bar %d %s" % (self.title, first + bar + 1, name)
+                if text is None and self.row_ticks(groove, width) != 6 * 16:
+                    text = "off"                     # a rest the length of the section's own rows
                 self.chains[ch].append(0 if text is None else self._phrase(text, groove, width, ch, where))
         return self
 
@@ -560,16 +577,15 @@ class Song:
             raise ValueError("%s: %d steps of text in a %d-step bar" % (where, len(tokens), steps))
         for i, token in enumerate(tokens):
             cells.append(parse_cell(token, channel, self.bank, "%s step %d" % (where, i)))
-        key = (groove, tuple(c.key() for c in cells))
+        # The length is part of the phrase now, so it is part of its identity.
+        key = (groove, steps, tuple(c.key() for c in cells))
         if key not in self._index:
             self.phrases.append((groove, cells))
             self.phrase_steps.append(steps)
             self._index[key] = len(self.phrases)
             if len(self.phrases) > 255:
                 raise ValueError("%s: more than 255 phrases" % self.title)
-        slot = self._index[key]
-        self.phrase_steps[slot - 1] = max(self.phrase_steps[slot - 1], steps)
-        return slot
+        return self._index[key]
 
     # -- what came out ----------------------------------------------------
     def bars(self):
@@ -652,17 +668,13 @@ class Song:
     def song_var(self):
         phrases = []
         for i, (groove, cells) in enumerate(self.phrases, start=1):
-            steps = [c.var(k) for k, c in enumerate(cells) if not c.empty()]
-            phrases.append({"slot": i, "groove": groove, "steps": steps})
-        bar_steps = list(self.bar_steps)
-        while bar_steps and bar_steps[-1] == 0:
-            bar_steps.pop()
-        return {"format": "chipboy-song", "version": 5,
-                "steps": self.steps_per_bar, "stepsPerBar": self.steps_per_bar,
-                "tempoBpm": self.tempo, "songStartSeconds": 0.0, "beatsPerBar": self.beats_per_bar,
+            written = [c.var(k) for k, c in enumerate(cells) if not c.empty()]
+            phrases.append({"slot": i, "groove": groove,
+                            "steps": self.phrase_steps[i - 1], "cells": written})
+        return {"format": "chipboy-song", "version": 6,
+                "tempoBpm": self.tempo, "songStartSeconds": 0.0,
                 "phrases": phrases,
                 "chains": [list(c) for c in self.chains],
-                "barSteps": bar_steps,
                 "noteSource": [1, 1, 1, 1],          # every channel plays its own cells (Trkr)
                 "recordArm": [True, True, True, True],
                 "grooves": [list(g) for g in self.grooves]}
@@ -671,7 +683,7 @@ class Song:
         names = {}
         for slot in self.instruments_used():
             names[str(slot)] = self.bank.instruments[slot - 1][0]
-        return {"format": "chipboy-song-file", "version": 5,
+        return {"format": "chipboy-song-file", "version": 6,
                 "bank": self.bank.name, "instruments": names,
                 "bankData": self.bank.var(), "song": self.song_var()}
 

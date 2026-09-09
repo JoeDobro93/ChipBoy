@@ -5,14 +5,14 @@
 //
 //   Host  the host's tempo. A tick sits at every multiple of 1/24 beat of the
 //         host's beat position, so scrubbing is exact. The host contributes
-//         the tempo and nothing else: a bar is the song's beats per bar x 24
-//         in both sources, so a DAW changing its time signature moves its own
-//         bar markers and not the song's (section 19).
+//         the tempo and nothing else -- not its signature: the song's own
+//         time is its phrases' lengths and grooves, per channel, and the
+//         host's bars are a ruler beside it (sections 19 and 25).
 //   Song  the song's own tempo: a base tempo plus T commands at known ticks.
 //         The position at a host time is the integral of that map from the
-//         song start, computed from the song alone -- a jump to bar 9 lands on
-//         the step playing through would have reached, and a playback ROM
-//         could reproduce it.
+//         song start, computed from the song alone -- a jump into the middle
+//         lands on the step playing through would have reached, and a
+//         playback ROM could reproduce it.
 //
 // With the transport stopped both sources free-run at the current tempo, so
 // live playing still has tables and vibrato.
@@ -41,7 +41,8 @@ struct Transport {
     double seconds = 0.0;        ///< host time at the block start
     bool   timeValid = false;    ///< `seconds` is real
     // The host's time signature is not here on purpose: it contributes the
-    // tempo only, and the bars are the song's in both modes (section 19).
+    // tempo only, and a song's time is its phrases' lengths and grooves, per
+    // channel (sections 19 and 25).
 };
 
 /// The tempo from an absolute tick on: one per T cell, the base being the
@@ -57,7 +58,6 @@ struct ClockConfig {
     TempoSource source = TempoSource::Host;
     double songTempo = 120.0;        ///< Song source: the base tempo, the Song tempo parameter
     double songStartSeconds = 0.0;   ///< host time where song tick 0 sits
-    double beatsPerBar = 4.0;        ///< the song's, in both tempo modes (section 19)
 };
 
 class Clock {
@@ -77,7 +77,7 @@ public:
     // With no host play head -- the Standalone, or a host that offers no
     // position -- the plugin runs the song itself: the clock makes the
     // transport at the Song tempo, from the song start, and loops between two
-    // ticks the caller names (the song knows where its bars are, the clock
+    // ticks the caller names (the song knows where its rows are, the clock
     // does not). The tempo source is Song while it owns the transport.
     void setOwnsTransport(bool on);
     bool ownsTransport() const { return owns_; }
@@ -97,11 +97,6 @@ public:
     const TickPoint* ticks() const { return ticks_.data(); }
     size_t   tickCount() const { return tickCount_; }
     int64_t  tickAtBlockStart() const { return blockStartTick_; }
-    /// Beats per bar in force: the song's, whatever the host's signature is
-    /// (docs/COMMANDS_AND_TEMPO.md section 19).
-    double   beatsPerBar() const { return barBeats_; }
-    /// Ticks in a bar, the unit the Player counts in.
-    int      barTicks() const;
     /// The tempo in force at the block start.
     double   bpm() const { return bpm_; }
 
@@ -133,7 +128,6 @@ private:
     std::array<TickPoint, kMaxTicksPerBlock> ticks_{};
     size_t  tickCount_ = 0;
     int64_t blockStartTick_ = 0;
-    double  barBeats_ = 4.0;
     double  bpm_ = 120.0;
 
     // Song source: tick(s) = ticksAtSeconds(s) + offset_. The offset is zero

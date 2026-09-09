@@ -33,7 +33,9 @@ public:
     void setSlot(int slot);
     int slot() const;
     /// What the total is measured against: the bar's ticks, from the processor.
-    void setBarTicks(int ticks);
+    /// What the groove's total is measured against: the ticks the phrase it
+    /// is running on would take at the straight groove (section 25).
+    void setRowTicks(int ticks);
     void setPlayingStep(int step);   ///< -1 none
     /// Taller rows where there is room for them (the Grooves tab).
     void setRowHeight(int px);

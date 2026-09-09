@@ -1,6 +1,8 @@
 #include "plugin/shared/BankJson.h"
 
+#include <array>
 #include <memory>
+#include <utility>
 
 namespace chipboy::plugin {
 
@@ -46,6 +48,17 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     o->setProperty("duty", int(i.duty));
     { Array<var> seq; for (int k = 0; k < i.dutySeqLen; ++k) seq.add(int(i.dutySeq[size_t(k)])); o->setProperty("dutySeq", seq); }
     o->setProperty("envVol", int(i.envVol)); o->setProperty("envDir", int(i.envDir)); o->setProperty("envRate", int(i.envRate));
+    // The envelope's mode and, when it is Shaped, its segments (section 27).
+    // A Chip instrument writes the mode alone, so a factory bank reads the
+    // same as it always did but for one property.
+    o->setProperty("envMode", int(i.env.mode));
+    if (i.env.mode != EnvMode::Chip) {
+        o->setProperty("envAttack", int(i.env.attackTicks)); o->setProperty("envPeak", int(i.env.peak));
+        o->setProperty("envDecay", int(i.env.decayTicks)); o->setProperty("envSustain", int(i.env.sustain));
+        o->setProperty("envRelease", int(i.env.releaseTicks));
+        o->setProperty("envAttackCurve", int(i.env.attackCurve)); o->setProperty("envDecayCurve", int(i.env.decayCurve));
+        o->setProperty("envReleaseCurve", int(i.env.releaseCurve));
+    }
     o->setProperty("sweepRate", int(i.sweepRate)); o->setProperty("sweepDown", i.sweepDown); o->setProperty("sweepShift", int(i.sweepShift));
     o->setProperty("wave", int(i.wave)); o->setProperty("frameAdvance", int(i.frameAdvance)); o->setProperty("frameLoop", int(i.frameLoop)); o->setProperty("waveLevel", int(i.waveLevel));
     o->setProperty("kit", int(i.kit)); o->setProperty("kitLoop", int(i.kitLoop));
@@ -83,6 +96,17 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.dutySeqLen = 0;
     if (auto* seq = o->getProperty("dutySeq").getArray()) for (const auto& s : *seq) if (i.dutySeqLen < 16) i.dutySeq[i.dutySeqLen++] = uint8_t(std::clamp(int(s), 0, 3));
     i.envVol = uint8_t(std::clamp(getOr(o, "envVol", 15), 0, 15)); i.envDir = EnvDir(std::clamp(getOr(o, "envDir", 0), 0, 1)); i.envRate = uint8_t(std::clamp(getOr(o, "envRate", 0), 0, 7));
+    // A file written before section 27 has no envelope mode: it is Chip.
+    i.env = Envelope{};
+    i.env.mode = EnvMode(std::clamp(getOr(o, "envMode", 0), 0, 1));
+    i.env.attackTicks = uint8_t(std::clamp(getOr(o, "envAttack", 0), 0, 255));
+    i.env.peak = uint8_t(std::clamp(getOr(o, "envPeak", 15), 0, 15));
+    i.env.decayTicks = uint8_t(std::clamp(getOr(o, "envDecay", 0), 0, 255));
+    i.env.sustain = uint8_t(std::clamp(getOr(o, "envSustain", 15), 0, 15));
+    i.env.releaseTicks = uint8_t(std::clamp(getOr(o, "envRelease", 0), 0, 255));
+    i.env.attackCurve = EnvCurve(std::clamp(getOr(o, "envAttackCurve", 0), 0, 2));
+    i.env.decayCurve = EnvCurve(std::clamp(getOr(o, "envDecayCurve", 0), 0, 2));
+    i.env.releaseCurve = EnvCurve(std::clamp(getOr(o, "envReleaseCurve", 0), 0, 2));
     i.sweepRate = uint8_t(std::clamp(getOr(o, "sweepRate", 0), 0, 7)); i.sweepDown = bool(o->getProperty("sweepDown")); i.sweepShift = uint8_t(std::clamp(getOr(o, "sweepShift", 0), 0, 7));
     i.wave = uint8_t(std::clamp(getOr(o, "wave", 1), 1, 64)); i.frameAdvance = uint8_t(std::clamp(getOr(o, "frameAdvance", 0), 0, 15)); i.frameLoop = FrameLoop(std::clamp(getOr(o, "frameLoop", 0), 0, 2)); i.waveLevel = uint8_t(std::clamp(getOr(o, "waveLevel", 3), 0, 3));
     i.kit = uint8_t(std::clamp(getOr(o, "kit", 1), 1, 32)); i.kitLoop = KitLoop(std::clamp(getOr(o, "kitLoop", 0), 0, 2));
@@ -233,22 +257,23 @@ bool bankFromVar(const var& v, Bank& out)
 var songToVar(const tracker::Song& s)
 {
     auto* o = new DynamicObject();
-    // Format 5 (docs/COMMANDS_AND_TEMPO.md sections 11, 18 and 20): steps per
-    // bar is a number, bars may override it, a phrase holds sixty-four cells
-    // and only the cells that hold something are written, each with its step
-    // index; a channel's note source may be Hybrid. In a song *file* the
-    // format also embeds the bank (SongFiles.cpp).
-    o->setProperty("format", "chipboy-song"); o->setProperty("version", 5);
-    o->setProperty("steps", int(s.steps())); o->setProperty("stepsPerBar", int(s.steps()));
+    // Format 6 (docs/COMMANDS_AND_TEMPO.md section 25): every channel keeps
+    // its own time. A phrase carries its own length -- `steps`, 1-64 -- and
+    // its cells are `cells`, only the ones that hold something, each with its
+    // step index. Steps per bar, the bar overrides and beats per bar are gone
+    // with the bars. In a song *file* the format also embeds the bank
+    // (SongFiles.cpp).
+    o->setProperty("format", "chipboy-song"); o->setProperty("version", 6);
     // The song's own timeline (docs/COMMANDS_AND_TEMPO.md section 4).
-    o->setProperty("tempoBpm", s.tempoBpm); o->setProperty("songStartSeconds", s.songStartSeconds); o->setProperty("beatsPerBar", s.beatsPerBar);
+    o->setProperty("tempoBpm", s.tempoBpm); o->setProperty("songStartSeconds", s.songStartSeconds);
     Array<var> phrases;
     for (int i = 0; i < tracker::kPhraseSlots; ++i) {
         const auto& p = s.phrases[size_t(i)]; if (!p.used) continue;
-        auto* po = new DynamicObject(); po->setProperty("slot", i + 1); po->setProperty("groove", int(p.groove));
-        Array<var> steps;
+        auto* po = new DynamicObject();
+        po->setProperty("slot", i + 1); po->setProperty("groove", int(p.groove)); po->setProperty("steps", p.length());
+        Array<var> cells;
         for (int k = 0; k < tracker::kMaxSteps; ++k) {
-            const auto& c = p.steps[size_t(k)];
+            const auto& c = p.cells[size_t(k)];
             if (tracker::emptyCell(c)) continue;
             auto* co = new DynamicObject();
             co->setProperty("s", k);
@@ -258,21 +283,13 @@ var songToVar(const tracker::Song& s)
             if (c.table) co->setProperty("t", int(c.table));
             if (c.cmd1.cmd != Cmd::None) co->setProperty("c1", cmdToVar(c.cmd1));
             if (c.cmd2.cmd != Cmd::None) co->setProperty("c2", cmdToVar(c.cmd2));
-            steps.add(var(co));
+            cells.add(var(co));
         }
-        po->setProperty("steps", steps); phrases.add(var(po));
+        po->setProperty("cells", cells); phrases.add(var(po));
     }
     o->setProperty("phrases", phrases);
     Array<var> chains; for (const auto& c : s.chain) { Array<var> a; for (auto p : c) a.add(int(p)); chains.add(a); }
     o->setProperty("chains", chains);
-    // A bar's own step count, 0 = the song's; trailing defaults are left out.
-    {
-        Array<var> bs;
-        size_t n = s.barSteps.size();
-        while (n > 0 && s.barSteps[n - 1] == 0) --n;
-        for (size_t k = 0; k < n; ++k) bs.add(int(s.barSteps[k]));
-        o->setProperty("barSteps", bs);
-    }
     Array<var> src; for (auto n : s.noteSource) src.add(int(n)); o->setProperty("noteSource", src);
     Array<var> arm; for (auto a : s.recordArm) arm.add(a); o->setProperty("recordArm", arm);
     // A groove is sixteen tick counts (section 9.2); trailing unused entries
@@ -283,30 +300,83 @@ var songToVar(const tracker::Song& s)
     return var(o);
 }
 
+namespace {
+
+/// A format-5 or older song has bars: one step count for the whole song and,
+/// perhaps, an override on a bar. Section 25 converts that to phrase lengths:
+/// every used phrase takes the file's steps per bar, and a bar override
+/// becomes the length of the phrase in that bar -- so a phrase used under two
+/// different overrides has to be two phrases, and the second is a copy in the
+/// first free slot.
+void lengthsFromBars(tracker::Song& out, int stepsPerBar, const std::vector<int>& barSteps)
+{
+    const int def = std::clamp(stepsPerBar, 1, tracker::kMaxSteps);
+    for (auto& p : out.phrases) if (p.used) p.steps = uint8_t(def);
+    std::array<int, tracker::kPhraseSlots + 1> assigned{};      // the length each slot has taken, 0 = none yet
+    std::vector<std::pair<int, int>> copies;                    // (original slot, length) -> the copy's slot
+    std::vector<int> copySlot;
+    int bars = int(barSteps.size());
+    for (const auto& c : out.chain) bars = std::max(bars, int(c.size()));
+    for (int bar = 0; bar < bars; ++bar) {
+        const int over = bar < int(barSteps.size()) ? barSteps[size_t(bar)] : 0;
+        const int want = over > 0 ? std::clamp(over, 1, tracker::kMaxSteps) : def;
+        for (auto& chain : out.chain) {
+            if (size_t(bar) >= chain.size()) continue;
+            const int slot = chain[size_t(bar)];
+            if (slot < 1 || slot > tracker::kPhraseSlots || !out.phrases[size_t(slot - 1)].used) continue;
+            if (assigned[size_t(slot)] == 0) { assigned[size_t(slot)] = want; out.phrases[size_t(slot - 1)].steps = uint8_t(want); continue; }
+            if (assigned[size_t(slot)] == want) continue;
+            size_t at = 0;
+            for (; at < copies.size(); ++at) if (copies[at].first == slot && copies[at].second == want) break;
+            if (at == copies.size()) {
+                int free = 0;
+                for (int i = 0; i < tracker::kPhraseSlots; ++i) if (!out.phrases[size_t(i)].used) { free = i + 1; break; }
+                if (free == 0) continue;                        // the song is full: it keeps the length it has
+                out.phrases[size_t(free - 1)] = out.phrases[size_t(slot - 1)];
+                out.phrases[size_t(free - 1)].steps = uint8_t(want);
+                assigned[size_t(free)] = want;
+                copies.push_back({ slot, want });
+                copySlot.push_back(free);
+            }
+            chain[size_t(bar)] = uint8_t(copySlot[at]);
+        }
+    }
+}
+
+} // namespace
+
 bool songFromVar(const var& v, tracker::Song& out)
 {
     auto* o = v.getDynamicObject(); if (!o) return false;
     if (o->getProperty("format").toString() != "chipboy-song") return false;
     { const auto blank = std::make_unique<tracker::Song>(); out = std::move(*blank); }
-    // Format 4 writes `steps`, a number 1-64; a file older than it carries
-    // `stepsPerBar`, which was 8 or 16 (sections 9.1 and 11).
-    out.stepsPerBar = uint8_t(std::clamp(o->hasProperty("steps") ? getOr(o, "steps", 16) : getOr(o, "stepsPerBar", 16), 1, tracker::kMaxSteps));
+    // Format 6 has no bars at all. Older files carry a step count for the
+    // whole song (`steps`, a number since format 4; `stepsPerBar`, 8 or 16,
+    // before it) and perhaps a bar override, which become phrase lengths
+    // below (section 25).
+    const int fileSteps = std::clamp(o->hasProperty("steps") ? getOr(o, "steps", 16) : getOr(o, "stepsPerBar", 16), 1, tracker::kMaxSteps);
     out.tempoBpm = std::clamp(o->hasProperty("tempoBpm") ? double(o->getProperty("tempoBpm")) : 120.0, 40.0, 255.0);
     out.songStartSeconds = std::max(0.0, o->hasProperty("songStartSeconds") ? double(o->getProperty("songStartSeconds")) : 0.0);
-    out.beatsPerBar = std::clamp(o->hasProperty("beatsPerBar") ? double(o->getProperty("beatsPerBar")) : 4.0, 0.25, 32.0);
+    bool haveLengths = false;
     if (auto* ph = o->getProperty("phrases").getArray())
         for (const auto& pv : *ph) {
             auto* po = pv.getDynamicObject(); if (!po) continue;
             const int slot = getOr(po, "slot", 0); if (slot < 1 || slot > tracker::kPhraseSlots) continue;
             auto& p = out.phrases[size_t(slot - 1)]; p.used = true; p.groove = uint8_t(std::clamp(getOr(po, "groove", 0), 0, 16));
-            if (auto* steps = po->getProperty("steps").getArray())
-                for (int k = 0; k < steps->size(); ++k) {
-                    auto* co = (*steps)[k].getDynamicObject(); if (!co) continue;
+            // Format 6: `steps` is the phrase's length and the cells are
+            // `cells`. Before it, `steps` *was* the cells.
+            const var stepsVar = po->getProperty("steps");
+            const Array<var>* cells = po->getProperty("cells").getArray();
+            if (!cells && stepsVar.isArray()) cells = stepsVar.getArray();
+            else if (!stepsVar.isArray() && po->hasProperty("steps")) { p.steps = uint8_t(std::clamp(getOr(po, "steps", 16), 1, tracker::kMaxSteps)); haveLengths = true; }
+            if (cells)
+                for (int k = 0; k < cells->size(); ++k) {
+                    auto* co = (*cells)[k].getDynamicObject(); if (!co) continue;
                     // Format 4 stamps each cell with its step; before it the
                     // cells were a dense list of sixteen.
                     const int at = co->hasProperty("s") ? getOr(co, "s", 0) : k;
                     if (at < 0 || at >= tracker::kMaxSteps) continue;
-                    auto& c = p.steps[size_t(at)];
+                    auto& c = p.cells[size_t(at)];
                     c.note = uint8_t(std::clamp(getOr(co, "n", 0), 0, 255)); c.vel = uint8_t(std::clamp(getOr(co, "v", 0), 0, 127));
                     c.inst = uint8_t(std::clamp(getOr(co, "i", 0), 0, 128)); c.table = uint8_t(std::clamp(getOr(co, "t", 0), 0, 64));
                     c.cmd1 = cmdFromVar(co->getProperty("c1")); c.cmd2 = cmdFromVar(co->getProperty("c2"));
@@ -314,9 +384,11 @@ bool songFromVar(const var& v, tracker::Song& out)
         }
     if (auto* chains = o->getProperty("chains").getArray())
         for (int ch = 0; ch < std::min(4, chains->size()); ++ch) if (auto* a = (*chains)[ch].getArray()) { out.chain[size_t(ch)].clear(); for (const auto& p : *a) out.chain[size_t(ch)].push_back(uint8_t(std::clamp(int(p), 0, 255))); }
-    if (auto* bs = o->getProperty("barSteps").getArray()) {
-        out.barSteps.clear();
-        for (const auto& v2 : *bs) out.barSteps.push_back(uint8_t(std::clamp(int(v2), 0, tracker::kMaxSteps)));
+    if (!haveLengths) {
+        std::vector<int> barSteps;
+        if (auto* bs = o->getProperty("barSteps").getArray())
+            for (const auto& v2 : *bs) barSteps.push_back(std::clamp(int(v2), 0, tracker::kMaxSteps));
+        lengthsFromBars(out, fileSteps, barSteps);
     }
     // 0 MIDI, 1 Trkr, 2 Hybrid (section 20); a file older than format 5 has
     // only the first two.
@@ -332,6 +404,7 @@ bool songFromVar(const var& v, tracker::Song& out)
                 for (int i = 0; i < std::min(int(t.size()), a->size()); ++i) t[size_t(i)] = uint8_t(std::clamp(int((*a)[i]), 0, 48));
                 if (t[0] == 0) t[0] = 6;
             }
+    tracker::buildRowTables(out);
     return true;
 }
 

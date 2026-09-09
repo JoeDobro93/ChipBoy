@@ -42,6 +42,110 @@ uint8_t nr32Code(uint8_t level) { static const uint8_t c[4] = { 0, 3, 2, 1 }; re
 // NRx1's length bits from an instrument's length (0 = no length counter).
 uint8_t lengthCode6(uint16_t length) { return length ? uint8_t(uint8_t(64 - std::min<int>(64, length)) & 0x3F) : 0; }
 
+/* ------------------------------------------------------------ zombie mode
+ *
+ * Section 26: a level change on a running pulse or noise channel is made the
+ * way a Game Boy driver can make it -- by writing NRx2 without a trigger and
+ * living with what the chip does to the volume. What it does is this (the
+ * APU's own rule, Apu::writeSquare case 2 and writeNoise case 2, reference
+ * section 10.2), with the state *before* the write deciding:
+ *
+ *     if (period == 0 && running) volume += 1;
+ *     else if (direction is down)  volume += 2;
+ *     if (the direction bit changed) volume = 16 - volume;
+ *     volume &= 15;
+ *
+ * So on a channel whose envelope is holding -- period 0, which is where every
+ * software level lives -- a write with the same direction bit adds one and a
+ * write that flips it lands on 15 - v. Both consoles the APU models take the
+ * same rule; setModel() is read here so that a console with its own would get
+ * its own sequence rather than this one (docs/HARDWARE_DRIVER_AUDIT.md).
+ */
+
+/// One NRx2 write's effect on the chip's volume.
+uint8_t zombieVolume(uint8_t vol, uint8_t oldPeriod, bool oldUp, bool running, bool newUp)
+{
+    uint8_t v = vol;
+    if (oldPeriod == 0 && running) v = uint8_t(v + 1);
+    else if (!oldUp)               v = uint8_t(v + 2);
+    if (oldUp != newUp)            v = uint8_t(16 - v);
+    return uint8_t(v & 15);
+}
+
+/// The NRx2 byte for one step of a sequence: the level in the high nibble --
+/// which the chip only reads at the next trigger, so it is free, and saying
+/// the target there is what makes a register log readable -- the direction
+/// bit, and the period. A byte whose top five bits are zero would clear the
+/// DAC and stop the channel, so the level 0 with the direction down is
+/// written as level 1 instead; the volume it lands on is the same.
+uint8_t nrx2Byte(int level, bool up, uint8_t period)
+{
+    uint8_t b = uint8_t((uint8_t(level & 15) << 4) | (up ? 0x08 : 0) | (period & 7));
+    if ((b & 0xF8) == 0) b = uint8_t(0x10 | (period & 7));
+    return b;
+}
+
+/// The shortest sequence of NRx2 writes from `vol` to `target` that ends with
+/// the wanted period and direction in the register. A breadth-first search
+/// over (volume, period, direction) -- sixty-four states, two or four moves
+/// each -- so the answer is the shortest by construction whatever the rules
+/// do. `dirFree` lets the search end on either direction bit, which is what a
+/// holding envelope wants: with the period at zero the bit says nothing about
+/// the sound. Returns how many writes were found and fills `outUp` /
+/// `outPeriod`; when the target cannot be reached at all (an envelope that has
+/// run to its rail can only move in twos) the nearest volume is taken.
+int zombieSequence(uint8_t vol, bool up, uint8_t period, bool running,
+                   int target, uint8_t wantPeriod, bool wantUp, bool dirFree,
+                   bool* outUp, uint8_t* outPeriod, int maxWrites)
+{
+    struct Node { int16_t from = -1; uint8_t vol = 0; bool up = false; uint8_t period = 0; uint8_t depth = 0; };
+    // A state is (volume, direction, period). After the first write the period
+    // is one of two -- zero, or the one asked for -- so three classes cover
+    // everything, the third being whatever the channel started at.
+    const uint8_t periods[2] = { 0, wantPeriod };
+    auto pclass = [&](uint8_t p) { return p == 0 ? 0 : p == wantPeriod ? 1 : 2; };
+    auto index = [&](uint8_t v, bool u, uint8_t p) { return int(v) | (u ? 16 : 0) | (pclass(p) << 5); };
+    Node nodes[96];
+    int order[96]; int head = 0, tail = 0;
+    bool seen[96] = {};
+    const int start = index(vol, up, period);
+    nodes[start] = { -1, vol, up, period, 0 };
+    seen[start] = true; order[tail++] = start;
+    int best = -1, bestScore = 1 << 20;
+    while (head < tail) {
+        const int cur = order[head++];
+        const Node n = nodes[cur];
+        const bool goal = (n.period == wantPeriod) && (dirFree || n.up == wantUp);
+        if (goal) {
+            const int score = std::abs(int(n.vol) - target) * 64 + n.depth;
+            if (score < bestScore) { bestScore = score; best = cur; }
+            if (n.vol == target) break;                 // shortest exact answer: nothing later can beat it
+        }
+        if (int(n.depth) >= maxWrites) continue;
+        for (int d = 0; d < 2; ++d)
+            for (int pi = 0; pi < 2; ++pi) {
+                if (pi == 1 && periods[1] == periods[0]) continue;
+                const bool nu = d != 0;
+                const uint8_t np = periods[pi];
+                const uint8_t nv = zombieVolume(n.vol, n.period, n.up, running, nu);
+                const int idx = index(nv, nu, np);
+                if (seen[idx]) continue;
+                seen[idx] = true;
+                nodes[idx] = { int16_t(cur), nv, nu, np, uint8_t(n.depth + 1) };
+                order[tail++] = idx;
+            }
+    }
+    if (best < 0) return -1;
+    int i = nodes[best].depth;
+    const int depth = i;
+    for (int at = best; nodes[at].from >= 0; at = nodes[at].from) {
+        --i;
+        outUp[size_t(i)] = nodes[at].up;
+        outPeriod[size_t(i)] = nodes[at].period;
+    }
+    return depth;
+}
+
 } // namespace
 
 /* ------------------------------------------------------------ pitch */
@@ -233,9 +337,16 @@ void Driver::reloadInstrument(int ch)
     v.inst = core; v.haveInst = true;
     latch(ch);
     applyLevelParam(ch);
-    const uint8_t tbl = v.tableOverride ? v.tableOverride : core.table;
-    v.tableSlot = tbl; v.tableStep = 0; v.tableRow = 0; v.tableWait = 0; v.tableGroove = 0;
-    v.tableOn = tbl && bank_ && bank_->table(tbl);
+    // A shaped instrument brings its envelope with it: the load triggers the
+    // channel, so the shape starts again from its attack (sections 26, 27).
+    v.shapedOn = core.env.mode == EnvMode::Shaped;
+    v.shapedTaken = false; v.shapedRelease = false; v.shapedTick = 0; v.shapedFrom = 0;
+    if (v.shapedOn) {
+        const uint8_t level = shapedLevel(v);
+        if (core.type == InstrumentType::Wave || core.type == InstrumentType::Kit) v.waveLevel = uint8_t(level / 4);
+        else { v.envVol = level; v.envRate = 0; v.envDir = EnvDir::Up; }
+    }
+    beginTableRun(ch, v.tableOverride ? v.tableOverride : core.table);
     restartPitchClock(ch);                 // the new instrument may run its pitch elsewhere
     fireSlots(ch);
     if (v.active) {
@@ -317,7 +428,10 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
     // overlaps legato.
     bool plain = true;
     if (cell) plain = cell->inst != 0;
-    else if (over && v.inst.overlap == Overlap::Legato && instrumentKey(ch, vel) == v.instKey) plain = false;
+    // A note over a held one is bare only when it *moves*: a MIDI note-on at
+    // the pitch already sounding is a repeat -- a drum hit in succession -- and
+    // is plain whatever Overlap says (section 31).
+    else if (over && note != v.note && v.inst.overlap == Overlap::Legato && instrumentKey(ch, vel) == v.instKey) plain = false;
     // What this note is recorded as (section 9.4): the instrument it loads,
     // and whether it was plain. Decided here, so a note D holds back reports
     // the same thing as one that starts at once. A bare note keeps the slot
@@ -380,24 +494,38 @@ void Driver::beginRelease(int ch)
     Voice& v = v_[size_t(ch)];
     v.active = false; v.tableOn = false; v.sliding = false; v.chordN = 0;
     v.pitchClockOn = false; v.retrigEvery = 0; v.retrigOnce = false; v.bendSpeed = 0;
+    // A shaped envelope has its own release: from the level the note-off found
+    // to silence, one level per tick, over its own curve (section 27). A level
+    // change that took the envelope over leaves the chip's release instead.
+    if (v.shapedOn && !v.shapedTaken) {
+        if (!v.dacOn || v.inst.env.releaseTicks == 0) { v.shapedOn = false; stopVoice(ch, true); return; }
+        v.shapedRelease = true; v.shapedTick = 0;
+        v.shapedFrom = (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit)
+                       ? uint8_t(v.waveLevel * 5) : v.envVol;
+        v.releasing = true;
+        return;
+    }
     if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) {
         v.releasing = v.dacOn;              // the level steps down from here, a tick apart
         return;
     }
-    // A held or rising envelope would never finish: write a decrease at rate 1
-    // so the note fades out. No trigger -- that would start it again.
+    // A held or rising envelope would never finish: a decrease at rate 1 makes
+    // the note fade out. The level is where it is, so the rate reaches the
+    // register through a zombie sequence rather than a rewrite that would move
+    // the volume with it -- and never through a trigger (section 26).
     if (v.dacOn && (v.envRate == 0 || v.envDir == EnvDir::Up)) {
         v.envRate = 1; v.envDir = EnvDir::Down;
-        emit(regAddr(ch, 2), uint8_t((v.envVol << 4) | 1), true);
-        v.volume = v.envVol;
+        setLevel(ch);
     }
 }
 
 /// WAV and KIT have no envelope generator, so their release is four levels one
-/// tick apart: 100, 50, 25, mute (section 8).
+/// tick apart: 100, 50, 25, mute (section 8). A shaped envelope's release is
+/// its own curve instead (section 27).
 void Driver::stepRelease(int ch)
 {
     Voice& v = v_[size_t(ch)];
+    if (v.shapedOn && v.shapedRelease) { stepShaped(ch); return; }
     if (v.waveLevel > 0) {
         v.waveLevel = uint8_t(v.waveLevel - 1);
         emit(regAddr(2, 2), nr32Code(v.waveLevel));
@@ -457,20 +585,39 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     const bool velToVolume = v.velRule == 2 || (v.velRule == 0 && v.p.velocityMode == 0);
     if (velToVolume && (core.type == InstrumentType::Pulse || core.type == InstrumentType::Noise)) v.envVol = levelFromVelocity(vel);
     applyLevelParam(ch);
+    // A shaped envelope owns the level from here (section 27): the chip's own
+    // envelope holds at period 0 and its direction bit is up, so a level of
+    // zero keeps the DAC on and every step of the shape can be a zombie write.
+    v.shapedOn = core.env.mode == EnvMode::Shaped;
+    v.shapedTaken = false; v.shapedRelease = false; v.shapedTick = 0; v.shapedFrom = 0;
+    if (v.shapedOn) {
+        const uint8_t level = shapedLevel(v);
+        if (core.type == InstrumentType::Wave || core.type == InstrumentType::Kit) v.waveLevel = uint8_t(level / 4);
+        else { v.envVol = level; v.envRate = 0; v.envDir = EnvDir::Up; }
+    }
     // table
     const uint8_t tbl = v.tableOverride ? v.tableOverride : core.table;
     v.tableSlot = tbl; v.tableOn = tbl && bank_ && bank_->table(tbl);
     v.tableWait = 0;
+    if (v.tableOn) ++v.tableRun;                  // a note-on starts a run of its own (section 32)
     // A Step-mode table advances one row per trigger instead of restarting,
     // which is the whole point of it; a table that was not already running
     // starts at its first row (section 7).
     if (core.tableMode != TableMode::Step || hadTable != tbl) { v.tableStep = 0; v.tableRow = 0; v.tableGroove = 0; }
-    if (core.tableMode == TableMode::Step && v.tableOn) {
-        const bool was = inNoteOn_; inNoteOn_ = true;
-        stepTable(ch);
-        inNoteOn_ = was;
-    }
     if (core.dutySeqLen) v.duty = uint8_t(core.dutySeq[0] & 3);
+    // The table's first row fires with the note-on, in the same event, never
+    // at the next tick (section 31): a table that drops the pitch or the level
+    // starts dropping at once, so the raw note is never heard -- which is what
+    // it sounded like when a note fell just after a tick. Inside the note-on
+    // the row only changes the running state, so the note's own writes carry
+    // its transpose, its level and its commands; the rows after it step on the
+    // ticks, and tableJustStarted keeps this tick from taking a second one.
+    if (v.tableOn) {
+        const bool wasIn = inNoteOn_; inNoteOn_ = true;
+        stepTable(ch);
+        inNoteOn_ = wasIn;
+        v.tableJustStarted = true;
+    }
     // instrument, then its table, then CMD1 and CMD2: the slots in force apply
     // to every note in their span (section 3). Their registers go out with the
     // note's own writes below rather than twice.
@@ -500,7 +647,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
             if (ch == 0) emit(regAddr(0, 0), uint8_t((v.sweepRate << 4) | (v.sweepDown ? 8 : 0) | v.sweepShift), true);
             const uint8_t len = core.length ? uint8_t(64 - std::min<int>(64, core.length)) : 0;
             emit(regAddr(ch, 1), uint8_t((v.duty << 6) | (len & 0x3F)), true);
-            writeEnvelope(ch, false);   // sets dacOn; the previous state decides the quiet-edge marker
+            writeEnvelope(ch, false);   // the whole register; the trigger follows with the period
             writePeriod(ch, true);
             break;
         }
@@ -559,8 +706,8 @@ void Driver::killDac(int ch)
     // Clearing the DAC holds the level on this hardware, so it is silent
     // (reference section 9).
     if (ch == 2) emit(regAddr(2, 0), 0x00, true);
-    else emit(regAddr(ch, 2), 0x00, true);
-    v.dacOn = false; v.killed = true;
+    else { emit(regAddr(ch, 2), 0x00, true); v.hwPeriod = 0; v.hwUp = false; v.hwInitial = 0; }
+    v.dacOn = false; v.hwOn = false; v.killed = true;
 }
 
 void Driver::stopVoice(int ch, bool kill)
@@ -568,6 +715,7 @@ void Driver::stopVoice(int ch, bool kill)
     Voice& v = v_[size_t(ch)];
     v.active = false; v.tableOn = false; v.sliding = false; v.chordN = 0; v.kitOn = false; v.streamActive = false; v.pendingOn = false;
     v.pitchClockOn = false; v.releasing = false;
+    v.shapedOn = false; v.shapedRelease = false; v.tableJustStarted = false;
     // A kill or a stop ends the phrase: a key released afterwards must not
     // bring a note back that nobody is playing (section 8).
     v.heldCount = 0;
@@ -579,6 +727,17 @@ void Driver::stopVoice(int ch, bool kill)
 void Driver::allNotesOff(int ch)
 {
     Voice& v = v_[size_t(ch)];
+    // A note-on still waiting for its tick is a delayed start like any other
+    // (section 8): it has to go, or the queue puts back the note this just
+    // silenced -- which the fuzz found, as a channel still sounding after a
+    // panic (section 28).
+    size_t keep = 0;
+    for (size_t i = 0; i < pendingCount_; ++i) {
+        if ((pending_[i].channel & 3) == (ch & 3)) continue;
+        if (keep != i) { pending_[keep] = pending_[i]; pendingFrom_[keep] = pendingFrom_[i]; }
+        ++keep;
+    }
+    pendingCount_ = keep;
     v.delay = -1; v.kill = -1;
     v.heldCmdOn = false; v.heldDelay = 0; v.heldCmd[0] = {}; v.heldCmd[1] = {};
     v.hybridSlide = {};
@@ -704,7 +863,7 @@ void Driver::writePeriod(int ch, bool trigger)
         else { const int n = std::clamp(int(v.note) + v.p.transpose, 0, 127); s = uint8_t(noiseShiftMap_[size_t(n)]); d = uint8_t(noiseDivMap_[size_t(n)]); s = uint8_t(std::clamp(int(s) + int(v.noiseShift) - 5, 0, 13)); }
         v.noiseShift = s; v.noiseDiv = d;
         emit(regAddr(3, 3), uint8_t((s << 4) | (v.lfsr7 ? 8 : 0) | (d & 7)));
-        if (trigger) emit(regAddr(3, 4), uint8_t(0x80 | (v.inst.length ? 0x40 : 0)), true);
+        if (trigger) { emit(regAddr(3, 4), uint8_t(0x80 | (v.inst.length ? 0x40 : 0)), true); markTrigger(ch); }
         v.lastPeriod = int16_t((s << 4) | d);
         return;
     }
@@ -726,9 +885,37 @@ void Driver::writePeriod(int ch, bool trigger)
         emit(regAddr(ch, 3), uint8_t(f & 0xFF), trigger || ((v.lastPeriod & 0xFF) != (f & 0xFF)));
         const uint8_t hi = uint8_t((f >> 8) | (trigger ? 0x80 : 0) | (v.inst.length ? 0x40 : 0));
         emit(regAddr(ch, 4), hi, trigger || ((v.lastPeriod >> 8) != (f >> 8)));
+        if (trigger && v.inst.type == InstrumentType::Pulse) markTrigger(ch);
         if (ch == 2) updateWaveTimer(ch, f, trigger);
     }
     v.lastPeriod = int16_t(f);
+}
+
+void Driver::emitNrx2(int ch, uint8_t value)
+{
+    // One NRx2 write, with the model of the chip's envelope moved on exactly
+    // as the chip moves it: on a running channel the write is a zombie write
+    // and changes the volume (section 26), and the top five bits decide the
+    // DAC. What the driver *wants* (v.envVol and the rest) is not touched.
+    Voice& v = v_[size_t(ch)];
+    const bool newUp = (value & 0x08) != 0;
+    if (v.hwOn && v.dacOn) v.volume = zombieVolume(v.volume, v.hwPeriod, v.hwUp, v.hwRun, newUp);
+    v.hwUp = newUp;
+    v.hwPeriod = uint8_t(value & 7);
+    v.hwInitial = uint8_t(value >> 4);
+    emit(regAddr(ch, 2), value, true);
+    v.dacOn = (value & 0xF8) != 0;
+    if (!v.dacOn) v.hwOn = false;                    // the DAC off disables the channel
+}
+
+void Driver::markTrigger(int ch)
+{
+    // A trigger reloads the volume from NRx2's initial volume and starts the
+    // envelope again (Apu::triggerSquare).
+    Voice& v = v_[size_t(ch)];
+    v.volume = v.hwInitial;
+    v.hwRun = true;
+    v.hwOn = v.dacOn;
 }
 
 void Driver::writeEnvelope(int ch, bool trigger)
@@ -738,20 +925,80 @@ void Driver::writeEnvelope(int ch, bool trigger)
         emit(regAddr(2, 2), nr32Code(v.waveLevel));
         return;
     }
-    const uint8_t nr2 = uint8_t((v.envVol << 4) | (v.envDir == EnvDir::Up ? 8 : 0) | (v.envRate & 7));
-    // Rewriting NRx2 on a running channel is zombie mode; a driver that wants
-    // a clean level change writes the register and then retriggers, which
-    // restarts the envelope but keeps the duty phase (reference section 4).
-    // With "volume writes at edges" the plugin moves this burst to the low
-    // half of the pulse cycle, where a level change is silent.
-    if (global_.volumeAtEdges && v.active && v.dacOn && (ch == 0 || ch == 1) && v.inst.type == InstrumentType::Pulse) emit(kAlignToQuietEdge, uint8_t(ch), true);
-    emit(regAddr(ch, 2), nr2, true);
-    v.dacOn = (nr2 & 0xF8) != 0;
-    v.volume = v.envVol;
+    // The whole register, as a note-on writes it. Every level change that is
+    // not a note-on, R or an E moving the envelope goes through setLevel()
+    // instead, which never triggers (section 26).
+    emitNrx2(ch, uint8_t((v.envVol << 4) | (v.envDir == EnvDir::Up ? 8 : 0) | (v.envRate & 7)));
     if (trigger) {
         const uint16_t f = uint16_t(std::max<int16_t>(0, v.lastPeriod));
         if (v.inst.type == InstrumentType::Noise) emit(regAddr(3, 4), uint8_t(0x80 | (v.inst.length ? 0x40 : 0)), true);
         else emit(regAddr(ch, 4), uint8_t((f >> 8) | 0x80 | (v.inst.length ? 0x40 : 0)), true);
+        markTrigger(ch);
+    }
+}
+
+void Driver::setLevel(int ch)
+{
+    Voice& v = v_[size_t(ch)];
+    if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) {
+        // The wave channel has no envelope generator: its level is the two
+        // bits of NR32, one write, no trigger and no zombie mode (section 26).
+        if (v.active && !inNoteOn_) emit(regAddr(2, 2), nr32Code(v.waveLevel));
+        return;
+    }
+    // A note-on in progress, or a channel the chip is not running: the level
+    // is running state and the note's own writes carry it. A voice that has
+    // been released is not `active` and still takes a level change -- that is
+    // what its fade is (section 26).
+    if (inNoteOn_ || !v.dacOn || !v.hwOn) return;
+    const int target = std::clamp<int>(v.envVol, 0, 15);
+    if (v.volume == target && v.hwPeriod == (v.envRate & 7)) return;    // already there
+    bool ups[24] = {}; uint8_t periods[24] = {};
+    const bool dirFree = (v.envRate & 7) == 0;      // a holding envelope: the direction bit says nothing
+    const int n = zombieSequence(v.volume, v.hwUp, v.hwPeriod, v.hwRun, target,
+                                 uint8_t(v.envRate & 7), v.envDir == EnvDir::Up, dirFree,
+                                 ups, periods, 16);
+    if (n <= 0) {
+        // Unreachable (a channel whose envelope has run to its rail can only
+        // move in twos) or already there: one honest write, and the model
+        // takes whatever the chip makes of it.
+        if (n < 0) emitNrx2(ch, nrx2Byte(target, v.envDir == EnvDir::Up, uint8_t(v.envRate & 7)));
+        return;
+    }
+    for (int i = 0; i < n; ++i) emitNrx2(ch, nrx2Byte(target, ups[size_t(i)], periods[size_t(i)]));
+}
+
+uint8_t Driver::shapedLevel(const Voice& v) const
+{
+    const Envelope& e = v.inst.env;
+    auto clamp15 = [](int x) { return uint8_t(std::clamp(x, 0, 15)); };
+    if (v.shapedRelease) return clamp15(envSegmentLevel(v.shapedFrom, 0, e.releaseTicks, int(v.shapedTick), e.releaseCurve));
+    const int a = e.attackTicks, d = e.decayTicks, t = int(v.shapedTick);
+    if (t < a) return clamp15(envSegmentLevel(0, e.peak, a, t, e.attackCurve));
+    if (t < a + d) return clamp15(envSegmentLevel(e.peak, e.sustain, d, t - a, e.decayCurve));
+    return clamp15(e.sustain);
+}
+
+void Driver::stepShaped(int ch)
+{
+    // One level per tick from the segments, written only when it changes and
+    // always through section 26 -- no trigger, so a playback ROM can replay
+    // the same list of levels (section 27).
+    Voice& v = v_[size_t(ch)];
+    if (!v.shapedOn || v.shapedTaken) return;
+    ++v.shapedTick;
+    if (v.shapedRelease && int(v.shapedTick) >= int(v.inst.env.releaseTicks)) {
+        v.shapedOn = false; v.shapedRelease = false;
+        stopVoice(ch, true);
+        return;
+    }
+    const uint8_t level = shapedLevel(v);
+    if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) {
+        const uint8_t code = uint8_t(level / 4);
+        if (code != v.waveLevel) { v.waveLevel = code; setLevel(ch); }
+    } else if (level != v.envVol) {
+        v.envVol = level;
+        setLevel(ch);
     }
 }
 
@@ -931,7 +1178,7 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
     switch (c.cmd) {
         case Cmd::A:                                  // table select, 0 stops
             if (c.a <= 0) v.tableOn = false;
-            else { v.tableSlot = uint8_t(std::clamp<int>(c.a, 1, kTableSlots)); v.tableStep = 0; v.tableRow = 0; v.tableWait = 0; v.tableGroove = 0; v.tableOn = bank_ && bank_->table(v.tableSlot); }
+            else beginTableRun(ch, uint8_t(std::clamp<int>(c.a, 1, kTableSlots)));
             break;
         case Cmd::C:                                  // 0, x, y one step per cmdRate + 1 ticks
             if (noise) break;
@@ -943,14 +1190,21 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
         case Cmd::E: {
             // Envelope: volume in x; y is the NRx2 encoding, 0 and 8 holding,
             // 1-7 decaying at that rate and 9-15 rising at y - 8.
-            if (wave) { v.waveLevel = uint8_t(std::clamp<int>(c.a, 0, 3)); if (live) writeEnvelope(ch, false); }
+            // E takes a shaped envelope over, as a table's volume column does
+            // (section 27).
+            v.shapedTaken = true;
+            if (wave) { v.waveLevel = uint8_t(std::clamp<int>(c.a, 0, 3)); setLevel(ch); }
             else {
+                const bool moves = uint8_t(c.b & 7) != v.envRate || ((c.b & 8) != 0) != (v.envDir == EnvDir::Up);
                 v.envVol = uint8_t(std::clamp<int>(c.a, 0, 15));
                 v.envRate = uint8_t(c.b & 7);
                 v.envDir = (c.b & 8) ? EnvDir::Up : EnvDir::Down;
-                // A rewrite of NRx2 alone is zombie mode; the retrigger keeps
-                // the level honest and the duty phase intact (reference 4).
-                if (live) writeEnvelope(ch, pulse || noise);
+                // An E that keeps the envelope's direction and rate is a level
+                // change: zombie-mode writes, no trigger. One that moves either
+                // starts a new envelope, and a driver needs the trigger for
+                // that -- it keeps the duty phase (section 26, reference 4).
+                if (moves) { if (live) writeEnvelope(ch, pulse || noise); }
+                else setLevel(ch);
             }
             break;
         }
@@ -1064,10 +1318,20 @@ void Driver::revertCommand(int ch, Cmd cmd)
     const bool live = v.active && !inNoteOn_;
     switch (cmd) {
         case Cmd::A: v.tableOn = false; break;                    // A none stops the table
-        case Cmd::E:
-            if (wave) { v.waveLevel = i.waveLevel; applyLevelParam(ch); if (live) writeEnvelope(ch, false); }
-            else { v.envVol = i.envVol; v.envRate = i.envRate; v.envDir = i.envDir; applyLevelParam(ch); if (live) writeEnvelope(ch, pulse || i.type == InstrumentType::Noise); }
+        case Cmd::E: {
+            // The instrument's envelope back. As with an E that names one: a
+            // level change when the direction and the rate are already those,
+            // a new envelope -- and a trigger -- when they are not (26).
+            v.shapedTaken = true;
+            const bool moves = !wave && (i.envRate != v.envRate || i.envDir != v.envDir);
+            if (wave) { v.waveLevel = i.waveLevel; applyLevelParam(ch); setLevel(ch); }
+            else {
+                v.envVol = i.envVol; v.envRate = i.envRate; v.envDir = i.envDir; applyLevelParam(ch);
+                if (moves) { if (live) writeEnvelope(ch, pulse || i.type == InstrumentType::Noise); }
+                else setLevel(ch);
+            }
             break;
+        }
         case Cmd::F:
             if (i.type == InstrumentType::Wave) { const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr; v.frameIdx = 0; v.frameCount = 0; if (live && w && !w->frames.empty()) loadFrame(ch, w->frames[0], model_ == Console::DMG); }
             break;
@@ -1208,6 +1472,14 @@ uint16_t Driver::tableRowTicks(int ch, int row) const
     return uint16_t(n ? n : 1);
 }
 
+void Driver::beginTableRun(int ch, uint8_t slot)
+{
+    Voice& v = v_[size_t(ch)];
+    v.tableSlot = slot; v.tableStep = 0; v.tableRow = 0; v.tableWait = 0; v.tableGroove = 0;
+    v.tableOn = slot != 0 && bank_ && bank_->table(slot);
+    if (v.tableOn) ++v.tableRun;
+}
+
 void Driver::stepTable(int ch)
 {
     Voice& v = v_[size_t(ch)];
@@ -1219,11 +1491,14 @@ void Driver::stepTable(int ch)
     v.tableRow = v.tableStep;
     const TableStep& s = t->steps[v.tableRow];
     if (s.vol >= 0) {
-        // Inside a note-on the level only changes the running state: the
-        // note's own writes carry it, as a slot's would.
-        const bool live = v.active && !inNoteOn_;
-        if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) { v.waveLevel = uint8_t(std::clamp<int>(s.vol / 4, 0, 3)); if (live) writeEnvelope(ch, false); }
-        else { v.envVol = uint8_t(s.vol); if (live) writeEnvelope(ch, true); }
+        // A level change, never a retrigger (section 26); inside a note-on it
+        // only changes the running state and the note's own writes carry it.
+        // It takes a shaped envelope over: the segments left stop until the
+        // next plain note-on (section 27).
+        v.shapedTaken = true;
+        if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) v.waveLevel = uint8_t(std::clamp<int>(s.vol / 4, 0, 3));
+        else v.envVol = uint8_t(std::clamp<int>(s.vol, 0, 15));
+        setLevel(ch);
     }
     const Command c1 = s.cmd1.cmd == Cmd::Z ? resolveRandom(ch, s.cmd1, s.cmd2) : s.cmd1;
     const Command c2 = s.cmd2.cmd == Cmd::Z ? resolveRandom(ch, s.cmd2, s.cmd1) : s.cmd2;
@@ -1271,11 +1546,14 @@ void Driver::tick(int ch)
             if (before.instrument != v.p.instrument) { reloadInstrument(ch); return; }
             if (before.table != v.p.table || v.tableOverride != v.tableSlot) {
                 const uint8_t tbl = v.tableOverride ? v.tableOverride : v.inst.table;
-                if (tbl != v.tableSlot) { v.tableSlot = tbl; v.tableStep = 0; v.tableRow = 0; v.tableWait = 0; v.tableOn = tbl && bank_ && bank_->table(tbl); }
+                if (tbl != v.tableSlot) beginTableRun(ch, tbl);
             }
             if (before.level != v.p.level) {
+                // The Level lane is a level change too, and takes a shaped
+                // envelope over (sections 26 and 27).
+                v.shapedTaken = true;
                 applyLevelParam(ch);
-                writeEnvelope(ch, v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Noise);
+                setLevel(ch);
             }
             if (before.pan != v.p.pan) { v.pan = v.p.pan != 255 ? Pan(v.p.pan & 3) : v.inst.pan; writeNr51(); }
         }
@@ -1299,10 +1577,15 @@ void Driver::tick(int ch)
     if (v.kill >= 0) { if (v.kill == 0) { stopVoice(ch, true); v.kill = -1; return; } --v.kill; }
     // The table: a row per tick, or per the row length a G inside it asked
     // for. A Step-mode table advances at notes instead (section 7).
-    if (v.inst.tableMode == TableMode::Tick) {
+    if (v.tableJustStarted) v.tableJustStarted = false;      // row 0 fired with the note-on (section 31)
+    else if (v.inst.tableMode == TableMode::Tick) {
         if (v.tableWait > 1) --v.tableWait;
         else stepTable(ch);
     }
+    if (!v.active) return;
+    // The shaped envelope's level for this tick, after the table, which may
+    // just have taken it over (sections 26 and 27).
+    stepShaped(ch);
     if (!v.active) return;
     // chord: one step every cmdRate + 1 ticks
     if (v.chordN && ++v.chordCount >= uint8_t(v.inst.cmdRate + 1)) { v.chordCount = 0; v.chordIdx = uint8_t((v.chordIdx + 1) % v.chordN); }
@@ -1394,7 +1677,8 @@ void Driver::handleEvent(NoteEvent& e)
         case NoteEvent::PitchBend: v.bend = double(e.value) / 8192.0 * 2.0; if (v.active) writePeriod(ch, false); break;
         case NoteEvent::Control:
             if (e.a == 1) v.vibDepth = uint8_t(e.b / 8);       // the mod wheel is vibrato depth
-            else if (e.a == 7 && v.active) { if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) { v.waveLevel = uint8_t(e.b / 32); writeEnvelope(ch, false); } else { v.envVol = uint8_t(e.b / 8); writeEnvelope(ch, true); } }
+            // CC7 is a level change: zombie-mode writes, no trigger (26).
+            else if (e.a == 7 && v.active) { v.shapedTaken = true; if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) v.waveLevel = uint8_t(e.b / 32); else v.envVol = uint8_t(e.b / 8); setLevel(ch); }
             else if (e.a == 120 || e.a == 123) allNotesOff(ch);
             break;
         case NoteEvent::AllNotesOff: allNotesOff(ch); break;
@@ -1413,7 +1697,7 @@ void Driver::applyCellColumns(int ch, const NoteEvent& e)
 {
     Voice& v = v_[size_t(ch)];
     if (e.hybrid) { applyHybridCell(ch, e); return; }
-    if (e.table) { v.tableOverride = e.table; if (v.active) { v.tableSlot = e.table; v.tableStep = 0; v.tableRow = 0; v.tableWait = 0; v.tableOn = bank_ && bank_->table(e.table); } }
+    if (e.table) { v.tableOverride = e.table; if (v.active) beginTableRun(ch, e.table); }
     if (e.inst && e.inst != v.ksInstrument) {
         v.ksInstrument = e.inst; v.ksFromCell = true;
         // The instrument reloads and fires the slots; the cell's commands
@@ -1555,6 +1839,8 @@ void Driver::refreshView(int ch)
     w.volume = (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) ? v.waveLevel : v.volume;
     w.duty = v.duty; w.frame = uint8_t(v.frameIdx + 1);
     w.tableSlot = v.tableOn ? v.tableSlot : 0; w.tableStep = v.tableStep;
+    w.tableRow = v.tableOn ? int8_t(v.tableRow) : int8_t(-1);
+    w.tableRun = v.tableRun;
     // The running state the strip prints under the two slots (section 3).
     w.envVol = v.envVol; w.envRate = v.envRate; w.envDir = v.envDir == EnvDir::Up ? 1 : 0;
     w.vibSpeed = v.vibSpeed; w.vibDepth = v.vibDepth;

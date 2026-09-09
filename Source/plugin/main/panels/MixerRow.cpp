@@ -240,8 +240,9 @@ void ChannelStrip::refreshState()
 {
     const uint64_t packed = processor_.scopes().state2[size_t(ch_)].load(std::memory_order_acquire);
     const auto song = processor_.song();
-    const int barTicks = std::max(1, processor_.barTicks());
-    const int bar = int(std::max<int64_t>(0, processor_.trackerTick()) / barTicks);
+    // The channel's own row: which phrase's groove the line resolves through
+    // (section 25).
+    const int bar = std::max(0, processor_.channelRow(ch_));
     const int width = stateBox_.getWidth();
     if (packed == stateShown_ && bar == stateBar_ && width == stateWidth_) return;
     stateShown_ = packed;

@@ -61,7 +61,7 @@ TEST_CASE("host ticks are 24 to the beat, straight from the host's ppq", "[clock
 TEST_CASE("song position is the integral of the tempo map", "[clock]")
 {
     Clock c; c.prepare(48000.0);
-    ClockConfig cfg; cfg.source = TempoSource::Song; cfg.songTempo = 120.0; cfg.beatsPerBar = 4.0;
+    ClockConfig cfg; cfg.source = TempoSource::Song; cfg.songTempo = 120.0;
     c.setConfig(cfg);
     // 120 BPM to tick 96 (two seconds, one bar), then 60 BPM from a T cell.
     const TempoPoint map[] = { { 0, 120.0 }, { 96, 60.0 } };
@@ -213,26 +213,29 @@ std::vector<Tick> runOwn(Clock& c, double seconds, uint32_t block, double rate =
 
 } // namespace
 
-TEST_CASE("the bar is the song's beats per bar in both sources", "[clock]")
+TEST_CASE("the clock counts ticks and nothing else", "[clock]")
 {
-    // Section 19: the host contributes the tempo and nothing else, so a bar
-    // is the song's beats per bar x 24 whichever source the ticks come from.
+    // Sections 19 and 25: the host contributes the tempo, and bars have left
+    // the model -- the song's time is its phrases' lengths and grooves, per
+    // channel, so the clock has no signature of any kind in it.
     for (auto source : { TempoSource::Host, TempoSource::Song }) {
         Clock c; c.prepare(48000.0);
-        ClockConfig cfg; cfg.source = source; cfg.songTempo = 120.0; cfg.beatsPerBar = 3.0;
+        ClockConfig cfg; cfg.source = source; cfg.songTempo = 120.0;
         c.setConfig(cfg);
         c.setTempoMap(nullptr, 0);
         Transport t; t.valid = true; t.playing = true; t.bpm = 120.0; t.ppq = 0.0; t.seconds = 0.0; t.timeValid = true;
         c.process(t, 512, 0);
-        CHECK(c.beatsPerBar() == 3.0);
-        CHECK(c.barTicks() == 72);
+        // 512 samples at 48 kHz is 10.7 ms; a tick at 120 BPM is 20.8 ms.
+        CHECK(c.tickCount() == 1);
+        CHECK(c.ticks()[0].tick == 0);
+        CHECK(c.tickAtBlockStart() == 0);
     }
 }
 
 TEST_CASE("the plugin's own transport runs the song at the Song tempo", "[clock][transport]")
 {
     Clock c; c.prepare(48000.0);
-    ClockConfig cfg; cfg.source = TempoSource::Host; cfg.songTempo = 120.0; cfg.beatsPerBar = 4.0;
+    ClockConfig cfg; cfg.source = TempoSource::Host; cfg.songTempo = 120.0;
     c.setConfig(cfg);
     c.setTempoMap(nullptr, 0);
     c.setOwnsTransport(true);
@@ -284,7 +287,7 @@ TEST_CASE("the plugin's own transport runs the song at the Song tempo", "[clock]
 TEST_CASE("the plugin's own transport loops, keeping its place", "[clock][transport]")
 {
     Clock c; c.prepare(48000.0);
-    ClockConfig cfg; cfg.source = TempoSource::Song; cfg.songTempo = 120.0; cfg.beatsPerBar = 4.0;
+    ClockConfig cfg; cfg.source = TempoSource::Song; cfg.songTempo = 120.0;
     c.setConfig(cfg);
     c.setTempoMap(nullptr, 0);
     c.setOwnsTransport(true);

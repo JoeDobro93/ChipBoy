@@ -1,5 +1,5 @@
 // ChipBoy -- tracker playback and record tests (UI_DESIGN section 7,
-// docs/COMMANDS_AND_TEMPO.md section 9).
+// docs/COMMANDS_AND_TEMPO.md sections 9 and 25).
 #include "core/Driver/Clock.h"
 #include "core/Link/Spsc.h"
 #include "core/Tracker/Player.h"
@@ -25,10 +25,10 @@ std::unique_ptr<Song> demoSong()
     Song& s = *owned;
     s.noteSource[0] = NoteSource::Tracker;
     auto& p = s.phrases[0]; p.used = true;
-    p.steps[0].note = 60; p.steps[4].note = 64; p.steps[8].note = 67; p.steps[12].note = kNoteOff;
-    p.steps[2].cmd1 = { bank::Cmd::V, 4, 6, 0 };
+    p.cells[0].note = 60; p.cells[4].note = 64; p.cells[8].note = 67; p.cells[12].note = kNoteOff;
+    p.cells[2].cmd1 = { bank::Cmd::V, 4, 6, 0 };
     s.chain[0] = { 1, 1 };
-    buildBarTable(s);
+    buildRowTables(s);
     return owned;
 }
 
@@ -65,8 +65,7 @@ TEST_CASE("steps fire on their ticks, block size notwithstanding", "[tracker]")
     auto run = [](uint32_t block) {
         const auto owned = demoSong(); Song& s = *owned;
         driver::Clock clock; clock.prepare(48000.0);
-        Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-        std::vector<std::pair<uint64_t, NoteEvent>> all;
+        Player p; p.prepare(48000.0); p.setSong(&s); std::vector<std::pair<uint64_t, NoteEvent>> all;
         const uint64_t total = 192000;  // two bars at 120 BPM (4 s)
         for (uint64_t f = 0; f < total; f += block) {
             const uint32_t n = uint32_t(std::min<uint64_t>(block, total - f));
@@ -97,8 +96,7 @@ TEST_CASE("a groove is a list of tick counts and repeats to fill the bar", "[tra
     const auto owned = demoSong(); Song& s = *owned;
     s.grooves[0].ticks = { 8, 4 };
     s.phrases[0].groove = 1;
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    int starts[kMaxSteps + 1];
+    Player p; p.prepare(48000.0); p.setSong(&s); int starts[kMaxSteps + 1];
     p.stepTicks(&s.phrases[0], starts);
     CHECK(starts[0] == 0);
     CHECK(starts[1] == 8);     // straight would be 6
@@ -128,113 +126,175 @@ TEST_CASE("the factory grooves are the swing pairs", "[tracker][groove]")
     CHECK(s.grooves[15].at(0) == 6);
 }
 
-TEST_CASE("steps that start past the bar do not fire", "[tracker][groove]")
+TEST_CASE("a phrase lasts as long as its groove makes it", "[tracker][groove]")
 {
+    // Section 25: a step is the groove's entry for it, so sixteen steps of
+    // eight ticks are a row of 128 ticks -- every one of them plays, and the
+    // channel's next row starts there rather than at 96.
     const auto owned = demoSong(); Song& s = *owned;
-    s.grooves[0].ticks = { 8, 8 };          // 16 steps of 8 ticks is 128, a bar is 96
+    s.grooves[0].ticks = { 8, 8 };
     s.phrases[0].groove = 1;
-    for (int i = 0; i < 16; ++i) s.phrases[0].steps[size_t(i)].note = uint8_t(60 + i);
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    const auto out = ticks(p, 0, 96);
-    CHECK(countOf(out, NoteEvent::NoteOn) == 12);      // steps 0-11 start inside the bar
-    CHECK(out.back().a == 71);                         // step 11, and step 12 is the next bar
+    for (int i = 0; i < 16; ++i) s.phrases[0].cells[size_t(i)].note = uint8_t(60 + i);
+    buildRowTables(s);
+    CHECK(phraseTicks(s, &s.phrases[0]) == 128);
+    CHECK(rowStartTick(s, 0, 1) == 128);
+    Player p; p.prepare(48000.0); p.setSong(&s); const auto out = ticks(p, 0, 128);
+    CHECK(countOf(out, NoteEvent::NoteOn) == 16);
+    CHECK(out.back().a == 75);
 }
 
-TEST_CASE("eight steps per bar doubles the groove's entries", "[tracker][groove]")
+TEST_CASE("a groove that ends early leaves the last note sustaining", "[tracker][groove]")
 {
+    // A G in force can make the steps longer than the phrase's own groove
+    // does; the row's length is the phrase's, so the steps past its end do
+    // not fire (section 9.2 as section 25 counts it).
     const auto owned = demoSong(); Song& s = *owned;
-    s.stepsPerBar = 8;
+    s.grooves[1].ticks = { 8, 8 };                     // slot 2, in force through a G cell
+    for (int i = 0; i < 16; ++i) s.phrases[0].cells[size_t(i)].note = uint8_t(60 + i);
+    s.phrases[0].cells[0].cmd1 = { bank::Cmd::G, 2, 0, 0 };
+    buildRowTables(s);
+    CHECK(phraseTicks(s, &s.phrases[0]) == 96);        // the phrase's own groove is straight
+    Player p; p.prepare(48000.0); p.setSong(&s); const auto out = ticks(p, 0, 96);
+    CHECK(countOf(out, NoteEvent::NoteOn) == 12);      // steps 0-11 start inside the row
+    CHECK(out.back().a == 71);
+}
+
+TEST_CASE("a groove's entries are ticks, whatever the phrase's length", "[tracker][groove]")
+{
+    // Section 25: no scaling any more -- a 7 5 groove is seven ticks then
+    // five, and eight of those steps are a 48-tick row.
+    const auto owned = demoSong(); Song& s = *owned;
+    s.phrases[0].steps = 8;
     s.grooves[0].ticks = { 7, 5 };
     s.phrases[0].groove = 1;
-    CHECK(s.steps() == 8);
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
+    CHECK(s.phrases[0].length() == 8);
+    Player p; p.prepare(48000.0); p.setSong(&s);
     int starts[kMaxSteps + 1];
     p.stepTicks(&s.phrases[0], starts);
-    CHECK(starts[1] == 14);
-    CHECK(starts[2] == 24);
-    CHECK(starts[8] == 96);
+    CHECK(starts[1] == 7);
+    CHECK(starts[2] == 12);
+    CHECK(starts[8] == 48);
+    CHECK(phraseTicks(s, &s.phrases[0]) == 48);
 }
 
-/* --------------------------------------------------- bars and step counts */
+/* ------------------------------------------- phrase lengths and the rows */
 
-TEST_CASE("steps per bar is a number from 1 to 64", "[tracker][bars]")
+TEST_CASE("a phrase's length is a number from 1 to 64", "[tracker][rows]")
 {
-    // Section 11: a step starts at floor(i x bar ticks / steps), so a count
-    // that does not divide the bar jitters by less than a tick and the bar
-    // still ends where it should.
+    // Section 25: a step is six ticks at the straight groove, always, so the
+    // row is six times the phrase's length.
     const auto owned = demoSong(); Song& s = *owned;
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
+    Player p; p.prepare(48000.0); p.setSong(&s);
     int starts[kMaxSteps + 1];
-    s.stepsPerBar = 64;
-    CHECK(s.steps() == 64);
+    s.phrases[0].steps = 64;
+    CHECK(s.phrases[0].length() == 64);
     p.stepTicks(&s.phrases[0], starts);
-    CHECK(starts[1] == 1);                        // 96 ticks over 64 steps: one and a half
-    CHECK(starts[2] == 3);
-    CHECK(starts[64] == 96);
-    s.stepsPerBar = 5;                            // five steps in a 96-tick bar
-    CHECK(s.steps() == 5);
+    CHECK(starts[1] == 6);
+    CHECK(starts[64] == 384);
+    s.phrases[0].steps = 5;
     p.stepTicks(&s.phrases[0], starts);
     CHECK(starts[0] == 0);
-    CHECK(starts[1] == 19);                       // floor(96 / 5) = 19
-    CHECK(starts[3] == 57);
-    CHECK(starts[5] == 96);
-    s.stepsPerBar = 200;                          // clamped to the cells a phrase holds
-    CHECK(s.steps() == 64);
+    CHECK(starts[5] == 30);
+    CHECK(phraseTicks(s, &s.phrases[0]) == 30);
+    s.phrases[0].steps = 200;                     // clamped to the cells a phrase holds
+    CHECK(s.phrases[0].length() == 64);
 }
 
-TEST_CASE("a bar override moves the bars after it", "[tracker][bars]")
+TEST_CASE("two channels of different phrase lengths drift apart", "[tracker][rows]")
 {
-    // Section 11: a bar of eight steps in a sixteen-step song is half a bar
-    // long, so everything after it comes half a bar early. The prefix table
-    // is what a locate lands through.
-    const auto owned = demoSong(); Song& s = *owned;
-    s.chain[0] = { 1, 1, 1, 1 };
-    s.barSteps = { 0, 8, 0, 0 };
-    buildBarTable(s);
-    CHECK(s.stepsOfBar(0) == 16);
-    CHECK(s.stepsOfBar(1) == 8);
-    CHECK(barStartTick(s, 0, 96) == 0);
-    CHECK(barStartTick(s, 1, 96) == 96);
-    CHECK(barLengthTicks(s, 1, 96) == 48);        // eight steps of six ticks
-    CHECK(barStartTick(s, 2, 96) == 144);
-    CHECK(barStartTick(s, 3, 96) == 240);
-    CHECK(barStartTick(s, 4, 96) == 336);         // past the table: default bars, end to end
-    int bar = 0, inBar = 0;
-    barAtTick(s, 100, 96, bar, inBar);
-    CHECK(bar == 1); CHECK(inBar == 4);
-    barAtTick(s, 144, 96, bar, inBar);
-    CHECK(bar == 2); CHECK(inBar == 0);
-    barAtTick(s, 400, 96, bar, inBar);
-    CHECK(bar == 4); CHECK(inBar == 64);
-
-    // And the Player plays them there: bar 2's step 0 fires at tick 96, bar
-    // 3's at 144 rather than 192.
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    std::vector<int64_t> at;
-    for (int64_t t = 0; t < 250; ++t)
-        for (const auto& e : ticks(p, t, 1))
-            if (e.kind == NoteEvent::NoteOn && e.a == 60) at.push_back(t);
-    REQUIRE(at.size() == 4);
-    CHECK(at[0] == 0); CHECK(at[1] == 96); CHECK(at[2] == 144); CHECK(at[3] == 240);
-}
-
-TEST_CASE("a short bar plays only its own steps", "[tracker][bars]")
-{
+    // Section 25: twelve steps against sixteen. Each channel highlights its
+    // own row, and each fires its own steps at its own ticks.
     const auto owned = std::make_unique<Song>(); Song& s = *owned;
     s.noteSource[0] = NoteSource::Tracker;
-    auto& ph = s.phrases[0]; ph.used = true;
-    for (int i = 0; i < 16; ++i) ph.steps[size_t(i)].note = uint8_t(60 + i);
-    s.chain[0] = { 1, 1 };
-    s.barSteps = { 4 };                            // a quarter-bar of four steps
-    buildBarTable(s);
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    std::vector<uint8_t> notes;
-    for (int64_t t = 0; t < 24; ++t)
-        for (const auto& e : ticks(p, t, 1))
-            if (e.kind == NoteEvent::NoteOn) notes.push_back(e.a);
-    REQUIRE(notes.size() == 4);
-    CHECK(notes[3] == 63);                         // steps 4-15 belong to no bar
-    CHECK(barLengthTicks(s, 0, 96) == 24);
+    s.noteSource[1] = NoteSource::Tracker;
+    auto& twelve = s.phrases[0]; twelve.used = true; twelve.steps = 12; twelve.cells[0].note = 60;
+    auto& sixteen = s.phrases[1]; sixteen.used = true; sixteen.steps = 16; sixteen.cells[0].note = 72;
+    s.chain[0] = { 1, 1, 1, 1 };
+    s.chain[1] = { 2, 2, 2 };
+    buildRowTables(s);
+    CHECK(rowStartTick(s, 0, 1) == 72);
+    CHECK(rowStartTick(s, 1, 1) == 96);
+    // Four rows of 72 against three of 96: both channels end at 288, and the
+    // lowest of two equals is the one the loop counts in.
+    CHECK(songTicks(s) == 288);
+    CHECK(longestChain(s) == 0);
+    Player p; p.prepare(48000.0); p.setSong(&s);
+    std::vector<int64_t> a, b;
+    for (int64_t tick = 0; tick < 288; ++tick)
+        for (const auto& e : ticks(p, tick, 1))
+            if (e.kind == NoteEvent::NoteOn) (e.channel == 0 ? a : b).push_back(tick);
+    REQUIRE(a.size() == 4);
+    REQUIRE(b.size() == 3);
+    CHECK(a[1] == 72); CHECK(a[3] == 216);
+    CHECK(b[1] == 96); CHECK(b[2] == 192);
+    // Each channel's own row at one tick: 100 ticks in, PU1 is 28 ticks into
+    // its row 1 and PU2 four ticks into its own.
+    int row = 0, inRow = 0;
+    rowAtTick(s, 0, 100, row, inRow);
+    CHECK(row == 1); CHECK(inRow == 28);
+    rowAtTick(s, 1, 100, row, inRow);
+    CHECK(row == 1); CHECK(inRow == 4);
+    // And each highlights its own: at tick 150 PU1 is in row 2, PU2 in row 1.
+    Player q; q.prepare(48000.0); q.setSong(&s);
+    for (int64_t tick = 0; tick <= 150; ++tick) ticks(q, tick, 1);
+    CHECK(q.position(0).row == 2);
+    CHECK(q.position(1).row == 1);
+}
+
+TEST_CASE("locate is exact per channel", "[tracker][rows]")
+{
+    // A jump into the middle of the song lands on the row and step each
+    // channel would have reached, whatever their phrases' lengths.
+    const auto owned = std::make_unique<Song>(); Song& s = *owned;
+    s.noteSource[0] = NoteSource::Tracker;
+    s.noteSource[1] = NoteSource::Tracker;
+    auto& twelve = s.phrases[0]; twelve.used = true; twelve.steps = 12;
+    for (int i = 0; i < 12; ++i) twelve.cells[size_t(i)].note = uint8_t(60 + i);
+    auto& sixteen = s.phrases[1]; sixteen.used = true; sixteen.steps = 16;
+    for (int i = 0; i < 16; ++i) sixteen.cells[size_t(i)].note = uint8_t(40 + i);
+    s.chain[0] = { 1, 1, 1, 1 };
+    s.chain[1] = { 2, 2, 2 };
+    buildRowTables(s);
+    Player p; p.prepare(48000.0); p.setSong(&s);
+    const auto out = ticks(p, 150, 1);            // straight to tick 150
+    // PU1: row 2 starts at 144, so tick 150 is its step 1 (note 61).
+    // PU2: row 1 starts at 96, so tick 150 is its step 9 (note 49).
+    bool pu1 = false, pu2 = false;
+    for (const auto& e : out) {
+        if (e.kind != NoteEvent::NoteOn) continue;
+        if (e.channel == 0) { pu1 = e.a == 61; }
+        if (e.channel == 1) { pu2 = e.a == 49; }
+    }
+    CHECK(pu1);
+    CHECK(pu2);
+    CHECK(p.position(0).step == 1);
+    CHECK(p.position(1).step == 9);
+}
+
+TEST_CASE("a row with no phrase is ninety-six ticks with a note off", "[tracker][rows]")
+{
+    // Section 25. The channel's next row starts a straight sixteen later.
+    const auto owned = std::make_unique<Song>(); Song& s = *owned;
+    s.noteSource[0] = NoteSource::Tracker;
+    auto& ph = s.phrases[0]; ph.used = true; ph.steps = 8; ph.cells[0].note = 60;
+    s.chain[0] = { 1, 0, 1 };
+    buildRowTables(s);
+    CHECK(rowStartTick(s, 0, 1) == 48);
+    CHECK(rowStartTick(s, 0, 2) == 48 + 96);
+    Player p; p.prepare(48000.0); p.setSong(&s);
+    std::vector<int64_t> offs, ons;
+    for (int64_t tick = 0; tick < 200; ++tick)
+        for (const auto& e : ticks(p, tick, 1)) {
+            if (e.kind == NoteEvent::NoteOff) offs.push_back(tick);
+            if (e.kind == NoteEvent::NoteOn) ons.push_back(tick);
+        }
+    // The empty row's first tick, and the row past the chain, which is empty
+    // in the same way: rows go on end to end whatever the chain says.
+    REQUIRE(offs.size() == 2);
+    CHECK(offs[0] == 48);
+    CHECK(offs[1] == 192);
+    REQUIRE(ons.size() == 2);
+    CHECK(ons[1] == 144);
 }
 
 TEST_CASE("the groove in force is the slot, then the last cell, then the phrase", "[tracker][groove]")
@@ -244,11 +304,9 @@ TEST_CASE("the groove in force is the slot, then the last cell, then the phrase"
     s.grooves[0].ticks = { 8, 4 };          // slot 1
     s.grooves[1].ticks = { 4, 4, 4 };       // slot 2
     auto& ph = s.phrases[0]; ph.used = true; ph.groove = 0;
-    ph.steps[0].cmd1 = { bank::Cmd::G, 2, 0, 0 };
+    ph.cells[0].cmd1 = { bank::Cmd::G, 2, 0, 0 };
     s.chain[0] = { 1, 1 };
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-
-    CHECK(p.groove(0) == kGrooveNone);                 // the phrase's own, straight
+    Player p; p.prepare(48000.0); p.setSong(&s); CHECK(p.groove(0) == kGrooveNone);                 // the phrase's own, straight
     int st[kMaxSteps + 1];
     p.stepTicks(&ph, st, p.groove(0));
     CHECK(st[1] == 6);
@@ -275,14 +333,13 @@ TEST_CASE("a mid-bar G moves the steps that follow it", "[tracker][groove]")
     s.noteSource[0] = NoteSource::Tracker;
     s.grooves[0].ticks = { 12, 12 };
     auto& ph = s.phrases[0]; ph.used = true;
-    ph.steps[0].note = 60;
-    ph.steps[1].note = 62;
-    ph.steps[2].note = 64;
-    ph.steps[2].cmd1 = { bank::Cmd::G, 1, 0, 0 };
-    ph.steps[3].note = 65;
+    ph.cells[0].note = 60;
+    ph.cells[1].note = 62;
+    ph.cells[2].note = 64;
+    ph.cells[2].cmd1 = { bank::Cmd::G, 1, 0, 0 };
+    ph.cells[3].note = 65;
     s.chain[0] = { 1 };
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    std::vector<std::pair<int64_t, uint8_t>> notes;
+    Player p; p.prepare(48000.0); p.setSong(&s); std::vector<std::pair<int64_t, uint8_t>> notes;
     for (int64_t t = 0; t < 96; ++t) {
         const auto out = ticks(p, t, 1);
         for (const auto& e : out) if (e.kind == NoteEvent::NoteOn) notes.push_back({ t, e.a });
@@ -299,9 +356,8 @@ TEST_CASE("a mid-bar G moves the steps that follow it", "[tracker][groove]")
 TEST_CASE("cells fire with their velocity", "[tracker]")
 {
     const auto owned = demoSong(); Song& s = *owned;
-    s.phrases[0].steps[0].vel = 42;
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    const auto out = ticks(p, 0, 30);
+    s.phrases[0].cells[0].vel = 42;
+    Player p; p.prepare(48000.0); p.setSong(&s); const auto out = ticks(p, 0, 30);
     REQUIRE(out.size() >= 2);
     CHECK(out[0].kind == NoteEvent::NoteOn);
     CHECK(out[0].b == 42);
@@ -312,11 +368,10 @@ TEST_CASE("a blank phrase sustains, a bar with no phrase ends the note", "[track
 {
     const auto owned = std::make_unique<Song>(); Song& s = *owned;
     s.noteSource[0] = NoteSource::Tracker;
-    s.phrases[0].used = true; s.phrases[0].steps[0].note = 67;
+    s.phrases[0].used = true; s.phrases[0].cells[0].note = 67;
     s.phrases[1].used = true;                     // sixteen empty cells
     s.chain[0] = { 1, 2, 0 };
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    ticks(p, 0, 96);                              // bar 1 plays
+    Player p; p.prepare(48000.0); p.setSong(&s); ticks(p, 0, 96);                              // bar 1 plays
     const auto blank = ticks(p, 96, 96);
     CHECK(blank.empty());                         // bar 2 is blank: the note holds
     const auto gone = ticks(p, 192, 8);
@@ -333,15 +388,14 @@ TEST_CASE("a Hybrid channel's cells keep everything but the note", "[tracker][hy
     const auto owned = std::make_unique<Song>(); Song& s = *owned;
     s.noteSource[0] = NoteSource::Hybrid;
     auto& ph = s.phrases[0]; ph.used = true;
-    ph.steps[0].note = 60; ph.steps[0].inst = 4; ph.steps[0].vel = 90;
-    ph.steps[0].cmd1 = { bank::Cmd::E, 9, 1, 0 };
-    ph.steps[4].note = kNoteOff;                  // nothing but an OFF: nothing to send
-    ph.steps[8].note = 67;                        // nor a note on its own
-    ph.steps[12].cmd1 = { bank::Cmd::V, 4, 6, 0 };
+    ph.cells[0].note = 60; ph.cells[0].inst = 4; ph.cells[0].vel = 90;
+    ph.cells[0].cmd1 = { bank::Cmd::E, 9, 1, 0 };
+    ph.cells[4].note = kNoteOff;                  // nothing but an OFF: nothing to send
+    ph.cells[8].note = 67;                        // nor a note on its own
+    ph.cells[12].cmd1 = { bank::Cmd::V, 4, 6, 0 };
     s.chain[0] = { 1 };
-    buildBarTable(s);
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    const auto out = ticks(p, 0, 96);
+    buildRowTables(s);
+    Player p; p.prepare(48000.0); p.setSong(&s); const auto out = ticks(p, 0, 96);
     REQUIRE(out.size() == 2);
     CHECK(out[0].kind == NoteEvent::Command);
     CHECK(out[0].hybrid);
@@ -360,31 +414,28 @@ TEST_CASE("a Hybrid channel with no phrase leaves the note alone", "[tracker][hy
 {
     const auto owned = std::make_unique<Song>(); Song& s = *owned;
     s.noteSource[0] = NoteSource::Hybrid;
-    s.phrases[0].used = true; s.phrases[0].steps[0].note = 67;
+    s.phrases[0].used = true; s.phrases[0].cells[0].note = 67;
     s.chain[0] = { 1, 0 };
-    buildBarTable(s);
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    ticks(p, 0, 96);
+    buildRowTables(s);
+    Player p; p.prepare(48000.0); p.setSong(&s); ticks(p, 0, 96);
     CHECK(ticks(p, 96, 8).empty());               // a Trkr lane would send a note-off here
 }
 
 TEST_CASE("all notes off when the transport stops", "[tracker]")
 {
     const auto owned = demoSong(); Song& s = *owned;
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    ticks(p, 0, 8);
+    Player p; p.prepare(48000.0); p.setSong(&s); ticks(p, 0, 8);
     const auto out = ticks(p, 8, 0, false);
     REQUIRE(out.size() == 1);
     CHECK(out[0].kind == NoteEvent::AllNotesOff);
     CHECK(out[0].channel == 0);
-    CHECK(p.position(0).bar == -1);
+    CHECK(p.position(0).row == -1);
 }
 
 TEST_CASE("all notes off when the tick stream jumps", "[tracker]")
 {
     const auto owned = demoSong(); Song& s = *owned;
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    ticks(p, 0, 8);
+    Player p; p.prepare(48000.0); p.setSong(&s); ticks(p, 0, 8);
     // Forwards: a locate to the middle of the bar.
     const auto fwd = ticks(p, 48, 1);
     REQUIRE(fwd.size() >= 1);
@@ -402,8 +453,7 @@ TEST_CASE("all notes off when the tick stream jumps", "[tracker]")
 TEST_CASE("all notes off when the lane goes", "[tracker]")
 {
     const auto owned = demoSong(); Song& s = *owned;
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    ticks(p, 0, 8);
+    Player p; p.prepare(48000.0); p.setSong(&s); ticks(p, 0, 8);
     SECTION("the source changes to the piano roll") {
         s.noteSource[0] = NoteSource::PianoRoll;
         const auto out = ticks(p, 8, 4);
@@ -429,7 +479,7 @@ TEST_CASE("all notes off when the lane goes", "[tracker]")
 TEST_CASE("T cells become the song's tempo map", "[tracker]")
 {
     const auto owned = demoSong(); Song& s = *owned;
-    s.phrases[0].steps[8].cmd2 = { bank::Cmd::T, 90, 0, 0 };
+    s.phrases[0].cells[8].cmd2 = { bank::Cmd::T, 90, 0, 0 };
     buildTempoMap(s, 140.0);
     // Only the T cells are in the map: the base is the Song tempo parameter,
     // which the clock holds live (section 4).
@@ -438,7 +488,7 @@ TEST_CASE("T cells become the song's tempo map", "[tracker]")
     CHECK(s.tempoMap[0].bpm == 90.0);
     CHECK(s.tempoMap[1].tick == 144);
     // A T reverting is the base again from its tick.
-    s.phrases[0].steps[12].cmd2 = bank::revertOf(bank::Cmd::T);
+    s.phrases[0].cells[12].cmd2 = bank::revertOf(bank::Cmd::T);
     buildTempoMap(s, 140.0);
     REQUIRE(s.tempoMap.size() == 4);
     CHECK(s.tempoMap[1].tick == 72);
@@ -447,30 +497,28 @@ TEST_CASE("T cells become the song's tempo map", "[tracker]")
     CHECK(s.tempoMap[1].bpm == 96.0);
 }
 
-TEST_CASE("a T cell fires on the tick its tempo map says, in the song's bars", "[tracker]")
+TEST_CASE("a T cell fires at its own channel's tick", "[tracker]")
 {
+    // Section 25: a T cell sits where its channel's rows put it, so a phrase
+    // of twelve steps has its step 8 at tick 48, not 48 of somebody else's.
     const auto owned = demoSong(); Song& s = *owned;
-    s.beatsPerBar = 3.0;                      // a 72-tick bar
-    s.phrases[0].steps[8].cmd2 = { bank::Cmd::T, 90, 0, 0 };
+    s.phrases[0].steps = 12;                  // a 72-tick row
+    s.phrases[0].cells[8].cmd2 = { bank::Cmd::T, 90, 0, 0 };
     buildTempoMap(s, 120.0);
     REQUIRE(!s.tempoMap.empty());
-    CHECK(s.barTicks() == 72);
-    // Sixteen steps divide the bar, whatever its length (section 11): a step
-    // is four and a half ticks here, and step 8 is half a bar in.
-    CHECK(s.tempoMap[0].tick == 36);
-    // The Player counts in the song's bar ticks, so the cell lands there too.
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    std::vector<int64_t> at;
+    CHECK(phraseTicks(s, &s.phrases[0]) == 72);
+    CHECK(s.tempoMap[0].tick == 48);
+    // The Player fires the cell on the same tick the map says.
+    Player p; p.prepare(48000.0); p.setSong(&s); std::vector<int64_t> at;
     for (int64_t t = 0; t < 72; ++t)
         for (const auto& e : ticks(p, t, 1))
             if (e.cmd2.cmd == bank::Cmd::T) at.push_back(t);
     REQUIRE(at.size() == 1);
     CHECK(at[0] == s.tempoMap[0].tick);
-    // Every step of the bar plays, and the sixteenth ends it.
     int starts[kMaxSteps + 1];
     p.stepTicks(&s.phrases[0], starts);
-    CHECK(starts[12] == 54);
-    CHECK(starts[16] == 72);
+    CHECK(starts[11] == 66);
+    CHECK(starts[12] == 72);
 }
 
 /* --------------------------------------------------------------- quantise */
@@ -482,8 +530,7 @@ TEST_CASE("quantise picks the nearest step of the channel's own grid", "[tracker
     s.grooves[0].ticks = { 8, 4 };
     auto& swung = s.phrases[1]; swung.used = true; swung.groove = 1;
     s.chain[1] = { 1, 2 };
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    int bar = 0, step = 0; int64_t at = 0;
+    Player p; p.prepare(48000.0); p.setSong(&s); int bar = 0, step = 0; int64_t at = 0;
     // Bar 2 (ticks 96-191), just before step 1 at tick 102.
     REQUIRE(p.quantise(0, 96.0 + 5.8, bar, step, at));
     CHECK(bar == 1);
@@ -521,7 +568,7 @@ std::unique_ptr<Song> recordSong()
     s.noteSource[0] = NoteSource::Tracker;
     s.phrases[0].used = true;
     s.chain[0] = { 1, 1 };
-    buildBarTable(s);
+    buildRowTables(s);
     return owned;
 }
 
@@ -530,13 +577,12 @@ std::unique_ptr<Song> recordSong()
 TEST_CASE("a plain note records its instrument, a bare note leaves the column blank", "[tracker][record]")
 {
     const auto owned = recordSong(); Song& s = *owned;
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    p.resetRecord();
+    Player p; p.prepare(48000.0); p.setSong(&s); p.resetRecord();
     const bank::Command e { bank::Cmd::E, 12, 3, 0 };
     const bank::Command w { bank::Cmd::W, 1, 0, 0 };
     RecordMessage m;
     REQUIRE(p.recordNote(0, 0.0, 60, 100, false, true, 5, 2, e, w, m));
-    CHECK(m.bar == 0); CHECK(m.step == 0);
+    CHECK(m.row == 0); CHECK(m.step == 0);
     CHECK(m.cell.note == 60);
     CHECK(m.cell.vel == 100);
     CHECK(m.cell.inst == 5);
@@ -564,8 +610,7 @@ TEST_CASE("a bare note's cell carries the per-note letters only", "[tracker][rec
     // re-writing E on a sounding pulse would restart its envelope. K, which
     // shapes the note it is on, is written.
     const auto owned = recordSong(); Song& s = *owned;
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    p.resetRecord();
+    Player p; p.prepare(48000.0); p.setSong(&s); p.resetRecord();
     const bank::Command v { bank::Cmd::V, 4, 6, 0 };
     const bank::Command k { bank::Cmd::K, 3, 0, 0 };
     RecordMessage m;
@@ -588,8 +633,7 @@ TEST_CASE("the command octave writes the slots in force, changed or not", "[trac
     // Section 13: a note in the command octave fires the slots on whatever is
     // sounding, so its cell carries them whether they moved or not.
     const auto owned = recordSong(); Song& s = *owned;
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    p.resetRecord();
+    Player p; p.prepare(48000.0); p.setSong(&s); p.resetRecord();
     const bank::Command none;
     const bank::Command v { bank::Cmd::V, 4, 6, 0 };
     RecordMessage m;
@@ -605,8 +649,7 @@ TEST_CASE("the command octave writes the slots in force, changed or not", "[trac
 TEST_CASE("a note-off goes to its step, or the one after its note's", "[tracker][record]")
 {
     const auto owned = recordSong(); Song& s = *owned;
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    p.resetRecord();
+    Player p; p.prepare(48000.0); p.setSong(&s); p.resetRecord();
     const bank::Command none;
     RecordMessage m;
     SECTION("a later step takes the OFF") {
@@ -621,14 +664,14 @@ TEST_CASE("a note-off goes to its step, or the one after its note's", "[tracker]
         CHECK(m.step == 1);                       // a note shorter than a step lasts one step
         CHECK(m.cell.note == kNoteOff);
     }
-    SECTION("the last step of a bar pushes it into the next bar") {
+    SECTION("the last step of a row pushes it into the next row") {
         REQUIRE(p.recordNote(0, 90.0, 60, 100, false, true, 1, 0, none, none, m));
         REQUIRE(p.recordNote(0, 90.0, 60, 0, true, false, 1, 0, none, none, m));
-        CHECK(m.bar == 1);
+        CHECK(m.row == 1);
         CHECK(m.step == 0);
     }
     SECTION("a step that already holds a note keeps it") {
-        s.phrases[0].steps[2].note = 64;          // from an earlier take
+        s.phrases[0].cells[2].note = 64;          // from an earlier take
         REQUIRE(p.recordNote(0, 0.0, 60, 100, false, true, 1, 0, none, none, m));
         CHECK_FALSE(p.recordNote(0, 12.0, 60, 0, true, false, 1, 0, none, none, m));
     }
@@ -641,8 +684,7 @@ TEST_CASE("a note-off goes to its step, or the one after its note's", "[tracker]
 TEST_CASE("a slot is written at the step whose tick it changed on", "[tracker][record]")
 {
     const auto owned = recordSong(); Song& s = *owned;
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    p.resetRecord();
+    Player p; p.prepare(48000.0); p.setSong(&s); p.resetRecord();
     const bank::Command none;
     const bank::Command e { bank::Cmd::E, 12, 3, 0 };
     const bank::Command v { bank::Cmd::V, 4, 6, 0 };
@@ -682,8 +724,7 @@ TEST_CASE("a slot going to none records the letter's revert form", "[tracker][re
         CHECK(bank::revertOf(letter).cmd == bank::Cmd::None);
 
     const auto owned = recordSong(); Song& s = *owned;
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    p.resetRecord();
+    Player p; p.prepare(48000.0); p.setSong(&s); p.resetRecord();
     const bank::Command none;
     const bank::Command e { bank::Cmd::E, 12, 3, 0 };
     const bank::Command pitch { bank::Cmd::P, 200, 0, 0 };
@@ -711,12 +752,11 @@ TEST_CASE("a cell's revert form reaches the driver as it was written", "[tracker
     const auto owned = std::make_unique<Song>(); Song& s = *owned;
     s.noteSource[0] = NoteSource::Tracker;
     auto& ph = s.phrases[0]; ph.used = true;
-    ph.steps[0].note = 60; ph.steps[0].inst = 1;
-    ph.steps[4].cmd1 = bank::revertOf(bank::Cmd::E);
-    ph.steps[4].cmd2 = bank::revertOf(bank::Cmd::V);
+    ph.cells[0].note = 60; ph.cells[0].inst = 1;
+    ph.cells[4].cmd1 = bank::revertOf(bank::Cmd::E);
+    ph.cells[4].cmd2 = bank::revertOf(bank::Cmd::V);
     s.chain[0] = { 1 };
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    const auto out = ticks(p, 0, 96);
+    Player p; p.prepare(48000.0); p.setSong(&s); const auto out = ticks(p, 0, 96);
     const NoteEvent* cmd = nullptr;
     for (const auto& e : out) if (e.kind == NoteEvent::Command) cmd = &e;
     REQUIRE(cmd != nullptr);
@@ -733,13 +773,12 @@ TEST_CASE("a G cell reverting puts the phrase's own groove back", "[tracker][gro
     s.grooves[1].ticks = { 12, 12 };            // slot 2: twelve ticks a step
     auto& ph = s.phrases[0]; ph.used = true;
     ph.groove = 0;                              // the phrase's own is straight
-    ph.steps[0].cmd1 = { bank::Cmd::G, 2, 0, 0 };
+    ph.cells[0].cmd1 = { bank::Cmd::G, 2, 0, 0 };
     s.chain[0] = { 1, 1 };
-    Player p; p.prepare(48000.0); p.setSong(&s); p.setBarTicks(s.barTicks());
-    ticks(p, 0, 1);
+    Player p; p.prepare(48000.0); p.setSong(&s); ticks(p, 0, 1);
     CHECK(p.groove(0) == 2);
     auto& ph2 = s.phrases[0];
-    ph2.steps[1].cmd1 = bank::revertOf(bank::Cmd::G);
+    ph2.cells[1].cmd1 = bank::revertOf(bank::Cmd::G);
     ticks(p, 1, 20);
     CHECK(p.groove(0) == kGrooveNone);          // the phrase's own again
 }
