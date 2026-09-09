@@ -61,3 +61,4 @@ chipboy_linktest.stages.txt
 *.gb
 *.gbc
 *.sav
+!tools/capture/chipboy_probe.gb
