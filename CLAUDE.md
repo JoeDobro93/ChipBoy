@@ -18,7 +18,13 @@ own build and tests once.
   the same rule belongs in `~/.claude/settings.json` for other projects.
 
 Briefs to subagents say what to build, which files they own, how to verify,
-and that they must not poll a build in a loop: build once, read the result.
+and that they must not poll a build in a loop: run a build in the foreground
+with a generous timeout and read its result. Never start a background
+`until grep … sleep` watcher, a Monitor on a build log, or any process that
+outlives the step — a superseded watcher waits forever and shows up as a
+hung task. Before reporting, a subagent kills anything it started in the
+background and says so; the orchestrator checks `pgrep -af "until grep|sleep"`
+after each stage and ends what is left.
 
 ## Verification runs here, not in Actions
 
