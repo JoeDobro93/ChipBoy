@@ -402,7 +402,8 @@ and §2 says y = 0 retriggers once.
   1798, 1837, 1881 — 0, +3, +7 semitones exactly. `C C 0` wrote 1798, 1923 —
   a two-step cycle, 0 and +12. `C 0 0` stopped it. **This agrees with ChipBoy.**
   ChipBoy has since given the chord a rate of its own (`COMMANDS_AND_TEMPO.md` §37);
-  the harness sets it from LSDj's one CMD/RATE, so the comparison stands.
+  the harness sets it from LSDj's one CMD/RATE, so the comparison stands. Re-run on a
+  9.3.9 ROM (§44): the same one step a tick.
 
 ## 10. Tables, bare notes and hops
 
@@ -646,15 +647,16 @@ timing outside tolerance** and **different values**.
 
 **Deliberate — ChipBoy's own design, documented as such in §2 and §7.**
 
-- **A table row is one tick in ChipBoy and two in LSDj.** Measured: a table of
-  `F1 81 41 01` changes the level every 2.01 ticks and cycles 15, 8, 4 with the
-  zero-amplitude row writing nothing at all; `f_table_rows` shows the same two
-  ticks whether the envelope nibble is 1 or 7, so the nibble is not the row's
-  length. ChipBoy's tables run one row a tick and have a groove of their own (a
-  G inside a table, §32), which LSDj's do not; making a row two ticks would
-  change every table in every ChipBoy song and is not a driver law but a tracker
-  one. `f_table_volume`, `f_table_rows` and `j_groove_hop` differ for this
-  reason, in timing and in where their loops land.
+- ~~**A table row is one tick in ChipBoy and two in LSDj.**~~ **Withdrawn**
+  (`COMMANDS_AND_TEMPO.md` §44): `f_table_speed`, a table whose *transpose*
+  column steps 0 2 4 6 8 10, wrote a new period **every tick** on an LSDj 9.3.9
+  ROM (0.94 / 1.07 alternating, the frame jitter). The "two ticks" this
+  section read off `F1 81 41 01` was the envelope nibble's timing, not the
+  row's. A table row is one tick in both. `f_table_volume`, `f_table_rows` and
+  `j_groove_hop` still differ, in how the volume column's envelope byte is
+  read, not in the row length. (The `f_table_speed` trace loops after six rows
+  where the case wrote eight, the zero row and the last two writing nothing
+  visible — unexplained, and beside the row-length question.)
 - **Noise.** LSDj maps the note column to NR43 by its own scheme and its `S` is
   a shape command; ChipBoy maps a note to a shift/divisor pair musically and
   gives `S` to PU1's sweep. §2 already says the noise letters are ChipBoy's own,

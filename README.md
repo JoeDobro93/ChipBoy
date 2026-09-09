@@ -244,7 +244,9 @@ sound still audible 100 ms after all-notes-off, and prints its seed on failure
     `bb2` → `A-1`, `A#1`, `A#2`; `off` or `-` is a note off). Every slot field — a
     cell's **INS** and **TBL**, the groove chip, a strip's instrument and table
     steppers — opens its item's own tab on a double-click and lists its slots by name
-    on a right-click, with *Open … in its tab* at the top. A cell's two commands
+    on a right-click, with *Open … in its tab* at the top. Enter or a double-click on a
+    **blank** cell fills it with the column's last value, and a new note brings the
+    channel's last instrument with it. Grooves can be **named**. A cell's two commands
     fire once, at their step: the persistent letters (`A E F G M O P S T V W`) hold
     until the next note that carries an instrument, same as a slot; the rest
     (`C D K L R Z`) shape only that note. Each lane carries a record **arm** and a

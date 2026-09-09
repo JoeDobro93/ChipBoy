@@ -929,3 +929,25 @@ case f_table_rows
     row 0 n=C-5 i=2
     row 8 n=C-5 i=0
   chain pu1 0 1
+
+# --- (f) the table's row speed, read off a transpose column -----------------
+
+case f_table_speed
+  desc A table transposing 0 2 4 6 8 10 12 14: how many ticks is a row at the default speed?
+  note The period changes are unambiguous where the volume rows were not, so
+  note the spacing of the writes is the row length itself.
+  frames 1200
+  tempo 120
+  inst 0 pulse env=F0 duty=2 sweep=FF table=0
+  table 0
+    row 0 tsp=00
+    row 1 tsp=02
+    row 2 tsp=04
+    row 3 tsp=06
+    row 4 tsp=08
+    row 5 tsp=0A
+    row 6 tsp=0C
+    row 7 tsp=0E
+  phrase 0
+    row 0 n=C-5 i=0
+  chain pu1 0

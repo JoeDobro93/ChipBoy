@@ -26,8 +26,18 @@ GroovesPanel::GroovesPanel(ChipBoyProcessor& p)
     addAndMakeVisible(listTitle_);
     addAndMakeVisible(editor_);
     addAndMakeVisible(help_);
-    list_.setRenameable(false);                 // a groove is its ticks; there is no name to type
+    // A groove has a name as well as its ticks (section 39); straight, slot
+    // 0, is not the song's and keeps its own.
     list_.onSelect = [this](int slot) { showSlot(slot); };
+    list_.onRename = [this](int slot, const String& n) {
+        if (slot < 1 || slot > kSlots) return;
+        const String name = n.trim().substring(0, 15);
+        processor.editSong("Groove " + ValueFormat::number(slot) + " named " + name, [slot, name](tracker::Song& s) {
+            if (slot >= 1 && slot <= int(s.grooves.size())) s.grooves[size_t(slot - 1)].setName(name.toRawUTF8());
+        });
+        rebuildList();
+        contextChanged();
+    };
     editor_.onChange = [this](int slot, const tracker::Groove& g) {
         processor.editSong("Groove " + ValueFormat::number(slot), [slot, g](tracker::Song& s) { if (slot >= 1 && slot <= int(s.grooves.size())) s.grooves[size_t(slot - 1)] = g; });
         rebuildList();
@@ -101,7 +111,14 @@ void GroovesPanel::rebuildList()
     std::vector<SlotRow> rows;
     rows.reserve(size_t(kSlots) + 1);
     rows.push_back({ 0, "straight", true, -1, "6 6, fixed" });
-    for (int slot = 1; slot <= kSlots; ++slot) rows.push_back({ slot, ticksText(slot), true, -1, swingText(slot) });
+    // A named groove reads "slot . name" with its ticks beside it; an unnamed
+    // one shows its ticks where the name goes, as before (section 39).
+    const auto s = processor.song();
+    for (int slot = 1; slot <= kSlots; ++slot) {
+        const bool named = s && s->grooves[size_t(slot - 1)].named();
+        rows.push_back({ slot, named ? String(CharPointer_UTF8(s->grooves[size_t(slot - 1)].nameOf())) : ticksText(slot), true, -1,
+                         named ? ticksText(slot) : swingText(slot) });
+    }
     bool same = rows.size() == lastRows_.size();
     for (size_t k = 0; same && k < rows.size(); ++k)
         same = rows[k].slot == lastRows_[k].slot && rows[k].name == lastRows_[k].name && rows[k].note == lastRows_[k].note;
@@ -138,7 +155,9 @@ void GroovesPanel::showSlot(int slot)
 RichText GroovesPanel::contextLine() const
 {
     RichText r;
-    r.plain("Editing groove ").bold(slot_ == 0 ? String("0 straight") : ValueFormat::number(slot_));
+    const auto sg = processor.song();
+    const bool named = slot_ > 0 && sg && sg->grooves[size_t(slot_ - 1)].named();
+    r.plain("Editing groove ").bold(slot_ == 0 ? String("0 straight") : ValueFormat::number(slot_) + (named ? " " + String(CharPointer_UTF8(sg->grooves[size_t(slot_ - 1)].nameOf())) : String()));
     if (slot_ > 0) r.plain(middot()).bold(ticksText(slot_)).plain(" ticks a step");
     else r.plain(" " + String(CharPointer_UTF8("\xe2\x80\x94")) + " six ticks a step, and not editable");
     return r;

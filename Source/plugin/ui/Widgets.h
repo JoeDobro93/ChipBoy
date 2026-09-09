@@ -229,7 +229,9 @@ private:
 
 /// The table editor: 16 steps of volume, transpose and two commands
 /// (spec 9.5). Keyboard: type digits to set, Backspace blanks, letters
-/// pick a command in the command columns, Tab/arrows move.
+/// pick a command in the command columns, Tab/arrows move; Enter or a
+/// double click on a blank cell fills it with the column's most recent
+/// value, and a vertical drag moves a value (section 38).
 class TableGrid : public juce::Component, public juce::TooltipClient {
 public:
     TableGrid();
@@ -243,6 +245,7 @@ public:
     static constexpr int preferredHeight() { return kHeaderHeight + bank::kTableSteps * kRowHeight; }
     void resized() override; void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override; void mouseUp(const juce::MouseEvent&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override;
     bool keyPressed(const juce::KeyPress&) override; void focusGained(FocusChangeType) override; void focusLost(FocusChangeType) override;
 private:

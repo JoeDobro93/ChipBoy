@@ -1253,3 +1253,104 @@ it; the command rate keeps R, P and V and no longer touches C.
   group, reading "every tick", "every 2" ….
 - **Test**: `C arpeggiates 0, x, y and the chord rate slows it` — the chord rate slows
   the chord, the command rate does not, and neither disturbs the other.
+
+---
+
+# Addendum, 2026-09-09 (fifth): filling cells, named grooves, wave import, the lane's look
+
+Agreed after the fourth addendum. Binding. Amends §30, §35 and UI_DESIGN §7.
+
+## 38. A blank cell fills itself, and a new note brings its instrument
+
+- **Enter, or a double click, on a blank cell fills it** with the column's most recent
+  value — in the lane per channel, in a table per table: the last non-blank value that
+  column was given this session, else the nearest non-blank cell above it in the same
+  column, else a sensible default: the note the octave setting puts at C (C-4 at the
+  default), velocity 100, instrument 1, volume 15, transpose 0. A table slot or a
+  command with nothing to copy stays blank: there is no sensible command to invent. On
+  a cell that already holds something, Enter and the double click do what §35 says (the
+  box, or the slot's tab).
+- **A note typed into a blank cell brings the instrument with it**: the cell's INS takes
+  the column's most recent instrument when the cell had none. A note off does not, and
+  a note changed afterwards — a semitone up, a retyped pitch — never puts a deleted
+  instrument back; only the step from blank to a note does. *As built:* `PhraseGrid`
+  keeps a `Recent` per channel — note, velocity, instrument, table, both commands —
+  refreshed from every cell it writes; `TableGrid` keeps volume, transpose and the two
+  commands.
+- **A vertical drag on any value cell moves it**, as a note's already did: one unit per
+  six pixels, sixteen with Shift (a note: a semitone, an octave), the whole drag one
+  undo. Velocity, instrument, table, a command's argument (the byte in Hex), a table's
+  volume and transpose. A drag from a blank cell starts at zero.
+
+## 39. Grooves have names
+
+A groove is sixteen tick counts, but "7/5 swing" and "the hi-hat shuffle" are how a
+groove is remembered. `tracker::Groove` gains a **name**, up to fifteen characters
+(`std::array<char, 16>`, so the factory grooves stay `constexpr`), typed in the Grooves
+list as every other list renames — a double click or Enter on the row — and shown
+wherever a groove is picked: the Grooves list as *slot · name* with the ticks beside it,
+the lane's groove chip menu, the chip's tooltip. The song's JSON carries it as
+`grooveNames`; a file without one, which is every song before this section, reads
+blank names and the song format stays 7.
+
+## 40. Importing a wave shape
+
+The Waves tab's tools row gains **Import…**: an audio file the platform can read — a
+single-cycle waveform is what it is for — read as **one cycle**, mixed to mono, its mean
+removed, box-filtered onto 32 samples, peak-normalised and quantised to the sixteen
+levels (rounded, no dither: a wave is a shape, not a signal), and written into the frame
+on show as one undo. A file longer than a cycle is still read as one: the whole of it
+becomes the 32 samples, which is what a user who chose the file meant. *As built:*
+`bank::frameFromCycle(const float*, size_t)` in core, tested — a sine of any length is
+`frameSine()` to within a level; `plugin::importWaveCycle` does the file reading beside
+`importKitSample`.
+
+## 41. The lane reads as rows and channels
+
+- A **2 px divider** stands between the channels' column groups where a hairline did.
+- **Row bands**: every fourth row — the beat at the straight groove, rows 1, 5, 9, 13 —
+  is tinted, and the rows between alternate a fainter tint, so the eye finds a row and a
+  beat without counting. The step numbers keep their emphasis on the same rows.
+
+## 42. MIDI and Hybrid channels show their notes, dimmed
+
+The note column of a channel on MIDI or Hybrid used to show only the host's notes as they
+arrived and hid the cell's own. It now shows the **cell's notes dimmed**, the column
+washed, and refuses edits — the cells are not what plays. Where a cell is blank and the
+host played a note at that step, that note shows fainter still, as before. Switching the
+channel to Trkr lights the column and makes it editable again.
+
+## 43. The first note of a loop
+
+A user report from FL Studio: looping a bar of a four-on-the-floor beat, the note on
+beat one is often dropped. When a note ends exactly where the loop ends and the next
+starts exactly where it starts, the two land on the same sample, and FL delivers the
+**note-off after the note-on**. The plugin kept the host's order at equal offsets, so
+the new note was cut by the old one's off in the same sample. At one sample offset a
+MIDI **note-off now goes before a note-on** (a velocity-0 on counts as an off): the
+order is a flush, the song's cells, MIDI offs, then MIDI ons. A note-off cannot lose
+anything by going first, and a note-on cannot be killed by the note it replaces.
+*As built:* the rank in `ChipBoyProcessor::processBlock`'s sort. Not reproducible here
+without the host; the user confirms.
+
+## 44. LSDj's defaults, measured on 9.3.9: a table row is one tick, a chord step is one tick
+
+The user asked what LSDj's default table and chord rates are, to set the defaults for new
+instruments, and supplied an LSDj **9.3.9** ROM (outside the tree, as §31 requires). Two
+harness cases against it:
+
+- **`f_table_speed`** (new): a table whose transpose column steps 0, 2, 4, 6, 8, 10 —
+  the period changes are unambiguous where §10's volume column was not. LSDj wrote a
+  new period **every tick** (0.94 / 1.07 alternating, the frame jitter of a 59.7 Hz
+  machine against a 20.83 ms tick). **A table row is one tick**, and the "two ticks a
+  row" §10 and §17 read off the volume column was the envelope nibble's own timing, not
+  the row's. ChipBoy's tables already run one row a tick: the open issue closes with no
+  change. *(The trace loops after six rows where the case wrote eight; the last two and
+  the zero row write nothing visible. Unexplained and beside the point; noted in
+  `LSDJ_PARITY.md`.)*
+- **`i_kill_delay_chord`**: `C 3 7` at CMD/RATE 0 stepped **once a tick** on 9.3.9 as it
+  did on 9.2.J, and the note's own tick plays the root.
+
+So the defaults stand: a new instrument's **Chord rate** is 0 (one step a tick, §37), and
+a new table runs one row a tick with no rate field to add. LSDj has no separate table
+speed — its tables take the groove a `G` inside them names, as ChipBoy's do (§32).

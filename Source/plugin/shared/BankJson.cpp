@@ -392,6 +392,11 @@ var songToVar(const tracker::Song& s)
     Array<var> gr;
     for (const auto& g : s.grooves) { Array<var> a; for (int k = 0; k < g.length(); ++k) a.add(int(g.ticks[size_t(k)])); gr.add(a); }
     o->setProperty("grooves", gr);
+    // The grooves' names (section 39), beside the ticks so the ticks' form
+    // stays what every older reader expects.
+    Array<var> names;
+    for (const auto& g : s.grooves) names.add(String(CharPointer_UTF8(g.nameOf())));
+    o->setProperty("grooveNames", names);
     return var(o);
 }
 
@@ -502,6 +507,9 @@ bool songFromVar(const var& v, tracker::Song& out)
                 for (int i = 0; i < std::min(int(t.size()), a->size()); ++i) t[size_t(i)] = uint8_t(std::clamp(int((*a)[i]), 0, 48));
                 if (t[0] == 0) t[0] = 6;
             }
+    if (auto* names = o->getProperty("grooveNames").getArray())
+        for (int k = 0; k < std::min(int(out.grooves.size()), names->size()); ++k)
+            out.grooves[size_t(k)].setName((*names)[k].toString().substring(0, 15).toRawUTF8());
     tracker::buildRowTables(out);
     return true;
 }

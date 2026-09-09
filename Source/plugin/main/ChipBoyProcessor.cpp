@@ -1003,12 +1003,19 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     recWasArmed_ = rec;
 
     // At one sample the order is: a flush, then the song's cells, then the
-    // MIDI. A Hybrid channel's cell chooses the instrument and holds the
-    // commands a note-on in the same tick takes (section 20), so it has to be
-    // in front of that note; a flush is in front of everything.
+    // MIDI's offs, then its ons. A Hybrid channel's cell chooses the
+    // instrument and holds the commands a note-on in the same tick takes
+    // (section 20), so it has to be in front of that note; a flush is in
+    // front of everything; and a note-off goes before a note-on so a host
+    // that ends one note and starts the next on the same sample in the other
+    // order -- FL Studio at a loop point -- does not have the new note cut by
+    // the old one's off (section 43).
     {
         auto rank = [](const driver::NoteEvent& e) {
-            return e.kind == driver::NoteEvent::AllNotesOff ? 0 : e.source == driver::NoteEvent::Tracker ? 1 : 2;
+            if (e.kind == driver::NoteEvent::AllNotesOff) return 0;
+            if (e.source == driver::NoteEvent::Tracker) return 1;
+            const bool off = e.kind == driver::NoteEvent::NoteOff || (e.kind == driver::NoteEvent::NoteOn && e.b == 0);
+            return off ? 2 : 3;
         };
         std::stable_sort(events_.begin(), events_.end(), [&rank](const driver::NoteEvent& a, const driver::NoteEvent& b) {
             return a.offset != b.offset ? a.offset < b.offset : rank(a) < rank(b);

@@ -71,6 +71,17 @@ struct Phrase {
 /// as long as its groove makes it (section 25).
 struct Groove {
     std::array<uint8_t, kGrooveSteps> ticks{ 6, 6 };
+    /// A name, up to fifteen characters (section 39); a char array so the
+    /// factory grooves stay constexpr. Empty means unnamed.
+    std::array<char, 16> name{};
+
+    const char* nameOf() const { return name.data(); }
+    bool named() const { return name[0] != 0; }
+    void setName(const char* s)
+    {
+        name.fill(0);
+        for (size_t i = 0; s != nullptr && s[i] != 0 && i + 1 < name.size(); ++i) name[i] = s[i];
+    }
 
     int length() const { int n = 0; while (n < kGrooveSteps && ticks[size_t(n)] != 0) ++n; return n ? n : 1; }
     /// The ticks step i lasts, repeating; a groove with no entries is straight.

@@ -32,4 +32,18 @@ KitImportResult importKitSample(const juce::File& file, uint16_t kitPeriod, doub
 /// per chosen file, in order.
 void chooseAndImportKitSamples(juce::Component* parent, uint16_t kitPeriod, std::function<void(KitImportResult)> onEach);
 
+/// A wave shape from an audio file (docs/COMMANDS_AND_TEMPO.md section 40):
+/// the whole file read as one cycle, mixed to mono and handed to
+/// bank::frameFromCycle. Meant for single-cycle waveforms; a longer file
+/// still becomes the 32 samples. Message thread.
+struct WaveImportResult {
+    bool ok = false;
+    juce::String error;
+    bank::Frame frame;
+    juce::String name;             ///< the file's name, for the undo history
+    int64_t length = 0;            ///< samples read
+};
+WaveImportResult importWaveCycle(const juce::File& file);
+void chooseAndImportWave(juce::Component* parent, std::function<void(WaveImportResult)> onDone);
+
 } // namespace chipboy::plugin

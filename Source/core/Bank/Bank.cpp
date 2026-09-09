@@ -61,6 +61,28 @@ Frame frameSine()     { Frame f; for (int i = 0; i < 32; ++i) f.s[size_t(i)] = q
 Frame frameTriangle() { Frame f; for (int i = 0; i < 32; ++i) f.s[size_t(i)] = uint8_t(i < 16 ? i : 31 - i); return f; }
 Frame frameSaw()      { Frame f; for (int i = 0; i < 32; ++i) f.s[size_t(i)] = uint8_t(i / 2); return f; }
 Frame framePulse(int w){ Frame f; for (int i = 0; i < 32; ++i) f.s[size_t(i)] = uint8_t(i < w ? 15 : 0); return f; }
+Frame frameFromCycle(const float* x, size_t n)
+{
+    Frame f;
+    for (auto& s : f.s) s = q4(0.0);
+    if (x == nullptr || n == 0) return f;
+    double mean = 0.0;
+    for (size_t i = 0; i < n; ++i) mean += double(x[i]);
+    mean /= double(n);
+    double bins[32] = {};
+    for (size_t k = 0; k < 32; ++k) {
+        const size_t lo = k * n / 32, hi = std::max(lo + 1, (k + 1) * n / 32);
+        double acc = 0.0;
+        for (size_t i = lo; i < hi && i < n; ++i) acc += double(x[i]) - mean;
+        bins[k] = acc / double(std::min(hi, n) - lo);
+    }
+    double peak = 0.0;
+    for (double v : bins) peak = std::max(peak, std::abs(v));
+    if (peak <= 1.0e-9) return f;
+    for (size_t k = 0; k < 32; ++k) f.s[k] = q4(bins[k] / peak);
+    return f;
+}
+
 Frame frameInterpolate(const Frame& a, const Frame& b, double t)
 {
     Frame f;

@@ -5,6 +5,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <vector>
 
 using namespace chipboy;
@@ -408,4 +409,33 @@ TEST_CASE("the run is written from its first frame and the rest of the wave stay
     Wave sixteen;
     synthWriteRun(tail, two, sixteen);
     CHECK(sixteen.frames.size() == 16);
+}
+
+TEST_CASE("a cycle of audio becomes a frame", "[synth][waves]")
+{
+    // Section 40: a sine of any length is the bank's own sine to within a
+    // level, whatever its amplitude and offset.
+    for (const size_t n : { size_t(32), size_t(100), size_t(1000), size_t(4410) }) {
+        std::vector<float> x(n);
+        for (size_t i = 0; i < n; ++i) x[i] = 0.3f + 0.25f * std::sin(2.0f * 3.14159265f * (float(i) + 0.5f) / float(n));
+        const Frame f = frameFromCycle(x.data(), n);
+        const Frame want = frameSine();
+        for (int k = 0; k < 32; ++k) {
+            INFO("n " << n << " sample " << k);
+            CHECK(std::abs(int(f.s[size_t(k)]) - int(want.s[size_t(k)])) <= 1);
+        }
+    }
+    // A shorter input is held, not dropped; silence is the middle level;
+    // nothing is nothing.
+    const float short8[8] = { -1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+    const Frame held = frameFromCycle(short8, 8);
+    CHECK(held.s[0] == 0);
+    CHECK(held.s[15] == 0);
+    CHECK(held.s[16] == 15);
+    CHECK(held.s[31] == 15);
+    std::vector<float> flat(64, 0.4f);
+    const Frame silent = frameFromCycle(flat.data(), flat.size());
+    for (auto v : silent.s) CHECK((v == 7 || v == 8));
+    const Frame none = frameFromCycle(nullptr, 0);
+    for (auto v : none.s) CHECK((v == 7 || v == 8));
 }

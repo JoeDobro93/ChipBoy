@@ -291,6 +291,11 @@ Frame frameTriangle();
 Frame frameSaw();
 Frame framePulse(int widthSamples);
 Frame frameInterpolate(const Frame& a, const Frame& b, double t);
+/// One cycle of audio, `n` samples in -1..1, as a frame (section 40): the
+/// mean removed, box-filtered onto the 32 samples (a shorter input is held),
+/// peak-normalised and rounded to the sixteen levels -- no dither, a wave is
+/// a shape. Silence, or nothing, is the middle level.
+Frame frameFromCycle(const float* x, size_t n);
 
 /// Wave-channel period register for a sample rate, and back (section 9.8).
 uint16_t periodForSampleRate(double hz);

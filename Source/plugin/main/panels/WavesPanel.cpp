@@ -1,5 +1,7 @@
 #include "plugin/main/panels/WavesPanel.h"
 
+#include "plugin/shared/KitImport.h"
+
 #include <cmath>
 
 namespace chipboy::plugin {
@@ -132,13 +134,13 @@ private:
 /// grid's view. Holds the panel's own widgets, so it owns nothing.
 class WavesPanel::ToolsRow : public Block {
 public:
-    ToolsRow(Segmented& shape, TextButton& interp, Segmented& view)
+    ToolsRow(Segmented& shape, TextButton& interp, TextButton& import, Segmented& view)
         : drawLabel_("Draw", Fonts::caption(10.0f), colours::textDim), viewLabel_("View", Fonts::caption(10.0f), colours::textDim),
-          shape_(shape), interp_(interp), view_(view)
+          shape_(shape), interp_(interp), import_(import), view_(view)
     {
         drawLabel_.setUpperCase(true);
         viewLabel_.setUpperCase(true);
-        for (auto* c : std::initializer_list<Component*>{ &drawLabel_, &shape_, &interp_, &viewLabel_, &view_ }) addAndMakeVisible(c);
+        for (auto* c : std::initializer_list<Component*>{ &drawLabel_, &shape_, &interp_, &import_, &viewLabel_, &view_ }) addAndMakeVisible(c);
     }
     int preferredHeight(int) override { return 26; }
     void resized() override
@@ -148,6 +150,8 @@ public:
         shape_.setBounds(area.removeFromLeft(shape_.preferredWidth()).withSizeKeepingCentre(shape_.preferredWidth(), shape_.preferredHeight()));
         area.removeFromLeft(8);
         interp_.setBounds(area.removeFromLeft(88).reduced(0, 2));
+        area.removeFromLeft(6);
+        import_.setBounds(area.removeFromLeft(72).reduced(0, 2));
         view_.setBounds(area.removeFromRight(view_.preferredWidth()).withSizeKeepingCentre(view_.preferredWidth(), view_.preferredHeight()));
         area.removeFromRight(6);
         viewLabel_.setBounds(area.removeFromRight(34));
@@ -156,6 +160,7 @@ private:
     TextLine drawLabel_, viewLabel_;
     Segmented& shape_;
     TextButton& interp_;
+    TextButton& import_;
     Segmented& view_;
 };
 
@@ -301,7 +306,8 @@ WavesPanel::WavesPanel(ChipBoyProcessor& p)
       frameText_({}, Fonts::mono(12.0f), colours::text),
       shape_({ "Sine", "Triangle", "Saw", "Pulse" }),
       view_({ "Bars", "Points" }),
-      interp_("Interpolate")
+      interp_("Interpolate"),
+      import_("Import" + String(CharPointer_UTF8("\xe2\x80\xa6")))
 {
     frameLabel_.setUpperCase(true);
     sw_ = std::make_unique<SynthWidgets>();
@@ -333,6 +339,8 @@ WavesPanel::WavesPanel(ChipBoyProcessor& p)
     shape_.onChange = [this](int i) { generate(i); };
     interp_.setTooltip("Every frame between the first and the last becomes a blend of the two.");
     interp_.onClick = [this] { interpolate(); };
+    import_.setTooltip("An audio file -- a single-cycle waveform -- read as one cycle into the frame on show: mono, 32 samples, 16 levels.");
+    import_.onClick = [this] { importWave(); };
     view_.setMini(true);
     view_.setTooltip("Bars, or each sample as a point on the 32 by 16 grid. Either way the pointer's column and row are lit and the corner reads the coordinates.");
     view_.setSelected(0, dontSendNotification);
@@ -340,7 +348,7 @@ WavesPanel::WavesPanel(ChipBoyProcessor& p)
 
     auto stack = std::make_unique<Stack>(8);
     stack->add(std::make_unique<Hold>(grid_, kGridHeight));
-    stack->add(std::make_unique<ToolsRow>(shape_, interp_, view_));
+    stack->add(std::make_unique<ToolsRow>(shape_, interp_, import_, view_));
     auto frames = std::make_unique<FrameStrip>();
     frames_ = frames.get();
     frames->onSelect = [this](int k) { frame_ = k; syncFromBank(true); contextChanged(); };
@@ -476,6 +484,20 @@ void WavesPanel::generate(int shape)
     const bank::Frame f = shape == 0 ? bank::frameSine() : shape == 1 ? bank::frameTriangle() : shape == 2 ? bank::frameSaw() : bank::framePulse(16);
     const int k = frame_;
     editWave("frame " + String(k + 1), [f, k](bank::Wave& w) { w.frames[size_t(std::clamp(k, 0, int(w.frames.size()) - 1))] = f; }, true);
+}
+
+void WavesPanel::importWave()
+{
+    Component::SafePointer<WavesPanel> safe(this);
+    const int k = frame_;
+    chooseAndImportWave(this, [safe, k](WaveImportResult r) {
+        if (safe == nullptr) return;
+        if (!r.ok) { AlertWindow::showMessageBoxAsync(MessageBoxIconType::WarningIcon, "ChipBoy", r.error.isEmpty() ? String("The file could not be imported.") : r.error); return; }
+        const bank::Frame f = r.frame;
+        safe->frame_ = k;
+        safe->editWave("frame " + String(k + 1) + " imported from " + r.name, [f, k](bank::Wave& w) { w.frames[size_t(std::clamp(k, 0, int(w.frames.size()) - 1))] = f; }, true);
+        safe->message("Imported " + r.name + " (" + String(int(r.length)) + " samples) as one cycle into frame " + String(k + 1));
+    });
 }
 
 void WavesPanel::interpolate()

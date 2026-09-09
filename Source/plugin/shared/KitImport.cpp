@@ -109,6 +109,49 @@ KitImportResult importKitSample(const File& file, uint16_t kitPeriod, double max
     return r;
 }
 
+WaveImportResult importWaveCycle(const File& file)
+{
+    WaveImportResult r;
+    r.name = file.getFileNameWithoutExtension();
+    if (!file.existsAsFile()) { r.error = "file not found"; return r; }
+    AudioFormatManager formats;
+    formats.registerBasicFormats();
+    std::unique_ptr<AudioFormatReader> reader(formats.createReaderFor(file));
+    if (!reader) { r.error = "not an audio file this build can read"; return r; }
+    const int channels = int(reader->numChannels);
+    if (channels <= 0 || reader->lengthInSamples <= 0) { r.error = "the file has no audio"; return r; }
+    // One cycle is a few hundred samples; a whole second is more than anyone
+    // meant, and enough to average down to 32.
+    const int frames = int(std::min<int64>(reader->lengthInSamples, int64(1 << 20)));
+    AudioBuffer<float> decoded(channels, frames);
+    if (!reader->read(decoded.getArrayOfWritePointers(), channels, 0, frames)) { r.error = "could not read the audio data"; return r; }
+    std::vector<float> mono(size_t(frames), 0.0f);
+    const float gain = 1.0f / float(channels);
+    for (int c = 0; c < channels; ++c) {
+        const float* src = decoded.getReadPointer(c);
+        for (int i = 0; i < frames; ++i) mono[size_t(i)] += src[i] * gain;
+    }
+    r.frame = bank::frameFromCycle(mono.data(), mono.size());
+    r.length = frames;
+    r.ok = true;
+    return r;
+}
+
+void chooseAndImportWave(Component* parent, std::function<void(WaveImportResult)> onDone)
+{
+    AudioFormatManager formats;
+    formats.registerBasicFormats();
+    const File start = lastDirectory().isDirectory() ? lastDirectory() : File::getSpecialLocation(File::userMusicDirectory);
+    chooser() = std::make_unique<FileChooser>("Import a wave shape", start, formats.getWildcardForAllFormats(), true, false, parent);
+    const int flags = FileBrowserComponent::openMode | FileBrowserComponent::canSelectFiles;
+    chooser()->launchAsync(flags, [onDone = std::move(onDone)](const FileChooser& fc) {
+        const File f = fc.getResult();
+        if (f == File()) return;
+        lastDirectory() = f.getParentDirectory();
+        if (onDone) onDone(importWaveCycle(f));
+    });
+}
+
 void chooseAndImportKitSamples(Component* parent, uint16_t kitPeriod, std::function<void(KitImportResult)> onEach)
 {
     AudioFormatManager formats;

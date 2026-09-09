@@ -44,6 +44,8 @@ private:
     void editWave(const juce::String& what, const std::function<void(bank::Wave&)>& fn, bool pushToGrid);
     void generate(int shape);
     void interpolate();
+    /// Import...: an audio file read as one cycle into the frame on show (section 40).
+    void importWave();
     /// The synth section (sections 33 and 36): built when the edited end's
     /// shape changes, read back whenever the bank does.
     void buildSynth();
@@ -65,7 +67,7 @@ private:
     ui::NameField name_;
     TextLine frameLabel_, frameText_;
     ui::Segmented shape_, view_;
-    juce::TextButton interp_;
+    juce::TextButton interp_, import_;
     ScrollBlock scroll_, synthScroll_;
     ui::WaveGrid grid_;
     FrameStrip* frames_ = nullptr;

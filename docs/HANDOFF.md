@@ -38,13 +38,25 @@ design-log section the change touches. Update this file at the end of every chan
   chosen shaper, the tools sit under the grid, and the grid has a Points view with the
   pointer's coordinates; the instrument gains a **Chord rate** apart from the command
   rate (default 0 keeps parity; old files take the command rate).
+- Round 7, second pass (§38–§44): Enter or a double click on a blank cell fills it from
+  the column's memory and a new note brings its instrument; every value cell takes a
+  vertical drag; grooves have names (`Groove::name`, `grooveNames` in the song JSON);
+  the Waves tab imports a single-cycle file as a frame (`bank::frameFromCycle`,
+  `plugin::importWaveCycle`); the lane has 2 px channel dividers and beat bands; MIDI
+  and Hybrid channels show their notes dimmed; a MIDI note-off sorts before a note-on at
+  one sample (the FL Studio first-note report, unverified here); LSDj 9.3.9 measured — a
+  table row and a chord step are both one tick, so the defaults stand.
+- The parity harness runs here now: RGBDS was built from source into `/usr/local`, the
+  ROM sits at `/root/lsdj/lsdj9_3_9.gb` (container only), `build-ref/` holds the build.
+  `f_table_speed` is a new case; only it and `i_kill_delay_chord` were traced on 9.3.9.
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
 ## Open issues
 
-- Table rows: LSDj measured two ticks per row, ChipBoy runs one (tables have their own
-  groove). Deliberate for now; the user decides.
+- ~~Table rows: LSDj measured two ticks per row.~~ Closed (§44): re-measured on a 9.3.9
+  ROM with a transpose column, a row is **one tick** in LSDj too; the two ticks were the
+  envelope nibble. Nothing to change.
 - Not at parity (`LSDJ_PARITY.md` §17): P's last ~1 %, V in Drum rounding, V in Tick at
   speeds not multiples of three, R's resync after 38, envelope rates 6 and 7, bare notes
   ended by a dead envelope; saw/square vibrato, kits and speech unmeasured.
@@ -52,6 +64,8 @@ design-log section the change touches. Update this file at the end of every chan
 - Visualizer scopes lack the kit fixed-window hint; the STOCK badge is global;
   `Z 255,255` clips in a lane's command column.
 - Demo songs were re-expressed under the measured laws; worth a listen.
+- The FL Studio first-note drop (§43) is fixed on reasoning — a note-off now sorts before a
+  note-on at the same sample — but was not reproduced here; the user confirms in FL.
 - The chord rate defaults to LSDj's one step a tick; the demo songs' arpeggios still run
   at that speed. Slowing them is a content decision (`make_songs.py` would need a
   `chordRate` field).

@@ -499,9 +499,15 @@ plain note reloads the instrument (§12) — the lane and the automation lanes a
 mechanism, not two. **Vel** is the note's velocity, 1–127, blank meaning the default 100;
 a recorded note keeps the velocity it arrived with, and every column takes the same
 gestures — typed digits, + and −, Backspace to take a digit back and then blank, Shift
-with the arrows, a double click for the box (§2.1: the wheel scrolls the pane, it never
-edits). The note column takes them as well, with Shift+←/→ a semitone and Shift+↑/↓ an
-octave, a vertical drag, and a double click that types a note with auto-correction.
+with the arrows, a vertical drag, a double click for the box (§2.1: the wheel scrolls the
+pane, it never edits). The note column takes them as well, with Shift+←/→ a semitone and
+Shift+↑/↓ an octave, and a double click that types a note with auto-correction. **Enter
+or a double click on a blank cell fills it** with the column's most recent value, and a
+note typed into a blank cell brings the channel's most recent instrument with it
+([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §38). A 2 px divider stands between
+the channels and every fourth row is banded for the beat, the rows between alternating
+a fainter band (§41). A channel on MIDI or Hybrid shows its notes dimmed in a washed
+column and does not edit them (§42).
 
 A command cell is drawn as the two things it is (§2.1): the **letter**, in the accent
 colour against a hairline, then its **values**. The letter is picked from the palette a
