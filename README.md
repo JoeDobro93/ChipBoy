@@ -35,7 +35,7 @@ tracker with song tabs — each song owning its own bank — that follows the ho
 transport or runs its own, records, and saves songs and instrument presets to their own
 files, two plugins linked through shared memory, the Hardware panel's options, and the
 window from the mockup with its visualizer and period-locked scopes. It has
-been compiled and tested on Linux (61 core tests, the link integration test, VST3 and
+been compiled and tested on Linux (158 core tests, the link integration test, VST3 and
 Standalone builds). The Windows and macOS builds are made by hand from the same tree
 (the build section below); CI builds them only when asked
 (Actions → CI → Run workflow) or for a `v*` tag, since the local Linux gate runs
@@ -48,12 +48,33 @@ beat it is, the host's or the song's. The design is
 [`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md) and it supersedes the spec
 where they differ; projects and banks from before it are not migrated.
 
+**Revised on 2026-09-09:** every channel now keeps its own time — a phrase has its own
+length instead of living in a bar (a step is always six ticks at the straight groove, so
+a 3/4 phrase is 12 steps), and the chain highlights each channel's own row, so channels
+whose phrases differ in length can, and by design do, drift apart. A level change — a
+table's volume column, an envelope that only decays, a fade — never retriggers any more;
+it is written the way the hardware allows, a zombie-mode register sequence, the way
+LSDj's own driver does it. The instrument's envelope gained a **Shaped** alternative to
+the chip's own **Chip** mode: Attack, Peak, Decay, Sustain and Release, each with its own
+curve, rendered as one level a tick so a ROM driver could replay it from a plain list.
+And the driver's laws — pitch, vibrato, bends, retriggers, every level change — are now
+measured rather than guessed: an opt-in parity harness (`-DCHIPBOY_LSDJREF=ON`,
+`CHIPBOY_LSDJ_ROM` pointing at an LSDj ROM you own — never the repository) plays the same
+songs through a real LSDj 9.2.J ROM and through ChipBoy's driver and diffs the register
+streams. Most of what it checks now matches, write for write; what still differs is
+either deliberate (ChipBoy's tables run one row a tick against LSDj's two, and its noise
+mapping and 64-slot tables are its own) or measured but not yet resolved (the last one
+per cent of a bend's rate, a couple of vibrato roundings) — see
+[`docs/LSDJ_PARITY.md`](docs/LSDJ_PARITY.md) for the case-by-case account.
+
 Expect first-run bugs; the documents remain the source of truth:
 
 - [`docs/CHIPBOY_SPEC.md`](docs/CHIPBOY_SPEC.md) — the build specification, and the source of truth.
 - [`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md) — commands, the channel's lanes and the tempo model; supersedes the spec where they differ.
+- [`docs/LSDJ_PARITY.md`](docs/LSDJ_PARITY.md) — what a real LSDj ROM writes to the APU against what ChipBoy's driver writes, case by case, measured through the opt-in parity harness.
 - [`docs/UI_DESIGN.md`](docs/UI_DESIGN.md) — the interface, its reasons, and the decisions taken.
 - [`docs/HARDWARE_REFERENCE.md`](docs/HARDWARE_REFERENCE.md) — DMG APU registers, timing, and the measured analog behaviour the emulation has to reproduce.
+- [`docs/HARDWARE_DRIVER_AUDIT.md`](docs/HARDWARE_DRIVER_AUDIT.md) — every driver behaviour against the register writes and clock a real Game Boy program would use, and what a playback ROM would need.
 - [`docs/LICENSING.md`](docs/LICENSING.md) — third-party obligations and the licence decision still to be made.
 - [`docs/CAPTURE_GUIDE.md`](docs/CAPTURE_GUIDE.md) — step-by-step procedure for measuring a real DMG and CGB.
 - [`CHANGES.md`](CHANGES.md) — every departure from the spec, with reasons, and what is deferred.
@@ -121,7 +142,11 @@ file byte for byte (`ctest --test-dir build -C Release -R demo_song_matches`). T
 tool's `--check-state` compares the processor against the hybrid project's saved state,
 `Demo/chipboy_demo_hybrid.state` (`demo_state_matches`), and its `--play-song FILE`
 loads any of the six songs under `Demo/songs` and measures every channel, run over
-every file by `demo_songs_load`.
+every file by `demo_songs_load`. Beside these, `chipboy_fuzz` plays random songs —
+random cells, every command letter with random arguments, grooves, tempo and mode
+changes, locates — through the plugin's own transport looking for a NaN, a hang, or
+sound still audible 100 ms after all-notes-off, and prints its seed on failure
+(`ctest --test-dir build -C Release -R chipboy_fuzz`).
 
 ## Playing it
 
@@ -143,7 +168,11 @@ every file by `demo_songs_load`.
    them live with *Live follow*. A note landing over one still held is legato when the
    instrument's **Overlap** field says so — it just bends to the new pitch, instead of
    retriggering the instrument (pulse and wave default to legato, noise and kits to
-   retrig).
+   retrig) — except a note at the **same pitch** as the one already sounding, which
+   always retriggers even under legato: legato is for moving between pitches, and a drum
+   hit in succession is a hit. A table's first row fires in the same instant as the
+   note-on, never at the next tick, so a wave kick whose table drops the pitch starts
+   dropping at once instead of sounding its raw note first.
 4. **The two command slots** are LSDj's letters with base-10 arguments: `W` duty on a
    pulse channel and the wave slot on WAV, `E` envelope, `V` vibrato, `A` table, `F`
    frame, `C` chord, `L` slide, `R` retrigger, `P` bend speed, `O` pan, `S` PU1's
@@ -153,68 +182,106 @@ every file by `demo_songs_load`.
    note-on after the instrument and its table. Put the letter back to *none* and what it
    changed reverts to the instrument's own value. The strip shows the meaning
    ("vol 12 · down 3"), never a packed byte, with the running state under it, so an
-   automation move is visible as the slot changing and the state following. The
+   automation move is visible as the slot changing and the state following. A command's
+   values are typed in an inline box, in one of two views — **Decimal** (`V 4,6`) or
+   **Hex**, the one byte LSDj itself would carry (`V46`; `P` in two's complement) — the
+   same pair wherever a command shows: the grid, a strip, or the Voice window. The
    instrument's own **Pitch speed** — Fast, Tick, Step or Drum — sets how `V`, `L` and
-   `P` move: Fast is a tempo-independent 360 Hz, Tick follows the tempo, Step makes `P`
-   an immediate jump instead of a bend, and Drum bends `P` and `L` in semitones, for a
+   `P` move: Fast is a tempo-independent 358.12 Hz, Tick follows the tempo, Step makes
+   `P` an immediate jump instead of a bend, and Drum bends `P` and `L` in semitones, for a
    kick. A note-on in the **command octave** — MIDI notes 0–11, on any channel — never
    sounds: it fires CMD1 then CMD2 on whatever the channel is already playing, without a
    trigger, so a held note can be shaped after its attack from a keyboard with no wheel
    to spare.
-5. Velocity sets the envelope's start volume — or selects an instrument, or is ignored,
+5. **A level change never retriggers.** Turning a level down or up — a table's volume
+   column, an `E` that only changes decay or attack, the *Level* lane, CC7, a release
+   fade — is written the way the hardware allows, without a trigger: the same register
+   sequence a real LSDj driver uses, measured off a ROM (see Status above). Only a plain
+   note-on, `R`, and an `E` that flips direction or rate ever retrigger. The instrument's
+   envelope gains a second **mode** beside the original, now called **Chip**:
+   **Shaped** — Attack, Peak, Decay, Sustain and Release in ticks, each with its own
+   curve (linear, exponential or logarithmic) — rendered as one level a tick, so a ROM
+   driver could replay it from a plain list. The **Instrument** tab is a compact
+   **form** — labels down one column, controls down the other, no card chrome — with
+   the envelope drawn as **a graph from its own fields**: the chip's ramp, or the
+   Shaped ADSR with its curves.
+6. Velocity sets the envelope's start volume — or selects an instrument, or is ignored,
    per channel — the mod wheel sets vibrato depth, and pitch bend moves the period.
-6. **Tempo.** Ticks, which tables, vibrato, wave frames and tracker steps all run on, are
+7. **Tempo.** Ticks, which tables, vibrato, wave frames and tracker steps all run on, are
    always 24 to the beat. *Tempo source* (in the header bar) chooses whose beat:
    **Host**, the default, where a tick sits at every multiple of 1/24 of the host's beat
    and scrubbing is exact; or **Song**, where the plugin keeps its own *Song tempo*
    (40–255 BPM, automatable) with `T` commands over it. The header's tempo field is a
    **read-only readout** of whichever is in force — each song's own master tempo is
    typed in the Tracker tab instead. Either way **the host's time signature never
-   reaches the tracker**: only its tempo does, and a song's bar is always its own
-   *Beats* per bar, so the host's bars stay a ruler in both modes. *Quantize* (default
-   off) holds note-ons and note-offs until the next tick, for the tracker's feel; bends
-   and controllers are never quantised, and tracker cells are always on ticks.
-7. For one track per voice: put a **ChipBoy Voice** on another track, turn **Link mode**
+   reaches the tracker**: only its tempo does, and there are no bars to move — a phrase
+   has its own length in steps, in the **Tracker** tab below — so the host's bars stay a
+   ruler regardless of mode. *Quantize* (default off) holds note-ons and note-offs until
+   the next tick, for the tracker's feel; bends and controllers are never quantised, and
+   tracker cells are always on ticks.
+8. For one track per voice: put a **ChipBoy Voice** on another track, turn **Link mode**
    on in ChipBoy's Link tab (the host re-compensates for one block of latency), and
    pick the instance and channel in the Voice. The Voice's track stays silent; the audio
    comes out of the ChipBoy track. Its parameters are the same set, as automation lanes
    where you expect them.
-8. **Keyswitches** (per channel, off by default): notes 24–35 on a pulse channel and
+9. **Keyswitches** (per channel, off by default): notes 24–35 on a pulse channel and
    12–23 on the wave and noise channels select instrument slots 1–12 without sounding.
-9. Songs live in **tabs**: one per open song, plus a **+** tab that starts an empty one
-   on the factory bank. Only the active tab plays and is edited, and it is what the
-   Instrument, Tables, Grooves, Waves, Kits tabs and the header's Bank group show; a
-   song file embeds its own bank, so **Load song…** brings its sounds with it. The
-   **Tracker** tab (renamed from Phrases) is a tracker on that same clock: note,
-   velocity, instrument, table and two commands per channel. *Steps / bar* is a typed
-   number, 1–64, and a bar may take its own count instead, in the chain's **STP**
-   column. A cell's two commands fire once, at their step: the persistent letters
-   (`A E F G M O P S T V W`) hold until the next note that carries an instrument, same as
-   a slot; the rest (`C D K L R Z`) shape only that note. Each lane carries a record
-   **arm** and a **PLAYS** switch — **MIDI**, **Trkr**, or **Hybrid**, which takes notes
-   from MIDI and everything else (instrument, table, commands) from the song's cells at
-   their steps; with the head row's *Rec* on, an armed channel records what it plays
-   whatever the switch says — an overdub onto a Trkr lane stays audible — and playing
-   the song back in Trkr reproduces the performance, tempo and groove included. *Play*,
-   *Stop* and *Loop* run the song on the plugin's own clock when nothing else offers a
-   transport (the Standalone, chiefly), and mirror the host's transport, disabled, when
-   one is playing. *Save song…* / *Load song…* write and read a `.cbsong`; it also names
-   the bank it was written with and every instrument slot it uses, so loading it against
-   a different bank reports where the two disagree.
-10. The **Grooves** tab holds the song's sixteen editable grooves (groove 0 is straight)
+10. Songs live in **tabs**: one per open song, plus a **+** tab that starts an empty one
+    on the factory bank. Only the active tab plays and is edited, and it is what the
+    Instrument, Tables, Grooves, Waves, Kits tabs and the header's Bank group show; a
+    song file embeds its own bank, so **Load song…** brings its sounds with it. The
+    **Tracker** tab (renamed from Phrases) is a tracker on that same clock: note,
+    velocity, instrument, table and two commands per channel. **Every channel keeps its
+    own time**: a phrase's **LEN** is typed, 1–64 steps, in the lane's head beside the
+    groove chip, and the chain's own LEN column sits where the old bar override did —
+    there are no bars, and channels whose phrases run different lengths drift apart by
+    design, each lit in the chain at its own row. A note takes **Shift+↑/↓** for a
+    semitone, **Shift+←/→** for an octave, a vertical drag for a semitone every six
+    pixels, or a **double-click** that types it with auto-correction (`a1`, `a#1`,
+    `bb2` → `A-1`, `A#1`, `A#2`; `off` or `-` is a note off). Every slot field — a
+    cell's **INS** and **TBL**, the groove chip, a strip's instrument and table
+    steppers — shares **one convention**: click selects and types, right-click lists
+    the slots by name, double-click opens that item's own tab. A cell's two commands
+    fire once, at their step: the persistent letters (`A E F G M O P S T V W`) hold
+    until the next note that carries an instrument, same as a slot; the rest
+    (`C D K L R Z`) shape only that note. Each lane carries a record **arm** and a
+    **PLAYS** switch — **MIDI**, **Trkr**, or **Hybrid**, which takes notes from MIDI
+    and everything else (instrument, table, commands) from the song's cells at their
+    steps; with the head row's *Rec* on, an armed channel records what it plays
+    whatever the switch says — an overdub onto a Trkr lane stays audible — and playing
+    the song back in Trkr reproduces the performance, tempo and groove included. *Play*,
+    *Stop* and *Loop* run the song on the plugin's own clock when nothing else offers a
+    transport (the Standalone, chiefly), and mirror the host's transport, disabled, when
+    one is playing. *Save song…* / *Load song…* write and read a `.cbsong`; it also names
+    the bank it was written with and every instrument slot it uses, so loading it against
+    a different bank reports where the two disagree.
+11. The **Grooves** tab holds the song's sixteen editable grooves (groove 0 is straight)
     — sixteen tick counts each, for the swing and triplets a straight six ticks a step
-    can't give — with the total against the bar's ticks, a swing readout and a ◀ ▶
+    can't give — with the total against the row's ticks, a swing readout and a ◀ ▶
     nudge. A phrase picks its groove from the chip in the Tracker tab's lane; tables run
     on one too.
-11. Instruments save and load on their own: **Save preset…** / **Load preset…** in the
+12. The **Tables** tab lights the row a running table is on, following whichever
+    channel's run started **last** when two channels share a table. The **Waves** tab
+    gained a **synth**: a source (sine, triangle, saw, square, eight-partial harmonic,
+    noise, or the drawn wave) through a chain of shapers (filters, drive, rotate, shift,
+    invert, reverse, smooth, bit-crush, quantise, normalise), morphed from a start state
+    to an end one over a run of frames. **Generate** writes the run into the slot as one
+    undo step, and the parameters are saved alongside it so a run can be made again
+    after a hand edit.
+13. Instruments save and load on their own: **Save preset…** / **Load preset…** in the
     Instrument tab write and read a `.cbi` — the instrument plus every table, wave and
     kit it depends on. Loading one drops each dependency into a free slot of its kind
     (or reuses an identical one already in the bank) and renumbers every reference to
     match.
-12. The **Hardware** tab holds the model switch (DMG / CGB / RAW), the hardware states
-    (headphone noise, LCD line, CGB bass mod, volume writes at edges) and the two
-    departures (de-click, soften master pops), which light the MODIFIED badge.
-13. **Typing, the wheel and undo.** Every number is typeable: click a stepper's readout
+14. The **Hardware** tab holds the model switch (DMG / CGB / RAW) and the hardware
+    states (headphone noise, LCD line, CGB bass mod) beside the two departures
+    (de-click, soften master pops), which light the MODIFIED badge; *Volume writes at
+    edges* stays in the list but now reads **no effect** — no program on a real Game Boy
+    can wait for a pulse's low half, so neither does ChipBoy's driver any more.
+    [`docs/HARDWARE_DRIVER_AUDIT.md`](docs/HARDWARE_DRIVER_AUDIT.md) lists every driver
+    behaviour against the register writes and clock a real program would use, and
+    `chipboy_fuzz` (above) is the stability check that runs beside the others.
+15. **Typing, the wheel and undo.** Every number is typeable: click a stepper's readout
     or double-click a knob or the trim fader and a small box opens — Enter commits,
     Escape cancels, and what is not a number in the field's base is refused rather than
     guessed at, while a number outside the hardware's range is clamped to it. The mouse
@@ -227,7 +294,7 @@ every file by `demo_songs_load`.
     In a command cell the letter and the values are separate: click the letter for a
     palette of the letters that channel can carry, then type the values; a right click
     on an **ins** or **tbl** cell lists the bank's slots by name.
-14. `Demo/ChipBoy Demo.rpp` opens in Reaper with the tune and its automation, and
+16. `Demo/ChipBoy Demo.rpp` opens in Reaper with the tune and its automation, and
     `Demo/ChipBoy Demo (song tempo).rpp` runs the same track on the song's clock at 150
     BPM with a `T` that drops it to 100 for four bars; the tune alone is in
     `Demo/chipboy_demo.mid` for any other host, and the same tune recorded onto the
@@ -236,6 +303,10 @@ every file by `demo_songs_load`.
     and all four channels on **Hybrid** instead of automation, and `Demo/songs/` holds
     six more original songs, each carrying its own bank, written straight into the
     tracker — no MIDI, no automation, no DAW required.
+
+![The Instrument tab with a shaped envelope](docs/screenshots/main-instrument-shaped.png)
+![The Tables tab, lighting a running table's row](docs/screenshots/main-tables.png)
+![The Waves tab and its synth](docs/screenshots/main-waves.png)
 
 ## Building the core and its tests
 
