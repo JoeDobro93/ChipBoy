@@ -388,10 +388,15 @@ the hardware's ranges, and none of the cartridge limits (C10).
 
   | | Pulse | Wave | Kit | Noise |
   |---|---|---|---|---|
-  | left column (Sound + Pitch) | 340 | 314 | 288 | 314 |
-  | right column, Chip | 388 | 336 | 336 | 388 |
+  | left column (Sound + Pitch & modulation) | 360 | 332 | 306 | 332 |
+  | right column, Chip (Envelope + Table) | 378 | 326 | 326 | 378 |
+  | **total, Chip** | **416** | **370** | **364** | **416** |
   | right column, Shaped | 430 | 430 | 430 | 430 |
   | **total, Shaped** | **468** | **468** | **468** | **468** |
+
+  Shaped is the same height on all four types because the right column is the tall one
+  and the shaped envelope is the same six rows whatever the channel; `chipboy_uishot`
+  reports the content height of the pane on every run, and these are its numbers.
 
   The knobs are gone, and that is what buys the room: a stepper with a readout says
   "4 Hz" in 24 px where a 50 px dial with its caption took 70. Before the form it was
