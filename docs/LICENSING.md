@@ -20,7 +20,9 @@ a lawyer.
 | **AudioUnit** (macOS) | Apple SDK, part of Xcode | No fee, no separate agreement. Distribution follows Apple's normal developer terms. |
 | **CLAP** | MIT | Nothing. `clap-juce-extensions` is also permissive. **This is the only plugin format with no strings attached** — see §3. |
 | **Catch2** | BSL-1.0 | Permissive, and test-only — never linked into a shipped binary. |
-| **RGBDS** | MIT | Assembler used at build time for the probe ROM and SameSuite. A tool, never linked; optional (its tests are skipped without it). |
+| **RGBDS** | MIT | Assembler used at build time for the probe ROM, SameSuite and the LSDj harness's boot ROMs. A tool, never linked; optional (its tests are skipped without it). |
+| **SameBoy** core (LIJI32) | MIT | **Tool only, opt in.** Fetched at configure time into git-ignored `TestRoms/SameBoy` when `-DCHIPBOY_LSDJREF=ON`, built as `lsdjref_sameboy` and linked *only* into `lsdjref_trace` (`tools/lsdjref/`). Never linked into `chipboy_core` or either plugin, and not fetched at all in the default build. Its own open boot ROMs are assembled from its sources with RGBDS into the build tree. MIT: keep the notice with any redistribution of the tool. |
+| **liblsdj** (Stijn Frishert) | MIT | **Reference only; no code vendored.** Its `song_offsets.h` was read alongside the LSDj manual's SRAM chapter to confirm the save layout the harness writes (`tools/lsdjref/lsdjref_sav.py`); the code there is ChipBoy's. Nothing is fetched, linked or copied, so there is nothing to redistribute — the entry is here because §4.4 says every dependency is recorded, and a layout learned from a project is worth naming. |
 | **IBM Plex Sans / IBM Plex Mono** | OFL 1.1 | Embedded in the plugin as BinaryData (`Source/plugin/ui/assets/`) with the licence text alongside. Attribution in the about text; no restriction on the software. |
 | **Silkscreen** (Jason Kottke) | OFL 1.1 | Same: embedded with its licence text. |
 | **juce::JSON** | part of JUCE | No separate obligation; nlohmann/json is not used. |
@@ -34,7 +36,7 @@ build must keep the splash screen. Do not ship a binary before D1 is taken.
 | Source | Licence | Rule |
 |---|---|---|
 | **Pan Docs** (gbdev) | CC BY 4.0 | Facts and register layouts are not copyrightable. Attribute if prose or tables are reproduced verbatim. |
-| **SameBoy** | MIT | The best-documented accurate core, and the safest to study. If any code is genuinely copied, retain the MIT notice and record it in this file. |
+| **SameBoy** | MIT | The best-documented accurate core, and the safest to study. Now also a build-time dependency of the LSDj parity harness — see §1. Nothing of it is copied into `Source/`; the harness links the fetched library. |
 | **Gambatte** | GPLv2 | **Read only.** Copying any of it closes the commercial path. |
 | **mGBA** | MPL-2.0 | **Read only.** File-level copyleft; a copied file stays MPL forever. |
 | **blargg's `dmg_sound` test ROMs** | freely distributed | Used for validation. Fetched at configure time from the `retrio/gb-test-roms` mirror into git-ignored `TestRoms/`, never committed (spec §16.1). |
@@ -120,7 +122,12 @@ These hold regardless of which path is chosen, because breaking them removes a p
    hardware, then implement from documentation and from measurements. When a reference
    implementation resolves a question, cite it in a comment — the citation is the proof
    that the behaviour was understood rather than transplanted.
-3. **No LSDj-derived content in the repository or in any binary.**
+3. **No LSDj-derived content in the repository or in any binary.** The parity
+   harness (`tools/lsdjref/`, docs/LSDJ_PARITY.md) observes a ROM the user owns
+   from outside: it logs register writes and cycle counts and writes those down.
+   No disassembly, no ROM bytes, no manual text. The ROM and its saves live
+   outside the tree, `*.gb` and `*.sav` are ignored, and no test that needs one
+   runs in CI — each skips instead.
 4. **Every third-party dependency is recorded in §1 before it is added**, with its
    licence. A dependency that is not in that table does not go in.
 5. **Outside contributions require a CLA, or are not accepted.** Path A is only
@@ -137,3 +144,4 @@ These hold regardless of which path is chosen, because breaking them removes a p
 | Date | Decision | Notes |
 |---|---|---|
 | 2026-09-05 | Deferred. Repo private, all rights reserved. | Rules in §4 adopted so that A, B and C all remain open. Tracked as `[DECIDE] D1` in spec §18. |
+| 2026-09-09 | SameBoy's core admitted as a tool-only dependency, fetched not vendored. | MIT, so no path is closed; it is behind `-DCHIPBOY_LSDJREF=ON` and links into one console tool. liblsdj recorded as a reference with no code taken. |
