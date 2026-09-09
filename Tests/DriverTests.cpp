@@ -146,6 +146,33 @@ bool anyTrigger(const std::vector<RegWrite>& w, uint16_t addr)
 }
 int note(int n) { return Driver::periodForNote(n, false); }
 
+/// The periods a block's writes carry, in order: each NRx3 with the NRx4 that
+/// follows it. This is what the parity harness compares, so it is what these
+/// tests read rather than sampling the view at block boundaries.
+std::vector<int> periodWrites(const std::vector<RegWrite>& w, int ch = 0)
+{
+    const uint16_t lo3 = uint16_t(0xFF13 + ch * 5), hi4 = uint16_t(0xFF14 + ch * 5);
+    std::vector<int> out; int lo = -1;
+    for (const auto& x : w) {
+        if (x.addr == lo3) lo = x.value;
+        else if (x.addr == hi4 && lo >= 0) out.push_back(((x.value & 7) << 8) | lo);
+    }
+    return out;
+}
+/// Turning points in a series: two to a vibrato cycle.
+int turns(const std::vector<int>& v)
+{
+    int n = 0, dir = 0;
+    for (size_t i = 1; i < v.size(); ++i) {
+        const int d = v[i] - v[i - 1];
+        if (d == 0) continue;
+        const int s = d > 0 ? 1 : -1;
+        if (dir != 0 && s != dir) ++n;
+        dir = s;
+    }
+    return n;
+}
+
 } // namespace
 
 TEST_CASE("pitch: note to period and the chip's floor", "[driver]")
@@ -168,9 +195,10 @@ TEST_CASE("a note on writes the registers and a note off kills the DAC", "[drive
     REQUIRE_FALSE(w.empty());
     CHECK(has(w, 0xFF10));                     // sweep register written on PU1
     CHECK(has(w, 0xFF11, 0x80));               // duty 50%, no length
-    CHECK(has(w, 0xFF12, 0xF0));               // velocity 127 -> volume 15, hold
+    CHECK(has(w, 0xFF12, 0xF8));               // velocity 127 -> volume 15; the low nibble is always 8
     CHECK(has(w, 0xFF13, 1750 & 0xFF));
-    CHECK(last(w, 0xFF14)->value == uint8_t(0x80 | (1750 >> 8)));   // trigger
+    CHECK(has(w, 0xFF14, uint8_t(0x80 | (1750 >> 8))));             // trigger
+    CHECK(anyTrigger(w, 0xFF14));
     CHECK(has(w, 0xFF25));                     // NR51 pan
     CHECK(has(w, 0xFF24, 0x77));               // NR50 from the defaults
     // cycle-ordered, and spaced like a CPU writing them
@@ -188,7 +216,7 @@ TEST_CASE("velocity quantises to sixteen levels and the pulse floor is silent", 
     Rig r;
     ChannelParams p; p.instrument = 1; r.drv.setParams(1, p);
     auto w = r.block({ Rig::on(1, 60, 64) }, 256);
-    CHECK(last(w, 0xFF17)->value == 0x80);     // 64 -> level 8
+    CHECK(last(w, 0xFF17)->value == 0x88);     // 64 -> level 8, hold nibble 8
     r.block({ Rig::off(1, 60) }, 256);
     w = r.block({ Rig::on(1, 30, 100) }, 256); // below C2
     CHECK(r.drv.view(1).outOfRange);
@@ -204,7 +232,7 @@ TEST_CASE("a cell's VEL is a start volume in any instance and a blank VEL is the
     r.song.noteSource[1] = tracker::NoteSource::Tracker;
     ChannelParams p; p.instrument = 1; p.velocityMode = 1; r.drv.setParams(1, p);   // instrument bank
     auto w = r.block({ cellOn(1, 60, 1, 64) }, 256);
-    CHECK(last(w, 0xFF17)->value == 0x80);     // VEL 64 -> level 8, the mode notwithstanding
+    CHECK(last(w, 0xFF17)->value == 0x88);     // VEL 64 -> level 8, the mode notwithstanding
     r.block({ Rig::off(1, 60) }, 256);
     p.velocityMode = 0; r.drv.setParams(1, p);  // start volume
     NoteEvent blank = cellOn(1, 60, 1, 100); blank.velSet = false;
@@ -299,10 +327,10 @@ TEST_CASE("wave instruments load wave RAM through the DMG dance", "[driver]")
     CHECK(ramWrites == 16);
     CHECK(has(w, 0xFF1A, 0x80));               // DAC on
     CHECK(has(w, 0xFF1C, 0x20));               // 100%
-    CHECK(last(w, 0xFF1E)->value & 0x80);      // trigger
+    CHECK(anyTrigger(w, 0xFF1E));              // trigger
     // The RAM writes precede the DAC-on, and the trigger comes last.
     uint64_t lastRam = 0, dacOn = 0, trig = 0;
-    for (auto& x : w) { if (x.addr >= 0xFF30 && x.addr <= 0xFF3F) lastRam = std::max(lastRam, x.cycle); if (x.addr == 0xFF1A && x.value == 0x80) dacOn = x.cycle; if (x.addr == 0xFF1E) trig = x.cycle; }
+    for (auto& x : w) { if (x.addr >= 0xFF30 && x.addr <= 0xFF3F) lastRam = std::max(lastRam, x.cycle); if (x.addr == 0xFF1A && x.value == 0x80) dacOn = x.cycle; if (x.addr == 0xFF1E && (x.value & 0x80)) trig = x.cycle; }
     CHECK(lastRam < dacOn);
     CHECK(dacOn < trig);
 }
@@ -374,13 +402,19 @@ TEST_CASE("E, W, P, S and A write what the letter says", "[driver][commands]")
     // The command table of docs/COMMANDS_AND_TEMPO.md section 2, as registers.
     SECTION("E is the envelope: volume in x, speed and direction in y") {
         Rig r;
+        // The register always holds -- amplitude, direction up, period zero --
+        // and the rate and direction the letter names are the *driver's*
+        // envelope, which it steps itself (docs/LSDJ_PARITY.md sections 2, 7).
         ChannelParams p; p.instrument = 1; p.cmd[0] = { Cmd::E, 10, 3, 0 }; r.drv.setParams(0, p);
         auto w = r.block({ Rig::on(0, 69, 127) }, 512);
-        CHECK(last(w, 0xFF12)->value == 0xA3);          // vol 10, down, rate 3
+        CHECK(has(w, 0xFF12, 0xA8));                    // vol 10, hold
+        CHECK(r.drv.view(0).envRate == 3);
+        CHECK(r.drv.view(0).envDir == 0);               // down
         p.cmd[0] = { Cmd::E, 10, 11, 0 };               // y >= 8: rising
         r.drv.setParams(0, p);
-        w = r.block({}, 512);
-        CHECK(last(w, 0xFF12)->value == 0xAB);
+        r.block({}, 512);
+        CHECK(r.drv.view(0).envRate == 3);
+        CHECK(r.drv.view(0).envDir == 1);
     }
     SECTION("E on the wave channel is its two-bit level") {
         Rig r;
@@ -405,21 +439,25 @@ TEST_CASE("E, W, P, S and A write what the letter says", "[driver][commands]")
     SECTION("P with the pitch speed at Step is an immediate offset") {
         Rig r;
         r.bank.instruments[0].pitchSpeed = PitchSpeed::Step;
-        ChannelParams p; p.instrument = 1; p.cmd[0] = { Cmd::P, 128 + 10, 0, 0 }; r.drv.setParams(0, p);
-        r.block({ Rig::on(0, 69, 100) }, 512);
-        CHECK(r.drv.view(0).period == 1760);            // A4 is 1750
-        CHECK(r.drv.view(0).pitchOffset == 10);
-        p.cmd[0] = { Cmd::P, 128 - 10, 0, 0 };
+        // The argument is two's complement (section 34) and the offset is
+        // x/32 of a semitone, applied at the first pitch update after the
+        // note-on, not in the note's own writes (docs/LSDJ_PARITY.md 5).
+        r.bank.instruments[0].vib.depth = 0;
+        ChannelParams p; p.instrument = 1; p.cmd[0] = { Cmd::P, 32, 0, 0 }; r.drv.setParams(0, p);
+        r.block({ Rig::on(0, 69, 100) }, 2048);
+        CHECK(r.drv.view(0).period == Driver::periodForNote(70, false));   // a whole semitone up
+        p.cmd[0] = { Cmd::P, 256 - 32, 0, 0 };          // -32: back down again
         r.drv.setParams(0, p);
-        r.block({}, 512);
-        CHECK(r.drv.view(0).period == 1740);
+        r.block({}, 2048);
+        CHECK(r.drv.view(0).period == Driver::periodForNote(69, false));
     }
     SECTION("S is PU1's sweep, down when x asks for it") {
         Rig r;
+        // `y` is NR10's low nibble: 0-7 up at that shift, 8-15 down (34).
         ChannelParams p; p.instrument = 1; p.cmd[0] = { Cmd::S, 3, 2, 0 }; r.drv.setParams(0, p);
         auto w = r.block({ Rig::on(0, 69, 100) }, 512);
         CHECK(last(w, 0xFF10)->value == 0x32);          // rate 3, up, shift 2
-        p.cmd[0] = { Cmd::S, 128 + 3, 2, 0 };
+        p.cmd[0] = { Cmd::S, 3, 10, 0 };
         r.drv.setParams(0, p);
         w = r.block({}, 512);
         CHECK(last(w, 0xFF10)->value == 0x3A);          // the same, downward
@@ -442,14 +480,16 @@ TEST_CASE("a slot fires when it changes, again at each note-on, and reverts", "[
     ChannelParams p; p.instrument = 1; r.drv.setParams(0, p);      // Square lead: vol 13, rate 0
     auto w = r.block({ Rig::on(0, 69, 127) }, 512);
     REQUIRE(last(w, 0xFF12) != nullptr);
-    CHECK(last(w, 0xFF12)->value == 0xF0);                         // velocity 127
+    CHECK(last(w, 0xFF12)->value == 0xF8);                         // velocity 127, hold nibble 8
 
-    // Changing a slot fires it at the next tick, with no note involved.
+    // Changing a slot fires it at the next tick, with no note involved. A
+    // level change is a zombie sequence, so what it says is where the chip's
+    // volume ends up, not what the byte reads (docs/LSDJ_PARITY.md 6).
     p.cmd[1] = { Cmd::E, 4, 0, 0 };
     r.drv.setParams(0, p);
     w = r.block({}, 512);
     REQUIRE(last(w, 0xFF12) != nullptr);
-    CHECK(last(w, 0xFF12)->value == 0x40);
+    CHECK(r.drv.view(0).volume == 4);
     CHECK(r.drv.view(0).envVol == 4);
     // Unchanged, it does not fire again.
     w = r.block({}, 512);
@@ -458,7 +498,7 @@ TEST_CASE("a slot fires when it changes, again at each note-on, and reverts", "[
     // It applies to the next note too, after the instrument has loaded.
     r.block({ Rig::off(0, 69) }, 512);
     w = r.block({ Rig::on(0, 69, 127) }, 512);
-    CHECK(last(w, 0xFF12)->value == 0x40);                         // not the velocity's 0xF0
+    CHECK(last(w, 0xFF12)->value == 0x48);                         // not the velocity's 0xF8
 
     // None reverts to the instrument's envelope.
     p.cmd[1] = {};
@@ -468,8 +508,6 @@ TEST_CASE("a slot fires when it changes, again at each note-on, and reverts", "[
     // The instrument's vol 13 again. It keeps the envelope's direction and
     // rate, so it is a level change: zombie-mode writes, no trigger, and the
     // direction bit of the last one is whichever way was shorter (26).
-    CHECK((last(w, 0xFF12)->value >> 4) == 13);
-    CHECK((last(w, 0xFF12)->value & 7) == 0);
     CHECK_FALSE(anyTrigger(w, 0xFF14));
     CHECK(r.drv.view(0).volume == 13);                             // where the chip really is
     CHECK(r.drv.slot(0, 1).cmd == Cmd::None);
@@ -488,20 +526,19 @@ TEST_CASE("a cell's command is applied once and never occupies a slot", "[driver
     NoteEvent e = cellOn(0, 69, 1, 127);
     e.cmd1 = { Cmd::E, 5, 0, 0 };
     auto w = r.block({ e }, 480);
-    CHECK(last(w, 0xFF12)->value == 0x50);                         // E's volume at this note
+    CHECK(last(w, 0xFF12)->value == 0x58);                         // E's volume at this note
     CHECK(r.drv.slot(0, 0).cmd == Cmd::None);                      // the slot is the lane's alone
     w = r.block({ cellOn(0, 67, 1, 127) }, 480);
-    CHECK(last(w, 0xFF12)->value == 0xF0);                         // the next plain note is the instrument's
+    CHECK(last(w, 0xFF12)->value == 0xF8);                         // the next plain note is the instrument's
     w = r.block({ cellOn(0, 64, 1, 64) }, 480);
-    CHECK(last(w, 0xFF12)->value == 0x80);                         // and velocity 64 gets through
+    CHECK(last(w, 0xFF12)->value == 0x88);                         // and velocity 64 gets through
 
     // The revert form still says "put the letter back", once.
     e = cellOn(0, 69, 1, 127); e.cmd1 = { Cmd::E, 5, 0, 0 };
     r.block({ e }, 480);
     w = r.block({ cellCmd(0, bank::revertOf(Cmd::E)) }, 480);
     REQUIRE(last(w, 0xFF12) != nullptr);
-    CHECK((last(w, 0xFF12)->value >> 4) == 13);                    // the instrument's own vol 13
-    CHECK(r.drv.view(0).volume == 13);
+    CHECK(r.drv.view(0).volume == 13);                             // the instrument's own vol 13
     CHECK_FALSE(anyTrigger(w, 0xFF14));
 }
 
@@ -720,7 +757,10 @@ TEST_CASE("Z re-runs the other slot with a random amount added", "[driver][comma
     std::vector<int> lows;
     for (int i = 0; i < 24; ++i) {
         auto w = s.block({ Rig::on(0, 69, 100) }, 512);
-        if (const auto* nr2 = last(w, 0xFF12)) { CHECK((nr2->value >> 4) == 8); lows.push_back(nr2->value & 15); }
+        // The register always holds now (section 2), so the randomised `y`
+        // shows in the envelope the driver runs, not in NRx2's low nibble.
+        if (const auto* nr2 = last(w, 0xFF12)) CHECK((nr2->value & 15) == 8);
+        lows.push_back(int(s.drv.view(0).envRate) | (s.drv.view(0).envDir ? 8 : 0));
         s.block({ Rig::off(0, 69) }, 512);
     }
     CHECK(minOf(lows) != maxOf(lows));
@@ -739,7 +779,12 @@ TEST_CASE("notes on ticks wait for the tick; off, they are sample accurate", "[d
     const std::vector<TickPoint> ticks { { 300, 0 } };
     // The note's burst starts at the cycle the note was applied at; the
     // writes that follow it are spaced like a CPU writing them.
-    auto burstStart = [](const std::vector<RegWrite>& w) { return w.empty() ? uint64_t(0) : w.front().cycle; };
+    // The mixer registers a driver writes once at its own initialisation come
+    // first and are not the note's (docs/LSDJ_PARITY.md section 2).
+    auto burstStart = [](const std::vector<RegWrite>& w) {
+        for (const auto& x : w) if (x.addr != 0xFF24 && x.addr != 0xFF25) return x.cycle;
+        return uint64_t(0);
+    };
     Rig off;
     ChannelParams p; p.instrument = 1; off.drv.setParams(0, p);
     auto w = off.block({ Rig::on(0, 69, 100, 10) }, 512, ticks);
@@ -795,212 +840,227 @@ TEST_CASE("the driver drives the chip: rendered audio is not silent", "[driver]"
 
 /* ------------------------------------------------------- pitch (section 7) */
 
-TEST_CASE("V rides the pitch clock: 720/x updates a cycle, depth in semitones", "[driver][pitch]")
+TEST_CASE("the note table interpolates in period units", "[driver][pitch]")
 {
-    Rig r;
-    r.tickHz = 20.0;                                     // the pitch clock does this, not the tick
-    r.bank.instruments[0].vib = { VibShape::Triangle, VibDir::Down, 8, 5, 0 };   // 4 Hz, one semitone
-    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
-    r.block({ Rig::on(0, 69, 100) }, 480);
-    const auto series = periodSeries(r, 0, 100, 480);     // a second, sampled every 10 ms
-    CHECK(maxOf(series) == note(69));                    // the note itself, at the top of the swing
-    CHECK(std::abs(minOf(series) - note(68)) <= 1);      // a semitone below it
-    CHECK(dips(series) == 4);                            // speed 8 is four cycles a second
-
-    // The depth is LSDj's table, not a period offset: index 11 is four semitones.
-    Rig s;
-    s.tickHz = 20.0;
-    s.bank.instruments[0].vib = { VibShape::Triangle, VibDir::Down, 8, 11, 0 };
-    s.drv.setParams(0, p);
-    s.block({ Rig::on(0, 69, 100) }, 480);
-    const auto deep = periodSeries(s, 0, 100, 480);
-    CHECK(std::abs(minOf(deep) - note(65)) <= 3);
-    CHECK(dips(deep) == 4);
-
-    // Up swings the other way, and a square shape sits at one end or the other.
-    Rig u;
-    u.tickHz = 20.0;
-    u.bank.instruments[0].vib = { VibShape::Square, VibDir::Up, 8, 5, 0 };
-    u.drv.setParams(0, p);
-    u.block({ Rig::on(0, 69, 100) }, 480);
-    const auto up = periodSeries(u, 0, 100, 480);
-    CHECK(minOf(up) == note(69));
-    CHECK(std::abs(maxOf(up) - note(70)) <= 1);
-    for (int x : up) CHECK((std::abs(x - note(69)) <= 1 || std::abs(x - note(70)) <= 1));   // no ramp between
+    // Measured (docs/LSDJ_PARITY.md section 3): LSDj's table is one entry a
+    // semitone and a fraction is interpolated between two of them in *period*
+    // units. Half a semitone below C-5 lands on 1791, where the exponential
+    // curve gives 1790.
+    CHECK(Driver::periodForNote(72, false) == 1798);
+    CHECK(Driver::periodForNote(71, false) == 1783);
+    CHECK(Driver::periodForNote(71.5, false) == 1791);
+    CHECK(Driver::periodForNote(72.5, false) == 1805);
+    CHECK(Driver::periodForNote(69.5, false) == 1759);      // depth 8's trough, measured
+    CHECK(Driver::periodForNote(64, false) == 1650);        // E-4, depth 15's trough
 }
 
-TEST_CASE("V in Tick mode follows the tempo, and the command rate slows it", "[driver][pitch]")
+TEST_CASE("V is a triangle of 64/(x+1) updates, symmetric about the note", "[driver][pitch]")
 {
-    auto rig = [](uint8_t rate) {
-        auto r = std::make_unique<Rig>();
-        r->tickHz = 100.0;                               // one tick per 480-frame block
-        auto& i = r->bank.instruments[0];
-        i.pitchSpeed = PitchSpeed::Tick; i.cmdRate = rate;
-        i.vib = { VibShape::Triangle, VibDir::Down, 8, 5, 0 };    // 96 / 8 = twelve ticks a cycle
-        ChannelParams p; p.instrument = 1; p.velocityMode = 2; r->drv.setParams(0, p);
-        r->block({ Rig::on(0, 69, 100) }, 480);
-        return r;
+    // Every number here was read off the ROM (docs/LSDJ_PARITY.md section 3):
+    // the phase is a six-bit counter stepping by x + 1, the depth table is
+    // LSDj's own, and the swing is either side of the note.
+    auto series = [](uint8_t speed, uint8_t depth, VibDir dir) {
+        Rig r;
+        r.tickHz = 1.0;                                  // the pitch clock does this, not the tick
+        r.bank.instruments[0].vib = { VibShape::Triangle, dir, speed, depth, 0 };
+        ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+        r.block({ Rig::on(0, 72, 100) }, 64);
+        return periodWrites(r.block({}, 48000));         // a second of updates
     };
-    auto plain = rig(0);
-    CHECK(dips(periodSeries(*plain, 0, 48, 480)) == 4);   // 48 ticks, twelve to a cycle
-    auto slowed = rig(1);
-    CHECK(dips(periodSeries(*slowed, 0, 48, 480)) == 2);  // one advance every two ticks
+    // Speed 1, depth 15: a semitone an update, eight of them to the trough.
+    const auto deep = series(1, 15, VibDir::Down);
+    REQUIRE(deep.size() >= 33);
+    CHECK(deep[0] == 1798);                              // the first update is the note itself
+    CHECK(deep[1] == 1783);
+    CHECK(deep[8] == 1650);                              // eight semitones down
+    CHECK(deep[16] == 1798);                             // and back through the note
+    CHECK(deep[24] == 1890);                             // eight above it
+    CHECK(deep[32] == 1798);                             // 64/(1+1) = 32 updates to the cycle
+    // The direction only chooses which half comes first: both cover the swing.
+    const auto up = series(1, 15, VibDir::Up);
+    REQUIRE(up.size() >= 25);
+    CHECK(up[8] == 1890);
+    CHECK(up[24] == 1650);
+    // A `V` command's depth 0 is an eighth of a semitone, not "off" -- while
+    // the *instrument's* own vibrato at depth 0 is off (section 7).
+    Rig sh;
+    sh.tickHz = 1.0;
+    sh.bank.instruments[0].vib.depth = 0;
+    { ChannelParams q; q.instrument = 1; q.velocityMode = 2; q.cmd[0] = { Cmd::V, 1, 0, 0 }; sh.drv.setParams(0, q); }
+    sh.block({ Rig::on(0, 72, 100) }, 64);
+    const auto shallow = periodWrites(sh.block({}, 48000));
+    REQUIRE(shallow.size() >= 9);
+    CHECK(shallow[8] == 1796);
+    CHECK(maxOf(shallow) == 1800);
+    CHECK(minOf(shallow) == 1796);
+    // Speed 15 is four updates to the cycle: note, trough, note, peak.
+    const auto fast = series(15, 15, VibDir::Down);
+    REQUIRE(fast.size() >= 4);
+    CHECK(fast[0] == 1798); CHECK(fast[1] == 1650); CHECK(fast[2] == 1798); CHECK(fast[3] == 1890);
+    // Speed 0 is the slowest, 64 updates to the cycle -- not "off".
+    const auto slow = series(0, 15, VibDir::Down);
+    REQUIRE(slow.size() >= 33);
+    CHECK(slow[16] == 1650);
+    CHECK(slow[32] == 1798);
 }
 
-TEST_CASE("L slides for its duration, from wherever the channel is", "[driver][pitch]")
+TEST_CASE("V in Tick mode runs on the measured table of tick counts", "[driver][pitch]")
 {
-    const int a4 = note(69), c4 = note(60);
-    // The lead's own vibrato would ride on top of every period below.
-    SECTION("Fast: the duration is in 1/360 s") {
+    // One cycle is 96, 72, 64, 48, 36, 32, 24, 18, 16, 12, 9, 8, 6, 4.5, 4 or
+    // 3 ticks -- the period halves every three speeds (LSDJ_PARITY 3).
+    auto cyclesIn96 = [](uint8_t speed) {
         Rig r;
-        r.tickHz = 20.0;
+        r.tickHz = 100.0;                                // one tick a block
+        auto& i = r.bank.instruments[0];
+        i.pitchSpeed = PitchSpeed::Tick;
+        i.vib = { VibShape::Triangle, VibDir::Down, speed, 15, 0 };
+        ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+        r.block({ Rig::on(0, 72, 100) }, 480);
+        std::vector<int> all;
+        for (int k = 0; k < 96; ++k) { const auto v = periodWrites(r.block({}, 480)); all.insert(all.end(), v.begin(), v.end()); }
+        return turns(all);                               // two turning points a cycle
+    };
+    CHECK(cyclesIn96(0) == 2);                           // 96 ticks a cycle
+    CHECK(cyclesIn96(8) == 12);                          // 16
+    CHECK(cyclesIn96(11) == 24);                         // 8
+    CHECK(cyclesIn96(14) >= 47);                         // 4
+}
+
+TEST_CASE("L slides in x + 1 updates, linear in semitones", "[driver][pitch]")
+{
+    const int a4 = note(69), c5 = note(72);
+    SECTION("Fast: x + 1 pitch-clock updates") {
+        Rig r;
+        r.tickHz = 1.0;
         r.bank.instruments[0].vib.depth = 0;
-        ChannelParams p; p.instrument = 1; p.velocityMode = 2; p.cmd[0] = { Cmd::L, 180, 0, 0 };
+        ChannelParams p; p.instrument = 1; p.velocityMode = 2; p.cmd[0] = { Cmd::L, 4, 0, 0 };
         r.drv.setParams(0, p);
-        r.block({ Rig::on(0, 69, 100) }, 480);
-        CHECK(r.drv.view(0).period == a4);               // the first note has nothing to slide from
-        r.block({ Rig::off(0, 69) }, 480);
-        r.block({ Rig::on(0, 60, 100) }, 240);
-        CHECK(std::abs(int(r.drv.view(0).period) - a4) <= 4);    // it starts at the note before
-        r.block({}, 11760);                              // half the half-second
-        CHECK(std::abs(int(r.drv.view(0).period) - (c4 + (a4 - c4) / 2)) <= 4);
-        r.block({}, 14000);                              // and it arrives
-        CHECK(r.drv.view(0).period == c4);
+        r.block({ Rig::on(0, 60, 100) }, 4096);          // C-4 first, to slide from
+        CHECK(r.drv.view(0).period == note(60));
+        r.block({ Rig::off(0, 60) }, 4096);
+        auto w = r.block({ Rig::on(0, 72, 100) }, 48000);
+        const auto per = periodWrites(w);
+        REQUIRE(per.size() >= 7);
+        CHECK(per[0] == note(60));                       // the trigger is at the pitch it came from
+        // Five equal steps in semitones: the periods LSDj wrote (LSDJ_PARITY 4).
+        const int want[6] = { 1612, 1668, 1718, 1760, 1798, 1798 };
+        for (int i = 0; i < 6; ++i) { INFO("step " << i); CHECK(per[size_t(i + 1)] == want[i]); }
+        CHECK(per.size() == 7);                          // and then it stops writing
     }
-    SECTION("L 0 arrives at once") {
+    SECTION("L 0 is one update, and the note-on still starts where it was") {
         Rig r;
-        r.tickHz = 20.0;
+        r.tickHz = 1.0;
         r.bank.instruments[0].vib.depth = 0;
         ChannelParams p; p.instrument = 1; p.velocityMode = 2; p.cmd[0] = { Cmd::L, 0, 0, 0 };
         r.drv.setParams(0, p);
-        r.block({ Rig::on(0, 69, 100) }, 480);
-        r.block({ Rig::off(0, 69) }, 480);
-        r.block({ Rig::on(0, 60, 100) }, 240);
-        CHECK(r.drv.view(0).period == c4);
+        r.block({ Rig::on(0, 69, 100) }, 4096);
+        r.block({ Rig::off(0, 69) }, 4096);
+        const auto per = periodWrites(r.block({ Rig::on(0, 72, 100) }, 48000));
+        REQUIRE(per.size() == 2);
+        CHECK(per[0] == a4);                             // the trigger, at the note before
+        CHECK(per[1] == c5);                             // and one update to arrive
     }
     SECTION("Tick: the duration is in ticks") {
         Rig r;
         r.tickHz = 100.0;                                // a tick per 480-frame block
         r.bank.instruments[0].pitchSpeed = PitchSpeed::Tick;
         r.bank.instruments[0].vib.depth = 0;
-        ChannelParams p; p.instrument = 1; p.velocityMode = 2; p.cmd[0] = { Cmd::L, 20, 0, 0 };
+        ChannelParams p; p.instrument = 1; p.velocityMode = 2; p.cmd[0] = { Cmd::L, 4, 0, 0 };
         r.drv.setParams(0, p);
-        r.block({ Rig::on(0, 69, 100) }, 480);
-        r.block({ Rig::off(0, 69) }, 480);
         r.block({ Rig::on(0, 60, 100) }, 480);
-        r.block({}, 480 * 9);                            // ten of the twenty ticks
-        CHECK(std::abs(int(r.drv.view(0).period) - (c4 + (a4 - c4) / 2)) <= 12);
-        r.block({}, 480 * 12);
-        CHECK(r.drv.view(0).period == c4);
-    }
-    SECTION("Drum: linear in semitones, not in register units") {
-        Rig r;
-        r.tickHz = 20.0;
-        r.bank.instruments[0].pitchSpeed = PitchSpeed::Drum;
-        r.bank.instruments[0].vib.depth = 0;
-        ChannelParams p; p.instrument = 1; p.velocityMode = 2; p.cmd[0] = { Cmd::L, 180, 0, 0 };
-        r.drv.setParams(0, p);
-        r.block({ Rig::on(0, 69, 100) }, 480);
-        r.block({ Rig::off(0, 69) }, 480);
-        r.block({ Rig::on(0, 45, 100) }, 240);           // two octaves down
-        r.block({}, 11760);
-        const int p2 = int(r.drv.view(0).period);
-        const int halfSemis = note(57);                  // half the drop in semitones
-        const int halfUnits = (a4 + note(45)) / 2;       // half of it in register units
-        CHECK(std::abs(p2 - halfSemis) < std::abs(p2 - halfUnits));
-        CHECK(std::abs(p2 - halfSemis) <= 12);
-        r.block({}, 14000);
-        CHECK(r.drv.view(0).period == note(45));
+        r.block({ Rig::off(0, 60) }, 480);
+        std::vector<int> per = periodWrites(r.block({ Rig::on(0, 72, 100) }, 480));
+        for (int i = 0; i < 6; ++i) { const auto v = periodWrites(r.block({}, 480)); per.insert(per.end(), v.begin(), v.end()); }
+        REQUIRE(per.size() >= 6);
+        const int want[6] = { note(60), 1612, 1668, 1718, 1760, 1798 };
+        for (int i = 0; i < 6; ++i) { INFO("tick " << i); CHECK(per[size_t(i)] == want[i]); }
     }
 }
 
-TEST_CASE("P bends at the instrument's pitch speed", "[driver][pitch]")
+TEST_CASE("P bends by the measured table, and Drum wraps", "[driver][pitch]")
 {
-    SECTION("Fast: x - 128 register units per update, and 128 stops it") {
+    SECTION("the step table") {
+        // The step per update in 1/256 of a semitone (LSDJ_PARITY 5).
+        CHECK(Driver::bendStepFor(1) == 1);
+        CHECK(Driver::bendStepFor(4) == 4);
+        CHECK(Driver::bendStepFor(8) == 12);
+        CHECK(Driver::bendStepFor(16) == 40);
+        CHECK(Driver::bendStepFor(32) == 144);
+        CHECK(Driver::bendStepFor(64) == 544);
+        CHECK(Driver::bendStepFor(127) == 2080);
+    }
+    SECTION("Fast: the note moves, and P 0 stops it where it is") {
         Rig r;
-        r.tickHz = 20.0;
+        r.tickHz = 1.0;
         r.bank.instruments[0].vib.depth = 0;
-        ChannelParams p; p.instrument = 1; p.velocityMode = 2; p.cmd[0] = { Cmd::P, 129, 0, 0 };
+        ChannelParams p; p.instrument = 1; p.velocityMode = 2;
+        p.cmd[0] = { Cmd::P, 256 - 64, 0, 0 };           // -64: 544/256 semitones an update
         r.drv.setParams(0, p);
-        r.block({ Rig::on(0, 69, 100) }, 240);
-        r.block({}, 4800);                               // about 37 updates at 360 Hz
-        const int off = r.drv.view(0).pitchOffset;
-        CHECK(off >= 35); CHECK(off <= 39);
-        CHECK(r.drv.view(0).period == note(69) + off);
-        // P 128 stops the bend and keeps what it reached.
-        p.cmd[0] = { Cmd::P, 128, 0, 0 }; r.drv.setParams(0, p);
-        r.block({}, 4800);
-        const int stopped = r.drv.view(0).pitchOffset;
-        r.block({}, 4800);
-        CHECK(r.drv.view(0).pitchOffset == stopped);
-        // A bare note leaves it where it is (section 8).
-        r.block({ Rig::on(0, 72, 100) }, 480);
-        CHECK(r.drv.view(0).pitchOffset == stopped);
-        CHECK_FALSE(r.report(0)->plain);
-        r.block({ Rig::off(0, 72) }, 480);
-        // A plain note-on puts the offset back to zero.
-        r.block({ Rig::off(0, 69) }, 480);
-        r.block({ Rig::on(0, 69, 100) }, 480);
-        CHECK(r.drv.view(0).pitchOffset == 0);
-        CHECK(r.drv.view(0).period == note(69));
-    }
-    SECTION("Tick: a unit a tick, and the command rate halves it") {
-        auto run = [](uint8_t rate) {
-            auto r = std::make_unique<Rig>();
-            r->tickHz = 100.0;
-            auto& i = r->bank.instruments[0];
-            i.pitchSpeed = PitchSpeed::Tick; i.cmdRate = rate; i.vib.depth = 0;
-            ChannelParams p; p.instrument = 1; p.velocityMode = 2; p.cmd[0] = { Cmd::P, 129, 0, 0 };
-            r->drv.setParams(0, p);
-            r->block({ Rig::on(0, 69, 100) }, 480);      // the note's own tick counts
-            r->block({}, 480 * 9);
-            return int(r->drv.view(0).pitchOffset);
-        };
-        CHECK(run(0) == 10);
-        CHECK(run(1) == 5);
-    }
-    SECTION("Drum: (x - 128) / 16 semitones an update") {
-        Rig r;
-        r.tickHz = 20.0;
-        r.bank.instruments[0].pitchSpeed = PitchSpeed::Drum;
-        r.bank.instruments[0].vib.depth = 0;
-        ChannelParams p; p.instrument = 1; p.velocityMode = 2; p.cmd[0] = { Cmd::P, 126, 0, 0 };
-        r.drv.setParams(0, p);
-        r.block({ Rig::on(0, 69, 100) }, 240);
-        r.block({}, 4060);                               // 32 updates: an eighth of a semitone each
-        CHECK(std::abs(int(r.drv.view(0).period) - note(65)) <= 6);
-        // The running state shows what a Drum bend is worth in register units.
-        CHECK(std::abs(int(r.drv.view(0).pitchOffset) - (note(65) - note(69))) <= 6);
-    }
-}
-
-TEST_CASE("the pitch clock restarts at the note, whatever sample it started on", "[driver][pitch]")
-{
-    auto run = [](uint32_t at) {
-        Rig r;
-        r.tickHz = 20.0;
-        r.bank.instruments[0].vib = { VibShape::Triangle, VibDir::Down, 8, 5, 0 };
-        ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
-        r.block({}, 4800);                               // NR50 and the rest are out of the way
-        std::vector<RegWrite> all;
-        for (int i = 0; i < 5; ++i) {
-            std::vector<NoteEvent> ev;
-            if (i == 0) ev.push_back(Rig::on(0, 69, 100, at));
-            auto w = r.block(ev, 4800);
-            all.insert(all.end(), w.begin(), w.end());
+        r.block({ Rig::on(0, 72, 100) }, 64);
+        const auto per = periodWrites(r.block({}, 4 * 160));
+        REQUIRE(per.size() >= 4);
+        // Each update is 544/256 of a semitone below the one before.
+        for (int i = 0; i < 4; ++i) {
+            INFO("update " << i);
+            CHECK(per[size_t(i)] == Driver::periodForNote(72.0 - double(i + 1) * 544.0 / 256.0, false));
         }
-        return all;
-    };
-    const auto a = run(0), b = run(137);
-    REQUIRE(a.size() > 20);
-    REQUIRE(a.size() == b.size());
-    for (size_t i = 0; i < a.size(); ++i) {
-        INFO("write " << i);
-        CHECK(a[i].addr == b[i].addr);
-        CHECK(a[i].value == b[i].value);
-        const int64_t da = int64_t(a[i].cycle - a[0].cycle), db = int64_t(b[i].cycle - b[0].cycle);
-        CHECK(std::abs(da - db) <= 2);                   // the same note, the same shape
+        p.cmd[0] = { Cmd::P, 0, 0, 0 }; r.drv.setParams(0, p);
+        r.block({}, 4096);
+        const int stopped = int(r.drv.view(0).period);
+        r.block({}, 8192);
+        CHECK(int(r.drv.view(0).period) == stopped);
     }
+    SECTION("Drum: the period register moves and wraps at 2048") {
+        Rig r;
+        r.tickHz = 1.0;
+        r.bank.instruments[0].pitchSpeed = PitchSpeed::Drum;
+        r.bank.instruments[0].vib.depth = 0;
+        ChannelParams p; p.instrument = 1; p.velocityMode = 2; p.cmd[0] = { Cmd::P, 16, 0, 0 };
+        r.drv.setParams(0, p);
+        r.block({ Rig::on(0, 84, 100) }, 64);            // C-6 = 1923
+        const auto per = periodWrites(r.block({}, 160 * 3));
+        REQUIRE(per.size() >= 2);
+        CHECK(per[0] == 1926);                           // 40/256 semitones is about three units
+        CHECK(per[1] == 1929);
+        r.block({}, 160 * 80);                           // straight through the top of the register
+        CHECK(int(r.drv.view(0).period) < 1900);         // it wrapped rather than sticking at 2047
+    }
+    SECTION("Tick: four of the pitch clock's steps a tick") {
+        Rig r;
+        r.tickHz = 100.0;
+        auto& i = r.bank.instruments[0];
+        i.pitchSpeed = PitchSpeed::Tick; i.vib.depth = 0;
+        ChannelParams p; p.instrument = 1; p.velocityMode = 2; p.cmd[0] = { Cmd::P, 256 - 16, 0, 0 };
+        r.drv.setParams(0, p);
+        // The note-on's own tick writes the note; the ticks after it bend.
+        std::vector<int> per = periodWrites(r.block({ Rig::on(0, 72, 100) }, 480));
+        for (int i = 0; i < 5; ++i) { const auto v = periodWrites(r.block({}, 480)); per.insert(per.end(), v.begin(), v.end()); }
+        REQUIRE(per.size() >= 5);
+        CHECK(per[0] == 1798);
+        for (int i = 1; i < 5; ++i) {
+            INFO("tick " << i);
+            CHECK(per[size_t(i)] == Driver::periodForNote(72.0 - double(i) * 4.0 * 40.0 / 256.0, false));
+        }
+    }
+}
+
+TEST_CASE("the pitch clock is 11712 cycles and free-running", "[driver][pitch]")
+{
+    // LSDj sets the Game Boy's timer once at boot and never moves it, so the
+    // clock does not know that a note began: the phase of an update against a
+    // note is where the player pressed play (docs/LSDJ_PARITY.md section 1).
+    Rig r;
+    r.tickHz = 1.0;
+    r.bank.instruments[0].vib = { VibShape::Triangle, VibDir::Down, 1, 15, 0 };
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    r.block({ Rig::on(0, 72, 100) }, 256);
+    std::vector<uint64_t> at;
+    for (int i = 0; i < 40; ++i) {
+        auto w = r.block({}, 512);
+        for (const auto& x : w) if (x.addr == 0xFF13) at.push_back(x.cycle);
+    }
+    REQUIRE(at.size() > 8);
+    for (size_t i = 1; i < at.size(); ++i) CHECK(at[i] - at[i - 1] == 11712);
 }
 
 /* ------------------------------------------------ notes, plain and bare */
@@ -1018,17 +1078,17 @@ TEST_CASE("a tracker cell with a blank instrument column is bare", "[driver][not
     CHECK(r.report(0)->loaded == 1);
     r.block({}, 24000);                                  // half a second of vibrato
     const int bent = int(r.drv.view(0).period);
-    CHECK(bent < note(69) - 20);                         // the vibrato is well away from the note
+    CHECK(bent != note(69));                             // the vibrato has moved the pitch
     w = r.block({ cellOn(0, 69, 0) }, 240);              // the same note, blank column
     CHECK_FALSE(anyTrigger(w, 0xFF14));                  // no trigger
     CHECK_FALSE(has(w, 0xFF12));                         // the envelope is not rewritten
-    CHECK(std::abs(int(r.drv.view(0).period) - bent) <= 12);   // the vibrato kept its phase
+    CHECK(std::abs(int(r.drv.view(0).period) - bent) <= 40);   // the vibrato kept its phase
     CHECK_FALSE(r.report(0)->plain);
     CHECK(r.report(0)->loaded == 1);
     // A plain cell starts the phase again, so the note is in tune at its start.
     w = r.block({ cellOn(0, 69, 1) }, 240);
     CHECK(anyTrigger(w, 0xFF14));
-    CHECK(r.drv.view(0).period == note(69));
+    CHECK(has(w, 0xFF13, note(69) & 0xFF));              // the trigger is on the note itself
 }
 
 TEST_CASE("a bare cell leaves the table where it is", "[driver][notes]")
@@ -1054,9 +1114,9 @@ TEST_CASE("a tracker cell's velocity is honoured like MIDI's", "[driver][notes]"
     auto w = r.block({ cellOn(0, 69, 1, 64) }, 512);
     ChannelParams p; p.instrument = 1; r.drv.setParams(0, p);
     w = r.block({ cellOn(0, 69, 1, 64) }, 512);
-    CHECK(last(w, 0xFF12)->value == 0x80);               // 64 of 127 is level 8
+    CHECK(last(w, 0xFF12)->value == 0x88);               // 64 of 127 is level 8
     w = r.block({ cellOn(0, 71, 1, 127) }, 512);
-    CHECK(last(w, 0xFF12)->value == 0xF0);
+    CHECK(last(w, 0xFF12)->value == 0xF8);
 }
 
 TEST_CASE("Note-off Release lets the sound finish", "[driver][notes]")
@@ -1067,22 +1127,25 @@ TEST_CASE("Note-off Release lets the sound finish", "[driver][notes]")
         ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
         r.block({ Rig::on(0, 69, 100) }, 256);
         auto w = r.block({ Rig::off(0, 69) }, 256);
-        REQUIRE(last(w, 0xFF12) != nullptr);
-        CHECK((last(w, 0xFF12)->value & 0x07) == 1);     // rate 1
-        CHECK((last(w, 0xFF12)->value & 0x08) == 0);     // downward
-        CHECK((last(w, 0xFF12)->value >> 4) == 13);      // at the volume it had
+        // The register holds and the driver runs the fade itself (section 26),
+        // so what the release does is visible in the running state and in the
+        // volume the chip is really at, not in NRx2's low nibble.
+        CHECK(r.drv.view(0).envRate == 1);
+        CHECK(r.drv.view(0).envDir == 0);                // downward
         CHECK_FALSE(anyTrigger(w, 0xFF14));
         CHECK_FALSE(r.drv.view(0).active);
         CHECK(r.drv.view(0).dacOn);
+        r.block({}, 48000 * 2);
+        CHECK(r.drv.view(0).volume < 13);                // and it really does fall
     }
     SECTION("a rising envelope is turned round") {
         Rig r;
         auto& i = r.bank.instruments[0]; i.noteOff = NoteOff::Release; i.envDir = EnvDir::Up; i.envRate = 4;
         ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
         r.block({ Rig::on(0, 69, 100) }, 256);
-        auto w = r.block({ Rig::off(0, 69) }, 256);
-        REQUIRE(last(w, 0xFF12) != nullptr);
-        CHECK((last(w, 0xFF12)->value & 0x0F) == 1);     // down, rate 1
+        r.block({ Rig::off(0, 69) }, 256);
+        CHECK(r.drv.view(0).envRate == 1);               // down, rate 1
+        CHECK(r.drv.view(0).envDir == 0);
     }
     SECTION("a decaying envelope is left alone") {
         Rig r;
@@ -1218,12 +1281,13 @@ TEST_CASE("C arpeggiates 0, x, y and the command rate slows it", "[driver][comma
     for (size_t i = 0; i + 2 < two.size(); ++i) CHECK(two[i] == two[i + 2]);
     const auto none = series(0, 0, 0, 4);
     for (int x : none) CHECK(x == note(60));
-    // One step every rate + 1 ticks.
-    const auto slow = series(1, 3, 7, 12);
-    for (size_t i = 0; i + 6 < slow.size(); ++i) CHECK(slow[i] == slow[i + 6]);
-    CHECK(slow[0] == slow[1]);                           // two ticks to a step
-    CHECK(slow[2] == slow[3]);
-    CHECK(slow[1] != slow[2]);
+    // One step every rate + 1 ticks, and the note's own tick is the root
+    // (measured): the pairs start one sample in.
+    const auto slow = series(1, 3, 7, 13);
+    REQUIRE(slow.size() >= 7);
+    CHECK(slow[1] == slow[2]);
+    CHECK(slow[3] == slow[4]);
+    CHECK(slow[1] != slow[3]);
 }
 
 TEST_CASE("R retriggers and steps the volume", "[driver][commands]")
@@ -1236,15 +1300,20 @@ TEST_CASE("R retriggers and steps the volume", "[driver][commands]")
         r.drv.setParams(0, p);
         r.block({ Rig::on(0, 60, 100) }, 480);
         std::vector<int> out;
-        for (int i = 0; i < 8; ++i) { auto w = r.block({}, 480); if (const auto* n = last(w, 0xFF12)) out.push_back(n->value >> 4); }
+        for (int i = 0; i < 24; ++i) {
+            auto w = r.block({}, 480);
+            if (anyTrigger(w, 0xFF14)) out.push_back(int(r.drv.view(0).envVol));
+        }
         return out;
     };
-    const auto up = volumes(2);                          // 1-7: up by that much
+    // `x` is a signed nibble: 1-7 up by that much, 9-15 down by sixteen minus
+    // it -- measured, `R A` steps down by six (docs/LSDJ_PARITY.md section 8).
+    const auto up = volumes(2);
     REQUIRE(up.size() >= 3);
     CHECK(up[0] == 10); CHECK(up[1] == 12); CHECK(up[2] == 14);
-    const auto down = volumes(10);                       // 9-15: down by x - 8
-    REQUIRE(down.size() >= 3);
-    CHECK(down[0] == 6); CHECK(down[1] == 4); CHECK(down[2] == 2);
+    const auto down = volumes(10);
+    REQUIRE(down.size() >= 2);
+    CHECK(down[0] == 2); CHECK(down[1] == 0);
     const auto flat = volumes(0);                        // 0: the level does not move
     for (int v : flat) CHECK(v == 8);
 }
@@ -1363,11 +1432,12 @@ TEST_CASE("a cell's instrument column is exact under the velocity bank", "[drive
     r.drv.setRecordMask(0xF);                                      // MIDI plays through onto a Trk lane
     ChannelParams p; p.instrument = 11; p.velocityMode = 1; r.drv.setParams(3, p);
     auto w = r.block({ Rig::on(3, 60, 20) }, 512);                 // 11 + 20/8 = 13, Hat closed
-    CHECK(last(w, 0xFF21)->value == 0x91);
+    CHECK(last(w, 0xFF21)->value == 0x98);                         // vol 9, the low nibble always 8
     r.block({ Rig::off(3, 60) }, 512);
     NoteEvent c = cellOn(3, 60, 13, 100); c.velSet = false;        // as recorded under the bank: the slot, no VEL
     w = r.block({ c }, 512);                                       // the cell names 13, and stays there
-    CHECK(last(w, 0xFF21)->value == 0x91);
+    CHECK(last(w, 0xFF21)->value == 0x98);
+    CHECK(r.drv.view(3).envRate == 1);                              // Hat closed's own rate
 }
 
 TEST_CASE("a pitch update inside a tick's burst follows it", "[driver][commands]")
@@ -1413,7 +1483,8 @@ TEST_CASE("a MIDI note under Hybrid takes the cell's instrument and commands", "
     CHECK(r.drv.view(0).active);
     CHECK(anyTrigger(w, 0xFF14));                    // the MIDI note sounded
     REQUIRE(last(w, 0xFF12) != nullptr);
-    CHECK(last(w, 0xFF12)->value == 0x52);           // E 5 2, after the note's own envelope
+    CHECK(r.drv.view(0).envVol == 5);                // E 5 2, after the note's own envelope
+    CHECK(r.drv.view(0).envRate == 2);
 }
 
 TEST_CASE("a Hybrid cell with no note lands on the sounding one at the tick", "[driver][hybrid]")
@@ -1426,7 +1497,8 @@ TEST_CASE("a Hybrid cell with no note lands on the sounding one at the tick", "[
     // is sounding.
     auto w = r.block({ cellHybrid(0, 0, { Cmd::E, 9, 1, 0 }) }, 512);
     REQUIRE(last(w, 0xFF12) != nullptr);
-    CHECK(last(w, 0xFF12)->value == 0x91);
+    CHECK(r.drv.view(0).envVol == 9);
+    CHECK(r.drv.view(0).envRate == 1);
     CHECK(r.drv.view(0).active);                     // and it is still the same note
     CHECK(r.drv.view(0).note == 69);
 }
@@ -1487,15 +1559,16 @@ TEST_CASE("L in a Hybrid cell is the next note's portamento", "[driver][hybrid]"
     CHECK(int(r.drv.view(0).period) == from);
     // The cell asks for a slide; no note arrives in its tick, so it waits for
     // one instead of sliding what is sounding (section 20).
-    r.block({ cellHybrid(0, 0, { Cmd::L, 180, 0, 0 }) }, 480);
+    r.block({ cellHybrid(0, 0, { Cmd::L, 60, 0, 0 }) }, 480);
     CHECK(int(r.drv.view(0).period) == from);        // nothing has moved yet
-    r.block({ Rig::on(0, 72, 100) }, 240);
+    r.block({ Rig::on(0, 72, 100) }, 120);
     const int started = int(r.drv.view(0).period);
     INFO("from " << from << " started " << started << " target " << target);
-    CHECK(std::abs(started - from) < std::abs(started - target));    // it left from the note before
-    r.block({}, 11760);                              // half of the half-second
-    CHECK(std::abs(int(r.drv.view(0).period) - (target + (from - target) / 2)) <= 6);
-    r.block({}, 14000);
+    CHECK(std::abs(started - from) <= 8);            // it left from the note before
+    r.block({}, 4200);                               // about thirty of the sixty-one updates
+    const int half = int(r.drv.view(0).period);
+    CHECK(std::abs(half - (target + (from - target) / 2)) <= 30);
+    r.block({}, 8000);
     CHECK(int(r.drv.view(0).period) == target);      // and it arrives
 }
 
@@ -1508,9 +1581,11 @@ TEST_CASE("a Hybrid cell's D holds its commands back", "[driver][hybrid]")
     r.block({ cellHybrid(0, 1), Rig::on(0, 69, 100) }, 512);
     // D 3 with no note: the E waits three ticks and then lands.
     auto w = r.block({ cellHybrid(0, 0, { Cmd::D, 3, 0, 0 }, { Cmd::E, 7, 1, 0 }) }, 400);
-    CHECK(!has(w, 0xFF12, 0x71));
-    w = r.block({}, 400);
-    CHECK(has(w, 0xFF12, 0x71));
+    CHECK_FALSE(has(w, 0xFF12));                     // the E has not fired yet
+    CHECK(r.drv.view(0).envRate == 0);
+    r.block({}, 400);
+    CHECK(r.drv.view(0).envVol == 7);                // and now it has
+    CHECK(r.drv.view(0).envRate == 1);
 }
 
 /* ============================ zombie-mode levels (section 26) ============ */
@@ -1593,52 +1668,69 @@ TEST_CASE("a table's volume column is a level change, not a retrigger", "[driver
     }
 }
 
-TEST_CASE("an E that moves the envelope triggers, one that does not is a level change", "[driver][zombie]")
+TEST_CASE("E never triggers, whatever it does to the envelope", "[driver][zombie]")
 {
+    // Measured (docs/LSDJ_PARITY.md section 6): `E x y` walks the level to x
+    // by zombie steps at its own tick and sets the direction and rate of what
+    // follows. There is no trigger and no phase reset, whether or not the
+    // envelope moved -- `E 8 0` on a channel at 15 is seven down-triples and
+    // nothing else.
     Rig r;
     Chip chip;
     ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);   // rate 0, down
     chip.feed(r.block({ Rig::on(0, 69, 100) }, 512));
-    SECTION("the same direction and rate: no trigger") {
+    SECTION("the same direction and rate") {
         const auto w = r.block({ levelCell(0, 9, 0) }, 512);
         chip.feed(w);
         CHECK_FALSE(anyTrigger(w, 0xFF14));
         CHECK(chip.apu.channelVolume(0) == 9);
     }
-    SECTION("a rate of its own: a trigger, which is how a new envelope starts") {
+    SECTION("a rate of its own") {
         const auto w = r.block({ levelCell(0, 9, 3) }, 512);
         chip.feed(w);
-        CHECK(anyTrigger(w, 0xFF14));
+        CHECK_FALSE(anyTrigger(w, 0xFF14));
         CHECK(chip.apu.channelVolume(0) == 9);
+        CHECK(r.drv.view(0).envRate == 3);
     }
-    SECTION("a direction of its own: a trigger") {
+    SECTION("a direction of its own") {
         const auto w = r.block({ levelCell(0, 9, 8 + 3) }, 512);
         chip.feed(w);
-        CHECK(anyTrigger(w, 0xFF14));
+        CHECK_FALSE(anyTrigger(w, 0xFF14));
+        CHECK(chip.apu.channelVolume(0) == 9);
+        CHECK(r.drv.view(0).envDir == 1);
     }
 }
 
-TEST_CASE("the zombie sequence is the shortest one", "[driver][zombie]")
+TEST_CASE("the zombie sequence is LSDj's own bytes", "[driver][zombie]")
 {
-    // From a holding envelope a write with the same direction bit adds one
-    // and a write that flips it lands on 15 - v, so a step up costs one write
-    // and one down costs three (section 26). The point of the search is that
-    // it is never longer than it has to be.
+    // One step down is `09 11 18` and one step up is `08`, byte for byte as
+    // the ROM writes them, repeated to the target (LSDJ_PARITY 6). Under the
+    // APU's own rule the triple lands on v - 1 and the single on v + 1, so the
+    // driver's model and the chip agree.
     Rig r;
     Chip chip;
     ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);   // vol 13
     chip.feed(r.block({ Rig::on(0, 69, 100) }, 512));
-    auto writes = [&](int target) {
+    auto bytes = [&](int target) {
         const auto w = r.block({ levelCell(0, target) }, 512);
         chip.feed(w);
         REQUIRE(chip.apu.channelVolume(0) == target);
-        int n = 0; for (const auto& x : w) if (x.addr == 0xFF12) ++n;
-        return n;
+        std::vector<int> out; for (const auto& x : w) if (x.addr == 0xFF12) out.push_back(x.value);
+        return out;
     };
-    CHECK(writes(14) == 1);          // 13 -> 14, one write with the same direction
-    CHECK(writes(1) == 1);           // 14 -> 1, one write that flips (15 - 14)
-    CHECK(writes(2) == 1);           // 1 -> 2
-    CHECK(writes(1) == 3);           // 2 -> 1 is the long way round: flip, step, flip
+    CHECK(bytes(14) == std::vector<int>{ 0x08 });                          // one step up
+    CHECK(bytes(13) == std::vector<int>{ 0x09, 0x11, 0x18 });              // one step down
+    CHECK(bytes(10) == std::vector<int>{ 0x09, 0x11, 0x18, 0x09, 0x11, 0x18, 0x09, 0x11, 0x18 });
+    CHECK(bytes(13) == std::vector<int>{ 0x08, 0x08, 0x08 });              // three up
+    // The steps are spaced as the ROM spaces them: sixteen cycles inside a
+    // down-triple, a hundred and twelve between them, sixty-eight between ups.
+    const auto w = r.block({ levelCell(0, 11) }, 512);
+    chip.feed(w);
+    std::vector<uint64_t> at; for (const auto& x : w) if (x.addr == 0xFF12) at.push_back(x.cycle);
+    REQUIRE(at.size() == 6);
+    CHECK(at[1] - at[0] == 16);
+    CHECK(at[2] - at[1] == 16);
+    CHECK(at[3] - at[0] == 112);
 }
 
 /* ============================= shaped envelopes (section 27) ============= */
@@ -1752,7 +1844,7 @@ TEST_CASE("a table's first row fires with the note-on", "[driver][table]")
     Rig r;
     r.tickHz = 140.0 * 24.0 / 60.0;                    // 140 BPM quarters, 24 ticks a beat
     auto& t = r.bank.tables[0]; t.used = true; t.end = TableEnd::Stop;
-    t.steps[0].cmd1 = { Cmd::P, 55, 0, 0 };            // x - 128 = -73 period units an update
+    t.steps[0].cmd1 = { Cmd::P, 256 - 73, 0, 0 };      // -73, two's complement (section 34)
     t.steps[0].vol = 15;
     auto& i = r.bank.instruments[6];                   // a wave instrument
     i.table = 1;
@@ -1781,7 +1873,7 @@ TEST_CASE("a kick played twice never plays its raw pitch on its own", "[driver][
         Rig r;
         r.tickHz = 140.0 * 24.0 / 60.0;
         auto& t = r.bank.tables[0]; t.used = true; t.end = TableEnd::Stop;
-        t.steps[0].cmd1 = { Cmd::P, 55, 0, 0 };
+        t.steps[0].cmd1 = { Cmd::P, 256 - 73, 0, 0 };
         auto& i = r.bank.instruments[6];
         i.table = 1;
         ChannelParams p; p.instrument = 7; r.drv.setParams(2, p);

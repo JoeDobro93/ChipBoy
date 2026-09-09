@@ -30,12 +30,12 @@ A song is Python data. Its bank is a handful of `pulse()`, `wave()`, `noise()`,
 of text is its steps, separated by spaces (`|` reads as a bar line and is
 ignored):
 
-    "C-4@lead . . . | ~E-4 . . . | off . . . | . . . +V 9 4"
+    "C-4@lead . . . | ~E-4 . . . | off . . . | . . . +V 0 4"
 
     .          an empty step               off        a note off
     C-4        a note (C, octave 4)        ~C-4       explicitly bare
     @lead      the instrument column       :96        the VEL column
-    %shape     the table column            +V9,4      a command, up to two
+    %shape     the table column            +V0,4      a command, up to two
 
 A note with an instrument is *plain* (it loads the instrument and triggers);
 one without is *bare* -- the pitch changes and nothing else (section 8). Every
@@ -93,18 +93,18 @@ CMD_SPEC = {
     "E": (2, (0, 15), (0, 15), "PWN"),       # envelope; on WAV x is the level 0-3
     "F": (1, (1, 16), None, "W"),            # frame
     "G": (1, (0, 16), None, "*"),            # groove slot, 0 straight
-    "H": (1, (0, 16), None, ""),             # tables only
+    "H": (2, (0, 15), (0, 15), ""),          # tables only: times, row (section 34)
     "K": (1, (0, 255), None, "PWN"),         # kill after x ticks
-    "L": (1, (0, 255), None, "PW"),          # slide duration
-    "M": (2, (0, 15), (0, 15), "*"),         # master volume, per side
+    "L": (1, (0, 255), None, "PW"),          # slide: x + 1 updates, in semitones
+    "M": (2, (0, 15), (0, 15), "*"),         # master volume, per side (nibbles)
     "O": (1, (0, 3), None, "PWN"),           # pan
-    "P": (1, (0, 255), None, "PW"),          # bend speed, signed around 128
-    "R": (2, (0, 15), (0, 255), "PWN"),      # retrigger
-    "S": (2, (0, 255), (0, 7), "1"),         # sweep, PU1 only
-    "T": (1, (40, 255), None, "*"),          # tempo
-    "V": (2, (0, 15), (0, 15), "PW"),        # vibrato speed, depth
+    "P": (1, (-128, 255), None, "PW"),       # bend speed, two's complement (34)
+    "R": (2, (0, 15), (0, 15), "PWN"),       # retrigger: signed nibble, y x (rate+1)+1 ticks
+    "S": (2, (0, 7), (0, 15), "1"),          # sweep, PU1 only: rate, NR10's low nibble
+    "T": (1, (40, 295), None, "*"),          # tempo in BPM; stored as LSDj's byte (34)
+    "V": (2, (0, 15), (0, 15), "PW"),        # vibrato: 64/(x+1) updates a cycle, depth
     "W": (1, (0, 64), None, "PW"),           # duty (pulse) / wave slot (WAV)
-    "Z": (2, (0, 255), (0, 255), "PWN"),     # random
+    "Z": (2, (0, 15), (0, 15), "PWN"),       # random (nibbles, section 34)
 }
 
 CHANNEL_CLASS = ["P", "P", "W", "N"]     # PU1 PU2 WAV NOI
@@ -172,6 +172,13 @@ def parse_cmd(text, where, channel=None, in_table=False):
         raise ValueError("%s: %s x = %d is outside %d-%d" % (where, letter, x, lo, hi))
     if yr is not None and not yr[0] <= y <= yr[1]:
         raise ValueError("%s: %s y = %d is outside %d-%d" % (where, letter, y, yr[0], yr[1]))
+    # Section 34: P is stored two's complement, so a song may write -14 and the
+    # file carries 242; T is stored as LSDj's byte, so 40-255 BPM is the number
+    # itself and 256-295 wraps to 00-27.
+    if letter == "P":
+        x &= 0xFF
+    elif letter == "T":
+        x = x if x <= 255 else x - 256
     return Cmd(letter, x, y)
 
 
@@ -301,7 +308,7 @@ class Bank:
 
     # -- tables, waves ----------------------------------------------------
     def table(self, name, steps, end=END_LOOP, hop=1):
-        """`steps` is a list of step texts: "v15", "t-12", "+P112+E3", "." ..."""
+        """`steps` is a list of step texts: "v15", "t-12", "+P-38+E3", "." ..."""
         if name in self.table_slot:
             raise ValueError("table %r twice" % name)
         slot = len(self.tables) + 1
@@ -372,7 +379,7 @@ class Bank:
 
 
 def parse_table_step(text, where):
-    """A table step: "v15" a volume, "t-12" a transpose, "+P112" a command."""
+    """A table step: "v15" a volume, "t-12" a transpose, "+P-38" a command."""
     vol, transpose, cmds = -1, None, []
     for field in [f for f in text.replace("+", " +").split() if f not in (".", "")]:
         if field.startswith("+"):
@@ -985,16 +992,16 @@ def puffball_bounce():
         [(0, "F-4"), (2, "A-4"), (4, "C-5"), (6, "A-4"), (8, "F-4"), (12, "G-4")],
         [(0, "A-4"), (2, "G-4"), (4, "F-4"), (8, "D-4"), (12, "F-4")],
         [(0, "B-4"), (2, "A-4"), (4, "G-4"), (6, "A-4"), (8, "B-4"), (12, "D-5")],
-        [(0, "C-5+V11,4"), (8, "A-4")],
+        [(0, "C-5+V0,4"), (8, "A-4")],
         [(0, "F-4"), (2, "A-4"), (4, "C-5"), (6, "F-5"), (8, "E-5"), (12, "C-5")],
         [(0, "D-5"), (2, "C-5"), (4, "A-4"), (8, "G-4"), (12, "A-4")],
         [(0, "B-4"), (4, "D-5"), (6, "C-5"), (8, "A-4"), (12, "G-4")],
-        [(0, "F-4+V11,5"), (10, "C-4")]]]
+        [(0, "F-4+V0,5"), (10, "C-4")]]]
     bridge = [lay(16, m, "melody") for m in [
         [(0, "D-5"), (3, "C-5"), (4, "B-4"), (8, "G-4"), (12, "B-4")],
         [(0, "C-5"), (3, "B-4"), (4, "A-4"), (8, "F-4"), (12, "A-4")],
         [(0, "B-4"), (4, "D-5"), (8, "G-5"), (12, "F-5")],
-        [(0, "E-5+V12,6"), (8, "D-5")],
+        [(0, "E-5+V0,6"), (8, "D-5")],
         [(0, "G-4"), (3, "B-4"), (4, "D-5"), (8, "C-5"), (12, "B-4")],
         [(0, "A-4"), (4, "C-5"), (8, "F-5"), (12, "E-5")]]]
     harm = [lay(16, m, "harmony") for m in [
@@ -1050,7 +1057,10 @@ def neon_grid():
     b.wav("grit", [frame_grit(0x1234 + 977 * k) for k in range(6)])
     # The kick: a wave note whose table drops it in semitones (Drum pitch
     # speed, section 7) while E steps the wave channel's level down.
-    b.table("kick-drop", ["+P118+E3", "+P118+E3", "+P128+E2", "+E1", "+E0"], end=END_STOP)
+    # P's step comes from the measured table now and Drum moves the period
+    # register (section 34, docs/LSDJ_PARITY.md 5): -38 is about fifteen period
+    # units an update, the fall this kick had, and 0 is what stops a bend.
+    b.table("kick-drop", ["+P-38+E3", "+P-38+E3", "+P0+E2", "+E1", "+E0"], end=END_STOP)
     # The snare: the same channel, running through the grit wave's frames with
     # F while the level falls -- a frame run is the wave channel's noise.
     b.table("snare-hit", ["+F1+E3", "+F3+E3", "+F5+E2", "+F6+E1", "+E0"], end=END_STOP)
@@ -1147,11 +1157,13 @@ def wave_study():
     sweep_dn = lay(16, [(0, "A-2@wave-lead+F8"), (4, "~A-2+F6"), (8, "~A-2+F4"), (12, "~A-2+F1")])
     # A wobble: P is a bend per tick here, so the wobble is tempo-synced, and
     # every plain note-on puts the offset back to zero (section 7).
-    wobble = lay(16, [(0, "F-3@wave-lead+F4"), (4, "~F-3+P136"), (8, "~F-3+P120"), (12, "~F-3+P128")])
-    wobble2 = lay(16, [(0, "G-3@wave-lead+F6"), (4, "~G-3+P140"), (8, "~G-3+P116"), (12, "~G-3+P128")])
+    # The wobble in 1/256 semitones an update: 27 and 30 are the table's
+    # nearest steps to the eight and twelve period units this had (section 34).
+    wobble = lay(16, [(0, "F-3@wave-lead+F4"), (4, "~F-3+P27"), (8, "~F-3+P-27"), (12, "~F-3+P0")])
+    wobble2 = lay(16, [(0, "G-3@wave-lead+F6"), (4, "~G-3+P30"), (8, "~G-3+P-30"), (12, "~G-3+P0")])
     switch = lay(16, [(0, "D-3@wave-lead+W2"), (6, "~F-3"), (8, "~A-3+F3"), (12, "~D-4+F6")])
     back = lay(16, [(0, "A-2@wave-lead+W1"), (4, "~C-3+F2"), (8, "~D-3+F5"), (12, "~F-3+F7")])
-    lift = lay(16, [(0, "D-3@wave-lead+V6,7"), (8, "~A-3")])
+    lift = lay(16, [(0, "D-3@wave-lead+V0,7"), (8, "~A-3")])
     pad = [lay(16, [(0, n)], "wave-pad") for n in ["D-3", "F-3", "A#2", "C-3"]]
 
     keys = [lay(16, m, "keys") for m in [

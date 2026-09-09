@@ -21,7 +21,7 @@ console could **not** have done was the quiet-edge marker, and it is gone.
 | Behaviour | On the hardware |
 |---|---|
 | **The tick** | The driver's whole timeline is ticks, 24 to a beat. A ROM runs them from the timer interrupt (TAC/TIMA) or from the vertical blank with a fractional accumulator; the plugin gets them from the host's beat position or from its own clock. Everything below happens at a tick unless it says otherwise. |
-| **The pitch clock, 360 Hz** | A second timer interrupt, 11651 CPU cycles apart, per voice, restarted at every plain note-on (§7). A ROM runs one timer and services whichever voices are due; the cycle count is exact, not a rounding of the tick. |
+| **The pitch clock, 358.12 Hz** | A second timer interrupt, **11712 CPU cycles** apart — LSDj's own reload, measured (docs/LSDJ_PARITY.md §1) — **one for the driver and free-running**: a note-on does not restart it, because a timer interrupt does not know a note began. A ROM runs exactly this and services whichever voices are due; the cycle count is the timer's, not a rounding of the tick. |
 | **Tempo (T)** | The tick period changes. A ROM reloads TMA; the plugin integrates a tempo map. Same thing, different clock source. |
 | **Grooves** | The number of ticks a step lasts, from a sixteen-entry table (§9.2). A ROM counts ticks down per step out of the same table. |
 | **A phrase's length** | 1–64 steps, its own; the row lasts the groove's ticks over that length (§25). A ROM walks the chain one row at a time and counts the row's ticks — no bar structure exists anywhere. |
@@ -33,8 +33,8 @@ console could **not** have done was the quiet-edge marker, and it is gone.
 | Behaviour | On the hardware |
 |---|---|
 | **A plain note** | Load the instrument's running state, run its table's row 0, fire the two command slots, then write NR10–NR14 (or NR21–NR24, NR30–NR34, NR41–NR44) ending with the trigger bit in NRx4 (§8, §31). |
-| **A bare note** | NRx3 and NRx4's low three bits only, no trigger bit: the envelope, the duty phase and the sweep keep running (reference §4). |
-| **Note-off: Kill** | NRx2 = `$00` (or NR30 = `$00` on the wave channel), which clears the DAC. The level is held, so there is no click on the way down (reference §9). |
+| **A bare note** | NRx3 and NRx4 only, no trigger bit: the envelope, the duty phase and the sweep keep running (reference §4). NRx4 goes out with every NRx3 whether or not the high bits moved, as LSDj does — there is no trigger in it, so it costs two cycles and nothing else (LSDJ_PARITY §11). |
+| **Note-off: Kill**, and K | A **zombie ramp to zero** — the same `09 11 18` steps as any other level change, about 1700 cycles end to end — with the DAC left on, which is what LSDj does (LSDJ_PARITY §9). A panic (CC 120/123, a flush) still writes NRx2 = `$00` to clear the DAC outright; the level is held, so there is no click (reference §9). |
 | **Note-off: Release** | Pulse and noise: NRx2 with a decrease at rate 1, written through the zombie sequence so the level is kept (§26). Wave and kits: the four NR32 levels, one tick apart. Shaped envelopes use their own release curve (§27). |
 | **Note-off: Ignore** | Nothing is written. |
 | **The held-note stack** | A ROM keeps the same list. Returning to an older note writes the period without a trigger. |
@@ -46,11 +46,11 @@ console could **not** have done was the quiet-edge marker, and it is gone.
 
 | Behaviour | On the hardware |
 |---|---|
-| **The chip's own envelope (Chip mode)** | NRx2: initial volume, direction, one of seven rates. Clocked at 64 Hz by the frame sequencer (reference §7). Written at the note-on with the trigger. |
-| **A level change on a running channel** | NRx2 writes without a trigger, using the chip's response to a write while the channel runs: with the envelope period at zero a write with the same direction bit adds one to the volume, and a write that flips the bit maps it to 15 − v. The driver searches for the shortest sequence of writes that lands the chip's volume on the level it wants and leaves the envelope it wants in the register (`Driver::setLevel`, `zombieSequence`). This is the table volume column, an E that keeps the direction and rate, a shaped envelope's step, CC7, the Level lane and the release fade. |
-| **What a sequence costs** | From a holding envelope: up one is one write, down one is three (flip, step, flip), and the worst case across all sixteen levels is nine. Every write is 20 cycles after the last, which is what `ld a,n` / `ldh (n),a` costs, so the longest sequence is 180 cycles — a fifth of a scanline. |
-| **A trigger** | Only where a driver needs one: a plain note-on, R, and an E that changes the envelope's direction or rate. Nothing else writes NRx4 bit 7. |
-| **The DAC** | A zombie write carries the target level in NRx2's high nibble, which the chip reads only at the next trigger, so it is free — but the top five bits must not be zero or the DAC goes off and the channel stops. A level of 0 with the direction bit down would be exactly that pattern, and is written as level 1 instead; the volume it lands on is the same. |
+| **The chip's own envelope (Chip mode)** | **Never used.** Every NRx2 the driver writes has the low nibble forced to **8** — amplitude, direction up, period zero — so the chip's envelope generator never runs, which is what LSDj does (LSDJ_PARITY §2). The instrument's rate and direction are the *driver's* envelope: it steps the level itself off the pitch clock, every 6, 11, 15, 20, 27, 36 or 36 periods for rates 1–7 (LSDJ_PARITY §7), each step a §26 level change. A note whose envelope reaches silence ends there. |
+| **A level change on a running channel** | NRx2 writes without a trigger, **byte for byte the two LSDj makes**: `09 11 18` takes the volume down one and `08` takes it up one, repeated to the target, whichever way round is fewer writes (`Driver::setLevel`). Under the chip's own rule — with the envelope period at zero a write with the same direction bit adds one and a write that flips it maps the volume to 16 − v — the triple lands on v − 1 and the single on v + 1, so the driver's model and the chip agree. This is the table volume column, an E, a shaped envelope's step, the instrument's own envelope, CC7, the Level lane, the release fade and K. |
+| **What a sequence costs** | Up one is one write and down one is three, so fifteen steps is the worst case: 45 writes. The spacing is LSDj's own, measured — sixteen cycles inside a down-triple, a hundred and twelve between triples, sixty-eight between single ups — so a full ramp from 15 to 0 is about 1700 cycles, a fifth of a tick. |
+| **A trigger** | Only a plain note-on and R. **E never triggers**, whatever it does to the direction or the rate (LSDJ_PARITY §6), and nothing else writes NRx4 bit 7. A tick-driven R writes the whole note-on sequence again; R's resync (`x` = 8) writes the level and the trigger on the pitch clock. |
+| **The DAC** | The two sequence bytes both have bit 3 set, so the top five bits are never zero and the DAC never goes off on the way — which is why LSDj writes its holds with the direction bit **up** (`F8`, not `F0`) and can hold a level of zero with the channel still enabled. |
 | **Wave levels** | NR32's two bits: 100 %, 50 %, 25 %, mute. One write, no zombie mode, no trigger — the wave channel has no envelope generator. |
 | **Console differences** | The APU implements one NRx2-write rule for both consoles it models, so both take the same sequence. The search reads the model (`Driver::model_`) and is driven by the rule, not by a table of writes, so a console whose behaviour differs (CGB-D and AGB are described as differing; ChipBoy has measured neither) would get its own sequence from the same code once the APU models it. Reference §10.2 marks the quirk model-specific for exactly this reason. |
 
@@ -59,7 +59,7 @@ console could **not** have done was the quiet-edge marker, and it is gone.
 | Behaviour | On the hardware |
 |---|---|
 | **Period** | NRx3 and NRx4's low three bits, from the note table. Below the chip's range the note does not sound (a real driver's table has no entry either). |
-| **Vibrato (V, and the instrument's own)** | The 360 Hz clock computes a phase and writes the period. A ROM does the same from a small table; nothing is per sample. |
+| **Vibrato (V, and the instrument's own)** | The pitch clock steps a six-bit phase by `x + 1` and writes the period: a symmetric triangle of `64/(x + 1)` updates about the note, amplitude from LSDj's depth table, and in Tick mode the measured table of tick counts (LSDJ_PARITY §3). A ROM does the same from two small tables; nothing is per sample. |
 | **Slide (L)** | A residual walked to zero over the duration, in period units — or in semitones in Drum mode, where the driver re-reads the note table each update. |
 | **Bend (P)** | An offset added per update. `P 128` stops it and keeps the offset. |
 | **Chord (C)** | The note changes every *rate + 1* ticks; the period is rewritten, no trigger. |
@@ -111,10 +111,10 @@ console could **not** have done was the quiet-edge marker, and it is gone.
 
 | Thing | Why it stays |
 |---|---|
-| **A level change while the chip's envelope is running** (a non-zero NRx2 period) | The driver's model of the volume is what it last wrote; the chip has been stepping it at 64 Hz since. A driver on the hardware has exactly the same problem — the volume cannot be read back — and a real one keeps the period at zero whenever it wants software levels, which is what a shaped envelope and every §26 path do. The sequence is exact whenever the period is zero. |
+| **A level change while the chip's envelope is running** (a non-zero NRx2 period) | Cannot happen any more: the driver never writes a non-zero envelope period, so the chip's envelope never runs and the sequence is always exact. The row stays because the APU still models the quirk for a register stream that comes from somewhere else. |
 | **The length counter disabling a channel** | `Driver` does not model the length counter's effect on the chip's *enabled* flag, so a zombie write to a channel a length counter has stopped is computed as if it were running. Reaching it needs an instrument with a length, a level change after the length has expired, and nothing else in between; the note is over by then. Listed rather than fixed because modelling it means modelling the 256 Hz frame step in the driver, which is a second clock for one silent case. |
 | **The 64 Hz envelope phase** | Not modelled in the driver (see above). It is not needed for §26 in its intended use. |
-| **The 360 Hz pitch clock's first update** | One full period after the note, so a bend never doubles the note's own period write. A ROM's timer has some phase too; this one is deterministic, which a ROM's is not. |
+| **The pitch clock's phase against a note** | The clock free-runs, so where a note falls inside its 11712 cycles depends on when playback started — exactly as a ROM's timer does. It is no longer deterministic, which is the point: a driver cannot restart the interrupt it is serviced by. The first update after a note-on always writes the period once, whether or not anything is moving it. |
 | **An instrument reload on a sounding channel** (a cell's instrument column, Live follow) keeps its trigger | It is not a level change: it re-lays duty, length, envelope, pan and table, which is a note-on in everything but the note. |
 | **A groove in force does not change a row's length** | The rows lie end to end on a table built when the song was published, so a G — a cell's or a slot's — re-lays the steps *inside* the row and never moves the rows. A step that would start at or past the row's end does not fire, and a groove that ends early leaves the last note sustaining (§9.2). A ROM counting ticks per row would do the same. |
 
@@ -124,7 +124,7 @@ The tracker is kept self-contained for this (spec §15.3). What follows is the
 shape of the data, not the exporter: a sketch to check that nothing in the
 model is unrepresentable.
 
-**The song, format 6, as a compact binary.** Everything is little-endian; a
+**The song, format 7, as a compact binary.** Everything is little-endian; a
 "slot" is a one-based index into the section that holds it.
 
 ```
@@ -180,6 +180,7 @@ the ROM's code budget matters more than its data.
 **What the ROM's player has to do**, in order, once a tick: advance each
 channel's row counter and fire the step that starts on this tick; run each
 voice's table row; step the shaped envelope; write the pitch; and on its own
-360 Hz timer, write the pitch again for vibrato, slides and bends. Levels go
+358 Hz timer, write the pitch again for vibrato, slides and bends, and step the
+instrument's own envelope. Levels go
 out as the sequences in §3. Nothing in that list needs a table the exporter
 does not already have.

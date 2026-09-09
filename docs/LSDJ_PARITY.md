@@ -6,6 +6,12 @@ a CPU-cycle stamp, then playing the same song through ChipBoy's driver with
 its own write log and comparing the two streams. The harness is
 `tools/lsdjref/`; §31 of `docs/COMMANDS_AND_TEMPO.md` asked for it.
 
+**The driver has since been made to match.** The verdict column below says what
+each finding came to: where it reads *done* the law is now ChipBoy's, and §7 of
+`docs/COMMANDS_AND_TEMPO.md` is written from these numbers. §16 is the
+comparison case by case on both consoles, and §17 is what is still different
+and why.
+
 **Nothing of the ROM is reproduced here.** These are observations of behaviour:
 register addresses, values and cycle counts. The ROM is the user's own copy, it
 lives outside the repository, and no test runs it in CI.
@@ -13,7 +19,7 @@ lives outside the repository, and no test runs it in CI.
 Cycles are the 4.194304 MHz master clock, the same unit `driver::RegWrite`
 counts in. Everything below is DMG unless it says otherwise; the console
 differences are in §12. The tempo is 120 BPM throughout, where a tracker tick
-is 87381 cycles (48 a second) on both sides.
+is 87381 cycles (48 a second) on ChipBoy's side and 87374 on LSDj's — see §16.
 
 Reproduce with:
 
@@ -21,6 +27,7 @@ Reproduce with:
 cmake -S . -B build-ref -DCHIPBOY_LSDJREF=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build-ref --parallel 4
 CHIPBOY_LSDJ_ROM=/path/to/lsdj.gb ./build-ref/lsdjref/lsdjref-run
+CHIPBOY_LSDJ_ROM=/path/to/lsdj.gb ./build-ref/lsdjref/lsdjref-run --model cgb
 python3 tools/lsdjref/lsdjref_measure.py --traces build-ref/lsdjref/trace
 ```
 
@@ -28,26 +35,27 @@ python3 tools/lsdjref/lsdjref_measure.py --traces build-ref/lsdjref/trace
 
 ## Summary of verdicts
 
-| # | Item | Verdict | Recommended change |
+| # | Item | Verdict | What was done |
 |---|---|---|---|
-| 1 | Note → period table | **agrees** | none |
-| 2 | Note-on register order | **agrees** | none |
-| 3 | NRx2 at a note-on: `F8` vs `F0` | **differs** | write the hold nibble as 8, not 0 |
-| 4 | The pitch clock: 11712 vs 11651 cycles | **differs (0.5 %)** | move the 360 Hz clock to 11712 |
-| 5 | V vibrato rate | **differs by 12–22×** | one cycle is 64/(x+1) updates, not 720/x |
-| 6 | V vibrato depth and shape | **agrees on depth, differs on centre** | the swing is ±depth about the note |
-| 7 | L slide duration and domain | **differs** | x+1 updates, linear in semitones |
-| 8 | P bend rate and domain | **differs by 10–40×** | a measured table, and Fast is logarithmic |
-| 9 | E and a table's volume: zombie vs retrigger | **differs** | zombie-step, one level at a time |
-| 10 | The envelope's own rate | **differs** | a measured table of timer periods |
-| 11 | R retrigger interval | **differs** | y × (rate + 1) + 1 ticks; y = 0 is not "once" |
-| 12 | K kill | **differs** | zombie-ramp to zero at the killing tick |
-| 13 | C chord and its rate | **agrees** | none |
-| 14 | A table's first row fires with the note | **agrees** (§31 confirmed) | none |
-| 15 | A table volume row with a zero low nibble | **differs** | such a row writes nothing at all |
-| 16 | Bare notes | **agrees** | none |
-| 17 | NRx4 written with every NRx3 | **differs** | write both halves every update |
-| 18 | CGB | **agrees** | none |
+| 1 | Note → period table | **agrees** | nothing; the fraction between two entries is now interpolated in period units, which is measurable (§3) |
+| 2 | Note-on register order | **agrees** | nothing |
+| 3 | NRx2 at a note-on: `F8` vs `F0` | **differed** | **done** — every NRx2 goes out with the low nibble 8, and the driver runs the envelope itself on §7's table |
+| 4 | The pitch clock: 11712 vs 11651 cycles | **differed (0.5 %)** | **done** — 11712 cycles, and **one clock for the driver, free-running**: a note-on no longer restarts it |
+| 5 | V vibrato rate | **differed by 12–22×** | **done** — 64/(x + 1) updates a cycle in Fast/Step/Drum; in Tick it is a **table, not a law**: the measured tick counts 96, 72, 64, 48, 36, 32, 24, 18, 16, 12, 9, 8, 6, 4½, 4, 3, whose pattern (the period halves every three speeds) has no formula behind it yet |
+| 6 | V vibrato depth and shape | **agreed on depth, differed on centre** | **done** — a symmetric triangle about the note; the depth **table** (⅛ … 8 semitones) is confirmed for all sixteen values, and in Drum one semitone is a measured 19.1 period units, again a number and not a law |
+| 7 | L slide duration and domain | **differed** | **done** — x + 1 updates, linear in semitones, the trigger at the pitch it came from |
+| 8 | P bend rate and domain | **differed by 10–40×** | **done — table, not law**: the measured step table (all 127 values), Fast/Tick/Step on the note and Drum on the period register, wrapping at 2048. The closed form in §5 is a fit to that table, good to a part in a hundred; the table is the fact |
+| 9 | E and a table's volume: zombie vs retrigger | **differed** | **done** — `09 11 18` down and `08` up, byte for byte, and E never triggers |
+| 10 | The envelope's own rate | **differed** | **done — table, not law**: the measured pitch-clock periods 6, 11, 15, 20, 27, 36, 36 for rates 1–7, stepped in software. They are within 11 % of what the chip's own envelope would have given, and no tidier expression fits |
+| 11 | R retrigger interval | **differed** | **done** — y × (rate + 1) + 1 ticks, y = 0 every tick, x = 8 the pitch-clock resync, the whole note-on written again |
+| 12 | K kill | **differed** | **done** — a zombie ramp to zero at the killing tick, the DAC left on |
+| 13 | C chord and its rate | **agreed** | the root now plays on the note's own tick and the chord steps from the one after (measured) |
+| 14 | A table's first row fires with the note | **agrees** (§31 confirmed) | nothing |
+| 15 | A table volume row with a zero nibble | **differed** | **done** — the harness's mapping makes such a row blank, which is what ChipBoy's own `vol = −1` already meant |
+| 16 | Bare notes | **agrees** | nothing |
+| 17 | NRx4 written with every NRx3 | **differed** | **done** — both halves, every update |
+| 18 | CGB | **agrees** | nothing; every verdict in §16 is the same on both consoles |
+| 19 | LSDj's tempo against ChipBoy's clock | **differs by 88 ppm** | **deliberate** — LSDj counts its tempo in timer interrupts, so its tick is 87374 cycles and jitters by one whole interrupt; ChipBoy's clock is exact. §16 says how the comparison handles it |
 
 ---
 
@@ -86,9 +94,13 @@ LSDj's own display calls that "C 3", one octave above scientific pitch.
 **ChipBoy.** The pitch clock is 11651 cycles (360.0 Hz exactly, `§7`).
 **Verdict: 0.52 % fast.** Over a two-second note that is one update in 190.
 
-> **Recommended change.** Make the Fast/Step/Drum pitch clock **11712 cycles**
-> and say in §7 that the "360 Hz" is really 358.12 Hz, because a real driver
-> gets it from a timer whose reload is an integer.
+> **Done.** The pitch clock is **11712 cycles** and §7 says the "360 Hz" is
+> really 358.12 Hz, because a real driver gets it from a timer whose reload is
+> an integer. It is also **one clock for the whole driver and free-running**: a
+> note-on does not restart it, because a timer interrupt does not know a note
+> began. The consequence is that where a note falls inside the period is where
+> the player pressed play, which is why the harness's timing tolerance is a
+> whole period (§16).
 
 ## 2. The note-on
 
@@ -159,11 +171,28 @@ period at all inside a one-second note, and at x = 4 it writes 40 in a second
 against LSDj's 359. §7 also says "Down moves between the note and note − depth",
 which would halve the swing and move its centre.
 
-> **Recommended change.** One vibrato cycle is **64/(x + 1) pitch updates**
-> (Fast/Step/Drum) or **64/(x + 1) ticks** (Tick). The waveform is a triangle in
-> the note's own 1/32-semitone units, amplitude = the depth table, **centred on
-> the note**; the direction only sets the starting half. §7's "720/x" and its
-> "note to note − depth" wording both go.
+> **Done**, with two corrections the finer cases (`b_vib_depth`,
+> `b_vib_speed_fast`, `b_vib_speed_tick`) made:
+>
+>  - The phase is a **six-bit counter stepping by x + 1**, so one cycle is
+>    64/(x + 1) updates and **x = 0 is the slowest, not off**. The phase steps
+>    *after* the write, so a note's first update writes the note itself.
+>  - In **Tick** mode the cycle is **not** 64/(x + 1) ticks but a measured table:
+>    96, 72, 64, 48, 36, 32, 24, 18, 16, 12, 9, 8, 6, 4½, 4, 3 ticks for
+>    x = 0…15 — the period halves every three speeds.
+>
+> The depth table is the manual's, and `b_vib_depth` confirmed it for **all
+> sixteen** values at C-5: ±1796…1800, 1794…1802, 1792…1803, 1791…1805,
+> 1787…1809, 1783…1812, 1775…1819, 1767…1825, 1759…1831, 1750…1837, 1741…1843,
+> 1732…1849, 1714…1860, 1694…1871, 1673…1881, 1650…1890. The fraction of a
+> semitone is interpolated **in period units** between two table entries, not in
+> frequency: that is what puts depth 3's trough on 1791 rather than 1790, and it
+> is now what `Driver::periodForNote` does.
+>
+> In **Drum** the swing is the period register's, not the note's: the same
+> triangle and depths, with one semitone worth about **19.1 period units**
+> whatever the note (measured from P's sweep at 19.110 and from V's depths at
+> 19.1). The ±1-unit residue at the larger depths is not resolved — see §17.
 
 ## 4. L slide
 
@@ -179,9 +208,15 @@ which would halve the swing and move its centre.
 **ChipBoy today.** L `04` writes four steps of 63 period units, L `10`
 sixteen steps of 16 — the right count minus one, linear in the wrong domain.
 
-> **Recommended change.** `x + 1` updates, interpolating the note in semitones
-> (`noteFine`), not the period. §7's "linear in period units, or in semitones in
-> Drum mode" becomes "always in semitones".
+> **Done**, with the arithmetic the ROM's own numbers pin down: the step is
+> `(target − source) / (x + 1)` in **1/256 of a semitone, truncated toward
+> zero**, so a little is usually left after the last step and one more update
+> lands the pitch exactly on the note. `L 10`'s seventeenth step is 1797 and the
+> eighteenth is 1798, which is only true of a truncated step. `L 00`'s one step
+> is the whole distance, so it writes the period once and there is nothing left
+> over. The note-on of a slide **triggers at the pitch the channel was at** —
+> that is what makes it a portamento. `c_slide_fast` and `c_slide_tick` are
+> write-for-write **identical** now.
 
 ## 5. P bend
 
@@ -229,10 +264,28 @@ against LSDj: ChipBoy's P `02` moves +2 units per update where LSDj moves 0.05;
 P `10` moves +16 where LSDj moves 1.3. **ChipBoy's P is between 12× and 40× too
 fast**, and Fast/Drum have their domains the wrong way round.
 
-> **Recommended change.** Take the rate from the measured table (interpolating
-> for untested values, or measuring the remaining 120 with the same case), and
-> swap the domains: **Fast, Tick and Step move the note in semitones; Drum moves
-> the period in units and wraps.** §7's P paragraph and §2's P row both change.
+**The whole sweep, all 127 values.** `d_bend_scale_all` and `d_bend_scale_up`
+play every value from −127 to −1 and +1 to +64, two steps a note, and the rate
+is symmetric in the sign. Read as a rate per update the table closes to
+
+> **step = S(|x|) / 256 of a semitone**, where
+> `S(m) = sum(ceil(j/4), j = 1..m) = (q + 1)(2q + r)` for `q = m / 4`,
+> `r = m mod 4`.
+
+which fits the measured rate at every value to about **one part in a hundred**
+(the worst is 1.5 % at |x| = 1, where a rate of 0.073 period units an update is
+measured over six steps of the register). That is the fit, stated as a fit: the
+table itself is what the traces hold.
+
+> **Done.** The step comes from that table; Fast and Tick bend the note, **Step
+> applies one offset of x/32 of a semitone** — measured: `P 02` moves 1798 to
+> 1799, `P 40` to 1825, `P C0` to 1767, all exactly x/32 of a semitone — and
+> **Drum bends the period register and wraps at 2048**. Step's offset lands at
+> the first pitch update, not in the note-on's own writes, because LSDj's
+> note-on writes the pitch the channel was at and its commands move it from
+> there. In Tick mode one tick's step is **four** of the pitch clock's, measured,
+> and not the 7.46 a tick is worth in updates. `d_bend_step` is **identical**;
+> the others differ by the fit's one per cent — see §17.
 
 ## 6. E, table volumes, and the zombie question
 
@@ -270,10 +323,13 @@ twenty-second capture — it retriggers the channel at every volume row — and 
 real hardware, but it does not land on 8: writing NRx2 with a non-zero period
 while a channel runs does not load the amplitude.
 
-> **Recommended change.** Exactly §26, with the sequences above as the driver's
-> primitive: `09 11 18` for one step down and `08` for one step up on DMG,
-> repeated to the target, at the tick, with no NRx4 write. §27's shaped
-> envelopes reach the chip the same way.
+> **Done.** `09 11 18` for one step down and `08` for one step up, **byte for
+> byte**, repeated to the target at the tick, with no NRx4 write — the search
+> that used to put the target in the high nibble is gone. The spacing is the
+> ROM's too: sixteen cycles inside a down-triple, a hundred and twelve between
+> triples, sixty-eight between single ups. **E never triggers**, whatever it does
+> to the direction or the rate. §27's shaped envelopes reach the chip the same
+> way, and so does K, which is a zombie ramp to zero with the DAC left on.
 
 ## 7. The instrument's own envelope rate
 
@@ -297,9 +353,9 @@ So LSDj's software envelope is within about 11 % of the rate the hardware
 envelope would have had, and rates 6 and 7 measured the same — worth one more
 run before that is taken as certain.
 
-> **Recommended change.** When ChipBoy stops using the hardware envelope (§26),
-> step the level on this table rather than on r/64 s, so a ChipBoy song and an
-> LSDj song with the same instrument decay together.
+> **Done.** Every NRx2 the driver writes has the low nibble 8 — a hold — and the
+> driver steps the level itself off the pitch clock on this table, through §26's
+> zombie writes. A note whose envelope reaches silence ends there.
 
 ## 8. R retrigger
 
@@ -327,8 +383,12 @@ the volume modulation rides on the retrigger rather than being zombie-stepped.
 **ChipBoy today.** R `01` retriggers every 87381 cycles — one tick, not two —
 and §2 says y = 0 retriggers once.
 
-> **Recommended change.** `y × (rate + 1) + 1` ticks; `y = 0` is every tick;
-> `x = 8` is the pitch clock. §2's R row and §7's R sentence both change.
+> **Done.** `y × (rate + 1) + 1` ticks; `y` = 0 is every tick; `x` = 8 runs the
+> retrigger on the pitch clock and writes only the level and the trigger, while a
+> tick-driven retrigger writes **the whole note-on sequence again**. `x` is a
+> **signed nibble** of volume change, 9–15 being down by 16 − x: `R A` steps the
+> level down by six, not by two, which is what the trace shows (`F8`, `98`, `38`,
+> `08`). What LSDj does at the floor is not resolved — see §17.
 
 ## 9. K, D and C
 
@@ -428,9 +488,10 @@ how a test case's LSDj value becomes a ChipBoy one. It is `commandOf()` in
 | letter | LSDj | ChipBoy |
 |---|---|---|
 | C E M R S V Z | one byte, x in the high nibble | `a` = high nibble, `b` = low |
+| a table's volume column | the NRx2 byte | a level 0–15, **blank unless both nibbles are non-zero**: measured, a row whose amplitude or whose envelope nibble is zero writes nothing at all |
 | A G | slot 0–31 | `a` = slot + 1 (ChipBoy numbers from 1) |
-| H | step 0–15 | `a` = step + 1 |
-| P | signed byte | `a` = (byte + 128) & 255 |
+| H | `times, row` | `a` = times, `b` = row (section 34) |
+| P | signed byte | `a` = the byte itself: ChipBoy stores P two's complement now (section 34) |
 | D K L T W | the byte | `a` = the byte |
 
 A phrase's command column holds the letter's position in LSDj's own order with
@@ -449,7 +510,7 @@ pitch bits are byte 5 bit 7 (step), bit 6 (drum), bit 4 (tick).
 
 `tools/lsdjref/` holds four pieces and a spec.
 
-- **`cases.spec`** — 23 test songs in a line-oriented format, one `case` each:
+- **`cases.spec`** — 29 test songs in a line-oriented format, one `case` each:
   instruments, tables, phrases and a chain per channel. It is read by both the
   save writer and the compare tool, so there is one description of each test.
 - **`lsdjref_sav.py`** — writes one `.sav` per case. The working-memory song is
@@ -465,11 +526,19 @@ pitch bits are byte 5 bit 7 (step), bit 6 (drum), bit 4 (tick).
   framebuffer, which is how the START key and its timing were found.
 - **`lsdjref_compare`** — builds each case as a ChipBoy `Song` and `Bank`,
   plays it through the Clock, the Player and the Driver with the write log on,
-  and diffs the two streams. It links `chipboy_core` and nothing else: the
+  and diffs the two streams. It repeats each chain for as long as the capture
+  runs, as LSDj loops a song, and lines the streams up note-on by note-on (§16). It links `chipboy_core` and nothing else: the
   Driver is what is under test and it knows no JUCE, so the song is built in
   memory rather than written as a `.cbsong`, whose writer lives in the plugin
   shell.
 - **`lsdjref_measure.py`** — turns the traces into the tables above.
+
+Six **finer cases** were added for this round, where the sparse ones pinned the
+shape of a law and not its numbers: `d_bend_scale_all` and `d_bend_scale_up`
+sweep P over every value from −127 to +64, `b_vib_depth` plays all sixteen
+depths, `b_vib_speed_fast` and `b_vib_speed_tick` all sixteen speeds in both
+clocks, and `f_table_rows` puts the same amplitudes behind different envelope
+nibbles to ask whether the nibble is a row's length (it is not).
 
 The two streams are aligned at **the first note-on**, which is not the first
 trigger: before the song starts LSDj beeps its interface with a bare period
@@ -478,3 +547,157 @@ level register written within the previous 4096 cycles. From there the writes
 are compared per channel, value for value, with a 4096-cycle tolerance on the
 timing, and the report says *identical*, *same values different timing* or
 *different values* with the first divergence.
+
+---
+
+## 16. The comparison, case by case
+
+`lsdjref-compare` plays each case through ChipBoy's driver and diffs the two
+streams. This is the table it writes, on both consoles, with the driver as it
+stands; reproduce it with the commands at the top of this file.
+
+**How the two are lined up.** Both streams are anchored at the first note-on and
+then again at **every note-on**, because two things that are not the driver's
+behaviour separate them and would otherwise swamp everything that is:
+
+- LSDj counts its tempo in timer interrupts, so a tick is a whole number of them
+  and jitters by one either way — 11712 cycles, which is three times the old
+  tolerance — while ChipBoy's clock is exact. The two tick rates also differ by
+  88 parts per million (87374 cycles against 87381), which over a twenty-second
+  capture is nine thousand cycles of drift.
+- The pitch clock free-runs on both sides, so where a note falls inside its
+  period is where the player pressed play. That is why the **timing tolerance is
+  two whole periods, 23424 cycles**: one for that phase, and one more for an
+  update one side fitted in and the other did not, which shifts everything after
+  it by a period. Where such a shift happens the tool resynchronises by skipping
+  the one NRx3/NRx4 pair and says how many it skipped.
+
+Inside a note the comparison is strict: register for register, value for value,
+in order. The verdicts are **identical** (same values, same order, every write
+inside the tolerance), **same values, timing within tolerance** (the same, with
+a trailing pitch update put down to the clock's phase, or writes past where the
+shorter capture stopped -- both counted and named in the detail), **same values,
+timing outside tolerance** and **different values**.
+
+| case | channel | LSDj writes | ChipBoy writes | DMG | CGB |
+|---|---|---:|---:|---|---|
+| `a_baseline` | PU1 | 234 | 255 | identical | identical |
+| `a_baseline` | global | 34 | 37 | identical | identical |
+| `b_vib_fast` | PU1 | 13591 | 14669 | same values, timing within tolerance | same values, timing within tolerance |
+| `b_vib_fast` | global | 19 | 21 | identical | identical |
+| `b_vib_step` | PU1 | 13591 | 14669 | same values, timing within tolerance | same values, timing within tolerance |
+| `b_vib_step` | global | 19 | 21 | identical | identical |
+| `b_vib_drum` | PU1 | 13591 | 14669 | different values | different values |
+| `b_vib_drum` | global | 19 | 21 | identical | identical |
+| `b_vib_tick` | PU1 | 1901 | 2055 | different values | different values |
+| `b_vib_tick` | global | 19 | 21 | identical | identical |
+| `b_vib_depth` | PU1 | 12386 | 13467 | same values, timing within tolerance | same values, timing within tolerance |
+| `b_vib_depth` | global | 18 | 19 | identical | identical |
+| `b_vib_speed_fast` | PU1 | 12386 | 13467 | same values, timing within tolerance | same values, timing within tolerance |
+| `b_vib_speed_fast` | global | 18 | 19 | identical | identical |
+| `b_vib_speed_tick` | PU1 | 1734 | 1885 | different values | different values |
+| `b_vib_speed_tick` | global | 18 | 19 | identical | identical |
+| `b_vib_shapes` | PU1 | 4498 | 12262 | different values | different values |
+| `b_vib_shapes` | global | 16 | 18 | identical | identical |
+| `c_slide_fast` | PU1 | 360 | 413 | identical | same values, timing within tolerance |
+| `c_slide_fast` | global | 24 | 27 | identical | identical |
+| `c_slide_tick` | PU1 | 360 | 415 | identical | same values, timing within tolerance |
+| `c_slide_tick` | global | 24 | 27 | identical | identical |
+| `d_bend_step` | PU1 | 108 | 120 | identical | identical |
+| `d_bend_step` | global | 16 | 18 | identical | identical |
+| `d_bend_fast` | PU1 | 11176 | 12262 | different values | different values |
+| `d_bend_fast` | global | 16 | 18 | identical | identical |
+| `d_bend_tick` | PU1 | 1564 | 1720 | different values | different values |
+| `d_bend_tick` | global | 16 | 18 | identical | identical |
+| `d_bend_drum` | PU1 | 11176 | 12262 | different values | different values |
+| `d_bend_drum` | global | 16 | 18 | identical | identical |
+| `d_bend_scale` | PU1 | 14801 | 15871 | different values | different values |
+| `d_bend_scale` | global | 21 | 23 | identical | identical |
+| `d_bend_scale_fast` | PU1 | 14801 | 15871 | different values | different values |
+| `d_bend_scale_fast` | global | 21 | 23 | identical | identical |
+| `d_bend_scale_all` | PU1 | 23734 | 24784 | different values | different values |
+| `d_bend_scale_all` | global | 128 | 134 | identical | identical |
+| `d_bend_scale_up` | PU1 | 12641 | 13747 | different values | different values |
+| `d_bend_scale_up` | global | 69 | 75 | identical | identical |
+| `e_env_change` | PU1 | 708 | 876 | same values, timing outside tolerance | same values, timing outside tolerance |
+| `e_env_change` | global | 8 | 9 | identical | identical |
+| `e_env_rates` | PU1 | 708 | 745 | same values, timing within tolerance | different values |
+| `e_env_rates` | global | 16 | 17 | identical | same values, timing outside tolerance |
+| `f_table_volume` | PU1 | 5036 | 2397 | different values | different values |
+| `f_table_volume` | global | 16 | 18 | identical | identical |
+| `f_table_rows` | PU1 | 4244 | 1711 | different values | different values |
+| `f_table_rows` | global | 19 | 21 | identical | identical |
+| `g_bare_note` | PU1 | 2677 | 5874 | different values | different values |
+| `g_bare_note` | global | 31 | 17 | same values, timing outside tolerance | same values, timing outside tolerance |
+| `h_retrig` | PU1 | 2056 | 4147 | different values | different values |
+| `h_retrig` | global | 19 | 21 | identical | identical |
+| `i_kill_delay_chord` | PU1 | 577 | 1311 | different values | different values |
+| `i_kill_delay_chord` | global | 25 | 27 | identical | identical |
+| `j_groove_hop` | PU1 | 6792 | 2918 | different values | different values |
+| `j_groove_hop` | global | 32 | 31 | same values, timing outside tolerance | same values, timing outside tolerance |
+| `k_wave_kick` | WAV | 9452 | 7379 | different values | different values |
+| `k_wave_kick` | global | 287 | 18 | different values | different values |
+| `l_noise` | NOI | 122 | 137 | different values | different values |
+| `l_noise` | global | 26 | 35 | same values, timing outside tolerance | same values, timing outside tolerance |
+
+## 17. What is still different, and why
+
+**Deliberate — ChipBoy's own design, documented as such in §2 and §7.**
+
+- **A table row is one tick in ChipBoy and two in LSDj.** Measured: a table of
+  `F1 81 41 01` changes the level every 2.01 ticks and cycles 15, 8, 4 with the
+  zero-amplitude row writing nothing at all; `f_table_rows` shows the same two
+  ticks whether the envelope nibble is 1 or 7, so the nibble is not the row's
+  length. ChipBoy's tables run one row a tick and have a groove of their own (a
+  G inside a table, §32), which LSDj's do not; making a row two ticks would
+  change every table in every ChipBoy song and is not a driver law but a tracker
+  one. `f_table_volume`, `f_table_rows` and `j_groove_hop` differ for this
+  reason, in timing and in where their loops land.
+- **Noise.** LSDj maps the note column to NR43 by its own scheme and its `S` is
+  a shape command; ChipBoy maps a note to a shift/divisor pair musically and
+  gives `S` to PU1's sweep. §2 already says the noise letters are ChipBoy's own,
+  so `l_noise` cannot be compared note for note.
+- **F is absolute in ChipBoy** (a frame number) and **A reaches 64 slots**
+  rather than LSDj's 32, so a case using either is a translation rather than a
+  comparison. `k_wave_kick` differs partly for that and partly for the wave
+  channel's own note-on order.
+- **E's x on the wave channel** is ChipBoy's four NR32 levels, not a 16-level
+  amplitude.
+
+**Measured but not resolved — the harness can see the behaviour and not the
+arithmetic behind it.**
+
+- **P's last one per cent.** The step table fits every one of the 127 measured
+  rates to about a part in a hundred (§5), and the six `d_bend_*` cases agree
+  for hundreds to thousands of writes and then drift by one period unit. Fitting
+  each value its own rate still leaves about a sixth of the writes off, so the
+  residue is LSDj's own fixed-point arithmetic — or the interrupt it counts,
+  which the ROM re-seeds once a frame — and not a rate this harness can read
+  from outside.
+- **V in Drum.** The swing is the period register's and about 19.1 units a
+  semitone, which `b_vib_drum` reproduces in shape and amplitude, but the
+  rounding at the larger depths leaves ±1 unit: the trace's swing is −153/+152
+  about a note whose period is 1798, and no single base and rounding rule gives
+  both.
+- **V in Tick.** The measured table of tick counts (§3) is exact at the speeds
+  that are multiples of three and one tick out at the others, where the cycle is
+  a ninth of a tick long (72, 36, 18, 9, 4½ ticks); `b_vib_tick` and
+  `b_vib_speed_tick` differ there.
+- **The vibrato shapes saw and square** (§13): the ROM writes five to nine
+  period writes in a second for them against the triangle's 360, which is
+  neither a saw nor a square, so ChipBoy keeps its own one-sided shapes and
+  `b_vib_shapes` differs by design until a case can read the shape off LSDj's
+  own instrument screen.
+- **R's resync** (`x` = 8) runs on the pitch clock as measured, but LSDj's stops
+  after 38 of them — five ticks into a forty-eight-tick note — for a reason the
+  register log does not show. ChipBoy's runs for the note, so `h_retrig`
+  differs from that point on.
+- **R's volume at the floor.** `R A` steps the level down by six, twice, and
+  then the trace reads 0, 9, 3, 0 for a two-tick interval and 3, 9, 9, 9 for a
+  five-tick one: two different behaviours at the floor from one rule. ChipBoy
+  clamps at zero.
+- **The software envelope's rate 6 and 7** measured the same interval (§7).
+  Taken as measured; `e_env_rates` differs from rate 7 on.
+- **The bare-note and kill cases** (`g_bare_note`, `i_kill_delay_chord`) agree
+  through their first notes and part company later, where a note whose envelope
+  has reached silence ends on LSDj and ChipBoy keeps the channel.

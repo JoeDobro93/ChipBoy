@@ -27,18 +27,18 @@ packed byte.
 | E | envelope | volume 0–15 | 0 and 8 hold, 1–7 decay at that rate, 9–15 attack at y − 8 | yes | wave level 0–3 in x | yes | until cleared or a new instrument loads |
 | F | frame | frame 1–16 | – | – | yes | – | until cleared or a new instrument loads |
 | G | groove | groove slot 1–16, 0 straight | – | tracker timing (Player) | | | until cleared |
-| H | hop | step 1–16 (0 stops) | – | tables only | | | – |
+| H | hop | times 0–15, 0 = for ever | row 0–15 to hop to | tables only | | | – |
 | K | kill | ticks after note-on | – | yes | yes | yes | no (per note) |
-| L | slide | duration 0–255: ticks in Tick pitch speed, 1/360 s otherwise; 0 instant | – | yes | yes | – | no (per note: portamento from the previous note) |
+| L | slide | x + 1 updates, linear in semitones: ticks in Tick pitch speed, pitch-clock updates otherwise | – | yes | yes | – | no (per note: portamento from the previous note) |
 | M | master volume | left 0–15: 0–7 absolute, 8/12 no change, 9–11 up 1–3, 13–15 down 1–3 | right, the same 0–15 scheme | global | | | until cleared |
 | O | pan | 0 off, 1 L, 2 R, 3 both | – | yes | yes | yes | until cleared or a new instrument loads |
-| P | bend speed | x − 128 per update: period units (Fast/Tick), an immediate offset (Step), or ÷16 semitones (Drum) | – | yes | yes | – | until cleared |
-| R | retrigger | 0 none, 1–7 up, 9–15 down by x − 8 | ticks between retriggers × (rate + 1); 0 once | yes | yes | yes | no (per note) |
-| S | sweep | rate 0–7 | shift 0–7, direction from the instrument unless x ≥ 128 (down) | PU1 | – | – | until cleared or a new instrument loads |
-| T | tempo | BPM 40–255 | – | song tempo (Song source only) | | | until the next T |
-| V | vibrato | speed 1–15 | depth 0–15 | yes | yes | – | until cleared or a new instrument loads |
+| P | bend speed | two's complement −128…127; the measured step table per update — the note (Fast/Tick), one offset of x/32 of a semitone (Step), the period register wrapping at 2048 (Drum) | – | yes | yes | – | until cleared |
+| R | retrigger | a signed nibble of volume: 0 none, 1–7 up, 9–15 down by 16 − x; 8 resyncs to the pitch clock | interval y × (rate + 1) + 1 ticks; 0 is every tick | yes | yes | yes | no (per note) |
+| S | sweep | rate 0–7 | NR10's low nibble: 0–7 sweep up at that shift, 8–15 down | PU1 | – | – | until cleared or a new instrument loads |
+| T | tempo | LSDj's byte: `28`–`FF` is 40–255 BPM, `00`–`27` is 256–295 | – | song tempo (Song source only) | | | until the next T |
+| V | vibrato | speed 0–15: one cycle every 64/(x + 1) updates, 0 the slowest | depth 0–15: ⅛ to 8 semitones either side of the note | yes | yes | – | until cleared or a new instrument loads |
 | W | wave | pulse: duty 0–3 (12.5/25/50/75 %); wave: wave slot 1–64 | – | duty | wave slot | – | until cleared or a new instrument loads |
-| Z | random | re-runs the last non-Z/H command, adding 0…x to its x | …and 0…y to its y | yes | yes | yes | no (per note-on) |
+| Z | random | re-runs the last non-Z/H command, adding 0…x to its x (nibble) | …and 0…y to its y (nibble) | yes | yes | yes | no (per note-on) |
 
 `Cmd::A` used to mean envelope and there was no E; that is corrected here. `B` and the
 ArduinoBoy letters (N X Q Y) are not implemented. Tables keep two commands per step
@@ -158,63 +158,172 @@ LSDj puts the speed of every pitch effect in the instrument, not in the command.
 does the same. Pulse and wave instruments (and kits) gain three fields; noise gets the
 vibrato shape only.
 
+**Every number in this section was measured against an LSDj 9.2.J ROM**, not taken from
+the manual: the harness is `tools/lsdjref/` and the measurements are
+[`docs/LSDJ_PARITY.md`](LSDJ_PARITY.md). Where a law could not be read off the register
+log, this section says so.
+
 | Field | Values | Meaning |
 |---|---|---|
-| **Pitch speed** | Fast (default), Tick, Step, Drum | how P, L and V move. *Fast*: 360 updates a second, tempo-independent. *Tick*: once per tracker tick (24 per beat), so the effect follows the tempo. *Step*: as Fast, except P is an immediate offset instead of a bend. *Drum*: as Fast, but P and L move in semitones (logarithmic) instead of period units — for P kicks. Not on noise; kits have no Drum. |
-| **Vibrato shape** | Triangle, Saw, Square × Down, Up | the waveform of V and of the instrument's own vibrato. *Down* moves between the note and note − depth, *Up* between the note and note + depth. Replaces the old Triangle/Square/SawUp/SawDown enum. |
+| **Pitch speed** | Fast (default), Tick, Step, Drum | how P, L and V move. *Fast*: on the pitch clock, 358 updates a second, tempo-independent. *Tick*: once per tracker tick (24 per beat), so the effect follows the tempo. *Step*: as Fast, except P is an immediate offset instead of a bend. *Drum*: as Fast, but P and V move the **period register** rather than the note — for P kicks. Not on noise; kits have no Drum. |
+| **Vibrato shape** | Triangle, Saw, Square × Down, Up | the waveform of V and of the instrument's own vibrato. *Triangle* is a **symmetric swing about the note**, and Down or Up only chooses which half of it comes first. Saw and square stay one-sided — from the note to note ± depth — because the ROM's own saw and square could not be read off the register log (LSDJ_PARITY §13). |
 | **Command rate** | 0–15, default 0 | slows C and R (an interval of rate + 1 ticks per chord/retrigger step), and P and V when the pitch speed is Tick (they advance every rate + 1 ticks). Nothing else. |
 | **Table mode** | Tick (default), Step | *Tick*: the table runs one row per tick (or per its own G). *Step*: the table advances one row each time the instrument is triggered (a plain note), LSDj's old "automate". |
 
-The **pitch update** in Fast/Step/Drum is a per-voice clock of 11651 CPU cycles (360.0 Hz)
-restarted at every plain note-on, so a note's vibrato and slide are the same whatever
-sample the note started on. In Tick mode the update is the tracker tick. Each update
-writes the period registers without the trigger bit; nothing is per sample.
+### The pitch clock
 
-The pitch pipeline is `period = periodOf(noteFine) + periodOffset`:
+The **pitch update** in Fast, Step and Drum is a clock of **11712 CPU cycles — 358.12 Hz**.
+LSDj sets the Game Boy's timer once, at boot (`TMA = $49`, `TAC = $06`), and never moves
+it, so ChipBoy's is the same number and, like a timer interrupt, it is **one clock for
+the whole driver and it free-runs**: it is *not* restarted at a note-on, because a real
+driver's interrupt does not know that a note began. Where a note falls inside the period
+is therefore where the player pressed play; it is not a property of the driver, and the
+parity harness's timing tolerance is one whole period for that reason.
 
-- `noteFine` is the note in 1/32 semitones: note + transpose + the bend wheel + vibrato
-  (± depth, from the table below) + Drum-mode P and L.
-- `periodOffset` is in NRx3/NRx4 units: Fast/Tick/Step P and L. It is what the sweep
-  unit and LSDj operate on, so a linear slide there is the Game Boy's "accelerating"
-  slide.
+The tracker tick is the pitch update in Tick mode.
 
-**V vibrato** (`V x y`). `x` 1–15 is the speed, `x` = 0 turns vibrato off (LSDj's V00).
-One cycle is 720 / x updates at 360 Hz (so x / 2 Hz: 4 Hz at x = 8) or 96 / x ticks
-in Tick mode (x cycles per four beats; identical to Fast at 120 BPM, and it scales with
-the tempo — LSDj's "synced to the music"). `y` is the depth in semitones from LSDj's
-table: 0 = ⅛, 1 = ¼, 2 = ⅜, 3 = ½, 4 = ¾, 5 = 1, 6 = 1½, 7 = 2, 8 = 2½, 9 = 3,
-10 = 3½, 11 = 4, 12 = 5, 13 = 6, 14 = 7, 15 = 8. The instrument's own Vibrato uses the
-same speed, depth and delay (delay in ticks, ChipBoy's). The phase restarts at a plain
-note-on and continues through bare notes. The two zeroes differ: the instrument's own
-Vibrato depth 0 means no vibrato at all (the interface shows "off"), while a `V`
-command's `y` = 0 is not off but the smallest step on LSDj's table, ⅛ semitone, as in
-LSDj itself.
+An update writes the period registers without the trigger bit — **both halves, NRx3 and
+NRx4, every time**, as LSDj does. NRx4 carries no trigger there, so the extra write
+changes nothing but the log, and the log is what a parity harness can line up. An update
+writes the period **whenever something is moving it**, and once after a note-on whether
+anything is moving or not: a plain note writes its period again one update after the
+trigger and then goes quiet.
 
-**L slide** (`L x`). Slides from the pitch the channel is at (mid-slide included) to
-the note of the same cell or note-on, in `x` units: ticks in Tick mode, 1/360 s
-otherwise; `x` = 0 is instant. Linear in period units, or in semitones in Drum mode.
+### The note table
+
+The table is one entry a semitone, `round(2048 − 131072/f)` on the pulse channels and
+half that numerator on the wave channel, and a **fraction is interpolated between two
+entries in period units**, not in frequency. That is measurable: a vibrato half a
+semitone below C-5 lands on 1791, where the exponential curve gives 1790. Whole notes
+are the same number either way.
+
+### V vibrato
+
+`V x y`. The phase is a **six-bit counter, 64 to the cycle**, and `x` is the step, so
+**one cycle is 64/(x + 1) updates** in Fast, Step and Drum — 5.6 Hz at x = 0, 11.2 at
+x = 1, 89.8 at x = 15. `x` = 0 is the *slowest*, not off; the phase steps **after** the
+write, so the first update of a note writes the note itself and the swing starts from the
+one after it.
+
+In **Tick** mode the cycle is a measured table of tick counts, not 64/(x + 1): one cycle
+is **96, 72, 64, 48, 36, 32, 24, 18, 16, 12, 9, 8, 6, 4½, 4 or 3 ticks** for x = 0…15 —
+the period halves every three speeds — and the command rate slows it as it slows P.
+
+`y` is the depth, the swing **either side of the note** in semitones, and it is LSDj's
+own table, confirmed against the ROM for all sixteen values:
+
+| y | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| semitones | ⅛ | ¼ | ⅜ | ½ | ¾ | 1 | 1½ | 2 | 2½ | 3 | 3½ | 4 | 5 | 6 | 7 | 8 |
+
+So at C-5 (period 1798) depth 0 swings 1796…1800, depth 3 swings 1791…1805, depth 8
+swings 1759…1831 and depth 15 swings 1650…1890 — the ROM's own numbers. A `V`'s depth 0
+is an eighth of a semitone and not "off"; the *instrument's* own vibrato depth 0 is off
+(the interface shows "off"), and the only way to stop a `V` is the letter's revert form or
+a new instrument. In **Drum** the same triangle and the same depths move the period
+register instead, where one semitone is worth about **19.1 period units** whatever the
+note; the phase law is the same. The instrument's own Vibrato uses the same speed, depth
+and delay (delay in ticks, ChipBoy's). The phase restarts at a plain note-on and
+continues through bare notes.
+
+### L slide
+
+`L x`. The slide takes **x + 1 updates** — ticks in Tick mode, pitch updates otherwise —
+and is **linear in semitones**. The note walks from the pitch the channel is at
+(mid-slide included) to the note of the same cell by a fixed step of
+`(target − source) / (x + 1)` in 1/256 semitones, truncated toward zero; because it is
+truncated there is usually a little left after the last step, and one more update lands
+the pitch exactly on the note. The note-on of a slide **triggers at the pitch the channel
+was at**, which is what makes it a portamento: LSDj writes the old period with the
+trigger and the slide moves from there. `L 00` is one step, the whole distance, so it
+writes the period once and nothing is left over.
+
+Measured: `L 04` from C-4 to C-5 writes 1612, 1668, 1718, 1760, 1798 and then 1798 again —
+five equal steps in semitones covering an octave, which in period units are 65, 56, 50,
+42, 38. `L 10` writes seventeen steps and lands on the note at the eighteenth.
+
 It is a per-note letter: a slot with L in force gives every note a portamento from the
 previous one. In a table, L in the first command column slides to the transpose column's
 value relative to the base note, and the transpose and the slide add independently.
 
-**P pitch** (`P x`, signed `x − 128`). Fast: `x − 128` period units per update. Tick:
-`x − 128` period units per tick (every rate + 1 ticks). Step: an immediate offset of
-`x − 128` units, no bend. Drum: `(x − 128) / 16` semitones per update, so a kick's fall
-is exponential. `P 128` stops a bend and keeps the offset; a plain note-on resets the
-offset to zero. Not on noise (LSDj's noise P is a shape command and is out of scope).
+### P pitch
+
+`P x`, **two's complement** (§34): the byte 0–255 read as −128…127. The step per update is
+not proportional to the value — it is a measured table, and over the whole sweep of 127
+values it closes to
+
+> **step = S(|x|) / 256 of a semitone per update**, where
+> `S(m) = sum(ceil(j/4), j = 1..m) = (q + 1)(2q + r)` for `q = m / 4`, `r = m mod 4`.
+
+which fits every measured rate to about one part in a hundred. So |x| = 1 is 1/256 of a
+semitone an update, 16 is 40/256, 64 is 544/256 and 127 is 2080/256 — eight semitones an
+update. The domains:
+
+- **Fast** bends the **note**: the pitch moves in a straight line in semitones and the
+  period step grows as it falls.
+- **Tick** is Fast clocked by the tracker tick, and one tick's step is **four** of the
+  pitch clock's (measured), not the 7.46 that a tick is worth in updates. The command
+  rate slows it.
+- **Step** is no bend at all but one immediate offset of **x/32 of a semitone**, applied
+  at the first pitch update after the note-on rather than in the note's own writes:
+  LSDj's note-on writes the pitch the channel was at and the commands move it from there.
+- **Drum** bends the **period register** in a straight line and **wraps at 2048** rather
+  than sticking at the top — which is what a P kick falling off the bottom really does.
+  One semitone of the table above is worth about 19.1 period units there.
+
+`P 0` stops a bend and keeps what it reached; a plain note-on resets the offset to zero.
+Not on noise (LSDj's noise P is a shape command and is out of scope).
+
+### C, R, M, E and Z
 
 **C chord** (`C x y`): the cycle is 0, x, y per step; if `y` = 0 the cycle is 0, x;
-`C 0 0` stops. One step per rate + 1 ticks. **R retrigger** (`R x y`): every `y` ticks
-× (rate + 1), `y` = 0 retriggers once; `x` changes the volume at each retrigger: 0 none,
-1–7 up by that much, 9–15 down by `x − 8`. **M master** (`M x y`): 0–7 absolute, 8 no
-change, 9–11 up by 1–3, 13–15 down by 1–3, per side. **E**: `y` 0 and 8 hold, 1–7
-decrease at that rate, 9–15 increase at `y − 8` (the NRx2 encoding; the wording in §2
-was misleading, the behaviour was already this). **Z random** (`Z x y`): re-runs the
-last command that is not Z or H — the other slot/column when it is set, else the last
-command fired on the channel — adding a random 0…x to its `x` and 0…y to its `y`, at
-every note-on. Not changed: A, D, F, G, H, K, O, S, T, W. LSDj's letters that mean
-something else here (W on wave, F on pulse, S and P on noise) stay as ChipBoy defines
-them and the documentation says so.
+`C 0 0` stops. The note's own tick plays the root and the chord steps from the tick after
+it, one step per rate + 1 ticks (measured: `C 3 7` wrote 1798, then 1837, then 1881).
+
+**R retrigger** (`R x y`): the interval is **y × (rate + 1) + 1 ticks**, so `y` = 0 is
+every tick and not "once". A retrigger writes **the whole note-on sequence again** —
+sweep, duty, level, period, trigger — not just the trigger. `x` is a **signed nibble** of
+volume change: 0 none, 1–7 up by that much, 9–15 down by 16 − x (measured: `R A` steps the
+level down by six). **`x` = 8 is LSDj's resync**: the retrigger runs on the **pitch
+clock** instead of on ticks, and writes two registers, the level and the trigger.
+
+**M master** (`M x y`): 0–7 absolute, 8 no change, 9–11 up by 1–3, 13–15 down by 1–3, per
+side; both arguments are nibbles.
+
+**E**: `x` is the level and `y` the envelope — 0 and 8 hold, 1–7 fall at that rate, 9–15
+rise at `y` − 8. **E never triggers**: it walks the level to `x` by zombie-mode writes at
+its own tick (§26) and sets the direction and rate of what happens next, which the driver
+then runs itself. Measured: `E 8 0` on a channel sounding at 15 is seven down-triples and
+nothing else.
+
+**Z random** (`Z x y`): re-runs the last command that is not Z or H — the other
+slot/column when it is set, else the last command fired on the channel — adding a random
+0…x to its `x` and 0…y to its `y`, at every note-on; both arguments are nibbles.
+
+### The instrument's own envelope, in software
+
+LSDj **never lets the chip's envelope run**. Every NRx2 it writes has the low nibble
+forced to **8** — amplitude, direction up, period zero, a hold — so an instrument's ENV
+byte of `F0` goes out as `F8`, `A3` as `A8` and `09` as `08`. The direction bit is not
+cosmetic: it is the state every later zombie write starts from, and it leaves the DAC on
+at level zero. ChipBoy does the same, and runs the envelope itself off the pitch clock at
+the measured rate:
+
+| ENV's rate nibble | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|
+| pitch-clock periods a step | 6 | 11 | 15 | 20 | 27 | 36 | 36 |
+| cycles | 70224 | 128740 | 175550 | 234070 | 316010 | 421340 | 421340 |
+
+Rates 6 and 7 measured the same interval over sixteen steps of a held note, which is
+either true of the ROM or an artefact of the note; it is recorded as measured. Each step
+is a level change and reaches the chip as §26's zombie writes. A note whose envelope
+reaches silence ends there.
+
+### Not changed
+
+A, D, F, G, K, O, S, T and W keep what §2 says. LSDj's letters that mean something else
+here (W on wave, F on pulse, S and P on noise) stay as ChipBoy defines them and the
+documentation says so.
 
 ## 8. Notes: plain and bare
 
@@ -793,7 +902,7 @@ channel moves to its next phrase when its own phrase ends.** Bars leave the mode
 ## 28. Hardware honesty, and the road to a ROM
 
 - `docs/HARDWARE_DRIVER_AUDIT.md` lists every driver behaviour with the way a Game Boy
-  driver realises it — register writes at ticks, the timer-driven 360 Hz pitch clock,
+  driver realises it — register writes at ticks, the timer-driven 358 Hz pitch clock,
   zombie-mode levels, wave RAM rewrites with the channel off on DMG, kit streaming — and
   marks what is **plugin-only** (MIDI input and its sample-accurate notes, Hybrid's live
   notes, the Voice link). It ends with the data a playback ROM needs: song format 6 with

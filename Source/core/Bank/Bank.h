@@ -91,6 +91,16 @@ inline bool cmdPersists(Cmd c)
 }
 /// The revert form of a letter, or Cmd::None when the letter leaves nothing.
 inline Command revertOf(Cmd c) { return cmdPersists(c) ? Command{ c, 0, 0, kRevert } : Command{}; }
+
+/// T's argument is the **byte LSDj stores** (docs/COMMANDS_AND_TEMPO.md 34):
+/// `28`-`FF` are 40-255 BPM and `00`-`27` are 256-295. The tempo is derived
+/// from the byte, never stored beside it, so a song file and a playback ROM
+/// carry one encoding.
+inline int tempoBpmOfByte(int b) { const int v = b & 0xFF; return v >= 0x28 ? v : v + 256; }
+inline int tempoByteOfBpm(int bpm) { const int v = bpm < 40 ? 40 : bpm > 295 ? 295 : bpm; return v <= 255 ? v : v - 256; }
+/// P is stored **two's complement** (section 34): the byte 0-255 read signed.
+inline int bendOfByte(int b) { return int(int8_t(uint8_t(b & 0xFF))); }
+inline int byteOfBend(int v) { return int(uint8_t(int8_t(v < -128 ? -128 : v > 127 ? 127 : v))); }
 const char* cmdLetter(Cmd c);
 Cmd cmdFromLetter(char c);
 

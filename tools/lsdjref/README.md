@@ -39,7 +39,7 @@ ROM still runs the suite clean.
 
 | | |
 |---|---|
-| `cases.spec` | the test songs, one `case` each, read by both tools |
+| `cases.spec` | the 29 test songs, one `case` each, read by both tools |
 | `lsdjref_sav.py` | writes one `.sav` per case into a copy of a base save |
 | `trace/` | `lsdjref_trace`: the ROM in SameBoy's core, with a write log |
 | `compare/` | `lsdjref_compare`: the same songs through ChipBoy's driver, diffed |
@@ -54,6 +54,11 @@ grammar is in the file's own header; notes are scientific pitch, command values
 are LSDj's single byte in hex, and instrument fields keep LSDj's own encodings
 (`env` is the NRx2 byte, `sweep` is NR10's complement) so what the spec says is
 what the save holds.
+
+The last six cases are the **fine** ones: where the cases above them pin the
+shape of a law, these pin its numbers -- P swept over every value from -127 to
++64, V at all sixteen depths and all sixteen speeds in both clocks, and a table
+whose rows hold the same amplitudes behind different envelope nibbles.
 
 Two traps worth knowing, both measured:
 

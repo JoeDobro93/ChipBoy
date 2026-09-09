@@ -29,6 +29,28 @@ Command cmdFromVar(const var& v)
     }
     return c;
 }
+
+/// Format 7 (docs/COMMANDS_AND_TEMPO.md section 34): three letters changed
+/// what their arguments *mean*, so a file written before it is converted as it
+/// is read.
+///
+///  - **P** was the signed speed biased by 128 and is two's complement now, so
+///    `x` becomes `x - 128` as a byte.
+///  - **S** carried its direction as bit 7 of `x`; it is NR10's low nibble in
+///    `y` now, so `y` becomes `(down << 3) | shift`.
+///  - **H** in a table was the step to hop to, 1-16; it is LSDj's `times, row`
+///    now, and the old instruction is "for ever, to that row".
+///
+/// V, L, R and the rest keep their numbers: what changed there is the law the
+/// driver plays them by, not the encoding, and no conversion can put a song's
+/// musical intent back (CHANGES.md says so).
+void convertCommandToFormat7(Command& c)
+{
+    if (isRevert(c)) return;
+    if (c.cmd == Cmd::P) c.a = int16_t((int(c.a) - 128) & 0xFF);
+    else if (c.cmd == Cmd::S) { c.b = int16_t(((int(c.a) & 0x80) ? 8 : 0) | (int(c.b) & 7)); c.a = int16_t(int(c.a) & 7); }
+    else if (c.cmd == Cmd::H) { c.b = int16_t(std::clamp(int(c.a) - 1, 0, 15)); c.a = 0; }
+}
 template <typename T> T getOr(const DynamicObject* o, const char* key, T def)
 {
     if (!o || !o->hasProperty(key)) return def;
@@ -285,7 +307,9 @@ var bankToVar(const Bank& b)
 {
     auto* o = new DynamicObject();
     o->setProperty("format", "chipboy-bank");
-    o->setProperty("version", 1);
+    // Version 7 is the command encodings of section 34; 1 is everything before
+    // them, and its table commands are converted as they are read.
+    o->setProperty("version", 7);
     Array<var> ins, tabs, waves, kits;
     for (int i = 0; i < kInstrumentSlots; ++i) if (b.instruments[size_t(i)].used) ins.add(instrumentToVarSlot(b.instruments[size_t(i)], i + 1));
     for (int i = 0; i < kTableSlots; ++i) if (b.tables[size_t(i)].used) tabs.add(tableToVarImpl(b.tables[size_t(i)], i + 1));
@@ -299,13 +323,18 @@ bool bankFromVar(const var& v, Bank& out)
 {
     auto* o = v.getDynamicObject(); if (!o) return false;
     if (o->getProperty("format").toString() != "chipboy-bank") return false;
+    const bool oldCommands = getOr(o, "version", 1) < 7;
     // A blank bank is 41 KB and a blank song 83 KB. These read files on the
     // message thread, which a Windows host gives a megabyte of stack, so the
     // blank is built on the heap and moved in rather than made a temporary.
     { const auto blank = std::make_unique<Bank>(); out = std::move(*blank); }
     auto each = [](const var& arr, int maxSlot, auto fn) { if (auto* a = arr.getArray()) for (const auto& e : *a) { const int slot = e.getDynamicObject() ? int(e.getDynamicObject()->getProperty("slot")) : 0; if (slot >= 1 && slot <= maxSlot) fn(e, slot); } };
     each(o->getProperty("instruments"), kInstrumentSlots, [&](const var& e, int slot) { instrumentFromVarImpl(e, out.instruments[size_t(slot - 1)]); });
-    each(o->getProperty("tables"), kTableSlots, [&](const var& e, int slot) { tableFromVarImpl(e, out.tables[size_t(slot - 1)]); });
+    each(o->getProperty("tables"), kTableSlots, [&](const var& e, int slot) {
+        auto& t = out.tables[size_t(slot - 1)];
+        tableFromVarImpl(e, t);
+        if (oldCommands) for (auto& st : t.steps) { convertCommandToFormat7(st.cmd1); convertCommandToFormat7(st.cmd2); }
+    });
     each(o->getProperty("waves"), kWaveSlots, [&](const var& e, int slot) { waveFromVarImpl(e, out.waves[size_t(slot - 1)]); });
     each(o->getProperty("kits"), kKitSlots, [&](const var& e, int slot) { kitFromVarImpl(e, out.kits[size_t(slot - 1)]); });
     return true;
@@ -314,13 +343,14 @@ bool bankFromVar(const var& v, Bank& out)
 var songToVar(const tracker::Song& s)
 {
     auto* o = new DynamicObject();
-    // Format 6 (docs/COMMANDS_AND_TEMPO.md section 25): every channel keeps
-    // its own time. A phrase carries its own length -- `steps`, 1-64 -- and
-    // its cells are `cells`, only the ones that hold something, each with its
-    // step index. Steps per bar, the bar overrides and beats per bar are gone
-    // with the bars. In a song *file* the format also embeds the bank
-    // (SongFiles.cpp).
-    o->setProperty("format", "chipboy-song"); o->setProperty("version", 6);
+    // Format 7 (docs/COMMANDS_AND_TEMPO.md section 34): P, S and H changed
+    // what their arguments mean, so the version says which encoding the file
+    // holds and a format-6 file is converted as it is read. Format 6 (section
+    // 25) is where every channel got its own time: a phrase carries its own
+    // length -- `steps`, 1-64 -- and its cells are `cells`, only the ones that
+    // hold something, each with its step index. In a song *file* the format
+    // also embeds the bank (SongFiles.cpp).
+    o->setProperty("format", "chipboy-song"); o->setProperty("version", 7);
     // The song's own timeline (docs/COMMANDS_AND_TEMPO.md section 4).
     o->setProperty("tempoBpm", s.tempoBpm); o->setProperty("songStartSeconds", s.songStartSeconds);
     Array<var> phrases;
@@ -407,6 +437,8 @@ bool songFromVar(const var& v, tracker::Song& out)
     auto* o = v.getDynamicObject(); if (!o) return false;
     if (o->getProperty("format").toString() != "chipboy-song") return false;
     { const auto blank = std::make_unique<tracker::Song>(); out = std::move(*blank); }
+    // Before format 7 P, S and H carried their arguments another way (34).
+    const bool oldCommands = getOr(o, "version", 1) < 7;
     // Format 6 has no bars at all. Older files carry a step count for the
     // whole song (`steps`, a number since format 4; `stepsPerBar`, 8 or 16,
     // before it) and perhaps a bar override, which become phrase lengths
@@ -437,6 +469,7 @@ bool songFromVar(const var& v, tracker::Song& out)
                     c.note = uint8_t(std::clamp(getOr(co, "n", 0), 0, 255)); c.vel = uint8_t(std::clamp(getOr(co, "v", 0), 0, 127));
                     c.inst = uint8_t(std::clamp(getOr(co, "i", 0), 0, 128)); c.table = uint8_t(std::clamp(getOr(co, "t", 0), 0, 64));
                     c.cmd1 = cmdFromVar(co->getProperty("c1")); c.cmd2 = cmdFromVar(co->getProperty("c2"));
+                    if (oldCommands) { convertCommandToFormat7(c.cmd1); convertCommandToFormat7(c.cmd2); }
                 }
         }
     if (auto* chains = o->getProperty("chains").getArray())
