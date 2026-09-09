@@ -621,6 +621,16 @@ uint8_t Apu::outNoise() const
     return (noise_.lfsr & 1) ? 0 : noise_.volume;   // output is NOT bit 0
 }
 
+uint8_t Apu::channelVolume(int ch) const
+{
+    switch (ch) {
+        case 0: return sq_[0].volume;
+        case 1: return sq_[1].volume;
+        case 2: return wave_.volumeCode;
+        default: return noise_.volume;
+    }
+}
+
 uint8_t Apu::level(int ch) const
 {
     switch (ch) {

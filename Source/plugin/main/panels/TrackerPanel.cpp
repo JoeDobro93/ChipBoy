@@ -62,7 +62,7 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     loop_.setColour(TextButton::textColourOnId, colours::text);
     loop_.setColour(TextButton::buttonOnColourId, colours::accentSoft);
     loop_.onClick = [this] {
-        processor.setLoopBars(0, -1);              // the whole song, end to start
+        processor.setLoopRows(0, -1);              // the whole song, end to start
         processor.setLoop(loop_.getToggleState());
     };
 
@@ -73,15 +73,21 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     rec_.setColour(TextButton::buttonOnColourId, colours::accentSoft);
     rec_.onClick = [this] { processor.setRecordArm(rec_.getToggleState()); };
 
-    // Steps per bar is a number now, 1-64 (section 11); a bar may still take
-    // one of its own in the chain's STP column.
+    // A phrase carries its own length, 1-64 (section 25): this sets it on the
+    // phrases of the row in view. The next stage moves LEN to the grid head.
     steps_.setRange(1, tracker::kMaxSteps, 16);
     steps_.setTyped(true);
-    steps_.setTooltip("How many steps a bar holds, 1-64: at 16 they are sixteenths of a 4/4 bar, at 8 eighths. Type a number, or step it. "
-                      "A single bar can take a count of its own in the chain's STP column.");
+    steps_.setTooltip("How many steps the phrases in this row hold, 1-64. A step is six ticks at the straight groove, so sixteen of them are four beats; "
+                      "a phrase of another length moves its channel on sooner or later than the others.");
     steps_.onChange = [this](int v) {
         const auto n = uint8_t(std::clamp(v, 1, tracker::kMaxSteps));
-        editSong("Steps per bar " + String(int(n)), [n](tracker::Song& s) { s.stepsPerBar = n; });
+        const int row = bar_;
+        editSong("Phrase length " + String(int(n)), [n, row](tracker::Song& s) {
+            for (int ch = 0; ch < 4; ++ch) {
+                const int slot = s.phraseAt(ch, row);
+                if (slot >= 1 && slot <= tracker::kPhraseSlots) s.phrases[size_t(slot - 1)].steps = n;
+            }
+        });
     };
 
     saveSong_.setTooltip("Write the active tab's song -- chains, phrases, grooves, steps, arms, its tempo and the bank it plays through -- to a .cbsong file. "
@@ -107,12 +113,12 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     songStart_.setTooltip("Where tick 0 of the song sits on the host's timeline, in seconds");
     songStart_.setTextFunction([](int v) { return String(double(v) / kStartSteps, 1) + " s"; });
     songStart_.onChange = [this](int v) { editSong("Song start", [v](tracker::Song& s) { s.songStartSeconds = double(v) / kStartSteps; }); };
+    // Beats per bar went with the bars (section 25): a phrase's length and its
+    // groove say how long it lasts. The field stays until the next stage takes
+    // the head apart, showing the straight sixteen a step grid counts in.
     beats_.setRange(1, 16, 4);
-    // The host contributes the tempo and never its signature (section 11 as
-    // amended, section 19), so this is the bar's length in both modes.
-    beats_.setTooltip("How many beats this song's bar holds. The host's time signature never reaches the tracker, so this says how long a bar is in both tempo "
-                      "modes: a song in 3/4 says 3 here.");
-    beats_.onChange = [this](int v) { editSong("Beats per bar " + String(v), [v](tracker::Song& s) { s.beatsPerBar = double(v); }); };
+    beats_.setEnabled(false);
+    beats_.setTooltip("Bars have left the song: a phrase lasts as long as its length and its groove make it, and each channel moves on when its own phrase ends.");
     tempoWatch_ = std::make_unique<ParamWatch>(param(processor, ids::tempoSource), [this](float v) {
         songMode_ = v > 0.5f || processor.ownsTransport();
         songStart_.setEnabled(songMode_);
@@ -149,17 +155,17 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
             if (slot >= 1 && slot <= tracker::kPhraseSlots) s.phrases[size_t(slot - 1)].used = true;
         });
     };
-    // The bar's own step count (section 11): blank is the song's, and a
-    // cleared last entry goes away so the song does not keep the bar.
-    chain_.onBarStepsChange = [this](int bar, int steps) {
-        editSong("Chain: bar " + String(bar + 1) + " steps", [bar, steps](tracker::Song& s) {
-            if (bar < 0 || bar > 4095) return;
-            if (int(s.barSteps.size()) <= bar) {
-                if (steps == 0) return;
-                s.barSteps.resize(size_t(bar) + 1, 0);
+    // A phrase carries its own length now (section 25). The column sets it on
+    // every phrase this row holds, which is what the bar's step count did; the
+    // next stage moves LEN to the grid head, where one phrase is in view.
+    chain_.onRowLengthChange = [this](int row, int steps) {
+        if (steps <= 0) return;
+        editSong("Chain: row " + String(row + 1) + " length", [row, steps](tracker::Song& s) {
+            if (row < 0 || row > 4095) return;
+            for (int ch = 0; ch < 4; ++ch) {
+                const int slot = s.phraseAt(ch, row);
+                if (slot >= 1 && slot <= tracker::kPhraseSlots) s.phrases[size_t(slot - 1)].steps = uint8_t(std::clamp(steps, 1, tracker::kMaxSteps));
             }
-            s.barSteps[size_t(bar)] = uint8_t(std::clamp(steps, 0, tracker::kMaxSteps));
-            while (!s.barSteps.empty() && s.barSteps.back() == 0) s.barSteps.pop_back();
         });
     };
     grid_.onCellChange = [this](int ch, int step, const tracker::Cell& cell) {
@@ -168,7 +174,7 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
                  [ch, step, bar, cell](tracker::Song& s) {
             const uint8_t slot = ensurePhrase(s, ch, bar);
             if (slot == 0 || step < 0 || step >= tracker::kMaxSteps) return;
-            s.phrases[size_t(slot - 1)].steps[size_t(step)] = cell;
+            s.phrases[size_t(slot - 1)].cells[size_t(step)] = cell;
         });
     };
     grid_.onSourceChange = [this](int ch, tracker::NoteSource src) {
@@ -227,7 +233,7 @@ RichText TrackerPanel::contextLine() const
     const int slot = s ? s->phraseAt(channel, bar_) : 0;
     if (slot) r.plain(" plays phrase ").bold(ValueFormat::number(slot));
     else r.plain(" has no phrase this bar " + String(CharPointer_UTF8("\xe2\x80\x94")) + " it just plays its notes");
-    if (s) r.plain(middot() + String(s->stepsOfBar(bar_)) + " steps");
+    if (s) r.plain(middot() + String(s->stepsOfRow(channel, bar_)) + " steps");
     return r;
 }
 
@@ -237,8 +243,9 @@ void TrackerPanel::refreshViews()
     chain_.setSong(s, bar_, playingBar_);
     grid_.setBank(processor.bank());
     grid_.setSong(s, bar_);
-    const int spb = s ? s->stepsOfBar(bar_) : 16;
-    steps_.setValue(s ? s->steps() : 16, dontSendNotification);
+    int spb = 16;
+    if (s) { spb = 1; for (int ch = 0; ch < 4; ++ch) spb = std::max(spb, s->stepsOfRow(ch, bar_)); }
+    steps_.setValue(spb, dontSendNotification);
     if (spb != gridSteps_) { gridSteps_ = spb; syncGridHeight(); }
     syncSongTime();
     syncTabs();
@@ -262,7 +269,7 @@ void TrackerPanel::syncSongTime()
     if (!s) return;
     tempo_.setValue(std::clamp(int(std::lround(s->tempoBpm)), 40, 255), dontSendNotification);
     songStart_.setValue(std::clamp(int(std::lround(s->songStartSeconds * kStartSteps)), 0, kStartMax), dontSendNotification);
-    beats_.setValue(std::clamp(int(std::lround(s->beatsPerBar)), 1, 16), dontSendNotification);
+
 }
 
 /// The strip, from the processor's tabs (section 18). An unchanged list
@@ -431,11 +438,11 @@ void TrackerPanel::tick()
     const auto s = processor.song();
     const auto at = trackerPosition(processor);
     const bool playing = at.playing;
-    const int bar = at.bar, inBar = at.inBar;
-    const int spb = s ? s->stepsOfBar(bar) : 16;
-    const int beat = inBar / driver::kTicksPerBeat;
-    const int stepInBeat = (inBar - beat * driver::kTicksPerBeat) * spb / at.barTicks;
-    pos_.setText(String(bar + 1) + "." + String(beat + 1) + "." + String(stepInBeat + 1));
+    // The song's time, and the selected channel's own row and step (25).
+    const int bar = at.row[channel & 3], inBar = at.inRow[channel & 3];
+    const int step = s ? playingStepOf(processor, *s, channel & 3, bar, inBar) : -1;
+    pos_.setText(String(bar + 1) + "." + String(step + 1) + "  "
+                 + String(double(at.tick) / double(driver::kTicksPerBeat), 1) + " b");
     playLed_.setOn(playing);
     playText_.setText(playing ? "playing" : "stopped");
     if (playing != wasPlaying_) { wasPlaying_ = playing; play_.setToggleState(playing, dontSendNotification); }

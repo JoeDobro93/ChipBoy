@@ -53,7 +53,7 @@ GroovesPanel::GroovesPanel(ChipBoyProcessor& p)
     help_.setText(h);
 
     editor_.setSong(processor.song());
-    editor_.setBarTicks(processor.barTicks());
+    editor_.setRowTicks(rowTicks());
     rebuildList();
     showSlot(firstSwung());
     list_.setSelected(slot_, dontSendNotification);
@@ -120,7 +120,7 @@ int GroovesPanel::grooveInForce(int ch) const
     if (!s) return 0;
     const uint8_t slot = processor.player().groove(ch);
     if (slot != tracker::kGrooveNone) return int(slot);
-    const auto* p = s->phrase(s->phraseAt(ch, trackerPosition(processor).bar));
+    const auto* p = s->phrase(s->phraseAt(ch, trackerPosition(processor).row[ch & 3]));
     return p != nullptr ? int(p->groove) : 0;
 }
 
@@ -160,9 +160,19 @@ void GroovesPanel::hexChanged()
     repaint();
 }
 
+/// The ticks the selected channel's phrase would take at the straight groove:
+/// what the editor measures a groove's total against (section 25).
+int GroovesPanel::rowTicks() const
+{
+    const auto s = processor.song();
+    if (!s) return tracker::kEmptyRowTicks;
+    const int ch = channel & 3;
+    return tracker::kTicksPerStep * s->stepsOfRow(ch, trackerPosition(processor).row[size_t(ch)]);
+}
+
 void GroovesPanel::tick()
 {
-    editor_.setBarTicks(processor.barTicks());
+    editor_.setRowTicks(rowTicks());
     // The row the selected channel is really playing, when it is playing the
     // groove on show; the editor's rows are a phrase's steps.
     // The editor follows the groove in force for the selected channel until
@@ -176,7 +186,7 @@ void GroovesPanel::tick()
     const auto s = processor.song();
     const auto at = trackerPosition(processor);
     int step = -1;
-    if (s && at.playing && inForce == slot_) step = playingStepOf(processor, *s, channel, at.bar, at.inBar);
+    if (s && at.playing && inForce == slot_) step = playingStepOf(processor, *s, channel, at.row[channel & 3], at.inRow[channel & 3]);
     if (step != lastStep_) { lastStep_ = step; editor_.setPlayingStep(step); }
 }
 

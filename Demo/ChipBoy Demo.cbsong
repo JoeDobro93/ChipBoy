@@ -1,6 +1,6 @@
 {
   "format": "chipboy-song-file",
-  "version": 5,
+  "version": 6,
   "bank": "Factory",
   "instruments": {
     "1": "Square lead",
@@ -42,6 +42,7 @@
         "envVol": 13,
         "envDir": 0,
         "envRate": 0,
+        "envMode": 0,
         "sweepRate": 0,
         "sweepDown": false,
         "sweepShift": 0,
@@ -80,6 +81,7 @@
         "envVol": 15,
         "envDir": 0,
         "envRate": 2,
+        "envMode": 0,
         "sweepRate": 0,
         "sweepDown": false,
         "sweepShift": 0,
@@ -118,6 +120,7 @@
         "envVol": 14,
         "envDir": 0,
         "envRate": 0,
+        "envMode": 0,
         "sweepRate": 0,
         "sweepDown": false,
         "sweepShift": 0,
@@ -156,6 +159,7 @@
         "envVol": 15,
         "envDir": 0,
         "envRate": 3,
+        "envMode": 0,
         "sweepRate": 3,
         "sweepDown": true,
         "sweepShift": 2,
@@ -194,6 +198,7 @@
         "envVol": 12,
         "envDir": 0,
         "envRate": 1,
+        "envMode": 0,
         "sweepRate": 0,
         "sweepDown": false,
         "sweepShift": 0,
@@ -241,6 +246,7 @@
         "envVol": 13,
         "envDir": 0,
         "envRate": 0,
+        "envMode": 0,
         "sweepRate": 0,
         "sweepDown": false,
         "sweepShift": 0,
@@ -279,6 +285,7 @@
         "envVol": 15,
         "envDir": 0,
         "envRate": 0,
+        "envMode": 0,
         "sweepRate": 0,
         "sweepDown": false,
         "sweepShift": 0,
@@ -317,6 +324,7 @@
         "envVol": 15,
         "envDir": 0,
         "envRate": 0,
+        "envMode": 0,
         "sweepRate": 0,
         "sweepDown": false,
         "sweepShift": 0,
@@ -355,6 +363,7 @@
         "envVol": 15,
         "envDir": 0,
         "envRate": 0,
+        "envMode": 0,
         "sweepRate": 0,
         "sweepDown": false,
         "sweepShift": 0,
@@ -393,6 +402,7 @@
         "envVol": 15,
         "envDir": 0,
         "envRate": 0,
+        "envMode": 0,
         "sweepRate": 0,
         "sweepDown": false,
         "sweepShift": 0,
@@ -431,6 +441,7 @@
         "envVol": 15,
         "envDir": 0,
         "envRate": 1,
+        "envMode": 0,
         "sweepRate": 0,
         "sweepDown": false,
         "sweepShift": 0,
@@ -469,6 +480,7 @@
         "envVol": 13,
         "envDir": 0,
         "envRate": 2,
+        "envMode": 0,
         "sweepRate": 0,
         "sweepDown": false,
         "sweepShift": 0,
@@ -507,6 +519,7 @@
         "envVol": 9,
         "envDir": 0,
         "envRate": 1,
+        "envMode": 0,
         "sweepRate": 0,
         "sweepDown": false,
         "sweepShift": 0,
@@ -545,6 +558,7 @@
         "envVol": 9,
         "envDir": 0,
         "envRate": 4,
+        "envMode": 0,
         "sweepRate": 0,
         "sweepDown": false,
         "sweepShift": 0,
@@ -583,6 +597,7 @@
         "envVol": 12,
         "envDir": 0,
         "envRate": 6,
+        "envMode": 0,
         "sweepRate": 0,
         "sweepDown": false,
         "sweepShift": 0,
@@ -621,6 +636,7 @@
         "envVol": 15,
         "envDir": 0,
         "envRate": 0,
+        "envMode": 0,
         "sweepRate": 0,
         "sweepDown": false,
         "sweepShift": 0,
@@ -659,6 +675,7 @@
         "envVol": 15,
         "envDir": 0,
         "envRate": 2,
+        "envMode": 0,
         "sweepRate": 0,
         "sweepDown": false,
         "sweepShift": 0,
@@ -1692,17 +1709,15 @@
   },
   "song": {
     "format": "chipboy-song",
-    "version": 5,
-    "steps": 16,
-    "stepsPerBar": 16,
+    "version": 6,
     "tempoBpm": 120.0,
     "songStartSeconds": 0.0,
-    "beatsPerBar": 4.0,
     "phrases": [
       {
         "slot": 1,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 69,
@@ -1768,7 +1783,8 @@
       {
         "slot": 2,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 45,
@@ -1854,7 +1870,8 @@
       {
         "slot": 3,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 33,
@@ -1890,7 +1907,8 @@
       {
         "slot": 4,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 36,
@@ -1968,7 +1986,8 @@
       {
         "slot": 5,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 77,
@@ -2024,7 +2043,8 @@
       {
         "slot": 6,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 41,
@@ -2110,7 +2130,8 @@
       {
         "slot": 7,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 29,
@@ -2146,7 +2167,8 @@
       {
         "slot": 8,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 36,
@@ -2215,7 +2237,8 @@
       {
         "slot": 9,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 76,
@@ -2281,7 +2304,8 @@
       {
         "slot": 10,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 36,
@@ -2367,7 +2391,8 @@
       {
         "slot": 11,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 24,
@@ -2403,7 +2428,8 @@
       {
         "slot": 12,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 36,
@@ -2481,7 +2507,8 @@
       {
         "slot": 13,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 74,
@@ -2553,7 +2580,8 @@
       {
         "slot": 14,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 43,
@@ -2639,7 +2667,8 @@
       {
         "slot": 15,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 31,
@@ -2675,7 +2704,8 @@
       {
         "slot": 16,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 36,
@@ -2753,7 +2783,8 @@
       {
         "slot": 17,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 81,
@@ -2821,7 +2852,8 @@
       {
         "slot": 18,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 45,
@@ -2867,7 +2899,8 @@
       {
         "slot": 19,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 33,
@@ -2893,7 +2926,8 @@
       {
         "slot": 20,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 49,
@@ -2971,7 +3005,8 @@
       {
         "slot": 21,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 77,
@@ -3052,7 +3087,8 @@
       {
         "slot": 22,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 41,
@@ -3098,7 +3134,8 @@
       {
         "slot": 23,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 29,
@@ -3124,7 +3161,8 @@
       {
         "slot": 24,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 36,
@@ -3193,7 +3231,8 @@
       {
         "slot": 25,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 76,
@@ -3261,7 +3300,8 @@
       {
         "slot": 26,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 36,
@@ -3307,7 +3347,8 @@
       {
         "slot": 27,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 24,
@@ -3333,7 +3374,8 @@
       {
         "slot": 28,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 36,
@@ -3411,7 +3453,8 @@
       {
         "slot": 29,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 74,
@@ -3498,7 +3541,8 @@
       {
         "slot": 30,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 43,
@@ -3550,7 +3594,8 @@
       {
         "slot": 31,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 31,
@@ -3582,7 +3627,8 @@
       {
         "slot": 32,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 36,
@@ -3702,7 +3748,8 @@
       {
         "slot": 33,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 69,
@@ -3842,7 +3889,8 @@
       {
         "slot": 34,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 45,
@@ -3982,7 +4030,8 @@
       {
         "slot": 35,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 33,
@@ -4128,7 +4177,8 @@
       {
         "slot": 36,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 49,
@@ -4254,7 +4304,8 @@
       {
         "slot": 37,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 77,
@@ -4394,7 +4445,8 @@
       {
         "slot": 38,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 41,
@@ -4534,7 +4586,8 @@
       {
         "slot": 39,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 29,
@@ -4722,7 +4775,8 @@
       {
         "slot": 40,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 36,
@@ -4833,7 +4887,8 @@
       {
         "slot": 41,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 76,
@@ -4973,7 +5028,8 @@
       {
         "slot": 42,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 36,
@@ -5113,7 +5169,8 @@
       {
         "slot": 43,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 24,
@@ -5301,7 +5358,8 @@
       {
         "slot": 44,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 36,
@@ -5427,7 +5485,8 @@
       {
         "slot": 45,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 74,
@@ -5551,7 +5610,8 @@
       {
         "slot": 46,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 43,
@@ -5691,7 +5751,8 @@
       {
         "slot": 47,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 31,
@@ -5885,7 +5946,8 @@
       {
         "slot": 48,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 36,
@@ -6011,7 +6073,8 @@
       {
         "slot": 49,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 79,
@@ -6049,7 +6112,8 @@
       {
         "slot": 50,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 45,
@@ -6135,7 +6199,8 @@
       {
         "slot": 51,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 33,
@@ -6161,7 +6226,8 @@
       {
         "slot": 52,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 49,
@@ -6287,7 +6353,8 @@
       {
         "slot": 53,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 77,
@@ -6347,7 +6414,8 @@
       {
         "slot": 54,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 41,
@@ -6433,7 +6501,8 @@
       {
         "slot": 55,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 29,
@@ -6459,7 +6528,8 @@
       {
         "slot": 56,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 36,
@@ -6570,7 +6640,8 @@
       {
         "slot": 57,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 76,
@@ -6624,7 +6695,8 @@
       {
         "slot": 58,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 48,
@@ -6680,7 +6752,8 @@
       {
         "slot": 59,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 24,
@@ -6706,7 +6779,8 @@
       {
         "slot": 60,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 36,
@@ -6832,7 +6906,8 @@
       {
         "slot": 61,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 74,
@@ -6866,7 +6941,8 @@
       {
         "slot": 62,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 48,
@@ -6918,7 +6994,8 @@
       {
         "slot": 63,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 31,
@@ -6940,7 +7017,8 @@
       {
         "slot": 64,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 36,
@@ -7062,7 +7140,8 @@
       {
         "slot": 65,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 255
@@ -7072,7 +7151,8 @@
       {
         "slot": 66,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 255
@@ -7082,7 +7162,8 @@
       {
         "slot": 67,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 255
@@ -7092,7 +7173,8 @@
       {
         "slot": 68,
         "groove": 0,
-        "steps": [
+        "steps": 16,
+        "cells": [
           {
             "s": 0,
             "n": 255
@@ -7178,7 +7260,6 @@
         68
       ]
     ],
-    "barSteps": [],
     "noteSource": [
       1,
       1,

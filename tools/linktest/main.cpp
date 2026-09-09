@@ -201,12 +201,12 @@ int main()
             s.grooves[2].ticks = { 4, 5, 6, 7 };
             s.phrases[0].used = true;
             s.phrases[0].groove = 16;
-            s.phrases[0].steps[0].note = 60;
-            s.phrases[0].steps[0].vel = 42;
+            s.phrases[0].cells[0].note = 60;
+            s.phrases[0].cells[0].vel = 42;
             // A cell command's revert form is its `c` field (section 3).
-            s.phrases[0].steps[0].cmd1 = chipboy::bank::revertOf(chipboy::bank::Cmd::E);
-            s.phrases[0].steps[0].cmd2 = { chipboy::bank::Cmd::V, 4, 6, 0 };
-            s.stepsPerBar = 8;
+            s.phrases[0].cells[0].cmd1 = chipboy::bank::revertOf(chipboy::bank::Cmd::E);
+            s.phrases[0].cells[0].cmd2 = { chipboy::bank::Cmd::V, 4, 6, 0 };
+            s.phrases[0].steps = 8;                   // the phrase's own length (section 25)
         });
         juce::MemoryBlock state;
         a.getStateInformation(state);
@@ -216,11 +216,11 @@ int main()
         const auto s = b.song();
         check(s && s->grooves[2].length() == 4 && s->grooves[2].at(3) == 7, "a groove's sixteen ticks round-trip through the song");
         check(s && s->phrases[0].groove == 16, "a phrase's groove slot 16 round-trips");
-        check(s && s->phrases[0].steps[0].vel == 42, "the VEL column round-trips");
-        check(s && s->stepsPerBar == 8, "steps per bar round-trips");
-        check(s && s->phrases[0].steps[0].cmd1.cmd == chipboy::bank::Cmd::E && chipboy::bank::isRevert(s->phrases[0].steps[0].cmd1),
+        check(s && s->phrases[0].cells[0].vel == 42, "the VEL column round-trips");
+        check(s && s->phrases[0].steps == 8, "a phrase's own length round-trips");
+        check(s && s->phrases[0].cells[0].cmd1.cmd == chipboy::bank::Cmd::E && chipboy::bank::isRevert(s->phrases[0].cells[0].cmd1),
               "a cell command's revert form round-trips");
-        check(s && !chipboy::bank::isRevert(s->phrases[0].steps[0].cmd2) && s->phrases[0].steps[0].cmd2.a == 4,
+        check(s && !chipboy::bank::isRevert(s->phrases[0].cells[0].cmd2) && s->phrases[0].cells[0].cmd2.a == 4,
               "a cell command with a value does not come back as a revert");
         const auto oldOwned = song();
         auto& old = *oldOwned;
@@ -230,7 +230,7 @@ int main()
         const auto noCOwned = song();
         auto& noC = *noCOwned;
         const bool readOld = songFromJson("{\"format\":\"chipboy-song\",\"phrases\":[{\"slot\":1,\"steps\":[{\"c1\":{\"c\":\"E\",\"a\":9,\"b\":3}}]}]}", noC);
-        check(readOld && noC.phrases[0].steps[0].cmd1.c == 0 && noC.phrases[0].steps[0].cmd1.a == 9,
+        check(readOld && noC.phrases[0].cells[0].cmd1.c == 0 && noC.phrases[0].cells[0].cmd1.a == 9,
               "a cell command written before the revert field reads as a value");
     }
 
@@ -348,7 +348,7 @@ int main()
         play(24, 48, 26, 60, 34);
         s = p.song();
         bool wrote = false;
-        if (s) for (const auto& phrase : s->phrases) if (phrase.used) for (const auto& c : phrase.steps) if (c.note == 60) wrote = true;
+        if (s) for (const auto& phrase : s->phrases) if (phrase.used) for (const auto& c : phrase.cells) if (c.note == 60) wrote = true;
         check(wrote, "a played note is recorded as a cell");
         play(48, 60, 50, 62, -1);         // still held
         const bool sounding = p.driverView().view(0).active;
@@ -357,20 +357,23 @@ int main()
         check(sounding && !p.driverView().view(0).active, "disarming record stops what was playing through");
     }
 
-    /* ---- bars, and a song file that says what bank it wants (11, 15) - */
+    /* ---- phrase lengths, and a song file that says what bank it wants
+       (docs/COMMANDS_AND_TEMPO.md sections 25 and 15) ------------------ */
     stage("song files");
     {
         const auto aOwned = machine();
         auto& a = *aOwned;
         a.mutateSong([](chipboy::tracker::Song& s) {
-            s.stepsPerBar = 24;                       // a number now, not 8 or 16
-            s.barSteps = { 0, 8, 0 };                 // bar 2 is a third of a bar
             s.recordArm = { true, false, true, false };
             s.phrases[0].used = true;
-            s.phrases[0].steps[40].note = 64;         // a cell past the old sixteen
-            s.phrases[0].steps[40].inst = 3;
-            s.phrases[0].steps[63].cmd1 = { chipboy::bank::Cmd::V, 9, 4, 0 };
+            s.phrases[0].steps = 24;                  // the phrase's own length
+            s.phrases[1].used = true;
+            s.phrases[1].steps = 8;                   // and another channel's, shorter
+            s.phrases[0].cells[40].note = 64;         // a cell past the old sixteen
+            s.phrases[0].cells[40].inst = 3;
+            s.phrases[0].cells[63].cmd1 = { chipboy::bank::Cmd::V, 9, 4, 0 };
             s.chain[0] = { 1, 1, 1 };
+            s.chain[1] = { 2, 2, 2 };
             s.noteSource[0] = chipboy::tracker::NoteSource::Tracker;
         });
         const juce::File file = juce::File::getCurrentWorkingDirectory().getChildFile("chipboy_linktest.cbsong");
@@ -386,12 +389,16 @@ int main()
         const bool loaded = b.loadSongFile(file, report);
         const auto s = b.song();
         check(loaded && s != nullptr, "and read back");
-        check(s && s->steps() == 24, "steps per bar is a number 1-64");
-        check(s && s->stepsOfBar(1) == 8 && s->stepsOfBar(0) == 24, "a bar's own step count round-trips");
-        check(s && s->phrases[0].steps[40].note == 64 && s->phrases[0].steps[40].inst == 3, "a cell at step 40 round-trips");
-        check(s && s->phrases[0].steps[63].cmd1.cmd == chipboy::bank::Cmd::V, "and so does one at step 63");
+        check(s && s->phrases[0].steps == 24 && s->phrases[1].steps == 8, "a phrase's length is a number 1-64 and round-trips");
+        check(s && s->stepsOfRow(0, 0) == 24 && s->stepsOfRow(1, 0) == 8, "two channels play rows of different lengths");
+        check(s && s->phrases[0].cells[40].note == 64 && s->phrases[0].cells[40].inst == 3, "a cell at step 40 round-trips");
+        check(s && s->phrases[0].cells[63].cmd1.cmd == chipboy::bank::Cmd::V, "and so does one at step 63");
         check(s && !s->recordArm[1] && !s->recordArm[3] && s->recordArm[0], "the record arms round-trip");
-        check(s && chipboy::tracker::barStartTick(*s, 2, 96) == 96 + 32, "the bar table is built when the song is published");
+        // 24 steps of six ticks against 8: the two channels drift by design.
+        check(s && chipboy::tracker::rowStartTick(*s, 0, 2) == 2 * 144 && chipboy::tracker::rowStartTick(*s, 1, 2) == 2 * 48,
+              "the row tables are built per channel when the song is published");
+        check(s && chipboy::tracker::songTicks(*s) == 3 * 144 && chipboy::tracker::longestChain(*s) == 0,
+              "and the song is as long as its longest channel");
         check(report.bankName == "Factory", "the song file names the bank it was written with");
         check(report.hasBank && report.instrumentsUsed == 1 && report.differences.isEmpty(),
               "and carries it, so nothing differs");
@@ -401,13 +408,30 @@ int main()
         file.deleteFile();
 
         // A song written before format 4: sixteen dense cells, steps 8 or 16.
+        // Section 25 gives every used phrase the file's steps per bar.
         const auto oldOwned = song();
         auto& old = *oldOwned;
         const bool readOld = songFromJson("{\"format\":\"chipboy-song\",\"stepsPerBar\":8,"
-                                          "\"phrases\":[{\"slot\":1,\"steps\":[{},{\"n\":62},{},{\"n\":64}]}]}", old);
-        check(readOld && old.steps() == 8 && old.phrases[0].steps[1].note == 62 && old.phrases[0].steps[3].note == 64,
-              "a song written before format 4 still reads");
+                                          "\"phrases\":[{\"slot\":1,\"steps\":[{},{\"n\":62},{},{\"n\":64}]}],"
+                                          "\"chains\":[[1]]}", old);
+        check(readOld && old.phrases[0].steps == 8 && old.phrases[0].cells[1].note == 62 && old.phrases[0].cells[3].note == 64,
+              "a song written before format 4 still reads, at the file's steps per bar");
         check(readOld && old.recordArm[0] && old.recordArm[3], "and its channels are all armed");
+
+        // A format-5 bar override becomes the length of the phrase in that
+        // bar; a phrase used under two different overrides is duplicated.
+        const auto fiveOwned = song();
+        auto& five = *fiveOwned;
+        const bool read5 = songFromJson("{\"format\":\"chipboy-song\",\"version\":5,\"steps\":16,"
+                                        "\"barSteps\":[0,12],"
+                                        "\"phrases\":[{\"slot\":1,\"steps\":[{\"s\":0,\"n\":60}]}],"
+                                        "\"chains\":[[1,1],[1]]}", five);
+        check(read5 && five.phrases[0].steps == 16, "a format-5 phrase takes the file's steps per bar");
+        const int dup = five.chain[0].size() > 1 ? five.chain[0][1] : 0;
+        check(read5 && dup > 1 && five.phrases[size_t(dup - 1)].used && five.phrases[size_t(dup - 1)].steps == 12,
+              "and a bar override becomes the length of a copy of it");
+        check(read5 && five.phrases[size_t(dup - 1)].cells[0].note == 60 && five.chain[1][0] == 1,
+              "the copy holds the same cells, and the bar without the override keeps the original");
     }
 
     /* ---- the record arms (section 14) -------------------------------- */
@@ -451,7 +475,7 @@ int main()
             if (!s) return false;
             for (auto slotN : s->chain[size_t(ch)])
                 if (const auto* phrase = s->phrase(slotN))
-                    for (const auto& c : phrase->steps) if (c.note == 60) return true;
+                    for (const auto& c : phrase->cells) if (c.note == 60) return true;
             return false;
         };
         check(wrote(0), "an armed channel records what it is played");
@@ -497,7 +521,7 @@ int main()
         bool sawNoteZero = false, sawSlotCell = false;
         if (s) for (auto slotN : s->chain[0])
             if (const auto* phrase = s->phrase(slotN))
-                for (const auto& c : phrase->steps) {
+                for (const auto& c : phrase->cells) {
                     if (c.note == 0 && c.cmd1.cmd == chipboy::bank::Cmd::V && c.cmd1.a == 9) sawSlotCell = true;
                     if (c.note >= 1 && c.note < 12) sawNoteZero = true;
                 }
@@ -516,10 +540,10 @@ int main()
         p.mutateSong([](chipboy::tracker::Song& s) {
             s.noteSource[0] = chipboy::tracker::NoteSource::Tracker;
             s.phrases[0].used = true;
-            s.phrases[0].steps[0].note = 60;
-            s.phrases[0].steps[0].inst = 1;
-            s.phrases[0].steps[8].note = 67;
-            s.phrases[0].steps[8].inst = 1;
+            s.phrases[0].cells[0].note = 60;
+            s.phrases[0].cells[0].inst = 1;
+            s.phrases[0].cells[8].note = 67;
+            s.phrases[0].cells[8].inst = 1;
             s.chain[0] = { 1, 1 };
         });
         juce::AudioBuffer<float> ab(2, 512);
@@ -543,7 +567,7 @@ int main()
         check(p.trackerTick() > 90, "the position follows the song's tempo");
         // It loops: two bars, and the position comes back round.
         p.setLoop(true);
-        p.setLoopBars(0, 2);
+        p.setLoopRows(0, 2);
         int64_t highest = 0;
         bool wrapped = false;
         for (int b = 0; b < 600; ++b) {
@@ -566,30 +590,30 @@ int main()
         const auto pOwned = machine();
         auto& p = *pOwned;
         check(p.tabCount() == 1 && p.activeTab() == 0, "a fresh plugin has one tab");
-        p.editSong("first", [](chipboy::tracker::Song& s) { s.phrases[0].used = true; s.phrases[0].steps[0].note = 61; s.stepsPerBar = 12; });
+        p.editSong("first", [](chipboy::tracker::Song& s) { s.phrases[0].used = true; s.phrases[0].cells[0].note = 61; s.phrases[0].steps = 12; });
         p.editBank("first bank", [](chipboy::bank::Bank& b) { b.instruments[0].name = "Tab one lead"; });
         p.setBankNameEdit("One");
         const int second = p.newTab();
         check(second == 1 && p.tabCount() == 2 && p.activeTab() == 1, "the + tab opens a new song");
-        check(p.song() && p.song()->phrases[0].steps[0].note == 0 && p.song()->steps() == 16, "which is empty");
+        check(p.song() && p.song()->phrases[0].cells[0].note == 0 && p.song()->phrases[0].length() == 16, "which is empty");
         check(p.bank() && p.bankName() == "Factory" && juce::String(p.bank()->instruments[0].name) != "Tab one lead",
               "and starts with the factory bank");
-        p.editSong("second", [](chipboy::tracker::Song& s) { s.phrases[0].used = true; s.phrases[0].steps[0].note = 72; });
+        p.editSong("second", [](chipboy::tracker::Song& s) { s.phrases[0].used = true; s.phrases[0].cells[0].note = 72; });
         p.setActiveTab(0);
-        check(p.song() && p.song()->phrases[0].steps[0].note == 61 && p.song()->steps() == 12, "switching back brings the first song");
+        check(p.song() && p.song()->phrases[0].cells[0].note == 61 && p.song()->phrases[0].length() == 12, "switching back brings the first song");
         check(p.bank() && juce::String(p.bank()->instruments[0].name) == "Tab one lead" && p.bankName() == "One",
               "with its own bank and bank name");
         p.setActiveTab(1);
-        check(p.song() && p.song()->phrases[0].steps[0].note == 72, "and forward again brings the second");
+        check(p.song() && p.song()->phrases[0].cells[0].note == 72, "and forward again brings the second");
 
         // An undo step belongs to its tab and re-activates it.
         p.setActiveTab(1);
         check(p.history().canUndo(), "the history holds the edits");
         while (p.history().canUndo()) p.history().undo();
-        check(p.activeTab() == 0 && p.song() && p.song()->phrases[0].steps[0].note == 0,
+        check(p.activeTab() == 0 && p.song() && p.song()->phrases[0].cells[0].note == 0,
               "undoing the first tab's edit goes back to that tab");
         while (p.history().canRedo()) p.history().redo();
-        check(p.tabCount() == 2 && p.song() && p.song()->phrases[0].steps[0].note == 72, "and redo lands on the last one again");
+        check(p.tabCount() == 2 && p.song() && p.song()->phrases[0].cells[0].note == 72, "and redo lands on the last one again");
 
         // Two tabs through the plugin state.
         juce::MemoryBlock state;
@@ -598,13 +622,13 @@ int main()
         auto& q = *qOwned;
         q.setStateInformation(state.getData(), int(state.getSize()));
         check(q.tabCount() == 2 && q.activeTab() == 1, "both tabs and the active one round-trip through the state");
-        check(q.song() && q.song()->phrases[0].steps[0].note == 72, "the active tab is the one that was saved");
+        check(q.song() && q.song()->phrases[0].cells[0].note == 72, "the active tab is the one that was saved");
         q.setActiveTab(0);
-        check(q.song() && q.song()->phrases[0].steps[0].note == 61 && q.song()->steps() == 12, "and the other tab came with it");
+        check(q.song() && q.song()->phrases[0].cells[0].note == 61 && q.song()->phrases[0].length() == 12, "and the other tab came with it");
         check(q.bank() && juce::String(q.bank()->instruments[0].name) == "Tab one lead" && q.bankName() == "One",
               "each tab keeps its own bank");
         check(q.closeTab(0) && q.tabCount() == 1, "a tab closes");
-        check(q.song() && q.song()->phrases[0].steps[0].note == 72, "and what is left plays");
+        check(q.song() && q.song()->phrases[0].cells[0].note == 72, "and what is left plays");
         check(!q.closeTab(0), "the last tab does not");
 
         // A state written before tabs is one tab.
@@ -618,7 +642,7 @@ int main()
         const auto rOwned = machine();
         auto& r = *rOwned;
         r.setStateInformation(oldState.getData(), int(oldState.getSize()));
-        check(r.tabCount() == 1 && r.bankName() == "Old" && r.song() && r.song()->phrases[0].steps[0].note == 72,
+        check(r.tabCount() == 1 && r.bankName() == "Old" && r.song() && r.song()->phrases[0].cells[0].note == 72,
               "a state written before tabs loads as one tab");
     }
 
@@ -630,7 +654,7 @@ int main()
         a.editBank("bank", [](chipboy::bank::Bank& b) { b.instruments[6].name = "Song's own wave"; b.instruments[6].used = true; });
         a.setBankNameEdit("Travelling");
         a.editSong("song", [](chipboy::tracker::Song& s) {
-            s.phrases[0].used = true; s.phrases[0].steps[0].note = 64; s.phrases[0].steps[0].inst = 7;
+            s.phrases[0].used = true; s.phrases[0].cells[0].note = 64; s.phrases[0].cells[0].inst = 7;
             s.chain[0] = { 1 };
             s.noteSource[0] = chipboy::tracker::NoteSource::Hybrid;    // and the third source
             s.noteSource[2] = chipboy::tracker::NoteSource::Tracker;
@@ -668,7 +692,7 @@ int main()
         // A format-4 file -- the song alone -- takes a copy of the active bank.
         const auto oldOwned = song();
         auto& old = *oldOwned;
-        old.phrases[0].used = true; old.phrases[0].steps[0].note = 55; old.phrases[0].steps[0].inst = 7;
+        old.phrases[0].used = true; old.phrases[0].cells[0].note = 55; old.phrases[0].cells[0].inst = 7;
         old.chain[0] = { 1 };
         const juce::File f4 = juce::File::getCurrentWorkingDirectory().getChildFile("chipboy_linktest_f4.cbsong");
         // The wrapper without the bank object: what every file written before
@@ -683,7 +707,7 @@ int main()
         check(!old4.hasBank && old4.differences.size() == 1 && old4.differences[0].contains("Was called this"),
               "with a copy of the active bank, and it says where that differs");
         check(c.bank() && juce::String(c.bank()->instruments[6].name) == "This bank's", "the copy is this bank");
-        check(c.song() && c.song()->phrases[0].steps[0].note == 55, "and the song is the file's");
+        check(c.song() && c.song()->phrases[0].cells[0].note == 55, "and the song is the file's");
         file.deleteFile();
         f4.deleteFile();
     }
@@ -742,12 +766,12 @@ int main()
         p.setPlayHead(&head);
         p.mutateSong([](chipboy::tracker::Song& s) {
             s.phrases[0].used = true;
-            for (int i = 0; i < 16; ++i) s.phrases[0].steps[size_t(i)].note = uint8_t(60 + i);
+            for (int i = 0; i < 16; ++i) s.phrases[0].cells[size_t(i)].note = uint8_t(60 + i);
             s.chain[0] = { 1, 1, 1, 1, 1, 1, 1, 1 };
             s.noteSource[0] = chipboy::tracker::NoteSource::Tracker;
         });
         const auto s = p.song();
-        check(s && chipboy::tracker::barStartTick(*s, 3, s->barTicks()) == 3 * 96, "the song's bar 3 starts at 3 x 96 ticks");
+        check(s && chipboy::tracker::rowStartTick(*s, 0, 3) == 3 * 96, "a row of sixteen straight steps is 96 ticks, so row 3 starts at 3 x 96");
         juce::AudioBuffer<float> ab(2, 512);
         juce::MidiBuffer empty;
         int64_t last = -1;
@@ -761,11 +785,11 @@ int main()
             const int64_t at = p.trackerTick();
             if (last >= 0 && (at < last || at > last + 40)) continuous = false;
             last = at;
-            if (p.barTicks() != 96) steady = false;
+            if (p.song() && chipboy::tracker::rowStartTick(*p.song(), 0, 1) != 96) steady = false;
         }
-        check(steady, "a host signature change does not move the song's bar");
+        check(steady, "a host signature change does not move the song's rows");
         check(continuous, "and the ticks run on across it");
-        check(p.player().position(0).bar == int(last / 96), "so the position is still the song's own bar");
+        check(p.channelRow(0) == int(last / 96), "so the position is still the channel's own row");
     }
 
     /* ---- an instrument preset saves, loads and is placed (15) -------- */

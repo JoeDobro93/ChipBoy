@@ -244,15 +244,16 @@ TEST_CASE("de-click spreads a DAC-on step", "[hardware][render]")
     CHECK(maxStep(soft) < maxStep(stock) * 0.25f);
 }
 
-TEST_CASE("the driver asks for the quiet edge, and mute is an NR51 gate", "[hardware][driver]")
+TEST_CASE("a level change is zombie writes, and mute is an NR51 gate", "[hardware][driver]")
 {
+    // Section 26: no marker, no trigger, no waiting for the pulse's low half
+    // -- a level change on a running channel is NRx2 writes a program on the
+    // console could really make.
     using namespace chipboy::driver;
     const auto bank = bank::Bank::factory();
     tracker::Song song;
     Driver d;
     d.prepare(48000.0, &bank, &song, Console::DMG);
-    GlobalParams g; g.volumeAtEdges = true;
-    d.setGlobal(g);
     ChannelParams p; p.instrument = 1; d.setParams(0, p);
     auto cycleAt = [](uint64_t f) { return f * uint64_t(kCpuHz) / 48000; };
     std::vector<RegWrite> out;
@@ -266,18 +267,14 @@ TEST_CASE("the driver asks for the quiet edge, and mute is an NR51 gate", "[hard
 
     NoteEvent on; on.kind = NoteEvent::NoteOn; on.channel = 0; on.a = 60; on.b = 100;
     { const auto tk = ticksFor(0, 4800); d.process(&on, 1, 4800, 0, tk.data(), tk.size(), cycleAt, out); }
-    const bool markedAtStart = std::any_of(out.begin(), out.end(), [](const RegWrite& w) { return w.addr == Driver::kAlignToQuietEdge; });
-    CHECK_FALSE(markedAtStart);                 // a fresh note has nothing to pop
 
     out.clear();
     NoteEvent cc; cc.kind = NoteEvent::Control; cc.channel = 0; cc.a = 7; cc.b = 64;   // level change on a playing note
     { const auto tk = ticksFor(4800, 4800); d.process(&cc, 1, 4800, 4800, tk.data(), tk.size(), cycleAt, out); }
-    auto marker = std::find_if(out.begin(), out.end(), [](const RegWrite& w) { return w.addr == Driver::kAlignToQuietEdge; });
-    REQUIRE(marker != out.end());
-    CHECK(marker->value == 0);
-    auto nr12 = std::find_if(marker, out.end(), [](const RegWrite& w) { return w.addr == NR12; });
-    REQUIRE(nr12 != out.end());
-    CHECK(nr12->cycle >= marker->cycle);
+    const bool anyTrigger = std::any_of(out.begin(), out.end(), [](const RegWrite& w) { return w.addr == NR14 && (w.value & 0x80) != 0; });
+    CHECK_FALSE(anyTrigger);                    // no retrigger for a level change
+    const int nr12writes = int(std::count_if(out.begin(), out.end(), [](const RegWrite& w) { return w.addr == NR12; }));
+    CHECK(nr12writes > 0);                      // ... but NRx2 writes, which is how it is done
 
     // Mute: the next tick rewrites NR51 without channel 0's bits.
     out.clear();

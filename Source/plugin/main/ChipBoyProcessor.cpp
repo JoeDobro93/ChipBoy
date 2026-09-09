@@ -35,7 +35,7 @@ ChipBoyProcessor::ChipBoyProcessor()
     for (int ch = 0; ch < 4; ++ch) channelParams[size_t(ch)].bind(apvts, channelPrefix(ch));
     auto g = [&](const char* id) { return apvts.getRawParameterValue(id); };
     pModel_ = g(ids::model); pMasterL_ = g(ids::masterL); pMasterR_ = g(ids::masterR); pTrim_ = g(ids::trim);
-    pNoise_ = g(ids::noise); pLcd_ = g(ids::lcd); pBassMod_ = g(ids::bassMod); pEdges_ = g(ids::volEdges);
+    pNoise_ = g(ids::noise); pLcd_ = g(ids::lcd); pBassMod_ = g(ids::bassMod);
     pDeclick_ = g(ids::declick); pDeclickMs_ = g(ids::declickMs); pSoften_ = g(ids::soften);
     pTempoSource_ = g(ids::tempoSource); pSongTempo_ = g(ids::songTempo); pNotesOnTick_ = g(ids::notesOnTick); pLink_ = g(ids::linkMode);
 
@@ -586,15 +586,15 @@ void ChipBoyProcessor::applyRecordMessages()
     while (recordFifo_.pop(m)) {
         if (!copy) { copy = std::make_shared<tracker::Song>(); if (songShared_) *copy = *songShared_; }
         auto& chain = copy->chain[size_t(m.channel & 3)];
-        if (chain.size() <= m.bar) chain.resize(size_t(m.bar) + 1, 0);
-        uint8_t slot = chain[m.bar];
+        if (chain.size() <= m.row) chain.resize(size_t(m.row) + 1, 0);
+        uint8_t slot = chain[m.row];
         if (slot == 0) {
             for (int i = 0; i < tracker::kPhraseSlots; ++i) if (!copy->phrases[size_t(i)].used) { slot = uint8_t(i + 1); break; }
             if (slot == 0) continue;                    // the song is full
             copy->phrases[size_t(slot - 1)].used = true;
-            chain[m.bar] = slot;
+            chain[m.row] = slot;
         }
-        auto& cell = copy->phrases[size_t(slot - 1)].steps[size_t(m.step) % size_t(tracker::kMaxSteps)];
+        auto& cell = copy->phrases[size_t(slot - 1)].cells[size_t(m.step) % size_t(tracker::kMaxSteps)];
         // An OFF never displaces a note-on: the note there ends the last one
         // anyway (section 9.4). A command column is written only when the
         // message carries a letter, so a note and a slot change at the same
@@ -772,6 +772,7 @@ void ChipBoyProcessor::tapScopes(int n, const float* L, const float* R)
         const uint64_t st2 = packState2(driver_.view(ch));
         scopes_.state[size_t(ch)].store(st, std::memory_order_release);
         scopes_.state2[size_t(ch)].store(st2, std::memory_order_release);
+        scopes_.tableRun[size_t(ch)].store(packTableRun(driver_.view(ch)), std::memory_order_release);
         if (owned & (1u << ch)) { r->slots[ch].state.store(st, std::memory_order_release); r->slots[ch].state2.store(st2, std::memory_order_release); }
     }
     scopes_.mix.store(uint32_t(driver_.nr50()) | (uint32_t(driver_.nr51()) << 8) | (1u << 16), std::memory_order_release);
@@ -795,7 +796,6 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     driver::GlobalParams g;
     g.masterL = uint8_t(std::clamp(paramInt(pMasterL_, 7), 0, 7));
     g.masterR = uint8_t(std::clamp(paramInt(pMasterR_, 7), 0, 7));
-    g.volumeAtEdges = paramInt(pEdges_) != 0;
     driver_.setGlobal(g);
     driver_.setNotesOnTick(paramInt(pNotesOnTick_) != 0);
     {
@@ -840,10 +840,6 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     cc.source = paramInt(pTempoSource_) != 0 || clock_.ownsTransport() ? driver::TempoSource::Song : driver::TempoSource::Host;
     cc.songTempo = songTempoParam();
     cc.songStartSeconds = song ? song->songStartSeconds : 0.0;
-    // The song's, in both tempo modes: the host contributes the tempo and
-    // never the signature, so its bar markers cannot move the song's bars
-    // (docs/COMMANDS_AND_TEMPO.md sections 11 and 19).
-    cc.beatsPerBar = song ? song->beatsPerBar : 4.0;
     // A T slot in force is the song's tempo from now on; the lowest channel
     // holding one wins, as two lanes cannot both be the timeline.
     for (int ch = 0; ch < 4; ++ch) {
@@ -857,14 +853,16 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     clock_.setConfig(cc);
     if (song && !song->tempoMap.empty()) clock_.setTempoMap(song->tempoMap.data(), song->tempoMap.size());
     else clock_.setTempoMap(nullptr, 0);
-    // The loop, in the song's own bars, handed over as ticks: the clock knows
-    // ticks, the song knows where its bars are (section 16).
+    // The loop, in the rows of the longest chain, handed over as ticks: the
+    // clock knows ticks, the song knows where its rows are. The whole song is
+    // the longest channel, which is what the own transport loops (section 25).
     {
-        const int songBarTicks = song ? song->barTicks() : clock_.barTicks();
-        const int bars = song ? std::max(1, song->bars()) : 1;
-        const int from = std::clamp(loopFrom_.load(), 0, bars - 1);
-        const int to = loopTo_.load() < 0 ? bars : std::clamp(loopTo_.load(), from + 1, bars);
-        if (song) clock_.setLoop(loopOn_.load(), tracker::barStartTick(*song, from, songBarTicks), tracker::barStartTick(*song, to, songBarTicks));
+        const int ch = song ? tracker::longestChain(*song) : 0;
+        const int rows = song ? std::max(1, song->rows(ch)) : 1;
+        const int from = std::clamp(loopFrom_.load(), 0, rows - 1);
+        const int to = loopTo_.load() < 0 ? rows : std::clamp(loopTo_.load(), from + 1, rows);
+        if (song) clock_.setLoop(loopOn_.load(), tracker::rowStartTick(*song, ch, from),
+                                 loopTo_.load() < 0 ? tracker::songTicks(*song) : tracker::rowStartTick(*song, ch, to));
         else clock_.setLoop(false, 0, 0);
     }
     if (const int req = transportRequest_.exchange(0)) { if (req == 1) clock_.ownPlay(); else clock_.ownStop(); }
@@ -872,14 +870,8 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     const bool songSource = cc.source == driver::TempoSource::Song;
     // Whoever owns the transport, this is whether it is running.
     const bool playing = clock_.playing();
-    // The tracker's bars are the song's in both modes -- the same ruler the
-    // tempo map was built with, so a T cell lands where the map says (9.3),
-    // and a host signature change moves nothing (section 19).
-    player_.setBarTicks(song ? song->barTicks() : clock_.barTicks());
     playing_.store(playing); ppq_.store(t.ppq); bpm_.store(t.bpm);
-    beatsPerBar_.store(clock_.beatsPerBar());
     songTempo_.store(songSource); tempo_.store(clock_.bpm());
-    barTicks_.store(song ? song->barTicks() : clock_.barTicks());
     // The position the window shows follows the transport (section 9.1). The
     // clock free-runs while it is stopped so that tables and vibrato stay
     // alive; that tick is not where the tracker is, so it is not published.
@@ -890,6 +882,11 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
         else if (t.valid && !songSource) at = int64_t(std::floor(t.ppq * driver::kTicksPerBeat));
         else if (t.valid && t.timeValid) at = int64_t(std::floor(clock_.ticksAtSeconds(t.seconds)));
         trackerTick_.store(std::max<int64_t>(0, at));
+    }
+    // Where each channel is in its own chain, for the window (section 25).
+    for (int ch = 0; ch < 4; ++ch) {
+        channelRow_[size_t(ch)].store(player_.position(ch).row);
+        channelStep_[size_t(ch)].store(player_.position(ch).step);
     }
 
     // --- events ---------------------------------------------------------
@@ -1057,27 +1054,10 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
 
 void ChipBoyProcessor::applyWrites()
 {
-    // Writes arrive in cycle order. A quiet-edge marker asks for the rest of
-    // its channel's burst to wait for the pulse output's low half: those
-    // writes move later, which can put them after other channels' writes,
-    // so the moved ones are re-sorted before they are applied.
-    for (size_t i = 0; i < writes_.size(); ++i) {
-        const auto& w = writes_[i];
-        if (w.addr != driver::Driver::kAlignToQuietEdge) continue;
-        apu_.runTo(std::max(w.cycle, apu_.cycle()));
-        const uint64_t delay = apu_.cyclesUntilPulseLow(w.value & 1);
-        if (delay == 0) continue;
-        const int ch = w.value & 1;
-        const uint16_t lo = uint16_t(0xFF10 + ch * 5), hi = uint16_t(lo + 4);
-        for (size_t j = i + 1; j < writes_.size(); ++j) {
-            if (writes_[j].addr == driver::Driver::kAlignToQuietEdge) break;
-            if (writes_[j].addr >= lo && writes_[j].addr <= hi) writes_[j].cycle += delay;
-        }
-        // Only the tail from here can be out of order now.
-        std::stable_sort(writes_.begin() + long(i + 1), writes_.end(), [](const driver::RegWrite& a, const driver::RegWrite& b) { return a.cycle < b.cycle; });
-    }
+    // Writes arrive in cycle order, and every one of them is a write a Game
+    // Boy driver could make: nothing waits for the pulse output's low half any
+    // more, because a program on the hardware cannot wait for it (section 26).
     for (const auto& w : writes_) {
-        if (w.addr == driver::Driver::kAlignToQuietEdge) continue;
         apu_.runTo(std::max(w.cycle, apu_.cycle()));
         apu_.write(w.addr, w.value);
     }

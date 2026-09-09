@@ -41,7 +41,6 @@ static_assert(sizeof(ChannelParams) == 32);
 
 struct GlobalParams {
     uint8_t masterL = 7, masterR = 7;
-    bool    volumeAtEdges = false;   ///< M8: NRx2 writes wait for the quiet half-cycle
 };
 
 struct NoteEvent {
@@ -81,6 +80,12 @@ struct VoiceView {
     uint16_t period = 0;
     uint8_t  volume = 0, duty = 0, frame = 0;
     uint8_t  tableSlot = 0, tableStep = 0;
+    /// The table run this channel is in (section 32): the row it is on now,
+    /// -1 when no table is running, and a serial that counts the runs -- a
+    /// plain note-on with a table, an A, a table override -- so a window
+    /// showing one table can tell which channel's run started last.
+    int8_t   tableRow = -1;
+    uint16_t tableRun = 0;
     uint8_t  regs[5] = { 0, 0, 0, 0, 0 };
     // running state
     uint8_t  envVol = 0, envRate = 0, envDir = 0;   ///< dir 0 down, 1 up
@@ -114,10 +119,6 @@ public:
     void setGateMask(uint32_t enabledMask) { const uint8_t m = uint8_t(enabledMask & 15); if (m != gateMask_) { gateMask_ = m; gateDirty_ = true; } }
     uint32_t gateMask() const { return gateMask_; }
 
-    /// A write list marker (spec 12.3, "volume writes at edges"): the plugin
-    /// delays the writes that follow it, on the same channel, to the next
-    /// cycle where that pulse channel's output is low (Apu::cyclesUntilPulseLow).
-    static constexpr uint16_t kAlignToQuietEdge = 0xFFFF;
     void setParams(int ch, const ChannelParams& p) { params_[size_t(ch & 3)] = p; }
     const ChannelParams& params(int ch) const { return params_[size_t(ch & 3)]; }
     /// The channel takes its notes from MIDI and everything else from the
@@ -204,14 +205,33 @@ private:
         uint8_t  vibSpeed = 0, vibDepth = 0; bank::VibShape vibShape = bank::VibShape::Triangle;
         bank::VibDir vibDir = bank::VibDir::Down; uint8_t vibDelay = 0;
         uint8_t  tableSlot = 0, tableStep = 0, tableRow = 0; bool tableOn = false;
+        uint16_t tableRun = 0;                        ///< counts this channel's table runs (section 32)
         uint16_t tableWait = 0;                       ///< ticks left of the row in force
         uint8_t  tableGroove = 0;                     ///< the groove a G inside the table asked for
         uint8_t  tableOverride = 0, tableParam = 0;   ///< in force (parameter or cell), and the parameter it came from
         uint8_t  chord[3] = { 0, 0, 0 }; uint8_t chordN = 0, chordIdx = 0, chordCount = 0;
         uint8_t  dutyIdx = 0, duty = 2;
+        // The envelope the driver *wants*: what a note-on writes into NRx2 and
+        // what a level change aims at (section 26).
         uint8_t  envVol = 15, envRate = 0; bank::EnvDir envDir = bank::EnvDir::Down;
         uint8_t  waveLevel = 3;            ///< WAV/KIT running level, 0 mute .. 3 full
-        uint8_t  volume = 15;              ///< last written level
+        // The chip's envelope as the driver models it, which is what a
+        // zombie-mode write starts from: the volume the channel is really at,
+        // and the NRx2 state that decides what the next write does to it
+        // (Apu::writeSquare case 2). Exact while the period is zero, which is
+        // where every software level lives (docs/HARDWARE_DRIVER_AUDIT.md).
+        uint8_t  volume = 15;              ///< the chip's volume, as modelled
+        uint8_t  hwPeriod = 0;             ///< NRx2's envelope period, as last written
+        uint8_t  hwInitial = 15;           ///< NRx2's initial volume, which a trigger reloads
+        bool     hwUp = false;             ///< NRx2's direction bit, as last written
+        bool     hwRun = false;            ///< the chip's envelope can still move (Apu: envRunning)
+        bool     hwOn = false;             ///< the channel is enabled, so NRx2 writes are zombie writes
+        // The shaped envelope (section 27): where it is, and whether a level
+        // change has taken it over until the next plain note-on.
+        bool     shapedOn = false, shapedTaken = false, shapedRelease = false;
+        uint16_t shapedTick = 0;           ///< ticks into the envelope, or into the release
+        uint8_t  shapedFrom = 0;           ///< the level the release started from
+        bool     tableJustStarted = false; ///< row 0 fired with the note-on (section 31)
         uint8_t  sweepRate = 0, sweepShift = 0; bool sweepDown = false;
         uint8_t  noiseShift = 5, noiseDiv = 1; bool lfsr7 = false; int8_t noiseSweep = 0;
         bank::Pan pan = bank::Pan::Both;
@@ -284,7 +304,32 @@ private:
     void stepRelease(int ch);                 ///< WAV/KIT: 100 -> 50 -> 25 -> mute, a tick apart
     void latch(int ch);
     void writePeriod(int ch, bool trigger);
+    /// NRx2 (or NR32 on the wave channel) from the running state, with the
+    /// trigger a note-on, R or an E that moves the envelope needs. Every
+    /// other level change goes through setLevel() instead (section 26).
     void writeEnvelope(int ch, bool trigger);
+    /// A level change on a running channel, without a trigger (section 26):
+    /// the shortest zombie-mode NRx2 sequence that leaves the chip's volume at
+    /// `v.envVol` with the envelope the driver wants (`v.envRate`, `v.envDir`)
+    /// in the register. With the rate at zero the direction bit says nothing
+    /// about the sound, so the sequence takes whichever way is shorter. On the
+    /// wave channel and a kit it is one NR32 write. Nothing is emitted when
+    /// the channel is not sounding: the note's own writes carry the level.
+    void setLevel(int ch);
+    /// One NRx2 write, with the model of the chip's envelope moved on exactly
+    /// as the APU moves it (reference section 10.2).
+    void emitNrx2(int ch, uint8_t value);
+    /// A trigger has just gone out on this channel: the chip's volume is the
+    /// initial volume in NRx2 again, and its envelope can move.
+    void markTrigger(int ch);
+    /// The shaped envelope's level for this tick, and the write it needs
+    /// (section 27). Called from the tick, after the table.
+    void stepShaped(int ch);
+    /// The level a shaped envelope is at, `tick` ticks in.
+    uint8_t shapedLevel(const Voice& v) const;
+    /// A table's volume column, an E or a level lane taking the level over:
+    /// the remaining segments stop until the next plain note-on (section 27).
+    void takeShaped(int ch) { v_[size_t(ch & 3)].shapedTaken = true; }
     void writeNr51();
     void writeNr50(uint8_t l, uint8_t r);
     void applyCommand(int ch, const bank::Command& c, bool fromTable);
@@ -319,6 +364,9 @@ private:
     static bank::InstrumentType defaultType(int ch);
     static bool typeFits(int ch, bank::InstrumentType t);
     void stepTable(int ch);
+    /// Start a table run on a channel (section 32): the slot, back to row 0,
+    /// and one more on the run counter the view publishes.
+    void beginTableRun(int ch, uint8_t slot);
     uint16_t tableRowTicks(int ch, int row) const;    ///< the table's own groove, else one tick
     /// One pitch update: the vibrato phase, a slide and a P bend advance, and
     /// the period goes out without a trigger. The 360 Hz clock calls this in

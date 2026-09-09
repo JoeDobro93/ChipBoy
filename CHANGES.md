@@ -20,11 +20,176 @@ intended product rather than a progress report.
 | M5 — Voice plugin + link | **done** 2026-09-07 — region files, claims, one-block timing, push/pull; `chipboy_linktest` passes 16 checks |
 | M6 — tracker, waves, frames, kits | **done** 2026-09-07 — tracker player on the host transport, record arm, kit import (resample + 4-bit dither), bank/song files. **2026-09-08**: grooves are sixteen tick counts, cells carry velocity, the Player flushes a channel with All notes off on stop/locate/source change, and the recorder follows §9.4; `chipboy_recordtest` (record/replay parity) and the tracker-shaped demo are done, next to the link test. Then: **steps per bar** is a number, 1–64, with a per-bar override (`Song::barSteps`) for any bar, tracked through a prefix table (`Song::barStartSteps`) so a locate lands on the right step; a cell's two commands fire **once**, at their step, instead of occupying a slot; per-channel **record arms** gate an armed channel's recording whatever its playback source; **song files** (`.cbsong`) and the plugin's **own transport** (`transportPlay`/`transportStop`/`setLoop`) round out the Standalone; `Demo/ChipBoy Demo.cbsong` is the recorded demo, checked byte for byte by `demo_song_matches`. **2026-09-08 (third)**: the Tracker tab becomes a **tab strip**, one tab per open song, each owning its own bank — only the active tab plays, records, and is shown in every other tab; undo steps carry the tab they belong to. **Hybrid** joins MIDI and Trkr as a third playback source: notes come from MIDI, everything else (instrument, table, commands) from the song's cells. The host's time signature no longer reaches the tracker — bar ticks are always the song's own beats per bar (§11 amended), in both tempo modes. `tools/demo/make_songs.py` adds six original songs under `Demo/songs` (a groove study, a meter study, a route theme, a platformer tune, a modern track, a wave-manipulation track), each checked by the CTest `demo_songs_load`; `Demo/ChipBoy Demo (hybrid).rpp` carries the plugin's saved state, checked by `demo_state_matches`, reproducing the recorded demo under Hybrid |
 | M7 — interface | **done** 2026-09-07 — the window from the mockup: header, mixer with period-locked scopes, seven tabs, status bar, visualizer window, Voice window. **2026-09-08**: the Phrases tab gained a groove editor and a VEL column, the Instrument tab gained the pitch fields, and the window was resized to fit a 1080p screen with tempo moved to the header; then the Phrases tab became the **Tracker** tab with the transport, the song files and the chain rotated beside the lane, a **Grooves** tab took the groove editor, and the Instrument tab gained preset files. Then a quality-of-life round: every number typeable, the wheel scrolling only, command cells split into letter and values with right-click slot lists, and undo / redo over every hand edit. **2026-09-08 (third)**: the song tab strip sits above the lane; the header's tempo becomes a **readout** — host or song, in force — with the song's own master tempo typed in the Tracker head, now two rows of grouped tools (TRANSPORT · RECORD · SONG · FILE); the master strip gains **LCD Whine** as a third, independent switch and one **VOL** stepper for both sides; PLAYS gains **Hybrid**; and the channel scopes lock to an edge chosen by the waveform's shape rather than the last edge before the window, holding still on a wave channel under vibrato |
-| M8 — CGB / RAW / hardware options | **done** 2026-09-07 — CGB chip variant, RAW bypass, headphone noise, LCD line, bass mod, quiet-edge volume writes, de-click, soften master pops; 61 core tests |
+| M8 — CGB / RAW / hardware options | **done** 2026-09-07 — CGB chip variant, RAW bypass, headphone noise, LCD line, bass mod, de-click, soften master pops; 61 core tests. **2026-09-09**: the quiet-edge volume writes are gone (§26) — no program on the console can wait for a pulse's low half; the parameter stays as a no-op so the parameter table does not move |
 
 ---
 
 ## Spec revisions
+
+### 2026-09-09 — channels on their own time, zombie-mode levels, shaped envelopes (engine)
+
+The fourth addendum ([`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md) §25–§28)
+and the two rules of §31 and §32, engine side. Bars leave the model; every level change
+becomes a write a program on the console could really make; the instrument gains an
+envelope of its own shape; and the driver is audited against the hardware in
+[`docs/HARDWARE_DRIVER_AUDIT.md`](docs/HARDWARE_DRIVER_AUDIT.md). The interface — the
+Instrument tab's form and graph, the grid's LEN, the chain column's own-row highlight —
+is the stage after this one; the window here only keeps building and behaving.
+
+**Changed:**
+
+- **Every channel keeps its own time (§25).** `Phrase` carries its **length** —
+  `Phrase::steps`, 1–64 — and its cells are `Phrase::cells`; a step is six ticks at the
+  straight groove, always, so a phrase lasts exactly what its groove and its length make
+  it. `Song::stepsPerBar`, `Song::barSteps`, `Song::beatsPerBar`, `Song::barTicks()`,
+  `Song::steps()`, `stepsOfBar()`, the bar table and every `barStartTick` / `barAtTick` /
+  `barLengthTicks` are gone, and so are `ClockConfig::beatsPerBar` and `Clock::barTicks()`
+  — the clock counts ticks and nothing else now. In their place, per channel:
+  `Song::rowStartTicks[ch]` (a prefix sum over that channel's row durations, built by
+  `buildRowTables()` when a song is published), `rowStartTick(s, ch, row)`,
+  `rowAtTick(s, ch, tick, row, inRow)`, `rowTicks()`, `phraseTicks()`, `songTicks()` and
+  `longestChain()`. The Player fires each channel from its own row and step, and
+  `Player::Position` is `{row, step, phrase}`; the processor publishes `channelRow(ch)`
+  and `channelStep(ch)` beside `trackerTick()`. T cells sit at their **own channel's**
+  ticks (`buildTempoMap` gathers all four and sorts them, the lowest channel winning a
+  tie), the recorder quantises to the channel's own grid, `RecordMessage::bar` is
+  `::row`, and the plugin's own transport loops the longest chain (`setLoopRows`,
+  `loopFirstRow`, `loopLastRow`).
+- **A row with no phrase is 96 ticks** with a note-off at its start, as §25 says, and so
+  is every row past the end of a chain. That is the one place where the model can put two
+  channels out of step by accident: in a song whose rows are not sixteen straight steps,
+  a channel resting for a row drifts from the others by the difference. It cost
+  `meter-study` its alignment when the six demo songs were regenerated (three 12-step
+  channels against one empty 16-step row), so `make_songs.py` now writes a rest as a
+  phrase of the section's own width holding a note off — the same sound, and the channel
+  stays with the others. Considered making an empty row take the length of the row the
+  other channels are playing; rejected — a channel would then have no length of its own,
+  which is the whole of §25.
+- **A groove never moves the rows.** The rows lie end to end on the table built when the
+  song was published, so a G — a cell's or a slot's — re-lays the steps *inside* the row
+  and the row keeps its phrase's own length. A step that would start at or past the row's
+  end does not fire, and a groove that ends early leaves the last note sustaining, which
+  is §9.2 counted in rows instead of bars. The alternative — a G that changes what the
+  row is worth — would make a locate unrepresentable and a T cell's tick depend on what
+  played before it.
+- **Song file format 6 (§25).** A phrase writes its own `steps` (its length) and its
+  cells as `cells`; `stepsPerBar`, `barSteps` and `beatsPerBar` are not written at all.
+  Loading format 5 or older converts as §25 says: every used phrase takes the file's steps
+  per bar, and a bar override becomes the length of the phrase in that bar — a phrase used
+  under two different overrides is **duplicated** into the first free slot and that bar's
+  chain entry points at the copy (`lengthsFromBars` in `BankJson.cpp`). A file whose bar
+  ticks were not six per step (a 3/4 song at sixteen steps) keeps its step *count*, so its
+  rows are the length those steps really are. The plugin state carries the same JSON, and
+  `songFileText` writes format 6 with the bank beside it as before.
+- **Level changes are zombie-mode writes (§26).** `Driver::setLevel(ch)` emits the
+  shortest sequence of NRx2 writes that leaves the chip's volume at the level the driver
+  wants and the envelope it wants in the register, computed by a breadth-first search over
+  (volume, direction, period) using the APU's own write rule — the search is driven by the
+  rule rather than by a table, so it is right by construction and would follow a console
+  whose rule differed. It is used by the table volume column, an E that keeps the
+  envelope's direction and rate, a shaped envelope's step, CC7, the Level lane and the
+  release fade. A trigger is left only where a driver needs one: a plain note-on, R, and
+  an E that moves the direction or the rate. The driver models the chip's envelope
+  (`Voice::volume`, `hwPeriod`, `hwUp`, `hwRun`, `hwOn`, `hwInitial`), moved on by
+  `emitNrx2()` exactly as `Apu::writeSquare` moves it, and by `markTrigger()` at every
+  trigger. From a holding envelope a step up costs one write and a step down three; nine
+  is the worst case over all sixteen levels. A zombie write carries the target in NRx2's
+  high nibble — free, since the chip reads it only at the next trigger — except that the
+  DAC-off pattern (level 0 with the direction down) is written as level 1 instead.
+- **The quiet edge is gone (§26).** `GlobalParams::volumeAtEdges`,
+  `Driver::kAlignToQuietEdge` and the processor's re-sorting of a delayed burst are
+  deleted: no program on a Game Boy can wait for a pulse's low half, so neither does
+  ChipBoy. The **parameter** `vol_edges` stays, and does nothing: removing it would change
+  the host-visible parameter table, which the two Reaper projects and
+  `make_demo.py --paramdump` are written against, for a switch nobody should use again.
+  The Hardware tab's row now reads *no effect* and says why. The table is byte for byte
+  the one it was (76 parameters, checked).
+- **Shaped envelopes (§27).** `bank::Envelope` on every instrument: a **mode** (Chip or
+  Shaped) and, for Shaped, Attack, Peak, Decay, Sustain and Release with a curve each —
+  linear, exponential (fast at the start) or logarithmic (slow at it). The curves are
+  integer arithmetic in `bank::envSegmentLevel` — `t/n`, `1 − (1 − t/n)²` and `(t/n)²`,
+  rounded half away from zero — so the per-tick level list is a constant of the song and
+  a playback ROM can hold it. The driver renders one level per tick and writes it only
+  when it changes, always through §26: a shaped note-on writes NRx2 with the level, the
+  direction bit **up** and no rate, so a level of zero still leaves the DAC on and every
+  step that follows can be a zombie write. Wave and kit instruments take the four NR32
+  levels (the shaped level over four, as a table's volume column already scales). A
+  note-off starts the Release under Note-off = Release, and the note ends when the release
+  does; a table's volume column, an E, CC7 or the Level lane **takes the envelope over**
+  and the segments left stop until the next plain note-on. The velocity and the Level lane
+  do not set a shaped note's start level — the envelope owns it — which is the one thing
+  §27 leaves open and is listed in the audit. Factory instruments are all Chip, and JSON,
+  presets and the plugin state carry the fields (`envMode` alone when the mode is Chip, so
+  a factory bank reads as it always did but for one property).
+- **A table's first row fires with the note-on (§31).** `startVoice` runs row 0 inside the
+  note's own event, after the instrument has loaded and before the trigger, for Tick-mode
+  tables as well as Step-mode ones — so a wave kick whose table drops the pitch starts
+  dropping at once and the raw note is never heard on its own. `Voice::tableJustStarted`
+  keeps the tick that follows from taking a second row, so the rows after the first still
+  step on the ticks. Firing row 0 *after* the trigger was measured too: it puts the raw
+  period in the stream ahead of the drop, which is exactly what §31 asks not to happen.
+- **A repeated pitch is never legato (§31).** A MIDI note-on at the pitch already sounding
+  is plain — it triggers — whatever the instrument's Overlap says; legato is for moving
+  between pitches, and a drum hit in succession is a hit. **The note-on order** was
+  audited with it and is unchanged and now tested: instrument → table row 0 → command
+  slots → the cell's own commands → the register writes ending in the trigger; the 360 Hz
+  pitch clock restarts at the note and its first update is one full period later, so a
+  bend never doubles the note's own period write; a D delays the whole of that, row 0
+  included; the DMG wave dance (NR30 off, sixteen bytes, NR30 on) precedes the first
+  period write; and a Hybrid cell's commands still wait for the tick's note-on and land on
+  the sounding voice when none comes.
+- **The table run in the view (§32).** `VoiceView` gains `tableRow` (−1 when no table is
+  running) and `tableRun`, a serial that counts the runs a channel has started — a plain
+  note-on with a table, an A, a table override, an instrument reload — so a window showing
+  one table can tell which channel's run started last. `Driver::beginTableRun()` is the
+  one place a run starts. The processor publishes them as `ScopeBuffers::tableRun`, packed
+  by `packTableRun()`; `packState2` is untouched, so the link region's layout is the same.
+- **`chipboy_fuzz` (§28).** `tools/fuzz/main.cpp`: a seed builds a random song — phrases
+  1–64 steps long with their own grooves, random cells on all four channels, every command
+  letter with arguments right across the byte, random note sources — writes it through the
+  song writer, opens it through the reader, and plays it on the plugin's own transport in
+  blocks of random size with tempo changes, PLAYS changes, locates, loops and MIDI thrown
+  in. A run fails on a NaN or an infinity, on a block that takes longer than 400 ms, or on
+  anything still audible 100 ms after all notes off. The CTest runs eight fixed seeds; a
+  failure prints the seed to replay. "Audible" is the swing inside a block minus the
+  drift across it: a DAC switched off holds its last level (reference §9) and the RAW
+  model has no coupling to take that offset away, so an absolute threshold would fail on
+  a silence that is silent.
+- **What the fuzz found.** A note-on waiting for its tick under notes-on-tick survived an
+  all-notes-off: the driver's pending queue was not part of "every internal flush", so a
+  panic could be followed by the note it had just silenced. §8 counts a waiting note as a
+  delayed start, so `Driver::allNotesOff` now drops that channel's entries from the queue.
+  A regression test holds a note back with notes-on-tick, silences the channel and checks
+  that the ticks after it write no trigger. One hundred and forty seeds pass since.
+- **The demo, the songs and the checks.** `Demo/ChipBoy Demo.cbsong` and
+  `Demo/chipboy_demo_hybrid.state` are regenerated (format 6 and the new register stream),
+  `tools/demo/make_songs.py` writes format 6 — a phrase's length is part of its identity
+  now, so a bar of text at another width interns as another phrase, which is §25's
+  duplication rule applied at generation — and the six songs are regenerated with it. The
+  record test's four passes still agree register for register, `demo_song_matches`,
+  `demo_state_matches` and the six `demo_songs_load` still pass, and the paramdump table
+  is identical. Measured with `--play-song`, `neon-grid`'s stabs are where they were:
+  PU2's bars 13–16 read 0.09990 / 0.09895 / 0.09931 / 0.09864 before and 0.09996 / 0.09886
+  / 0.09932 / 0.09854 after, with its peak 0.27010 → 0.26992 — the level changes sound the
+  same and are now writes the hardware would take.
+- **The audit (§28).** [`docs/HARDWARE_DRIVER_AUDIT.md`](docs/HARDWARE_DRIVER_AUDIT.md)
+  lists every driver behaviour against its register writes and its clock, marks what is
+  plugin-only (MIDI, Hybrid's live notes, the Voice link, the record path, the analog
+  model, the own transport and the prefix tables), keeps the approximations that stay with
+  the reason each one stays — a level change while the chip's envelope is running, the
+  length counter's effect on the enabled flag, the 64 Hz envelope phase — and ends with
+  the binary layout a playback ROM needs for format 6 and its bank.
+- **Tests.** 159 core tests (13 new: the zombie sequence against a real `Apu` on both
+  consoles and on noise, the shortest-sequence counts, a table volume column without a
+  retrigger, an E that moves the envelope against one that does not, the shaped per-tick
+  level list and its curves, a shaped wave instrument on NR32, a table volume column
+  taking a shaped envelope over, the table's first row at the note-on, the kick played
+  twice, the same-pitch retrigger, the table run serial, and the all-notes-off regression;
+  the tracker's bar tests became row tests, with two channels drifting apart by design,
+  a locate exact per channel and an empty row's 96 ticks). `Apu::channelVolume()` is new,
+  for tests to ask the chip what the volume really is. The link test checks format 6, two
+  channels of different lengths, the row tables and the format-5 conversion including the
+  duplicate case; `chipboy_fuzz` joins the CTest list.
 
 ### 2026-09-09 — the LSDj parity harness
 
@@ -67,7 +232,6 @@ changes they call for are a separate round.
   yet a bug.
 
 ---
-
 ### 2026-09-08 — six demo songs and the hybrid project (content)
 
 The third addendum's §20 and §24 ([`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md)),

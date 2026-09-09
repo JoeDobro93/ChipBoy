@@ -465,7 +465,13 @@ TEST_CASE("a slot fires when it changes, again at each note-on, and reverts", "[
     r.drv.setParams(0, p);
     w = r.block({}, 512);
     REQUIRE(last(w, 0xFF12) != nullptr);
-    CHECK(last(w, 0xFF12)->value == 0xD0);                         // the instrument's vol 13
+    // The instrument's vol 13 again. It keeps the envelope's direction and
+    // rate, so it is a level change: zombie-mode writes, no trigger, and the
+    // direction bit of the last one is whichever way was shorter (26).
+    CHECK((last(w, 0xFF12)->value >> 4) == 13);
+    CHECK((last(w, 0xFF12)->value & 7) == 0);
+    CHECK_FALSE(anyTrigger(w, 0xFF14));
+    CHECK(r.drv.view(0).volume == 13);                             // where the chip really is
     CHECK(r.drv.slot(0, 1).cmd == Cmd::None);
 }
 
@@ -494,7 +500,9 @@ TEST_CASE("a cell's command is applied once and never occupies a slot", "[driver
     r.block({ e }, 480);
     w = r.block({ cellCmd(0, bank::revertOf(Cmd::E)) }, 480);
     REQUIRE(last(w, 0xFF12) != nullptr);
-    CHECK(last(w, 0xFF12)->value == 0xD0);                         // the instrument's own vol 13
+    CHECK((last(w, 0xFF12)->value >> 4) == 13);                    // the instrument's own vol 13
+    CHECK(r.drv.view(0).volume == 13);
+    CHECK_FALSE(anyTrigger(w, 0xFF14));
 }
 
 TEST_CASE("a V on a bare note holds until the next plain note", "[driver][commands][pitch]")
@@ -1503,4 +1511,372 @@ TEST_CASE("a Hybrid cell's D holds its commands back", "[driver][hybrid]")
     CHECK(!has(w, 0xFF12, 0x71));
     w = r.block({}, 400);
     CHECK(has(w, 0xFF12, 0x71));
+}
+
+/* ============================ zombie-mode levels (section 26) ============ */
+
+namespace {
+
+/// A chip fed exactly what the driver wrote, so a test can ask the APU what
+/// the volume really is after a sequence (section 26).
+struct Chip {
+    Apu apu;
+    explicit Chip(Console model = Console::DMG) { apu.setModel(model); apu.reset(); }
+    void feed(const std::vector<RegWrite>& w)
+    {
+        for (const auto& x : w) { apu.runTo(std::max(x.cycle, apu.cycle())); apu.write(x.addr, x.value); }
+    }
+};
+
+/// The E command as a cell, which is how a level change arrives from a table
+/// or a phrase.
+NoteEvent levelCell(int ch, int level, int env = 0)
+{
+    return cellCmd(ch, Command{ Cmd::E, int16_t(level), int16_t(env), 0 });
+}
+
+} // namespace
+
+TEST_CASE("a level change lands on the chip's volume without a trigger", "[driver][zombie]")
+{
+    // Section 26: the driver issues the shortest zombie-mode NRx2 sequence to
+    // the level it wants. The check is against the APU itself -- the sequence
+    // is only right if the chip ends up there.
+    for (auto model : { Console::DMG, Console::CGB })
+        for (int target = 0; target <= 15; ++target) {
+            Rig r(model);
+            Chip chip(model);
+            ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);   // vol 13, rate 0
+            chip.feed(r.block({ Rig::on(0, 69, 100) }, 512));
+            REQUIRE(chip.apu.channelVolume(0) == 13);
+            const auto w = r.block({ levelCell(0, target) }, 512);
+            chip.feed(w);
+            CHECK(chip.apu.channelVolume(0) == target);
+            CHECK_FALSE(anyTrigger(w, 0xFF14));
+            CHECK(chip.apu.channelActive(0));               // the DAC never goes off on the way
+            CHECK(r.drv.view(0).volume == target);          // and the driver's model agrees
+        }
+}
+
+TEST_CASE("a level change on the noise channel is zombie mode too", "[driver][zombie]")
+{
+    Rig r;
+    Chip chip;
+    ChannelParams p; p.instrument = 5; p.velocityMode = 2; r.drv.setParams(3, p);   // a noise instrument
+    chip.feed(r.block({ Rig::on(3, 60, 100) }, 512));
+    const uint8_t was = chip.apu.channelVolume(3);
+    CHECK(was > 0);
+    const auto w = r.block({ levelCell(3, 4) }, 512);
+    chip.feed(w);
+    CHECK(chip.apu.channelVolume(3) == 4);
+    CHECK_FALSE(anyTrigger(w, 0xFF23));
+    CHECK_FALSE(anyTrigger(w, 0xFF13));
+}
+
+TEST_CASE("a table's volume column is a level change, not a retrigger", "[driver][zombie][table]")
+{
+    Rig r;
+    Chip chip;
+    r.tickHz = 100.0;
+    auto& t = r.bank.tables[0]; t.used = true; t.end = TableEnd::Stop;
+    t.steps[0].vol = 15; t.steps[1].vol = 11; t.steps[2].vol = 7; t.steps[3].vol = 3;
+    r.bank.instruments[0].table = 1;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    chip.feed(r.block({ Rig::on(0, 69, 100) }, 480));
+    // Row 0 goes out with the note itself now (section 31).
+    CHECK(chip.apu.channelVolume(0) == 15);
+    for (const int want : { 11, 7, 3 }) {
+        const auto w = r.block({}, 480);
+        chip.feed(w);
+        CHECK(chip.apu.channelVolume(0) == want);
+        CHECK_FALSE(anyTrigger(w, 0xFF14));
+    }
+}
+
+TEST_CASE("an E that moves the envelope triggers, one that does not is a level change", "[driver][zombie]")
+{
+    Rig r;
+    Chip chip;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);   // rate 0, down
+    chip.feed(r.block({ Rig::on(0, 69, 100) }, 512));
+    SECTION("the same direction and rate: no trigger") {
+        const auto w = r.block({ levelCell(0, 9, 0) }, 512);
+        chip.feed(w);
+        CHECK_FALSE(anyTrigger(w, 0xFF14));
+        CHECK(chip.apu.channelVolume(0) == 9);
+    }
+    SECTION("a rate of its own: a trigger, which is how a new envelope starts") {
+        const auto w = r.block({ levelCell(0, 9, 3) }, 512);
+        chip.feed(w);
+        CHECK(anyTrigger(w, 0xFF14));
+        CHECK(chip.apu.channelVolume(0) == 9);
+    }
+    SECTION("a direction of its own: a trigger") {
+        const auto w = r.block({ levelCell(0, 9, 8 + 3) }, 512);
+        chip.feed(w);
+        CHECK(anyTrigger(w, 0xFF14));
+    }
+}
+
+TEST_CASE("the zombie sequence is the shortest one", "[driver][zombie]")
+{
+    // From a holding envelope a write with the same direction bit adds one
+    // and a write that flips it lands on 15 - v, so a step up costs one write
+    // and one down costs three (section 26). The point of the search is that
+    // it is never longer than it has to be.
+    Rig r;
+    Chip chip;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);   // vol 13
+    chip.feed(r.block({ Rig::on(0, 69, 100) }, 512));
+    auto writes = [&](int target) {
+        const auto w = r.block({ levelCell(0, target) }, 512);
+        chip.feed(w);
+        REQUIRE(chip.apu.channelVolume(0) == target);
+        int n = 0; for (const auto& x : w) if (x.addr == 0xFF12) ++n;
+        return n;
+    };
+    CHECK(writes(14) == 1);          // 13 -> 14, one write with the same direction
+    CHECK(writes(1) == 1);           // 14 -> 1, one write that flips (15 - 14)
+    CHECK(writes(2) == 1);           // 1 -> 2
+    CHECK(writes(1) == 3);           // 2 -> 1 is the long way round: flip, step, flip
+}
+
+/* ============================= shaped envelopes (section 27) ============= */
+
+TEST_CASE("a shaped envelope is one level per tick and never triggers", "[driver][shaped]")
+{
+    Rig r;
+    Chip chip;
+    r.tickHz = 100.0;
+    auto& i = r.bank.instruments[0];
+    i.env.mode = EnvMode::Shaped;
+    i.env.attackTicks = 4; i.env.peak = 12; i.env.decayTicks = 4; i.env.sustain = 6; i.env.releaseTicks = 4;
+    i.noteOff = NoteOff::Release;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    std::vector<int> levels;
+    auto step = [&](std::vector<NoteEvent> ev) {
+        const auto w = r.block(std::move(ev), 480);
+        chip.feed(w);
+        levels.push_back(int(chip.apu.channelVolume(0)));
+        return w;
+    };
+    const auto first = step({ Rig::on(0, 69, 100) });
+    CHECK(anyTrigger(first, 0xFF14));                  // the note itself triggers, once
+    // Its NRx2 is the envelope's first level with the direction bit up and no
+    // rate: a level of zero that still leaves the DAC on, so the writes that
+    // follow are zombie writes (sections 26, 27).
+    REQUIRE(first.size() > 0);
+    bool sawStart = false;
+    for (const auto& x : first) if (x.addr == 0xFF12 && x.value == 0x08) sawStart = true;
+    CHECK(sawStart);
+    for (int k = 0; k < 8; ++k) {
+        const auto w = step({});
+        CHECK_FALSE(anyTrigger(w, 0xFF14));            // and nothing after it does
+    }
+    // Attack 0 -> 12 over four ticks, then decay to the sustain of 6, which
+    // holds while the note is held (section 27). The level is read at the end
+    // of each block, one tick after the note started at silence.
+    const std::vector<int> want { 3, 6, 9, 12, 10, 9, 7, 6, 6 };
+    CHECK(levels == want);
+    // The release starts at the note-off and walks to silence over its ticks:
+    // 6 -> 0 in four, linear. The tick of the note-off's own block is the
+    // first of them.
+    std::vector<int> rel;
+    step({ Rig::off(0, 69) });
+    rel.push_back(levels.back());
+    for (int k = 0; k < 3; ++k) { step({}); rel.push_back(levels.back()); }
+    CHECK(rel[0] == 4);
+    CHECK(rel[1] == 3);
+    CHECK(rel[2] == 1);
+    CHECK_FALSE(r.drv.view(0).dacOn);                  // and the note is over
+}
+
+TEST_CASE("a shaped envelope's curves are the segment shapes", "[driver][shaped]")
+{
+    // Section 27: exponential is fast at the start, logarithmic slow at it.
+    CHECK(envSegmentLevel(0, 12, 4, 2, EnvCurve::Linear) == 6);
+    CHECK(envSegmentLevel(0, 12, 4, 2, EnvCurve::Exponential) == 9);
+    CHECK(envSegmentLevel(0, 12, 4, 2, EnvCurve::Logarithmic) == 3);
+    CHECK(envSegmentLevel(0, 12, 4, 0, EnvCurve::Exponential) == 0);
+    CHECK(envSegmentLevel(0, 12, 4, 4, EnvCurve::Logarithmic) == 12);
+    CHECK(envSegmentLevel(12, 0, 4, 4, EnvCurve::Exponential) == 0);
+    CHECK(envSegmentLevel(7, 7, 0, 0, EnvCurve::Linear) == 7);       // no ticks: straight there
+}
+
+TEST_CASE("a shaped wave instrument uses the four NR32 levels", "[driver][shaped]")
+{
+    Rig r;
+    r.tickHz = 100.0;
+    auto& i = r.bank.instruments[6];                   // Triangle bass, a wave instrument
+    i.env.mode = EnvMode::Shaped;
+    i.env.attackTicks = 0; i.env.peak = 15; i.env.decayTicks = 8; i.env.sustain = 0;
+    ChannelParams p; p.instrument = 7; r.drv.setParams(2, p);
+    r.block({ Rig::on(2, 48, 100) }, 480);
+    std::vector<int> codes;
+    for (int k = 0; k < 8; ++k) {
+        const auto w = r.block({}, 480);
+        CHECK_FALSE(has(w, 0xFF12));                   // the wave channel has no NRx2 at all
+        if (const auto* nr32 = last(w, 0xFF1C)) codes.push_back((nr32->value >> 5) & 3);
+    }
+    REQUIRE(!codes.empty());
+    CHECK(codes.front() <= 3);
+    CHECK(codes.back() == 0);                          // 100 % down to mute, in four steps
+}
+
+TEST_CASE("a table's volume column takes a shaped envelope over", "[driver][shaped]")
+{
+    // Section 27: the segments left stop until the next plain note-on.
+    Rig r;
+    Chip chip;
+    r.tickHz = 100.0;
+    auto& t = r.bank.tables[0]; t.used = true; t.end = TableEnd::Stop;
+    t.steps[0].vol = 9;
+    auto& i = r.bank.instruments[0];
+    i.env.mode = EnvMode::Shaped;
+    i.env.attackTicks = 0; i.env.peak = 15; i.env.decayTicks = 8; i.env.sustain = 0;
+    i.table = 1;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    chip.feed(r.block({ Rig::on(0, 69, 100) }, 480));
+    CHECK(chip.apu.channelVolume(0) == 9);             // the table's row 0, with the note
+    for (int k = 0; k < 4; ++k) chip.feed(r.block({}, 480));
+    CHECK(chip.apu.channelVolume(0) == 9);             // and the decay never resumes
+}
+
+/* ====================== the table's first row (section 31) ============== */
+
+TEST_CASE("a table's first row fires with the note-on", "[driver][table]")
+{
+    // Section 31: a wave kick whose table drops the pitch must start dropping
+    // in the note's own event -- a note that falls just after a tick used to
+    // play its raw pitch for up to a tick, which is the beep this fixes.
+    Rig r;
+    r.tickHz = 140.0 * 24.0 / 60.0;                    // 140 BPM quarters, 24 ticks a beat
+    auto& t = r.bank.tables[0]; t.used = true; t.end = TableEnd::Stop;
+    t.steps[0].cmd1 = { Cmd::P, 55, 0, 0 };            // x - 128 = -73 period units an update
+    t.steps[0].vol = 15;
+    auto& i = r.bank.instruments[6];                   // a wave instrument
+    i.table = 1;
+    ChannelParams p; p.instrument = 7; r.drv.setParams(2, p);
+    // The note lands a third of the way into a tick, where the old code left
+    // the raw pitch sounding until the next one.
+    const uint32_t frames = uint32_t(48000.0 / r.tickHz);
+    r.block({}, frames / 3);
+    const auto w = r.block({ Rig::on(2, 108, 100) }, frames);
+    // Every period write of this tick, in order: the note's own, then the
+    // 360 Hz updates the P bend makes.
+    std::vector<int> periods;
+    for (const auto& x : w) if (x.addr == 0xFF1D) periods.push_back(x.value);
+    REQUIRE(periods.size() >= 2);
+    CHECK(periods.back() < periods.front());           // the drop starts in the same tick
+    CHECK(r.drv.view(2).tableRow == 0);
+    CHECK(r.drv.view(2).tableSlot == 1);
+}
+
+TEST_CASE("a kick played twice never plays its raw pitch on its own", "[driver][table]")
+{
+    // The same instrument twice, 429 ms apart (140 BPM), plain and then as an
+    // overlapping MIDI note: the drop starts in the note's own tick both
+    // times (sections 31 and 8).
+    for (bool overlap : { false, true }) {
+        Rig r;
+        r.tickHz = 140.0 * 24.0 / 60.0;
+        auto& t = r.bank.tables[0]; t.used = true; t.end = TableEnd::Stop;
+        t.steps[0].cmd1 = { Cmd::P, 55, 0, 0 };
+        auto& i = r.bank.instruments[6];
+        i.table = 1;
+        ChannelParams p; p.instrument = 7; r.drv.setParams(2, p);
+        const uint32_t quarter = uint32_t(48000.0 * 60.0 / 140.0);
+        auto hit = [&](std::vector<NoteEvent> ev) {
+            const auto w = r.block(std::move(ev), 512);
+            std::vector<int> periods;
+            for (const auto& x : w) if (x.addr == 0xFF1D) periods.push_back(x.value);
+            return periods;
+        };
+        const auto first = hit({ Rig::on(2, 108, 100) });
+        REQUIRE(first.size() >= 2);
+        CHECK(first.back() < first.front());
+        if (!overlap) r.block({ Rig::off(2, 108) }, quarter - 512);
+        else r.block({}, quarter - 512);
+        const auto second = hit({ Rig::on(2, 108, 100) });
+        REQUIRE(second.size() >= 2);
+        CHECK(second.back() < second.front());
+        CHECK(r.drv.view(2).tableRow == 0);
+    }
+}
+
+TEST_CASE("a note-on at the pitch already sounding is never legato", "[driver][notes]")
+{
+    // Section 31: legato is for moving between pitches; a repeated pitch is a
+    // drum hit in succession, and a drum hit is a retrigger.
+    Rig r;
+    ChannelParams p; p.instrument = 1; r.drv.setParams(0, p);       // a pulse instrument: legato
+    r.block({ Rig::on(0, 60, 100) }, 256);
+    SECTION("the same pitch retriggers") {
+        const auto w = r.block({ Rig::on(0, 60, 100) }, 256);
+        CHECK(anyTrigger(w, 0xFF14));
+        CHECK(r.report(0)->plain);
+    }
+    SECTION("a different pitch is still bare") {
+        const auto w = r.block({ Rig::on(0, 64, 100) }, 256);
+        CHECK_FALSE(anyTrigger(w, 0xFF14));
+        CHECK_FALSE(r.report(0)->plain);
+    }
+}
+
+/* ==================== the table run the view publishes (section 32) ===== */
+
+TEST_CASE("the view publishes the table's row and a run serial", "[driver][table]")
+{
+    Rig r;
+    r.tickHz = 100.0;
+    auto& t = r.bank.tables[0]; t.used = true; t.end = TableEnd::Stop;
+    for (int k = 0; k < 4; ++k) t.steps[size_t(k)].vol = int8_t(15 - k * 4);
+    r.bank.instruments[0].table = 1;
+    ChannelParams p; p.instrument = 1; r.drv.setParams(0, p);
+    CHECK(r.drv.view(0).tableRow == -1);                           // nothing running yet
+    CHECK(r.drv.view(0).tableRun == 0);
+    r.block({ Rig::on(0, 69, 100) }, 480);
+    CHECK(r.drv.view(0).tableSlot == 1);
+    CHECK(r.drv.view(0).tableRow == 0);                            // row 0 fired with the note
+    const uint16_t run = r.drv.view(0).tableRun;
+    CHECK(run == 1);
+    r.block({}, 480);
+    CHECK(r.drv.view(0).tableRow == 1);
+    CHECK(r.drv.view(0).tableRun == run);                          // the same run, one row on
+    // A table that ends stops, and the row goes with it: sixteen rows, then
+    // TableEnd::Stop.
+    for (int k = 0; k < 16; ++k) r.block({}, 480);
+    CHECK(r.drv.view(0).tableRow == -1);
+    CHECK(r.drv.view(0).tableSlot == 0);
+    // An A command starts a run of its own.
+    r.block({ cellCmd(0, Command{ Cmd::A, 1, 0, 0 }) }, 480);
+    CHECK(r.drv.view(0).tableRun == run + 1);
+    CHECK(r.drv.view(0).tableRow == 0);
+    // And so does the next plain note.
+    r.block({ Rig::off(0, 69) }, 480);
+    r.block({ Rig::on(0, 67, 100) }, 480);
+    CHECK(r.drv.view(0).tableRun == run + 2);
+}
+
+TEST_CASE("all notes off drops a note still waiting for its tick", "[driver][notes]")
+{
+    // Section 8: a note waiting for the tick, under notes-on-tick, is a
+    // delayed start, and an all-notes-off clears those too -- the fuzz found
+    // this as a channel left sounding after a panic (section 28).
+    Rig r;
+    r.tickHz = 20.0;                                   // a tick every 2400 frames
+    r.drv.setNotesOnTick(true);
+    ChannelParams p; p.instrument = 1; r.drv.setParams(0, p);
+    // The note-on lands in a block with no tick in it, so it waits.
+    r.block({}, 512);                                  // the tick at frame 0 goes by first
+    r.block({ Rig::on(0, 69, 100) }, 512);
+    CHECK_FALSE(r.drv.view(0).active);
+    auto w = r.block({ allOff(0) }, 512);
+    // ... and the ticks that follow must not start it after all.
+    for (int k = 0; k < 8; ++k) {
+        w = r.block({}, 512);
+        CHECK_FALSE(anyTrigger(w, 0xFF14));
+    }
+    CHECK_FALSE(r.drv.view(0).active);
+    CHECK_FALSE(r.drv.view(0).dacOn);
 }

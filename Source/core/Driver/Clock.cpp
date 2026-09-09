@@ -96,7 +96,6 @@ double Clock::secondsAtTicks(double tick) const
 
 double Clock::bpmAtTick(int64_t tick) const { return map_[segmentForTick(double(tick))].bpm; }
 
-int Clock::barTicks() const { return std::max(1, int(std::lround(barBeats_ * kTicksPerBeat))); }
 
 void Clock::pushTick(uint32_t offset, int64_t tick)
 {
@@ -168,9 +167,8 @@ void Clock::process(const Transport& host, uint32_t numSamples, uint64_t frameAb
         t.seconds = ownSeconds_; t.ppq = 0.0;
     }
     const bool song = cfg_.source == TempoSource::Song || owns_;
-    // The bar is the song's in both sources: the host gives the tempo, never
-    // the signature (section 19).
-    barBeats_ = std::max(0.25, cfg_.beatsPerBar);
+    // The host gives the tempo and nothing else -- never its signature, which
+    // the song has no use for: its time is its phrases' (sections 19, 25).
     const double hostBpm = t.valid && t.bpm > 1.0 ? t.bpm : bpm_;
     const bool playing = t.valid && t.playing && (!song || t.timeValid);
     isPlaying_ = playing;

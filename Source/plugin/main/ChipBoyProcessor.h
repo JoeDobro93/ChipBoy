@@ -200,11 +200,12 @@ public:
     void transportStop() { transportRequest_.store(2); }
     void setLoop(bool on) { loopOn_.store(on); }
     bool loopEnabled() const { return loopOn_.load(); }
-    /// The loop, in bars: from `first` up to but not including `last`. A
-    /// negative `last` loops to the end of the song.
-    void setLoopBars(int first, int last) { loopFrom_.store(std::max(0, first)); loopTo_.store(last); }
-    int  loopFirstBar() const { return loopFrom_.load(); }
-    int  loopLastBar() const { return loopTo_.load(); }
+    /// The loop, in rows of the longest chain: from `first` up to but not
+    /// including `last`. A negative `last` loops to the end of the song --
+    /// the longest channel's, which is the song's length (section 25).
+    void setLoopRows(int first, int last) { loopFrom_.store(std::max(0, first)); loopTo_.store(last); }
+    int  loopFirstRow() const { return loopFrom_.load(); }
+    int  loopLastRow() const { return loopTo_.load(); }
     /// Whether the plugin is running the transport rather than a host.
     bool ownsTransport() const { return ownsTransport_.load(); }
     bool transportPlaying() const { return playing_.load(); }
@@ -218,15 +219,19 @@ public:
     bool saveSongFile(const juce::File& file);
     double transportPpq() const { return ppq_.load(); }
     double transportBpm() const { return bpm_.load(); }
-    double beatsPerBar() const { return beatsPerBar_.load(); }
+
     /// Which tempo the ticks come from, and the tempo the header reads:
     /// the host's BPM in Host mode, the song's tempo in force -- its master
     /// tempo, or the T last passed -- in Song mode (section 19).
     bool songTempoSource() const { return songTempo_.load(); }
     double effectiveTempo() const { return tempo_.load(); }
-    /// The tracker's position, in ticks, and how many ticks a bar holds.
+    /// The tracker's position: the song's time in ticks, and where each
+    /// channel is in its own chain -- its row and the step inside it, which
+    /// differ between channels by design (section 25). -1 when the channel is
+    /// not playing its cells.
     int64_t trackerTick() const { return trackerTick_.load(); }
-    int barTicks() const { return barTicks_.load(); }
+    int channelRow(int ch) const { return channelRow_[size_t(ch & 3)].load(); }
+    int channelStep(int ch) const { return channelStep_[size_t(ch & 3)].load(); }
 
     /// 4-bit levels per channel as last rendered (-1 = DAC off), for meters.
     std::array<std::atomic<int>, 4> channelLevels;
@@ -307,9 +312,9 @@ private:
     std::atomic<int>  loopFrom_{ 0 }, loopTo_{ -1 };
     uint32_t prevRecMask_ = 0;
     std::atomic<bool> songTempo_{ false };
-    std::atomic<double> ppq_{ 0.0 }, bpm_{ 120.0 }, beatsPerBar_{ 4.0 }, tempo_{ 120.0 };
+    std::atomic<double> ppq_{ 0.0 }, bpm_{ 120.0 }, tempo_{ 120.0 };
     std::atomic<int64_t> trackerTick_{ 0 };
-    std::atomic<int> barTicks_{ driver::kTicksPerBeat * 4 };
+    std::array<std::atomic<int>, 4> channelRow_{}, channelStep_{};
     double tempoBase_ = 120.0;      ///< the Song tempo the published song's map was built on
     bool recWasArmed_ = false;
     // What each lane looked like last block, so a change of hands can be
@@ -345,7 +350,7 @@ private:
     // parameters
     std::atomic<float>* pModel_ = nullptr; std::atomic<float>* pMasterL_ = nullptr; std::atomic<float>* pMasterR_ = nullptr;
     std::atomic<float>* pTrim_ = nullptr; std::atomic<float>* pNoise_ = nullptr; std::atomic<float>* pLcd_ = nullptr;
-    std::atomic<float>* pBassMod_ = nullptr; std::atomic<float>* pEdges_ = nullptr; std::atomic<float>* pDeclick_ = nullptr;
+    std::atomic<float>* pBassMod_ = nullptr; std::atomic<float>* pDeclick_ = nullptr;
     std::atomic<float>* pDeclickMs_ = nullptr; std::atomic<float>* pSoften_ = nullptr; std::atomic<float>* pTempoSource_ = nullptr;
     std::atomic<float>* pSongTempo_ = nullptr; std::atomic<float>* pNotesOnTick_ = nullptr; std::atomic<float>* pLink_ = nullptr;
 

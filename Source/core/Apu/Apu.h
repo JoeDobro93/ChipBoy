@@ -82,6 +82,11 @@ public:
     bool    channelActive(int ch) const;
     bool    dacOn(int ch) const;
     uint8_t level(int ch) const;
+    /// The envelope volume of a pulse or noise channel, 0-15: the level its
+    /// DAC sees when the waveform is high, which is what a zombie-mode write
+    /// moves (reference section 10.2, docs/COMMANDS_AND_TEMPO.md section 26).
+    /// The wave channel has no envelope; it reports its NR32 code as 0-3.
+    uint8_t channelVolume(int ch) const;
     bool    powered() const { return powered_; }
     uint8_t frameStep() const { return frameStep_; }
 

@@ -227,8 +227,11 @@ HardwarePanel::HardwarePanel(ChipBoyProcessor& p) : EditorPanel(p)
         states->add(std::move(r));
     }
     {
-        auto r = std::make_unique<ToggleRow>("Volume writes at edges", "NRx2 writes wait for the low half of the pulse cycle, where a level change is silent. A driver technique, so still stock. Costs up to one period of delay.",
-                                             "writes land " + String(CharPointer_UTF8("\xe2\x89\xa4")) + " 1 period late");
+        // Section 26: a program on the Game Boy cannot wait for a pulse's low
+        // half, so neither does ChipBoy. The switch has no effect and stays
+        // only so that a saved project's parameter list is the one it wrote.
+        auto r = std::make_unique<ToggleRow>("Volume writes at edges", "No effect. Level changes are zombie-mode NRx2 writes now, which a driver on the hardware can really make; waiting for the pulse's low half is something no program on the console can do.",
+                                             "no effect");
         r->toggle.attach(param(processor, ids::volEdges));
         edges_ = r.get();
         states->add(std::move(r));

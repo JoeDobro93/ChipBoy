@@ -47,6 +47,26 @@ struct ScopeBuffers {
     std::array<std::atomic<uint64_t>, 4> state{};  ///< link::packState per channel
     std::array<std::atomic<uint64_t>, 4> state2{}; ///< link::packState2: the running state
     std::atomic<uint32_t> mix{ 0 };               ///< NR50 | NR51 << 8 | powered << 16
+    /// The table run per channel (docs/COMMANDS_AND_TEMPO.md section 32),
+    /// packed by packTableRun(): which table is running, the row it is on and
+    /// a serial that counts the runs, so a window showing one table can
+    /// highlight the row of the run that started last.
+    std::array<std::atomic<uint32_t>, 4> tableRun{};
 };
+
+/// row + 1 (0 = no table running) | slot << 7 | run << 14.
+inline uint32_t packTableRun(const driver::VoiceView& v)
+{
+    const uint32_t row = v.tableRow < 0 ? 0u : uint32_t(v.tableRow + 1) & 127u;
+    return row | (uint32_t(v.tableSlot & 127) << 7) | (uint32_t(v.tableRun) << 14);
+}
+/// What packTableRun() packed: `row` is -1 when no table is running.
+inline void unpackTableRun(uint32_t packed, int& slot, int& row, uint32_t& run)
+{
+    row = int(packed & 127u) - 1;
+    slot = int((packed >> 7) & 127u);
+    run = packed >> 14;
+    if (row < 0) slot = 0;
+}
 
 } // namespace chipboy::plugin

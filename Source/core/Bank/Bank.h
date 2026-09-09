@@ -38,6 +38,14 @@ enum class TableMode : uint8_t { Tick = 0, Step = 1 };
 /// note), Retrig starts the instrument again (section 8).
 enum class Overlap : uint8_t { Legato = 0, Retrig = 1 };
 enum class FrameLoop : uint8_t { Loop = 0, Once = 1, PingPong = 2 };
+/// How the instrument's level is made (docs/COMMANDS_AND_TEMPO.md section 27):
+/// Chip is the chip's own NRx2 envelope -- an initial volume, a direction and
+/// one of its seven rates -- and Shaped is an ADSR the driver renders one
+/// level per tick and writes through zombie mode (section 26).
+enum class EnvMode : uint8_t { Chip = 0, Shaped = 1 };
+/// A shaped segment's shape: Linear moves evenly, Exponential fast at the
+/// start, Logarithmic slowly at the start (section 27).
+enum class EnvCurve : uint8_t { Linear = 0, Exponential = 1, Logarithmic = 2 };
 enum class KitLoop : uint8_t { Once = 0, Loop = 1, FromPoint = 2 };
 enum class TableEnd : uint8_t { Loop = 0, Hop = 1, Stop = 2 };
 
@@ -97,6 +105,30 @@ struct Vibrato {
     uint8_t  delay = 0;     ///< ticks before it starts
 };
 
+/// The shaped envelope (section 27): Attack from silence to Peak, Decay to
+/// Sustain, which is held while the note is, and a Release from the level at
+/// note-off to silence, each in ticks and each with its own curve. It is
+/// rendered one level per tick (0-15; the wave channel takes the four NR32
+/// levels), so a playback ROM can replay it from a list.
+struct Envelope {
+    EnvMode  mode = EnvMode::Chip;
+    uint8_t  attackTicks = 0;      ///< 0-255; 0 starts at the peak
+    uint8_t  peak = 15;            ///< 0-15
+    uint8_t  decayTicks = 0;       ///< 0-255; 0 drops to the sustain at once
+    uint8_t  sustain = 15;         ///< 0-15, held while the note is held
+    uint8_t  releaseTicks = 0;     ///< 0-255; 0 is silent at once
+    EnvCurve attackCurve = EnvCurve::Linear;
+    EnvCurve decayCurve = EnvCurve::Linear;
+    EnvCurve releaseCurve = EnvCurve::Linear;
+};
+
+/// The level a shaped segment has reached: `from` to `to` over `ticks`, at
+/// tick `t` (0 at the segment's start, `ticks` at its end). Integer, so the
+/// driver, a test and a playback ROM all agree on the list (section 27):
+/// linear is t / n, exponential (fast start) 1 - (1 - t/n)^2 and logarithmic
+/// (slow start) (t/n)^2, rounded half away from zero.
+int envSegmentLevel(int from, int to, int ticks, int t, EnvCurve curve);
+
 /// The part of an instrument the driver latches. Trivially copyable.
 struct InstrumentCore {
     InstrumentType type = InstrumentType::Pulse;
@@ -117,6 +149,7 @@ struct InstrumentCore {
     uint8_t  envVol = 15;
     EnvDir   envDir = EnvDir::Down;
     uint8_t  envRate = 0;            ///< 0 = hold
+    Envelope env;                    ///< Chip by default; Shaped renders its own level (section 27)
     uint8_t  sweepRate = 0;          ///< PU1 only
     bool     sweepDown = false;
     uint8_t  sweepShift = 0;

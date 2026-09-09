@@ -1,10 +1,11 @@
 // ChipBoy -- tracker playback and record (UI_DESIGN section 7,
-// docs/COMMANDS_AND_TEMPO.md sections 4 and 9).
+// docs/COMMANDS_AND_TEMPO.md sections 4, 9 and 25).
 //
-// The song is counted in ticks, not beats: a bar is beatsPerBar x 24 ticks and
-// the groove says how many ticks each step lasts. The Clock says which ticks
-// fall in this block and what their absolute tick numbers are; a step fires on
-// the tick it starts on, so the Host and Song tempo sources are one code path.
+// The song is counted in ticks, not beats, and every channel keeps its own
+// time: a row lasts as long as its phrase's groove makes it, and each channel
+// moves to its next row when its own row ends. The Clock says which ticks fall
+// in this block and what their absolute tick numbers are; a step fires on the
+// tick it starts on, so the Host and Song tempo sources are one code path.
 // Record turns incoming notes and command slots into cells, quantised to the
 // channel's own step grid, as messages for the message thread to apply.
 #pragma once
@@ -23,7 +24,7 @@ namespace chipboy::tracker {
 struct RecordMessage {
     uint8_t channel = 0;
     uint16_t phraseSlot = 0;     ///< 0 = allocate the next free phrase and chain it
-    uint16_t bar = 0;
+    uint16_t row = 0;            ///< the channel's own row (section 25)
     uint8_t step = 0;
     bool    slotsOnly = false;   ///< a slot changed with no note: merge, keep the cell's note
     Cell cell;
@@ -33,10 +34,6 @@ class Player {
 public:
     void prepare(double sampleRate);
     void setSong(const Song* s) { song_ = s; }
-    /// Ticks in a bar of the song's own step count, from the Clock (the
-    /// host's signature, or the song's). A bar that overrides the step count
-    /// is shorter or longer than this in proportion (section 11).
-    void setBarTicks(int t) { barTicks_ = t > 0 ? t : driver::kTicksPerBeat * 4; }
     /// Channels whose lane is silenced (bit per channel), e.g. while recording.
     void setMuteMask(uint32_t m) { muteMask_ = m; }
     /// The G in this channel's command slots, or kGrooveNone when neither slot
@@ -53,10 +50,10 @@ public:
 
     /// Recording: the step of this channel's own grid nearest an absolute
     /// tick, and where that step is.
-    bool quantise(int ch, double tick, int& bar, int& step, int64_t& stepTick) const;
+    bool quantise(int ch, double tick, int& row, int& step, int64_t& stepTick) const;
     /// Does a step of this channel's grid start on that tick? The recorder
     /// reads the command slots at the step, not at the block start (9.4).
-    bool stepAt(int ch, int64_t tick, int& bar, int& step) const;
+    bool stepAt(int ch, int64_t tick, int& row, int& step) const;
 
     /// The cell a note writes (section 9.4): the note and its velocity, the
     /// instrument column filled when the note was plain and blank when it was
@@ -72,16 +69,19 @@ public:
     bool recordSlots(int ch, double tick, const bank::Command& c1, const bank::Command& c2, RecordMessage& out, bool force = false);
     void resetRecord();
 
-    struct Position { int bar = -1; int step = -1; uint8_t phrase = 0; };
+    /// Where a channel is: its own row and step, and the phrase playing there
+    /// (section 25). Two channels whose phrases differ in length show
+    /// different rows, which is the point.
+    struct Position { int row = -1; int step = -1; uint8_t phrase = 0; };
     const Position& position(int ch) const { return pos_[size_t(ch & 3)]; }
     bool playing() const { return playing_; }
 
-    /// Step boundaries of a phrase in ticks from the bar start (kMaxSteps + 1
-    /// entries). `barSteps` is the bar's own step count, 0 for the song's.
-    void stepTicks(const Phrase* p, int* startTicks, uint8_t grooveSlot = kGrooveNone, int barSteps = 0) const;
+    /// Step boundaries of a phrase in ticks from its row's start (kMaxSteps + 1
+    /// entries), under the groove in force.
+    void stepTicks(const Phrase* p, int* startTicks, uint8_t grooveSlot = kGrooveNone) const;
 
 private:
-    void fireStep(int ch, int bar, int step, uint8_t phraseSlot, uint32_t offset, std::vector<driver::NoteEvent>& out);
+    void fireStep(int ch, int row, int step, uint8_t phraseSlot, uint32_t offset, std::vector<driver::NoteEvent>& out);
     /// Silence a channel unconditionally (section 9.1): a Tracker note-off is
     /// dropped by the driver's source gate once the lane has gone.
     void allNotesOff(int ch, uint32_t offset, std::vector<driver::NoteEvent>& out);
@@ -95,13 +95,12 @@ private:
     enum class SlotWrite : uint8_t { Changed, Plain, Bare, All };
     void slotCells(int ch, const bank::Command& c1, const bank::Command& c2,
                    SlotWrite mode, bank::Command& o1, bank::Command& o2);
-    bool stepHasNote(int ch, int bar, int step) const;
-    /// The step after this one, wrapping into the next bar.
-    bool nextStep(int ch, int& bar, int& step, int64_t& stepTick) const;
+    bool stepHasNote(int ch, int row, int step) const;
+    /// The step after this one, wrapping into the next row.
+    bool nextStep(int ch, int& row, int& step, int64_t& stepTick) const;
 
     const Song* song_ = nullptr;
     double sampleRate_ = 48000.0;
-    int barTicks_ = driver::kTicksPerBeat * 4;
     bool playing_ = false;
     uint32_t muteMask_ = 0;
     Position pos_[4];
@@ -112,9 +111,9 @@ private:
     bool    ownedNotes_[4] = { false, false, false, false };
     int64_t lastTick_ = -1;
     bool    haveTick_ = false;
-    // The last step each channel fired, so a groove change mid-bar moves the
+    // The last step each channel fired, so a groove change mid-row moves the
     // steps that follow without playing one twice.
-    int     firedBar_[4] = { -1, -1, -1, -1 };
+    int     firedRow_[4] = { -1, -1, -1, -1 };
     int     firedStep_[4] = { -1, -1, -1, -1 };
     uint8_t grooveParam_[4] = { kGrooveNone, kGrooveNone, kGrooveNone, kGrooveNone };  ///< from a G slot
     uint8_t grooveCell_[4] = { kGrooveNone, kGrooveNone, kGrooveNone, kGrooveNone };   ///< from the last G cell
