@@ -173,6 +173,13 @@ public:
 
     /// Pitch helpers, public because the UI shows them.
     static int  periodForNote(double note, bool waveChannel);     ///< -1 below range
+    /// One entry of the note table: a whole semitone's period, as LSDj holds
+    /// it. `periodForNote` interpolates between two of these in period units.
+    static int  periodOfSemitone(int note, bool waveChannel);
+    static double periodRealForNote(double note, bool waveChannel);   ///< unrounded, for Drum
+    /// P's step per pitch update in 1/256 of a semitone, for a magnitude 0-127
+    /// (docs/LSDJ_PARITY.md section 5). Public so a test can pin the table.
+    static int  bendStepFor(int magnitude);
     static void noisePairForNote(int note, uint8_t& shift, uint8_t& divisor);
     static double noiseClockHz(uint8_t shift, uint8_t divisor);
 
@@ -186,28 +193,35 @@ private:
         double   bend = 0.0;
         int16_t  basePeriod = 0;
         int16_t  lastPeriod = -1;
-        // --- pitch (section 7): the note in 1/32 semitones plus an offset in
-        // period units. P, L and V move one or the other; vibrato is computed
-        // from the phase, never accumulated.
-        int32_t  fineOffset = 0;      ///< Drum-mode P and its slides, 1/32 semitones
-        int16_t  pOffset = 0;         ///< P and slides in NRx3/NRx4 units
-        int16_t  bendSpeed = 0;       ///< P's speed per pitch update (units, or 1/32 semitones in Drum)
-        bool     sliding = false, slideDrum = false;
-        int32_t  slideFrom = 0;       ///< the residual L started from, in its own domain
+        // --- pitch (section 7): the note in 1/256 semitones, which is what P,
+        // L and V all move outside Drum, where the period register itself is
+        // what moves. Vibrato is computed from the phase, never accumulated.
+        int32_t  fineOffset = 0;      ///< P and Step's offset, 1/256 semitones
+        int32_t  fineQueued = 0;      ///< ... and what the next update is to add to it
+        double   drumOffset = 0.0;    ///< Drum-mode P, in period register units
+        int16_t  bendSpeed = 0;       ///< P's signed argument, -128..127
+        bool     sliding = false;
+        int32_t  slideOff256 = 0;     ///< what is left of the slide, 1/256 semitones
+        int32_t  slideStep256 = 0;    ///< and what one update takes off it
         int32_t  slideLeft = 0, slideTotal = 0;   ///< updates remaining, and the duration
-        int32_t  pitchNowFine = 0, pitchNowPeriod = 0;   ///< where the channel is, as of the last write
+        int32_t  pitchNowFine = 0;    ///< where the channel is, as of the last write, 1/256 semitones
         bool     pitchValid = false;  ///< something has sounded, so a slide has somewhere to come from
-        uint64_t pitchClock = 0;      ///< the 360 Hz clock's next update, in CPU cycles
         bool     pitchClockOn = false;
+        bool     pitchWrite = false;  ///< something moved the pitch last update: write it once more
         uint8_t  pitchCount = 0;      ///< Tick mode: ticks since P and V last advanced
         uint32_t ticks = 0;
-        uint32_t vibPhase = 0;        ///< 1/65536 of a vibrato cycle
+        uint32_t vibPhase9 = 0;       ///< the vibrato phase in ninths of 1/64 of a cycle
         uint8_t  vibSpeed = 0, vibDepth = 0; bank::VibShape vibShape = bank::VibShape::Triangle;
+        /// The vibrato runs. A `V` always turns it on -- its depth 0 is an eighth
+        /// of a semitone, LSDj's smallest, and its speed 0 is the slowest, not
+        /// "off" -- while the instrument's own vibrato is off at depth 0.
+        bool     vibOn = false;
         bank::VibDir vibDir = bank::VibDir::Down; uint8_t vibDelay = 0;
         uint8_t  tableSlot = 0, tableStep = 0, tableRow = 0; bool tableOn = false;
         uint16_t tableRun = 0;                        ///< counts this channel's table runs (section 32)
         uint16_t tableWait = 0;                       ///< ticks left of the row in force
         uint8_t  tableGroove = 0;                     ///< the groove a G inside the table asked for
+        uint8_t  hopLeft = 0, hopFrom = 0xFF;         ///< H's `times` counter and the row it counts for
         uint8_t  tableOverride = 0, tableParam = 0;   ///< in force (parameter or cell), and the parameter it came from
         uint8_t  chord[3] = { 0, 0, 0 }; uint8_t chordN = 0, chordIdx = 0, chordCount = 0;
         uint8_t  dutyIdx = 0, duty = 2;
@@ -232,6 +246,12 @@ private:
         uint16_t shapedTick = 0;           ///< ticks into the envelope, or into the release
         uint8_t  shapedFrom = 0;           ///< the level the release started from
         bool     tableJustStarted = false; ///< row 0 fired with the note-on (section 31)
+        // The instrument's own envelope, run in software (section 26): LSDj
+        // never lets the chip's envelope run -- NRx2 always goes out with the
+        // period nibble at 8, a hold -- and steps the level itself on the
+        // measured table of pitch-clock periods.
+        uint32_t envCount = 0;             ///< pitch-clock periods since the level last stepped
+        bool     retrigFast = false;       ///< R x = 8: the retrigger runs on the pitch clock
         uint8_t  sweepRate = 0, sweepShift = 0; bool sweepDown = false;
         uint8_t  noiseShift = 5, noiseDiv = 1; bool lfsr7 = false; int8_t noiseSweep = 0;
         bank::Pan pan = bank::Pan::Both;
@@ -245,8 +265,9 @@ private:
         uint32_t kitLoopsStreamed = 0;
         // counters
         int16_t  delay = -1, kill = -1;
-        uint8_t  retrigEvery = 0; uint16_t retrigCount = 0; bool retrigOnce = false;
+        uint8_t  retrigEvery = 0; uint16_t retrigCount = 0; bool retrigOn = false;
         bool     releasing = false;                   ///< Release note-off: WAV/KIT steps the level down
+        bool     pulseReleasing = false;              ///< ... and PU/NOI let the software envelope finish
         bool     pendingOn = false, pendingPlain = true; uint8_t pendingNote = 0, pendingVel = 0;
         /// Where the note's volume comes from: 0 MIDI (the Velocity mode decides),
         /// 1 a cell with a blank VEL (the instrument's volume), 2 a cell's VEL.
@@ -278,9 +299,12 @@ private:
     // block state
     std::vector<RegWrite>* out_ = nullptr;
     uint64_t cycle_ = 0;                 ///< the current tick's cycle
-    uint32_t burst_ = 0;                 ///< writes emitted at this cycle so far
+    uint64_t burst_ = 0;                 ///< cycles into the burst of writes at this cycle
 
     void emit(uint16_t addr, uint8_t v, bool force = false);
+    /// A retrigger (section 8): LSDj writes the whole note-on sequence again --
+    /// sweep, duty, level, period, trigger -- not just the trigger.
+    void retrigger(int ch, bool full);
     void emitAt(uint64_t cycle, uint16_t addr, uint8_t v);
     void tick(int ch);
     void tickAll();
@@ -299,6 +323,7 @@ private:
     void startVoice(int ch, uint8_t note, uint8_t vel, bool plain);
     void stopVoice(int ch, bool kill);
     void killDac(int ch);                     ///< the DAC-off writes, held notes left alone
+    void killLevel(int ch);                   ///< a K, and the end of a note: a zombie ramp to zero
     void allNotesOff(int ch);                 ///< unconditional silence: CC120/123 and every flush
     void beginRelease(int ch);                ///< the Release note-off mode
     void stepRelease(int ch);                 ///< WAV/KIT: 100 -> 50 -> 25 -> mute, a tick apart
@@ -330,7 +355,9 @@ private:
     /// A table's volume column, an E or a level lane taking the level over:
     /// the remaining segments stop until the next plain note-on (section 27).
     void takeShaped(int ch) { v_[size_t(ch & 3)].shapedTaken = true; }
-    void writeNr51();
+    /// The pan gates. LSDj writes NR51 at every note-on whether or not it
+    /// changed (measured), which is what `force` is for.
+    void writeNr51(bool force = false);
     void writeNr50(uint8_t l, uint8_t r);
     void applyCommand(int ch, const bank::Command& c, bool fromTable);
     /// A letter going back to where the instrument left it: what a slot going
@@ -369,14 +396,18 @@ private:
     void beginTableRun(int ch, uint8_t slot);
     uint16_t tableRowTicks(int ch, int row) const;    ///< the table's own groove, else one tick
     /// One pitch update: the vibrato phase, a slide and a P bend advance, and
-    /// the period goes out without a trigger. The 360 Hz clock calls this in
+    /// the period goes out without a trigger. The 358 Hz clock calls this in
     /// Fast, Step and Drum; the tick calls it in Tick.
     void pitchStep(int ch, bool onTick);
     void restartPitchClock(int ch);
     bank::PitchSpeed pitchSpeed(const Voice& v) const;
     double  noteOfVoice(int ch) const;                ///< the note in semitones, vibrato apart
-    int     vibratoFine(const Voice& v) const;        ///< 1/32 semitones, from the phase
-    int32_t slideResidual(const Voice& v) const;      ///< what is left of the slide, in its domain
+    int     vibratoFine(const Voice& v) const;        ///< 1/256 semitones, from the phase
+    double  vibratoDrumUnits(const Voice& v) const;   ///< the same swing in period units (Drum)
+    /// One step of the instrument's own envelope, run in software off the
+    /// pitch clock at the measured rate (docs/LSDJ_PARITY.md section 7).
+    void    stepSoftEnvelope(int ch);
+    int32_t slideResidual(const Voice& v) const;      ///< what is left of the slide, 1/256 semitones
     void loadFrame(int ch, const bank::Frame& f, bool trigger);
     void updateWaveTimer(int ch, uint16_t freq, bool trigger);
     void scheduleStreams(uint64_t cycleStart, uint64_t cycleEnd);
@@ -405,7 +436,15 @@ private:
     std::array<uint8_t, 0x30> shadow_{};
     std::array<bool, 0x30>    known_{};
     uint8_t masterL_ = 255, masterR_ = 255;
+    /// The mixer registers a driver writes once, at its own initialisation,
+    /// before any note (LSDj does it while its interface is still up).
+    bool mixerInit_ = false;
     uint64_t tickCount_ = 0;
+    /// The pitch clock: one for the driver, free-running, never restarted at a
+    /// note (docs/LSDJ_PARITY.md section 1). `pitchClockAt_` is the cycle of
+    /// its next update.
+    uint64_t pitchClockAt_ = 0;
+    bool     pitchClockValid_ = false;
     bool     notesOnTick_ = false;
     bool     inNoteOn_ = false;   ///< commands set state; the note's own writes carry it
     /// Notes waiting for the next tick while notes-on-tick is on; they survive

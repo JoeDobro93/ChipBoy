@@ -13,14 +13,61 @@ constexpr uint32_t kBurstSpacing = 20;     ///< cycles between consecutive write
 constexpr uint32_t kCpuHz = 4194304u;
 constexpr int      kMaxTicksPerBlock = 512;
 
-/// The pitch clock (section 7): 11651 CPU cycles is 360.0 Hz. Every voice has
-/// its own, restarted at each plain note-on, so a note's vibrato and slide are
-/// the same whatever sample the note started on.
-constexpr uint64_t kPitchCycles = 11651;
-constexpr uint32_t kVibCycle = 65536;      ///< one vibrato cycle, in phase units
+/// The pitch clock (section 7). LSDj sets the Game Boy's timer once, at boot,
+/// and never moves it: the interrupt is every **11712 cycles** -- 358.12 Hz,
+/// measured (docs/LSDJ_PARITY.md section 1). It is one clock for the whole
+/// driver and it free-runs: it is not restarted at a note-on, because a real
+/// driver's timer does not know that a note began. Where in that period a note
+/// falls is where the player pressed play, not a property of the driver.
+constexpr uint64_t kPitchCycles = 11712;
 
-/// V's depth, in 1/32 semitones: LSDj's table, 0 = 1/8 of a semitone, 15 = 8.
-constexpr int kVibDepthFine[16] = { 4, 8, 12, 16, 24, 32, 48, 64, 80, 96, 112, 128, 160, 192, 224, 256 };
+/// The vibrato's phase is a six-bit counter, 0-63 to the cycle, and the speed
+/// is the step: **one cycle is 64/(x+1) updates** (measured for every speed).
+/// It is carried in ninths of a phase unit so that Tick mode's steps, which
+/// are thirds and ninths of one, are exact.
+constexpr uint32_t kVibPhase = 64;
+constexpr uint32_t kVibNinths = kVibPhase * 9;
+
+/// Tick mode's phase step per tracker tick, in ninths of a phase unit
+/// (measured, docs/LSDJ_PARITY.md section 3): one cycle is 96, 72, 64, 48, 36,
+/// 32, 24, 18, 16, 12, 9, 8, 6, 4.5, 4 or 3 **ticks** -- the period halves
+/// every three speeds, so it is not 64/(x+1) as the pitch clock's is.
+constexpr uint32_t kVibTickStep9[16] = { 6, 8, 9, 12, 16, 18, 24, 32, 36, 48, 64, 72, 96, 128, 144, 192 };
+
+/// V's depth in 1/256 semitones: LSDj's own table, confirmed for every depth
+/// against the ROM -- 0 is an eighth of a semitone and 15 is eight.
+constexpr int kVibDepth256[16] = {
+    32, 64, 96, 128, 192, 256, 384, 512, 640, 768, 896, 1024, 1280, 1536, 1792, 2048
+};
+
+/// P's step per pitch update, in 1/256 of a semitone, for a magnitude 0-127.
+/// Measured over all 127 values: the step is the sum of a ramp that rises by
+/// one every four, `sum(ceil(j/4), j = 1..m)`, which closes to the form below
+/// and fits the whole sweep to a part in a hundred (docs/LSDJ_PARITY.md 5).
+constexpr int bendStep256(int m)
+{
+    const int q = m / 4, r = m % 4;
+    return (q + 1) * (2 * q + r);
+}
+
+/// Drum mode works in the period register, and one semitone of a pitch effect
+/// is worth this many period units there whatever the note -- measured over
+/// P's whole sweep of 127 values (19.110) and over V's sixteen depths (19.1).
+/// It is the same constant for both, which is what says Drum is one domain and
+/// not two (docs/LSDJ_PARITY.md sections 3 and 5).
+constexpr double kDrumUnitsPerSemitone = 19.11;
+
+/// The instrument envelope's own step interval, in pitch-clock periods, for
+/// the ENV nibble's rates 1-7 (measured; 6 and 7 are the same interval).
+/// LSDj never lets the chip's envelope run -- it writes NRx2 with the period
+/// nibble at 8, a hold -- and steps the level itself on this table.
+constexpr int kEnvStepPeriods[8] = { 0, 6, 11, 15, 20, 27, 36, 36 };
+
+/// The spacing of the NRx2 writes a level change is made of (measured): the
+/// three writes of one step down are sixteen cycles apart and successive steps
+/// a hundred and twelve, one step up is a single write and they come
+/// sixty-eight apart.
+constexpr uint32_t kZombieInner = 16, kZombieDownStep = 112, kZombieUpStep = 68;
 
 uint16_t regAddr(int ch, int r) { return uint16_t(0xFF10 + ch * 5 + r); }
 
@@ -72,90 +119,73 @@ uint8_t zombieVolume(uint8_t vol, uint8_t oldPeriod, bool oldUp, bool running, b
     return uint8_t(v & 15);
 }
 
-/// The NRx2 byte for one step of a sequence: the level in the high nibble --
-/// which the chip only reads at the next trigger, so it is free, and saying
-/// the target there is what makes a register log readable -- the direction
-/// bit, and the period. A byte whose top five bits are zero would clear the
-/// DAC and stop the channel, so the level 0 with the direction down is
-/// written as level 1 instead; the volume it lands on is the same.
-uint8_t nrx2Byte(int level, bool up, uint8_t period)
-{
-    uint8_t b = uint8_t((uint8_t(level & 15) << 4) | (up ? 0x08 : 0) | (period & 7));
-    if ((b & 0xF8) == 0) b = uint8_t(0x10 | (period & 7));
-    return b;
-}
+/// The NRx2 byte a note-on writes: the level in the high nibble and the low
+/// nibble **forced to 8** -- amplitude, direction up, envelope period zero.
+/// LSDj writes that for every instrument, whatever the ENV byte says, and runs
+/// the envelope itself (docs/LSDJ_PARITY.md section 2); the direction bit
+/// matters because it is the state every later zombie write starts from, and
+/// because it leaves the DAC on at level zero.
+uint8_t nrx2Hold(int level) { return uint8_t((uint8_t(level & 15) << 4) | 0x08); }
 
-/// The shortest sequence of NRx2 writes from `vol` to `target` that ends with
-/// the wanted period and direction in the register. A breadth-first search
-/// over (volume, period, direction) -- sixty-four states, two or four moves
-/// each -- so the answer is the shortest by construction whatever the rules
-/// do. `dirFree` lets the search end on either direction bit, which is what a
-/// holding envelope wants: with the period at zero the bit says nothing about
-/// the sound. Returns how many writes were found and fills `outUp` /
-/// `outPeriod`; when the target cannot be reached at all (an envelope that has
-/// run to its rail can only move in twos) the nearest volume is taken.
-int zombieSequence(uint8_t vol, bool up, uint8_t period, bool running,
-                   int target, uint8_t wantPeriod, bool wantUp, bool dirFree,
-                   bool* outUp, uint8_t* outPeriod, int maxWrites)
+/// The two zombie-mode steps, byte for byte as the ROM writes them: one step
+/// **down** is `09 11 18` and one step **up** is `08` (measured on both
+/// consoles). Under the APU's own rule, from a holding envelope, the triple
+/// lands on v - 1 and the single on v + 1.
+constexpr uint8_t kZombieDown[3] = { 0x09, 0x11, 0x18 };
+constexpr uint8_t kZombieUp = 0x08;
+
+/// What one NRx2 byte does to the chip's volume, given the register state
+/// before it: this is `Apu::writeSquare` case 2, so the driver's model of the
+/// volume and the chip's stay together.
+uint8_t zombieAfter(uint8_t vol, uint8_t oldPeriod, bool oldUp, bool running, uint8_t value)
 {
-    struct Node { int16_t from = -1; uint8_t vol = 0; bool up = false; uint8_t period = 0; uint8_t depth = 0; };
-    // A state is (volume, direction, period). After the first write the period
-    // is one of two -- zero, or the one asked for -- so three classes cover
-    // everything, the third being whatever the channel started at.
-    const uint8_t periods[2] = { 0, wantPeriod };
-    auto pclass = [&](uint8_t p) { return p == 0 ? 0 : p == wantPeriod ? 1 : 2; };
-    auto index = [&](uint8_t v, bool u, uint8_t p) { return int(v) | (u ? 16 : 0) | (pclass(p) << 5); };
-    Node nodes[96];
-    int order[96]; int head = 0, tail = 0;
-    bool seen[96] = {};
-    const int start = index(vol, up, period);
-    nodes[start] = { -1, vol, up, period, 0 };
-    seen[start] = true; order[tail++] = start;
-    int best = -1, bestScore = 1 << 20;
-    while (head < tail) {
-        const int cur = order[head++];
-        const Node n = nodes[cur];
-        const bool goal = (n.period == wantPeriod) && (dirFree || n.up == wantUp);
-        if (goal) {
-            const int score = std::abs(int(n.vol) - target) * 64 + n.depth;
-            if (score < bestScore) { bestScore = score; best = cur; }
-            if (n.vol == target) break;                 // shortest exact answer: nothing later can beat it
-        }
-        if (int(n.depth) >= maxWrites) continue;
-        for (int d = 0; d < 2; ++d)
-            for (int pi = 0; pi < 2; ++pi) {
-                if (pi == 1 && periods[1] == periods[0]) continue;
-                const bool nu = d != 0;
-                const uint8_t np = periods[pi];
-                const uint8_t nv = zombieVolume(n.vol, n.period, n.up, running, nu);
-                const int idx = index(nv, nu, np);
-                if (seen[idx]) continue;
-                seen[idx] = true;
-                nodes[idx] = { int16_t(cur), nv, nu, np, uint8_t(n.depth + 1) };
-                order[tail++] = idx;
-            }
-    }
-    if (best < 0) return -1;
-    int i = nodes[best].depth;
-    const int depth = i;
-    for (int at = best; nodes[at].from >= 0; at = nodes[at].from) {
-        --i;
-        outUp[size_t(i)] = nodes[at].up;
-        outPeriod[size_t(i)] = nodes[at].period;
-    }
-    return depth;
+    return zombieVolume(vol, oldPeriod, oldUp, running, (value & 0x08) != 0);
 }
 
 } // namespace
 
 /* ------------------------------------------------------------ pitch */
 
+/// One entry of the note table: the period of a whole semitone, rounded, as
+/// LSDj's own table holds it.
+int Driver::periodOfSemitone(int note, bool waveChannel)
+{
+    const double p = 2048.0 - (waveChannel ? 65536.0 : 131072.0) / noteHz(double(note));
+    if (p < 0.0) return -1;
+    return std::min(2047, int(std::floor(p + 0.5)));
+}
+
+/// The period of a note and a fraction. The table is one entry a semitone and
+/// the fraction is interpolated **in period units**, not in frequency: LSDj
+/// does that, and it is measurable -- a vibrato half a semitone below C-5
+/// lands on 1791, where the exponential curve gives 1790. Whole notes are the
+/// same number either way (docs/LSDJ_PARITY.md section 3).
 int Driver::periodForNote(double note, bool waveChannel)
 {
-    const double hz = noteHz(note);
-    const double p = 2048.0 - (waveChannel ? 65536.0 : 131072.0) / hz;
-    if (p < 0.0) return -1;
-    return std::min(2047, int(std::lround(p)));
+    const double base = std::floor(note);
+    const int lo = periodOfSemitone(int(base), waveChannel);
+    if (lo < 0) return -1;
+    const double frac = note - base;
+    if (frac <= 0.0) return lo;
+    const int hi = periodOfSemitone(int(base) + 1, waveChannel);
+    if (hi < 0) return lo;
+    return std::min(2047, int(std::floor(double(lo) + frac * double(hi - lo) + 0.5)));
+}
+
+/// The same, unrounded, for Drum mode, where the offsets are period units and
+/// the rounding happens once at the end.
+int Driver::bendStepFor(int magnitude) { return bendStep256(std::clamp(magnitude, 0, 127)); }
+
+double Driver::periodRealForNote(double note, bool waveChannel)
+{
+    const double base = std::floor(note);
+    const int lo = periodOfSemitone(int(base), waveChannel);
+    if (lo < 0) return -1.0;
+    const double frac = note - base;
+    if (frac <= 0.0) return double(lo);
+    const int hi = periodOfSemitone(int(base) + 1, waveChannel);
+    if (hi < 0) return double(lo);
+    return double(lo) + frac * double(hi - lo);
 }
 
 double Driver::noiseClockHz(uint8_t shift, uint8_t divisor)
@@ -200,6 +230,7 @@ void Driver::reset()
     for (auto& k : known_) k = false;     // the first write of anything lands
     masterL_ = masterR_ = 255;
     tickCount_ = 0;
+    pitchClockAt_ = 0; pitchClockValid_ = false; mixerInit_ = false;
     pendingCount_ = 0;
     for (auto& g : tableGroove_) g.fill(0);
     for (auto& vw : view_) vw = VoiceView{};
@@ -214,8 +245,8 @@ void Driver::emit(uint16_t addr, uint8_t v, bool force)
         if (!force && known_[idx] && shadow_[idx] == v) return;
         shadow_[idx] = v; known_[idx] = true;
     }
-    out_->push_back({ cycle_ + uint64_t(burst_) * kBurstSpacing, addr, v });
-    ++burst_;
+    out_->push_back({ cycle_ + burst_, addr, v });
+    burst_ += kBurstSpacing;
 }
 
 void Driver::emitAt(uint64_t cycle, uint16_t addr, uint8_t v)
@@ -303,8 +334,9 @@ void Driver::latch(int ch)
     v.pan = p.pan != 255 ? Pan(p.pan & 3) : i.pan;
     v.vibShape = i.vib.shape;
     v.vibDir = i.vib.dir;
-    v.vibSpeed = uint8_t(std::clamp<int>(i.vib.speed, 1, 15));
+    v.vibSpeed = uint8_t(std::clamp<int>(i.vib.speed, 0, 15));
     v.vibDepth = i.vib.depth;
+    v.vibOn = i.vib.depth != 0;
     v.vibDelay = i.vib.delay;
     v.waveSlot = i.wave;
     v.waveLevel = i.waveLevel;
@@ -493,7 +525,7 @@ void Driver::beginRelease(int ch)
 {
     Voice& v = v_[size_t(ch)];
     v.active = false; v.tableOn = false; v.sliding = false; v.chordN = 0;
-    v.pitchClockOn = false; v.retrigEvery = 0; v.retrigOnce = false; v.bendSpeed = 0;
+    v.pitchClockOn = false; v.retrigEvery = 0; v.retrigOn = false; v.retrigFast = false; v.bendSpeed = 0;
     // A shaped envelope has its own release: from the level the note-off found
     // to silence, one level per tick, over its own curve (section 27). A level
     // change that took the envelope over leaves the chip's release instead.
@@ -515,8 +547,12 @@ void Driver::beginRelease(int ch)
     // the volume with it -- and never through a trigger (section 26).
     if (v.dacOn && (v.envRate == 0 || v.envDir == EnvDir::Up)) {
         v.envRate = 1; v.envDir = EnvDir::Down;
+        v.envCount = 0;
         setLevel(ch);
     }
+    // The driver runs the fade itself, off the pitch clock, and the note ends
+    // when it reaches silence (sections 26 and 8).
+    v.pulseReleasing = v.dacOn;
 }
 
 /// WAV and KIT have no envelope generator, so their release is four levels one
@@ -572,12 +608,12 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     const uint8_t hadTable = v.tableSlot;
     v.inst = core; v.haveInst = true;
     latch(ch);
-    v.note = note; v.vel = vel; v.active = true; v.killed = false; v.releasing = false;
+    v.note = note; v.vel = vel; v.active = true; v.killed = false; v.releasing = false; v.pulseReleasing = false;
     v.instKey = instrumentKey(ch, vel);
-    v.ticks = 0; v.vibPhase = 0; v.pitchCount = 0;
-    v.pOffset = 0; v.fineOffset = 0; v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0;
+    v.ticks = 0; v.vibPhase9 = 0; v.pitchCount = 0;
+    v.fineOffset = 0; v.fineQueued = 0; v.drumOffset = 0.0; v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0;
     v.chordN = 0; v.chordIdx = 0; v.chordCount = 0;
-    v.dutyIdx = 0; v.kill = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOnce = false; v.lastCmd = {}; v.frameIdx = 0;
+    v.dutyIdx = 0; v.kill = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigFast = false; v.envCount = 0; v.lastCmd = {}; v.frameIdx = 0;
     v.rng = v.rng * 1664525u + 1013904223u + note;
     restartPitchClock(ch);
     // volume from velocity: a MIDI note asks the Velocity mode, a cell's VEL is
@@ -696,7 +732,23 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
             break;
         }
     }
-    writeNr51();
+    // LSDj writes the pan at every note-on whether or not it moved (measured,
+    // docs/LSDJ_PARITY.md section 2): a driver sets the mixer with the note.
+    writeNr51(true);
+}
+
+/// K, and the end of a note: LSDj takes the level to zero with the same
+/// zombie steps as any other level change -- fifteen down-triples, about
+/// 1700 cycles -- and leaves the DAC on (docs/LSDJ_PARITY.md section 9).
+/// A panic still clears the DAC: killDac() is unconditional silence.
+void Driver::killLevel(int ch)
+{
+    Voice& v = v_[size_t(ch)];
+    if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) { killDac(ch); return; }
+    if (!v.dacOn || !v.hwOn) { killDac(ch); return; }
+    v.shapedTaken = true; v.envVol = 0; v.envRate = 0;
+    setLevel(ch);
+    v.killed = true;
 }
 
 void Driver::killDac(int ch)
@@ -714,7 +766,7 @@ void Driver::stopVoice(int ch, bool kill)
 {
     Voice& v = v_[size_t(ch)];
     v.active = false; v.tableOn = false; v.sliding = false; v.chordN = 0; v.kitOn = false; v.streamActive = false; v.pendingOn = false;
-    v.pitchClockOn = false; v.releasing = false;
+    v.pitchClockOn = false; v.releasing = false; v.pulseReleasing = false;
     v.shapedOn = false; v.shapedRelease = false; v.tableJustStarted = false;
     // A kill or a stop ends the phrase: a key released afterwards must not
     // bring a note back that nobody is playing (section 8).
@@ -741,42 +793,59 @@ void Driver::allNotesOff(int ch)
     v.delay = -1; v.kill = -1;
     v.heldCmdOn = false; v.heldDelay = 0; v.heldCmd[0] = {}; v.heldCmd[1] = {};
     v.hybridSlide = {};
-    v.retrigEvery = 0; v.retrigCount = 0; v.retrigOnce = false;
+    v.retrigEvery = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigFast = false;
     v.bendSpeed = 0; v.slideLeft = 0; v.chordIdx = 0; v.chordCount = 0;
     stopVoice(ch, true);
 }
 
 /* ------------------------------------------------------------- pitch */
 
-/// What is left of a slide, in the domain it started in: period units, or
-/// 1/32 semitones in Drum. It walks to zero over the duration L asked for, so
-/// the note arrives exactly, without accumulating rounding.
+/// What is left of a slide, in 1/256 of a semitone. L walks the pitch to the
+/// note by a fixed step, `(target - source) / (x + 1)` truncated toward zero,
+/// and the offset is only exactly zero on the update *after* the last step --
+/// which is what the ROM writes (docs/LSDJ_PARITY.md section 4).
 int32_t Driver::slideResidual(const Voice& v) const
 {
-    if (!v.sliding || v.slideTotal <= 0) return 0;
-    return int32_t(int64_t(v.slideFrom) * int64_t(v.slideLeft) / int64_t(v.slideTotal));
+    return v.sliding ? v.slideOff256 : 0;
 }
 
-/// The vibrato's offset in 1/32 semitones, from the phase: the shape over one
-/// cycle scaled by LSDj's depth table, downward or upward from the note.
+/// The vibrato's offset in 1/256 semitones, from the phase. A **symmetric
+/// triangle about the note**: the phase is a six-bit counter, the offset is
+/// the depth table times the triangle, and the direction bit only says which
+/// half of the swing comes first. Saw and square keep the shape ChipBoy gave
+/// them -- one-sided, from the note -- because the ROM's own saw and square
+/// could not be read off the register log (docs/LSDJ_PARITY.md section 13).
 int Driver::vibratoFine(const Voice& v) const
 {
-    if (!v.vibDepth || !v.vibSpeed || v.ticks < v.vibDelay) return 0;
-    const uint32_t ph = v.vibPhase % kVibCycle;
-    const double half = double(kVibCycle / 2);
-    double u = 0.0;                                   // 0 at the note, 1 at full depth
+    if (!v.vibOn || v.ticks < v.vibDelay) return 0;
+    const uint32_t ph = (v.vibPhase9 / 9u) % kVibPhase;         // 0-63
+    const int depth = kVibDepth256[v.vibDepth & 15];
+    double u = 0.0;                                             // -1 .. +1
     switch (v.vibShape) {
-        case VibShape::Triangle: u = ph < kVibCycle / 2 ? double(ph) / half : 2.0 - double(ph) / half; break;
-        case VibShape::Saw:      u = double(ph) / double(kVibCycle); break;
-        case VibShape::Square:   u = ph < kVibCycle / 2 ? 0.0 : 1.0; break;
+        case VibShape::Triangle:
+            u = ph <= 16 ? double(ph) / 16.0
+              : ph <= 48 ? 2.0 - double(ph) / 16.0
+                         : double(ph) / 16.0 - 4.0;
+            break;
+        case VibShape::Saw:    u = double(ph) / double(kVibPhase); break;
+        case VibShape::Square: u = ph < kVibPhase / 2 ? 0.0 : 1.0; break;
     }
-    const int off = int(std::lround(u * kVibDepthFine[v.vibDepth & 15]));
-    return v.vibDir == VibDir::Up ? off : -off;
+    const double off = u * double(depth);
+    return v.vibDir == VibDir::Up ? int(std::lround(off)) : -int(std::lround(off));
+}
+
+/// The vibrato in Drum mode, in period units: the same triangle and the same
+/// depth table, but the swing is the period's, not the note's -- LSDj works in
+/// the register there and one semitone is worth kDrumUnitsPerSemitone units.
+double Driver::vibratoDrumUnits(const Voice& v) const
+{
+    if (!v.vibOn || v.ticks < v.vibDelay) return 0.0;
+    return double(vibratoFine(v)) / 256.0 * kDrumUnitsPerSemitone;
 }
 
 /// The note the channel is at, in semitones and vibrato apart: the note, the
 /// channel's transpose, the bend wheel, the chord, the table's transpose
-/// column, and the 1/32-semitone offsets Drum-mode P and L work in.
+/// column, and the 1/256-semitone offsets P and L work in.
 double Driver::noteOfVoice(int ch) const
 {
     const Voice& v = v_[size_t(ch)];
@@ -786,9 +855,8 @@ double Driver::noteOfVoice(int ch) const
         const Table* t = bank_->table(v.tableSlot);
         if (t) { const auto& st = t->steps[v.tableRow]; if (st.hasTranspose) note += st.transpose; }
     }
-    int32_t fine = v.fineOffset;
-    if (v.slideDrum) fine += slideResidual(v);
-    return note + double(fine) / 32.0;
+    const int32_t fine = v.fineOffset + slideResidual(v);
+    return note + double(fine) / 256.0;
 }
 
 int Driver::computePeriod(int ch)
@@ -803,23 +871,37 @@ int Driver::computePeriod(int ch)
         const double semis = p.transpose + v.bend;
         const double r = rate * std::pow(2.0, semis / 12.0);
         const double per = 2048.0 - 2097152.0 / std::max(1024.0, r);
-        return std::clamp(int(std::lround(per)) + v.pOffset + (v.slideDrum ? 0 : slideResidual(v)), 0, 2047);
+        return std::clamp(int(std::lround(per)) + int(std::lround(v.drumOffset)), 0, 2047);
     }
-    // period = periodOf(noteFine) + periodOffset (section 7): the note and the
-    // vibrato are semitones, P and a slide are register units unless the
-    // instrument's pitch speed is Drum, where they are semitones too.
-    const double note = noteOfVoice(ch) + double(vibratoFine(v)) / 32.0;
-    int per = periodForNote(note, v.inst.type == InstrumentType::Wave);
+    const bool wave = v.inst.type == InstrumentType::Wave;
+    if (pitchSpeed(v) == PitchSpeed::Drum) {
+        // Drum works in the period register: P moves it in a straight line and
+        // it **wraps at 2048** rather than clamping, which is what a P kick
+        // falling off the bottom really does (docs/LSDJ_PARITY.md section 5).
+        const int base = periodForNote(noteOfVoice(ch), wave);
+        if (base < 0) return -1;
+        double per = double(base) + v.drumOffset - vibratoDrumUnits(v);
+        per = std::fmod(per, 2048.0);
+        if (per < 0.0) per += 2048.0;
+        return std::clamp(int(std::floor(per + 0.5)), 0, 2047);
+    }
+    // period = periodOf(noteFine) (section 7): the note, the vibrato, P and a
+    // slide are all semitones outside Drum, so the whole pitch is one number.
+    const double note = noteOfVoice(ch) + double(vibratoFine(v)) / 256.0;
+    const int per = periodForNote(note, wave);
     if (per < 0) return -1;
-    per += v.pOffset;
-    if (!v.slideDrum) per += slideResidual(v);
     return std::clamp(per, 0, 2047);
 }
 
 /// One pitch update: the vibrato phase, a slide and a P bend move on, and the
-/// period goes out without a trigger. The 360 Hz clock calls this in Fast,
+/// period goes out without a trigger. The 358 Hz clock calls this in Fast,
 /// Step and Drum; the tracker tick calls it in Tick, where the instrument's
 /// command rate slows P and V to one step every rate + 1 ticks.
+///
+/// LSDj writes the period **whenever something is moving it**, and once after
+/// a note-on whether anything is moving or not -- so a plain note writes the
+/// period again one update after its trigger and then stops, and a slide
+/// writes at each of its steps and at the one that lands it on the note.
 void Driver::pitchStep(int ch, bool onTick)
 {
     Voice& v = v_[size_t(ch)];
@@ -829,25 +911,56 @@ void Driver::pitchStep(int ch, bool onTick)
         const int every = int(v.inst.cmdRate) + 1;
         if (every > 1) { if (++v.pitchCount < every) advance = false; else v.pitchCount = 0; }
     }
+    bool moving = false;
+    const bool vib = advance && v.vibOn && v.ticks >= v.vibDelay;
+    if (vib) moving = true;
+    if (v.fineQueued) { v.fineOffset += v.fineQueued; v.fineQueued = 0; moving = true; }
     if (advance) {
-        // One cycle is 720 / speed updates at 360 Hz, or 96 / speed ticks.
-        if (v.vibSpeed && v.vibDepth && v.ticks >= v.vibDelay)
-            v.vibPhase += uint32_t((uint64_t(v.vibSpeed) * kVibCycle) / (onTick ? 96u : 720u));
         if (v.bendSpeed) {
-            if (pitchSpeed(v) == PitchSpeed::Drum) v.fineOffset = std::clamp<int32_t>(v.fineOffset + v.bendSpeed * 2, -32000, 32000);
-            else                                   v.pOffset = int16_t(std::clamp<int>(v.pOffset + v.bendSpeed, -2047, 2047));
+            // In Tick mode one tick's step is **four** of the pitch clock's
+            // (measured), not the 7.46 that a tick is worth in updates.
+            const int mag = bendStep256(std::abs(int(v.bendSpeed))) * (onTick ? 4 : 1);
+            const int step = v.bendSpeed < 0 ? -mag : mag;
+            if (pitchSpeed(v) == PitchSpeed::Drum)
+                v.drumOffset += double(step) / 256.0 * kDrumUnitsPerSemitone;
+            else
+                v.fineOffset = std::clamp<int32_t>(v.fineOffset + step, -1 << 20, 1 << 20);
+            moving = true;
         }
     }
-    // A slide's duration is in updates of this clock; the command rate leaves
-    // it alone.
-    if (v.sliding) { if (v.slideLeft > 0) --v.slideLeft; if (v.slideLeft <= 0) { v.sliding = false; v.slideLeft = 0; } }
-    writePeriod(ch, false);
+    // A slide runs for x + 1 updates, each a fixed step; the step is truncated,
+    // so after them a little is usually left, and one more update snaps the
+    // pitch onto the note exactly. When the step divides the distance -- L 00,
+    // whose one step is the whole of it -- there is nothing left and no extra
+    // update, which is why L 00 writes the period once (measured).
+    if (v.sliding) {
+        if (v.slideLeft > 0) {
+            v.slideOff256 += v.slideStep256;
+            if (--v.slideLeft == 0 && v.slideOff256 == 0) v.sliding = false;
+        } else { v.sliding = false; v.slideOff256 = 0; }
+        moving = true;
+    }
+    if (moving || v.pitchWrite) writePeriod(ch, false);
+    v.pitchWrite = false;
+    // The phase steps **after** the write: the first update of a note writes
+    // the note itself, at phase zero, and the swing starts from the one after
+    // (measured). One cycle is 64/(x + 1) updates on the pitch clock, and in
+    // Tick mode the measured table of tick counts.
+    if (vib) {
+        const uint32_t step = onTick ? kVibTickStep9[v.vibSpeed & 15] : 9u * uint32_t((v.vibSpeed & 15) + 1);
+        v.vibPhase9 = (v.vibPhase9 + step) % kVibNinths;
+    }
 }
 
 void Driver::restartPitchClock(int ch)
 {
+    // The clock itself is global and free-running (kPitchCycles): a note-on
+    // does not restart it, because a real driver's timer interrupt does not
+    // know a note began. What a note-on *does* reset is the vibrato phase and
+    // the "write the period once more" flag (docs/LSDJ_PARITY.md sections 1
+    // and 3).
     Voice& v = v_[size_t(ch)];
-    v.pitchClock = cycle_ + kPitchCycles;
+    v.pitchWrite = true;
     // Noise has no pitch effects, and a kit's period is its sample rate, read
     // by the streaming timer: neither is bent between ticks.
     v.pitchClockOn = (v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Wave)
@@ -862,7 +975,7 @@ void Driver::writePeriod(int ch, bool trigger)
         if (v.inst.noiseManual) { s = v.noiseShift; d = v.noiseDiv; }
         else { const int n = std::clamp(int(v.note) + v.p.transpose, 0, 127); s = uint8_t(noiseShiftMap_[size_t(n)]); d = uint8_t(noiseDivMap_[size_t(n)]); s = uint8_t(std::clamp(int(s) + int(v.noiseShift) - 5, 0, 13)); }
         v.noiseShift = s; v.noiseDiv = d;
-        emit(regAddr(3, 3), uint8_t((s << 4) | (v.lfsr7 ? 8 : 0) | (d & 7)));
+        emit(regAddr(3, 3), uint8_t((s << 4) | (v.lfsr7 ? 8 : 0) | (d & 7)), true);
         if (trigger) { emit(regAddr(3, 4), uint8_t(0x80 | (v.inst.length ? 0x40 : 0)), true); markTrigger(ch); }
         v.lastPeriod = int16_t((s << 4) | d);
         return;
@@ -871,23 +984,22 @@ void Driver::writePeriod(int ch, bool trigger)
     if (per < 0) per = 0;
     v.basePeriod = int16_t(per);
     // Where the channel is now, for an L that fires later: the pitch without
-    // the vibrato, in both domains, the slide it is in the middle of included.
+    // the vibrato, in 1/256 semitones, the slide it is in the middle of
+    // included.
     {
-        const double note = noteOfVoice(ch);
-        v.pitchNowFine = int32_t(std::lround(note * 32.0));
-        const int base = periodForNote(note, v.inst.type == InstrumentType::Wave);
-        v.pitchNowPeriod = (base < 0 ? 0 : base) + v.pOffset + (v.slideDrum ? 0 : slideResidual(v));
+        v.pitchNowFine = int32_t(std::lround(noteOfVoice(ch) * 256.0));
         v.pitchValid = true;
     }
     const uint16_t f = uint16_t(per);
-    const bool changed = v.lastPeriod != int16_t(f);
-    if (changed || trigger) {
-        emit(regAddr(ch, 3), uint8_t(f & 0xFF), trigger || ((v.lastPeriod & 0xFF) != (f & 0xFF)));
-        const uint8_t hi = uint8_t((f >> 8) | (trigger ? 0x80 : 0) | (v.inst.length ? 0x40 : 0));
-        emit(regAddr(ch, 4), hi, trigger || ((v.lastPeriod >> 8) != (f >> 8)));
-        if (trigger && v.inst.type == InstrumentType::Pulse) markTrigger(ch);
-        if (ch == 2) updateWaveTimer(ch, f, trigger);
-    }
+    // **Both halves, every time.** LSDj writes NRx4 with every NRx3 whether or
+    // not the high bits moved (docs/LSDJ_PARITY.md section 11); there is no
+    // trigger bit in it, so it changes nothing but the log -- and the log is
+    // what a parity harness can line up.
+    emit(regAddr(ch, 3), uint8_t(f & 0xFF), true);
+    const uint8_t hi = uint8_t((f >> 8) | (trigger ? 0x80 : 0) | (v.inst.length ? 0x40 : 0));
+    emit(regAddr(ch, 4), hi, true);
+    if (trigger && v.inst.type == InstrumentType::Pulse) markTrigger(ch);
+    if (ch == 2) updateWaveTimer(ch, f, trigger);
     v.lastPeriod = int16_t(f);
 }
 
@@ -899,7 +1011,7 @@ void Driver::emitNrx2(int ch, uint8_t value)
     // DAC. What the driver *wants* (v.envVol and the rest) is not touched.
     Voice& v = v_[size_t(ch)];
     const bool newUp = (value & 0x08) != 0;
-    if (v.hwOn && v.dacOn) v.volume = zombieVolume(v.volume, v.hwPeriod, v.hwUp, v.hwRun, newUp);
+    if (v.hwOn && v.dacOn) v.volume = zombieAfter(v.volume, v.hwPeriod, v.hwUp, v.hwRun, value);
     v.hwUp = newUp;
     v.hwPeriod = uint8_t(value & 7);
     v.hwInitial = uint8_t(value >> 4);
@@ -925,10 +1037,14 @@ void Driver::writeEnvelope(int ch, bool trigger)
         emit(regAddr(2, 2), nr32Code(v.waveLevel));
         return;
     }
-    // The whole register, as a note-on writes it. Every level change that is
-    // not a note-on, R or an E moving the envelope goes through setLevel()
-    // instead, which never triggers (section 26).
-    emitNrx2(ch, uint8_t((v.envVol << 4) | (v.envDir == EnvDir::Up ? 8 : 0) | (v.envRate & 7)));
+    // The whole register, as a note-on writes it -- always with the low nibble
+    // at 8, a hold (docs/LSDJ_PARITY.md section 2). The instrument's own rate
+    // and direction are the *driver's* envelope from here and are stepped by
+    // stepSoftEnvelope(); the chip's never runs. Every level change that is not
+    // a note-on, R or an E moving the envelope goes through setLevel() instead,
+    // which never triggers (section 26).
+    emitNrx2(ch, nrx2Hold(v.envVol));
+    v.envCount = 0;
     if (trigger) {
         const uint16_t f = uint16_t(std::max<int16_t>(0, v.lastPeriod));
         if (v.inst.type == InstrumentType::Noise) emit(regAddr(3, 4), uint8_t(0x80 | (v.inst.length ? 0x40 : 0)), true);
@@ -952,20 +1068,45 @@ void Driver::setLevel(int ch)
     // what its fade is (section 26).
     if (inNoteOn_ || !v.dacOn || !v.hwOn) return;
     const int target = std::clamp<int>(v.envVol, 0, 15);
-    if (v.volume == target && v.hwPeriod == (v.envRate & 7)) return;    // already there
-    bool ups[24] = {}; uint8_t periods[24] = {};
-    const bool dirFree = (v.envRate & 7) == 0;      // a holding envelope: the direction bit says nothing
-    const int n = zombieSequence(v.volume, v.hwUp, v.hwPeriod, v.hwRun, target,
-                                 uint8_t(v.envRate & 7), v.envDir == EnvDir::Up, dirFree,
-                                 ups, periods, 16);
-    if (n <= 0) {
-        // Unreachable (a channel whose envelope has run to its rail can only
-        // move in twos) or already there: one honest write, and the model
-        // takes whatever the chip makes of it.
-        if (n < 0) emitNrx2(ch, nrx2Byte(target, v.envDir == EnvDir::Up, uint8_t(v.envRate & 7)));
+    // The steps LSDj issues, one at a time, at the tick the change was asked
+    // for: `09 11 18` to go down one and `08` to go up one, repeated to the
+    // target, whichever way round is fewer writes. Sixteen levels, so at worst
+    // fifteen steps; the direction that wraps is never taken, because the ROM
+    // never takes it.
+    uint64_t at = burst_;
+    for (int guard = 0; guard < 16 && v.volume != target; ++guard) {
+        if (v.volume > target) {
+            for (int i = 0; i < 3; ++i) { burst_ = at + uint64_t(i) * kZombieInner; emitNrx2(ch, kZombieDown[size_t(i)]); }
+            at += kZombieDownStep;
+        } else {
+            burst_ = at; emitNrx2(ch, kZombieUp);
+            at += kZombieUpStep;
+        }
+    }
+    burst_ = at;
+}
+
+/// The instrument's own envelope, run in software off the pitch clock. LSDj
+/// never lets the chip's envelope run (the register always holds), so a decay
+/// or an attack is a level change every kEnvStepPeriods[rate] pitch-clock
+/// periods, made of the same zombie writes as any other (LSDJ_PARITY 7).
+void Driver::stepSoftEnvelope(int ch)
+{
+    Voice& v = v_[size_t(ch)];
+    if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) return;
+    if (v.shapedOn) return;                     // a shaped envelope owns the level, per tick
+    const int rate = v.envRate & 7;
+    if (rate == 0 || !v.dacOn || !v.hwOn) return;
+    if (++v.envCount < uint32_t(kEnvStepPeriods[rate])) return;
+    v.envCount = 0;
+    const int next = int(v.envVol) + (v.envDir == EnvDir::Up ? 1 : -1);
+    if (next < 0 || next > 15) {
+        v.envRate = 0;                                        // the rail: it stops there
+        if (v.pulseReleasing) { v.pulseReleasing = false; stopVoice(ch, true); }
         return;
     }
-    for (int i = 0; i < n; ++i) emitNrx2(ch, nrx2Byte(target, ups[size_t(i)], periods[size_t(i)]));
+    v.envVol = uint8_t(next);
+    setLevel(ch);
 }
 
 uint8_t Driver::shapedLevel(const Voice& v) const
@@ -1002,11 +1143,11 @@ void Driver::stepShaped(int ch)
     }
 }
 
-void Driver::writeNr51()
+void Driver::writeNr51(bool force)
 {
     uint8_t bits = 0;
     for (int ch = 0; ch < 4; ++ch) if (gateMask_ & (1u << ch)) bits |= panBitsFor(v_[size_t(ch)].pan, ch);
-    emit(0xFF25, bits);
+    emit(0xFF25, bits, force);
     gateDirty_ = false;
 }
 
@@ -1135,12 +1276,13 @@ void Driver::scheduleStreams(uint64_t cycleStart, uint64_t cycleEnd)
 
 namespace {
 
-/// R's volume step per retrigger (section 7): 0 none, 1-7 up by that much,
-/// 9-15 down by x - 8.
+/// R's volume step per retrigger: `x` is a **signed nibble** -- 0 none, 1-7 up
+/// by that much, 9-15 down by sixteen minus it (measured: `R A` steps the
+/// level down by six, not by two). 8 is the resync and changes no level.
 int16_t retrigVolStep(int x)
 {
     const int n = std::clamp(x, 0, 15);
-    return int16_t(n < 8 ? n : -(n - 8));
+    return int16_t(n == 8 ? 0 : n < 8 ? n : n - 16);
 }
 
 /// One side of M: 0-7 sets it, 8 leaves it, 9-11 raise it by 1-3 and 13-15
@@ -1195,16 +1337,16 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
             v.shapedTaken = true;
             if (wave) { v.waveLevel = uint8_t(std::clamp<int>(c.a, 0, 3)); setLevel(ch); }
             else {
-                const bool moves = uint8_t(c.b & 7) != v.envRate || ((c.b & 8) != 0) != (v.envDir == EnvDir::Up);
+                // **E never triggers.** It walks the level to x by zombie steps
+                // at its own tick and sets the direction and rate of what
+                // happens next -- the envelope the driver runs in software
+                // (docs/LSDJ_PARITY.md section 6). Measured: `E 8 0` on a
+                // channel at 15 is seven down-triples and nothing else.
                 v.envVol = uint8_t(std::clamp<int>(c.a, 0, 15));
                 v.envRate = uint8_t(c.b & 7);
                 v.envDir = (c.b & 8) ? EnvDir::Up : EnvDir::Down;
-                // An E that keeps the envelope's direction and rate is a level
-                // change: zombie-mode writes, no trigger. One that moves either
-                // starts a new envelope, and a driver needs the trigger for
-                // that -- it keeps the duty phase (section 26, reference 4).
-                if (moves) { if (live) writeEnvelope(ch, pulse || noise); }
-                else setLevel(ch);
+                v.envCount = 0;
+                setLevel(ch);
             }
             break;
         }
@@ -1216,51 +1358,78 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
             if (fromTable) { v.tableGroove = uint8_t(std::clamp<int>(c.a, 0, 16)); if (!v.tableGroove) tableGroove_[size_t(ch)].fill(0); }
             break;
         case Cmd::T: break;                           // timeline: the Player and the Clock own this
-        case Cmd::H: if (fromTable) { if (c.a <= 0) v.tableOn = false; else v.tableStep = uint8_t(std::clamp<int>(c.a - 1, 0, 15)); } break;
+        case Cmd::H:
+            // In a table H is LSDj's **`times, row`** (section 34): hop to row
+            // `y`, `x` times; `x` = 0 hops for ever. The count is per table
+            // run, so a new note starts it again.
+            if (fromTable) {
+                const int times = std::clamp<int>(c.a, 0, 15), row = std::clamp<int>(c.b, 0, 15);
+                if (times == 0) { v.tableStep = uint8_t(row); v.hopLeft = 0; }
+                else if (v.hopLeft == 0 && v.hopFrom != v.tableRow) { v.hopFrom = v.tableRow; v.hopLeft = uint8_t(times); v.tableStep = uint8_t(row); }
+                else if (v.hopLeft > 0) { if (--v.hopLeft > 0) v.tableStep = uint8_t(row); else v.hopFrom = 0xFF; }
+            }
+            break;
         case Cmd::K: v.kill = int16_t(std::clamp<int>(c.a, 0, 255)); break;
         case Cmd::L: {
-            // A slide is a residual that walks to zero over x updates: ticks in
-            // Tick, 1/360 s otherwise, 0 instant. It starts wherever the
-            // channel is, mid-slide included, and ends on the note of this
-            // cell or note-on -- in period units, or semitones in Drum.
+            // A slide takes **x + 1 pitch updates** and is **linear in
+            // semitones**: the note walks from where the channel is to the
+            // note of this cell by a fixed step, `(target - source) / (x + 1)`
+            // in 1/256 semitones truncated toward zero, and lands exactly on
+            // the note one update after the last step (docs/LSDJ_PARITY.md 4).
+            // x = 0 is instant. It is the pitch update in Fast/Step/Drum and
+            // the tracker tick in Tick.
             if (noise) break;
-            const bool drum = pitchSpeed(v) == PitchSpeed::Drum;
-            const int32_t fromFine = v.pitchNowFine, fromPeriod = v.pitchNowPeriod;
+            const int32_t fromFine = v.pitchNowFine;
             const bool have = v.pitchValid;
-            v.sliding = false; v.slideLeft = 0; v.slideDrum = drum;
-            const int dur = std::clamp<int>(c.a, 0, 32767);
-            if (!have || dur <= 0) { if (live) writePeriod(ch, false); break; }
-            int32_t from = 0;
-            if (drum) from = fromFine - int32_t(std::lround(noteOfVoice(ch) * 32.0));
-            else {
-                const int b = periodForNote(noteOfVoice(ch), v.inst.type == InstrumentType::Wave);
-                from = fromPeriod - ((b < 0 ? 0 : b) + v.pOffset);
+            v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0; v.slideStep256 = 0;
+            const int dur = std::clamp<int>(c.a, 0, 255) + 1;
+            if (!have) { if (live) writePeriod(ch, false); break; }
+            const int32_t target = int32_t(std::lround(noteOfVoice(ch) * 256.0));
+            const int32_t from = fromFine - target;
+            if (from != 0) {
+                v.slideOff256 = from;
+                v.slideStep256 = int32_t(-from / dur);      // C++ truncates toward zero
+                v.slideLeft = dur; v.slideTotal = dur; v.sliding = true;
             }
-            if (from != 0) { v.slideFrom = from; v.slideTotal = dur; v.slideLeft = dur; v.sliding = true; }
             if (live) writePeriod(ch, false);
             break;
         }
         case Cmd::M: {
+            // Both arguments are nibbles (section 34).
             const uint8_t cur = known_[0x14] ? shadow_[0x14] : uint8_t(((global_.masterL & 7) << 4) | (global_.masterR & 7));
-            writeNr50(uint8_t(masterFromArg(c.a, (cur >> 4) & 7)), uint8_t(masterFromArg(c.b, cur & 7)));
+            writeNr50(uint8_t(masterFromArg(c.a & 15, (cur >> 4) & 7)), uint8_t(masterFromArg(c.b & 15, cur & 7)));
             break;
         }
         case Cmd::O: v.pan = Pan(std::clamp<int>(c.a, 0, 3)); writeNr51(); break;
         case Cmd::P: {
-            // The bend speed, signed around 128: period units per update, or
-            // (x - 128)/16 semitones in Drum. Step has no bend, so it is an
-            // immediate offset instead. P 128 stops a bend and keeps what it
-            // reached; a plain note-on is what puts the offset back to zero.
+            // The argument is **two's complement** (section 34): the byte 0-255
+            // read as a signed -128..127. The step per update comes from the
+            // measured table, `bendStep256`, in 1/256 of a semitone; Fast and
+            // Tick bend the note, Step applies one offset of x/32 of a semitone
+            // and no bend, and Drum bends the **period register** and wraps at
+            // 2048 (docs/LSDJ_PARITY.md section 5). `P 0` stops a bend and
+            // keeps what it reached; a plain note-on puts the offset back.
             if (noise) break;
-            const int speed = std::clamp<int>(c.a, 0, 255) - 128;
-            if (pitchSpeed(v) == PitchSpeed::Step) { v.pOffset = int16_t(speed); v.bendSpeed = 0; }
+            const int speed = int(int8_t(uint8_t(std::clamp<int>(c.a, 0, 255))));
+            if (pitchSpeed(v) == PitchSpeed::Step) {
+                // The offset reaches the pitch at the next update, not in the
+                // note-on's own writes: LSDj's note-on writes the pitch the
+                // channel was at and the commands move it from there
+                // (measured -- P 02 triggers on the note and the first update
+                // is a semitone-thirty-second above it).
+                v.fineQueued += int32_t(speed) * 8; v.bendSpeed = 0;
+            }
             else v.bendSpeed = int16_t(speed);
             if (live) writePeriod(ch, false);
             break;
         }
         case Cmd::R:
-            v.retrigEvery = uint8_t(std::clamp<int>(c.b, 0, 255));
-            v.retrigOnce = v.retrigEvery == 0;        // y = 0 retriggers once
+            // `y` is the interval: y x (rate + 1) + 1 ticks, so y = 0 is every
+            // tick. `x` = 8 is LSDj's resync -- the retrigger runs on the pitch
+            // clock instead. `x` otherwise is a signed nibble of volume change.
+            v.retrigEvery = uint8_t(std::clamp<int>(c.b, 0, 15));
+            v.retrigOn = true;
+            v.retrigFast = (c.a & 15) == 8;
             v.retrigStep = retrigVolStep(c.a);
             v.retrigCount = 0;
             break;
@@ -1268,8 +1437,10 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
             // PU1's sweep. The direction is the instrument's unless x asks for
             // down; on WAV and NOI there is no sweep unit, so S is inert.
             if (ch == 0 && pulse) {
+                // `x` is the sweep rate and `y` is **NR10's low nibble**
+                // (section 34): 0-7 sweep up at that shift, 8-15 sweep down.
                 v.sweepRate = uint8_t(c.a & 7);
-                v.sweepDown = (c.a & 128) ? true : v.inst.sweepDown;
+                v.sweepDown = (c.b & 8) != 0;
                 v.sweepShift = uint8_t(c.b & 7);
                 if (live) {
                     emit(0xFF10, uint8_t((v.sweepRate << 4) | (v.sweepDown ? 8 : 0) | v.sweepShift), true);
@@ -1279,13 +1450,14 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
             break;
         }
         case Cmd::V:
-            // Speed 1-15 is V's own: one cycle every 720 / x updates (x / 2 Hz
-            // in Fast) or 96 / x ticks. x = 0 turns the vibrato off.
+            // One cycle is **64 / (x + 1) pitch updates** in Fast, Step and
+            // Drum -- so x = 0 is the slowest, not "off" -- and the measured
+            // table of tick counts in Tick. `y` is the depth, a symmetric
+            // swing of that many semitones either side of the note.
             if (noise) break;
             v.vibSpeed = uint8_t(std::clamp<int>(c.a, 0, 15));
             v.vibDepth = uint8_t(std::clamp<int>(c.b, 0, 15));
-            v.vibDelay = 0;
-            if (!v.vibSpeed) { v.vibDepth = 0; v.vibPhase = 0; }
+            v.vibDelay = 0; v.vibOn = true;
             if (live) writePeriod(ch, false);
             break;
         case Cmd::W: {
@@ -1323,12 +1495,11 @@ void Driver::revertCommand(int ch, Cmd cmd)
             // level change when the direction and the rate are already those,
             // a new envelope -- and a trigger -- when they are not (26).
             v.shapedTaken = true;
-            const bool moves = !wave && (i.envRate != v.envRate || i.envDir != v.envDir);
             if (wave) { v.waveLevel = i.waveLevel; applyLevelParam(ch); setLevel(ch); }
             else {
-                v.envVol = i.envVol; v.envRate = i.envRate; v.envDir = i.envDir; applyLevelParam(ch);
-                if (moves) { if (live) writeEnvelope(ch, pulse || i.type == InstrumentType::Noise); }
-                else setLevel(ch);
+                v.envVol = i.envVol; v.envRate = i.envRate; v.envDir = i.envDir; v.envCount = 0;
+                applyLevelParam(ch);
+                setLevel(ch);
             }
             break;
         }
@@ -1337,7 +1508,7 @@ void Driver::revertCommand(int ch, Cmd cmd)
             break;
         case Cmd::M: writeNr50(global_.masterL, global_.masterR); break;
         case Cmd::O: v.pan = v.p.pan != 255 ? Pan(v.p.pan & 3) : i.pan; writeNr51(); break;
-        case Cmd::P: v.pOffset = 0; v.fineOffset = 0; v.bendSpeed = 0; if (live) writePeriod(ch, false); break;
+        case Cmd::P: v.fineOffset = 0; v.fineQueued = 0; v.drumOffset = 0.0; v.bendSpeed = 0; if (live) writePeriod(ch, false); break;
         case Cmd::S:
             if (ch == 0 && pulse) {
                 v.sweepRate = i.sweepRate; v.sweepDown = i.sweepDown; v.sweepShift = i.sweepShift;
@@ -1346,7 +1517,8 @@ void Driver::revertCommand(int ch, Cmd cmd)
             break;
         case Cmd::V:
             v.vibShape = i.vib.shape; v.vibDir = i.vib.dir;
-            v.vibSpeed = uint8_t(std::clamp<int>(i.vib.speed, 1, 15)); v.vibDepth = i.vib.depth; v.vibDelay = i.vib.delay;
+            v.vibSpeed = uint8_t(std::clamp<int>(i.vib.speed, 0, 15)); v.vibDepth = i.vib.depth; v.vibDelay = i.vib.delay;
+            v.vibOn = i.vib.depth != 0;
             break;
         case Cmd::W:
             if (wave) { const Wave* w = bank_ ? bank_->wave(i.wave) : nullptr; v.waveSlot = i.wave; v.frameIdx = 0; v.frameCount = 0; if (live && w && !w->frames.empty()) loadFrame(ch, w->frames[0], model_ == Console::DMG); }
@@ -1390,8 +1562,9 @@ Command Driver::resolveRandom(int ch, const Command& z, const Command& other)
     Voice& v = v_[size_t(ch)];
     Command c = (other.cmd != Cmd::None && other.cmd != Cmd::Z && other.cmd != Cmd::H) ? other : v.lastCmd;
     if (c.cmd == Cmd::None || c.cmd == Cmd::Z || c.cmd == Cmd::H) return {};
-    c.a = int16_t(c.a + randomArg(ch, z.a));
-    c.b = int16_t(c.b + randomArg(ch, z.b));
+    // Z's own arguments are nibbles (section 34).
+    c.a = int16_t(c.a + randomArg(ch, z.a & 15));
+    c.b = int16_t(c.b + randomArg(ch, z.b & 15));
     return c;
 }
 
@@ -1475,7 +1648,7 @@ uint16_t Driver::tableRowTicks(int ch, int row) const
 void Driver::beginTableRun(int ch, uint8_t slot)
 {
     Voice& v = v_[size_t(ch)];
-    v.tableSlot = slot; v.tableStep = 0; v.tableRow = 0; v.tableWait = 0; v.tableGroove = 0;
+    v.tableSlot = slot; v.tableStep = 0; v.hopLeft = 0; v.hopFrom = 0xFF; v.tableRow = 0; v.tableWait = 0; v.tableGroove = 0;
     v.tableOn = slot != 0 && bank_ && bank_->table(slot);
     if (v.tableOn) ++v.tableRun;
 }
@@ -1573,8 +1746,15 @@ void Driver::tick(int ch)
     if (v.releasing) stepRelease(ch);
     if (!v.active) return;
     ++v.ticks;
+    // What the *tick* does to the pitch -- a chord step, a table's transpose
+    // column -- has to reach the registers; what the pitch clock does is its
+    // own business. Comparing the note before and after the tick's work
+    // separates the two, and the next pitch update carries the change.
+    // ... so the comparison leaves the pitch effects' own offsets out of it.
+    const auto tickNote = [&] { return noteOfVoice(ch) - double(v.fineOffset + slideResidual(v)) / 256.0; };
+    const double noteBeforeTick = tickNote();
     // kill countdown
-    if (v.kill >= 0) { if (v.kill == 0) { stopVoice(ch, true); v.kill = -1; return; } --v.kill; }
+    if (v.kill >= 0) { if (v.kill == 0) { killLevel(ch); stopVoice(ch, false); v.kill = -1; return; } --v.kill; }
     // The table: a row per tick, or per the row length a G inside it asked
     // for. A Step-mode table advances at notes instead (section 7).
     if (v.tableJustStarted) v.tableJustStarted = false;      // row 0 fired with the note-on (section 31)
@@ -1588,7 +1768,9 @@ void Driver::tick(int ch)
     stepShaped(ch);
     if (!v.active) return;
     // chord: one step every cmdRate + 1 ticks
-    if (v.chordN && ++v.chordCount >= uint8_t(v.inst.cmdRate + 1)) { v.chordCount = 0; v.chordIdx = uint8_t((v.chordIdx + 1) % v.chordN); }
+    // The note's own tick plays the root: the chord steps from the tick after
+    // it (measured -- C 3 7 wrote 1798, then 1837, then 1881, a tick apart).
+    if (v.chordN && v.ticks > 1 && ++v.chordCount >= uint8_t(v.inst.cmdRate + 1)) { v.chordCount = 0; v.chordIdx = uint8_t((v.chordIdx + 1) % v.chordN); }
     // duty sequence
     if (v.inst.type == InstrumentType::Pulse && v.inst.dutySeqLen) {
         v.dutyIdx = uint8_t((v.dutyIdx + 1) % v.inst.dutySeqLen);
@@ -1597,15 +1779,14 @@ void Driver::tick(int ch)
     }
     // noise sweep
     if (v.inst.type == InstrumentType::Noise && v.noiseSweep) { v.noiseShift = uint8_t(std::clamp<int>(int(v.noiseShift) + v.noiseSweep, 0, 13)); v.inst.noiseManual = true; }
-    // retrigger, every y ticks x (cmdRate + 1), or once when y is zero
+    // R: the interval is **y x (rate + 1) + 1 ticks**, so y = 0 is every tick
+    // and not "once" (docs/LSDJ_PARITY.md section 8). x = 8 resyncs instead:
+    // the retrigger runs on the pitch clock, and pitchBefore() does it.
     bool retrig = false;
-    if (v.retrigOnce) { v.retrigOnce = false; retrig = true; }
-    else if (v.retrigEvery) {
-        const uint16_t every = uint16_t(uint16_t(v.retrigEvery) * uint16_t(v.inst.cmdRate + 1));
+    if (v.retrigOn && !v.retrigFast) {
+        const uint16_t every = uint16_t(uint16_t(v.retrigEvery) * uint16_t(v.inst.cmdRate + 1) + 1u);
         if (++v.retrigCount >= every) { v.retrigCount = 0; retrig = true; }
     }
-    if (retrig && v.retrigStep && v.inst.type != InstrumentType::Wave && v.inst.type != InstrumentType::Kit)
-        v.envVol = uint8_t(std::clamp<int>(int(v.envVol) + v.retrigStep, 0, 15));
     // wave frames
     if (v.inst.type == InstrumentType::Wave && v.inst.frameAdvance) {
         if (++v.frameCount >= v.inst.frameAdvance) {
@@ -1624,14 +1805,50 @@ void Driver::tick(int ch)
         }
     }
     // With the pitch speed at Tick this tick is the pitch update: the vibrato
-    // phase, a slide and a P bend move here rather than at 360 Hz.
+    // phase, a slide and a P bend move here rather than on the pitch clock.
     if (!v.pitchClockOn && (v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Wave)
         && pitchSpeed(v) == PitchSpeed::Tick) pitchStep(ch, true);
-    // pitch for this tick
-    if (v.inst.type == InstrumentType::Noise) { if (v.noiseSweep || v.pOffset) writePeriod(ch, retrig); else if (retrig) writePeriod(ch, true); }
-    else if (v.inst.type == InstrumentType::Kit) { if (retrig) writePeriod(ch, true); }
-    else writePeriod(ch, retrig);
-    if (retrig && (v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Noise)) writeEnvelope(ch, true);
+    // pitch for this tick. The pitch clock writes the period whenever a pitch
+    // effect is moving it; what the *tick* moves -- a chord step, a table's
+    // transpose column, the channel's own transpose -- goes out here, and only
+    // when it really changed something.
+    if (retrig) retrigger(ch, true);
+    else if (v.inst.type == InstrumentType::Noise) { if (v.noiseSweep) writePeriod(ch, false); }
+    else if (tickNote() != noteBeforeTick) writePeriod(ch, false);
+}
+
+/// One retrigger. LSDj writes the whole note-on sequence again -- NR10, NR11,
+/// NR12, NR13, NR14 with the trigger -- not just a trigger, so the register
+/// log of a retrigger and of a note-on are the same five writes
+/// (docs/LSDJ_PARITY.md section 8).
+void Driver::retrigger(int ch, bool full)
+{
+    Voice& v = v_[size_t(ch)];
+    if (!v.active) return;
+    const bool pulse = v.inst.type == InstrumentType::Pulse;
+    const bool noise = v.inst.type == InstrumentType::Noise;
+    if (!full) {
+        // R's resync (x = 8) runs on the pitch clock and writes two registers,
+        // the level and the trigger, not the whole note-on (measured).
+        if (pulse || noise) writeEnvelope(ch, true);
+        else { const uint16_t f = uint16_t(std::max<int16_t>(0, v.lastPeriod));
+               emit(regAddr(ch, 4), uint8_t((f >> 8) | 0x80 | (v.inst.length ? 0x40 : 0)), true); markTrigger(ch); }
+        return;
+    }
+    // `x` is a signed nibble of volume change: 1-7 up by that much, 9-15 down
+    // by sixteen minus it (measured: R A steps the level down by six).
+    if (v.retrigStep && !noise) v.envVol = uint8_t(std::clamp<int>(int(v.envVol) + v.retrigStep, 0, 15));
+    if (pulse) {
+        if (ch == 0) emit(0xFF10, uint8_t((v.sweepRate << 4) | (v.sweepDown ? 8 : 0) | v.sweepShift), true);
+        emit(regAddr(ch, 1), uint8_t((v.duty << 6) | lengthCode6(v.inst.length)), true);
+    } else if (noise) {
+        emit(regAddr(3, 1), lengthCode6(v.inst.length), true);
+    }
+    if (pulse || noise) writeEnvelope(ch, false);
+    writePeriod(ch, true);
+    if (noise) { }                       // writePeriod carries NR43/NR44 for noise
+    else if (pulse || v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) { }
+    v.pitchWrite = true;
 }
 
 void Driver::tickAll()
@@ -1676,7 +1893,7 @@ void Driver::handleEvent(NoteEvent& e)
             break;
         case NoteEvent::PitchBend: v.bend = double(e.value) / 8192.0 * 2.0; if (v.active) writePeriod(ch, false); break;
         case NoteEvent::Control:
-            if (e.a == 1) v.vibDepth = uint8_t(e.b / 8);       // the mod wheel is vibrato depth
+            if (e.a == 1) { v.vibDepth = uint8_t(e.b / 8); v.vibOn = e.b != 0; }   // the mod wheel is vibrato depth
             // CC7 is a level change: zombie-mode writes, no trigger (26).
             else if (e.a == 7 && v.active) { v.shapedTaken = true; if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) v.waveLevel = uint8_t(e.b / 32); else v.envVol = uint8_t(e.b / 8); setLevel(ch); }
             else if (e.a == 120 || e.a == 123) allNotesOff(ch);
@@ -1737,9 +1954,21 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
     const size_t logFrom = out.size();
     const uint64_t blockEnd = frameAbs + numSamples;
 
+    // A driver writes the mixer once, at its own initialisation, before it
+    // plays anything: NR50 from the master volume and NR51 from the pans.
+    // LSDj does it while its interface is still up, so the note-on that lines
+    // the two streams up already has them behind it.
+    if (!mixerInit_) {
+        mixerInit_ = true;
+        cycle_ = cycleAt(frameAbs); burst_ = 0;
+        masterL_ = global_.masterL; masterR_ = global_.masterR;
+        writeNr50(masterL_, masterR_);
+        writeNr51(true);
+    }
+
     // Events land where the host put them (sample accurate); the tick drives
     // what a driver runs from its interrupt: tables, frames, the command
-    // slots. The per-voice pitch clock runs at 360 Hz between them, in cycle
+    // slots. The driver's one pitch clock runs at 358 Hz between them, in cycle
     // order with both, so vibrato and slides are where they really are.
     // With notes-on-tick the note-ons and note-offs wait for the next tick as
     // a tracker's do -- bends and controllers never do, and tracker cells
@@ -1748,28 +1977,31 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
     auto moveTo = [&](uint64_t c) { if (c != cycle_) { cycle_ = c; burst_ = 0; } };
     auto offOf = [&](uint32_t o) { return numSamples ? std::min<uint32_t>(o, numSamples - 1) : 0u; };
     auto pitchBefore = [&](uint64_t limit) {
-        for (int ch = 0; ch < 4; ++ch) {
-            // A jump in the timeline (a locate, a long gap) must not walk the
-            // clock forward one update at a time.
-            Voice& v = v_[size_t(ch)];
-            if (v.pitchClockOn && v.pitchClock + kPitchCycles * 4096 < limit)
-                v.pitchClock = limit - (limit - v.pitchClock) % kPitchCycles;
-        }
-        for (;;) {
-            int best = -1; uint64_t at = 0;
-            for (int ch = 0; ch < 4; ++ch) {
-                const Voice& v = v_[size_t(ch)];
-                if (!v.pitchClockOn || !v.active || v.pitchClock >= limit) continue;
-                if (best < 0 || v.pitchClock < at) { best = ch; at = v.pitchClock; }
-            }
-            if (best < 0) break;
+        // One clock for the driver, free-running (docs/LSDJ_PARITY.md 1). A
+        // jump in the timeline (a locate, a long gap) must not walk it forward
+        // one update at a time.
+        if (!pitchClockValid_) { pitchClockAt_ = cycle_ + kPitchCycles; pitchClockValid_ = true; }
+        if (pitchClockAt_ + kPitchCycles * 4096 < limit)
+            pitchClockAt_ = limit - (limit - pitchClockAt_) % kPitchCycles;
+        while (pitchClockAt_ < limit) {
+            const uint64_t at = pitchClockAt_;
             // A tick's register writes go out as one burst, an instruction
-            // pair apart. A 360 Hz update landing inside that burst cannot
+            // pair apart. A 358 Hz update landing inside that burst cannot
             // interleave with it on real hardware, and must not overtake
             // writes that were computed before it, so it follows the burst.
-            if (at > cycle_ + uint64_t(burst_) * kBurstSpacing) moveTo(at);
-            pitchStep(best, false);
-            v_[size_t(best)].pitchClock = at + kPitchCycles;
+            if (at > cycle_ + burst_) moveTo(at);
+            for (int ch = 0; ch < 4; ++ch) {
+                Voice& v = v_[size_t(ch)];
+                if (v.active && v.pitchClockOn) pitchStep(ch, false);
+                // The instrument's own envelope and R's resync run on the same
+                // clock, whatever the pitch speed is (sections 7 and 8).
+                if (v.active || v.releasing || v.pulseReleasing) stepSoftEnvelope(ch);
+                if (v.active && v.retrigFast) {
+                    if (v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Noise
+                        || v.inst.type == InstrumentType::Wave) retrigger(ch, false);
+                }
+            }
+            pitchClockAt_ = at + kPitchCycles;
         }
     };
     auto runEvent = [&](NoteEvent& e) {
@@ -1846,12 +2078,12 @@ void Driver::refreshView(int ch)
     w.vibSpeed = v.vibSpeed; w.vibDepth = v.vibDepth;
     // What the pitch effects have added, in register units: P and a slide
     // give them directly, and a Drum-mode bend through the note it moves.
-    int off = v.pOffset + (v.slideDrum ? 0 : slideResidual(v));
-    const int32_t fine = v.fineOffset + (v.slideDrum ? slideResidual(v) : 0);
+    int off = int(std::lround(v.drumOffset));
+    const int32_t fine = v.fineOffset + slideResidual(v);
     if (fine && v.inst.type != InstrumentType::Noise && v.inst.type != InstrumentType::Kit) {
         const bool wave = v.inst.type == InstrumentType::Wave;
         const double n = noteOfVoice(ch);
-        const int a = periodForNote(n, wave), b = periodForNote(n - double(fine) / 32.0, wave);
+        const int a = periodForNote(n, wave), b = periodForNote(n - double(fine) / 256.0, wave);
         if (a >= 0 && b >= 0) off += a - b;
     }
     w.pitchOffset = int16_t(std::clamp(off, -2047, 2047)); w.pan = uint8_t(v.pan);

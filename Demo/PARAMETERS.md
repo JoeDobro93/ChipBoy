@@ -120,14 +120,14 @@ the lane did. CMD1 is applied before CMD2.
 | `F` | frame | frame 1-16 (WAV) | - |
 | `G` | groove | groove slot 1-16, 0 straight | - |
 | `K` | kill | ticks after the note-on | - |
-| `L` | slide | rate 0-15 | - |
+| `L` | slide | x + 1 updates, linear in semitones | - |
 | `M` | master volume | left 0-7 | right 0-7 |
 | `O` | pan | 0 off, 1 L, 2 R, 3 both | - |
-| `P` | pitch offset | 0-255, signed x - 128 period units | - |
-| `R` | retrigger | volume step per retrigger | every y ticks |
-| `S` | sweep (PU1) | rate 0-7, +128 for down | shift 0-7 |
-| `T` | tempo | 40-255 BPM, Song source only | - |
-| `V` | vibrato | speed 1-15 | depth 0-15 |
+| `P` | pitch offset | two's complement -128..127, the measured step table | - |
+| `R` | retrigger | signed nibble of volume per retrigger, 8 resyncs | y x (rate + 1) + 1 ticks |
+| `S` | sweep (PU1) | rate 0-7 | NR10's low nibble: 0-7 up, 8-15 down |
+| `T` | tempo | LSDj's byte: 28-FF is 40-255 BPM, 00-27 is 256-295 | - |
+| `V` | vibrato | speed 0-15, 64/(x+1) updates a cycle | depth 0-15, 1/8 to 8 semitones |
 | `W` | wave | duty 0-3 on a pulse, wave slot 1-64 on WAV | - |
 | `Z` | random | randomises the other slot's x, up to x | - |
 

@@ -32,13 +32,13 @@ std::vector<int> instrumentsUsedBy(const tracker::Song& song)
 
 String songFileText(const tracker::Song& song, const bank::Bank& bank, const String& bankName)
 {
-    // Format 6 (sections 18 and 25): the song JSON as the plugin state writes
-    // it -- phrases with their own lengths -- the whole bank it plays through,
-    // and what it takes to say whether a bank it meets later is the bank it
-    // was written with.
+    // Format 7 (sections 18, 25 and 34): the song JSON as the plugin state
+    // writes it -- phrases with their own lengths and the command encodings of
+    // section 34 -- the whole bank it plays through, and what it takes to say
+    // whether a bank it meets later is the bank it was written with.
     auto* o = new DynamicObject();
     o->setProperty("format", "chipboy-song-file");
-    o->setProperty("version", 6);
+    o->setProperty("version", 7);
     o->setProperty("bank", bankName);
     auto* names = new DynamicObject();
     for (int slot : instrumentsUsedBy(song)) {
@@ -68,7 +68,7 @@ bool loadSongText(const String& text, tracker::Song& out, SongReport& report, co
     if (!wrapped && o->getProperty("format").toString() != "chipboy-song") return false;
     if (!songFromVar(wrapped ? o->getProperty("song") : parsed, out)) return false;
 
-    // Formats 5 and 6 carry the bank with them; the song then plays through that
+    // Formats 5 and later carry the bank with them; the song then plays through that
     // bank and there is nothing to report (section 18).
     if (bankOut != nullptr && o->hasProperty("bankData") && bankFromVar(o->getProperty("bankData"), *bankOut)) {
         report.hasBank = true;

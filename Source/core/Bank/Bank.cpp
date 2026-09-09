@@ -146,7 +146,7 @@ Bank Bank::factory()
     // semitone -- a lead's vibrato, after a delay of ten ticks (section 7).
     auto* lead = pulse(1, "Square lead", 2, 13, EnvDir::Down, 0);   lead->vib = { VibShape::Triangle, VibDir::Down, 10, 2, 10 };
     // A pluck's slides and bends belong to the groove, so its pitch runs on
-    // the tick rather than at 360 Hz.
+    // the tick rather than on the pitch clock.
     auto* pluck = pulse(2, "Pluck", 1, 15, EnvDir::Down, 2);        pluck->pitchSpeed = PitchSpeed::Tick;
     auto* bass = pulse(3, "Bass 25", 1, 14, EnvDir::Down, 0);       bass->length = 0;
     auto* sweep = pulse(4, "Sweep down", 2, 15, EnvDir::Down, 3);   sweep->sweepRate = 3; sweep->sweepDown = true; sweep->sweepShift = 2;
@@ -191,10 +191,14 @@ Bank Bank::factory()
       t.steps[1].hasTranspose = true; t.steps[1].transpose = 0; t.steps[1].cmd1 = { Cmd::L, 60, 0, 0 };
       t.end = TableEnd::Stop; b.tables[4] = t; }
     { Table t; t.used = true; t.name = "Octave hop"; t.steps[0].hasTranspose = true; t.steps[0].transpose = 12; t.steps[1].hasTranspose = true; t.steps[1].transpose = 0; t.end = TableEnd::Loop; b.tables[5] = t; }
+    // P's argument is two's complement now and its step comes from the measured
+    // table (section 34, docs/LSDJ_PARITY.md section 5): -44 is about one
+    // semitone a pitch update, which is the fall this table had, and 0 is what
+    // stops a bend and keeps the offset.
     { Table t; t.used = true; t.name = "Drum drop";
-      t.steps[0].vol = 15; t.steps[0].cmd1 = { Cmd::P, 112, 0, 0 };     // fall a semitone per pitch update
+      t.steps[0].vol = 15; t.steps[0].cmd1 = { Cmd::P, 256 - 44, 0, 0 };
       t.steps[1].vol = 12;
-      t.steps[2].vol = 8;  t.steps[2].cmd1 = { Cmd::P, 128, 0, 0 };     // P 128 stops the bend, keeping the offset
+      t.steps[2].vol = 8;  t.steps[2].cmd1 = { Cmd::P, 0, 0, 0 };
       t.steps[3].vol = 4;
       t.end = TableEnd::Stop; b.tables[6] = t; }
 

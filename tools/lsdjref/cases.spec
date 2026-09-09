@@ -573,3 +573,359 @@ case b_vib_shapes
     row 0 n=C-5 i=4 c=V:4F
     row 8 n=C-5 i=5 c=V:4F
   chain pu1 0 1 2
+
+# --- the fine cases: one law, many values ---------------------------------
+# Added for the LSDj-exact round: the sparse cases above pin the shape of
+# each law, these pin its numbers. They are read the same way and traced the
+# same way; the tables they produced are in docs/LSDJ_PARITY.md.
+
+case d_bend_scale_all
+  desc P at every value from -1 to -127, DRUM, two steps a note: the rate table
+  note The period moves in a straight line in DRUM, so the rate reads off the
+  note first differences. C-6 is high enough that the small values never wrap.
+  frames 2200
+  tempo 120
+  inst 0 pulse env=F0 duty=2 sweep=FF pitch=drum
+  phrase 0
+    row 0 n=C-6 i=0 c=P:FF
+    row 2 n=C-6 i=0 c=P:FE
+    row 4 n=C-6 i=0 c=P:FD
+    row 6 n=C-6 i=0 c=P:FC
+    row 8 n=C-6 i=0 c=P:FB
+    row 10 n=C-6 i=0 c=P:FA
+    row 12 n=C-6 i=0 c=P:F9
+    row 14 n=C-6 i=0 c=P:F8
+  phrase 1
+    row 0 n=C-6 i=0 c=P:F7
+    row 2 n=C-6 i=0 c=P:F6
+    row 4 n=C-6 i=0 c=P:F5
+    row 6 n=C-6 i=0 c=P:F4
+    row 8 n=C-6 i=0 c=P:F3
+    row 10 n=C-6 i=0 c=P:F2
+    row 12 n=C-6 i=0 c=P:F1
+    row 14 n=C-6 i=0 c=P:F0
+  phrase 2
+    row 0 n=C-6 i=0 c=P:EF
+    row 2 n=C-6 i=0 c=P:EE
+    row 4 n=C-6 i=0 c=P:ED
+    row 6 n=C-6 i=0 c=P:EC
+    row 8 n=C-6 i=0 c=P:EB
+    row 10 n=C-6 i=0 c=P:EA
+    row 12 n=C-6 i=0 c=P:E9
+    row 14 n=C-6 i=0 c=P:E8
+  phrase 3
+    row 0 n=C-6 i=0 c=P:E7
+    row 2 n=C-6 i=0 c=P:E6
+    row 4 n=C-6 i=0 c=P:E5
+    row 6 n=C-6 i=0 c=P:E4
+    row 8 n=C-6 i=0 c=P:E3
+    row 10 n=C-6 i=0 c=P:E2
+    row 12 n=C-6 i=0 c=P:E1
+    row 14 n=C-6 i=0 c=P:E0
+  phrase 4
+    row 0 n=C-6 i=0 c=P:DF
+    row 2 n=C-6 i=0 c=P:DE
+    row 4 n=C-6 i=0 c=P:DD
+    row 6 n=C-6 i=0 c=P:DC
+    row 8 n=C-6 i=0 c=P:DB
+    row 10 n=C-6 i=0 c=P:DA
+    row 12 n=C-6 i=0 c=P:D9
+    row 14 n=C-6 i=0 c=P:D8
+  phrase 5
+    row 0 n=C-6 i=0 c=P:D7
+    row 2 n=C-6 i=0 c=P:D6
+    row 4 n=C-6 i=0 c=P:D5
+    row 6 n=C-6 i=0 c=P:D4
+    row 8 n=C-6 i=0 c=P:D3
+    row 10 n=C-6 i=0 c=P:D2
+    row 12 n=C-6 i=0 c=P:D1
+    row 14 n=C-6 i=0 c=P:D0
+  phrase 6
+    row 0 n=C-6 i=0 c=P:CF
+    row 2 n=C-6 i=0 c=P:CE
+    row 4 n=C-6 i=0 c=P:CD
+    row 6 n=C-6 i=0 c=P:CC
+    row 8 n=C-6 i=0 c=P:CB
+    row 10 n=C-6 i=0 c=P:CA
+    row 12 n=C-6 i=0 c=P:C9
+    row 14 n=C-6 i=0 c=P:C8
+  phrase 7
+    row 0 n=C-6 i=0 c=P:C7
+    row 2 n=C-6 i=0 c=P:C6
+    row 4 n=C-6 i=0 c=P:C5
+    row 6 n=C-6 i=0 c=P:C4
+    row 8 n=C-6 i=0 c=P:C3
+    row 10 n=C-6 i=0 c=P:C2
+    row 12 n=C-6 i=0 c=P:C1
+    row 14 n=C-6 i=0 c=P:C0
+  phrase 8
+    row 0 n=C-6 i=0 c=P:BF
+    row 2 n=C-6 i=0 c=P:BE
+    row 4 n=C-6 i=0 c=P:BD
+    row 6 n=C-6 i=0 c=P:BC
+    row 8 n=C-6 i=0 c=P:BB
+    row 10 n=C-6 i=0 c=P:BA
+    row 12 n=C-6 i=0 c=P:B9
+    row 14 n=C-6 i=0 c=P:B8
+  phrase 9
+    row 0 n=C-6 i=0 c=P:B7
+    row 2 n=C-6 i=0 c=P:B6
+    row 4 n=C-6 i=0 c=P:B5
+    row 6 n=C-6 i=0 c=P:B4
+    row 8 n=C-6 i=0 c=P:B3
+    row 10 n=C-6 i=0 c=P:B2
+    row 12 n=C-6 i=0 c=P:B1
+    row 14 n=C-6 i=0 c=P:B0
+  phrase 10
+    row 0 n=C-6 i=0 c=P:AF
+    row 2 n=C-6 i=0 c=P:AE
+    row 4 n=C-6 i=0 c=P:AD
+    row 6 n=C-6 i=0 c=P:AC
+    row 8 n=C-6 i=0 c=P:AB
+    row 10 n=C-6 i=0 c=P:AA
+    row 12 n=C-6 i=0 c=P:A9
+    row 14 n=C-6 i=0 c=P:A8
+  phrase 11
+    row 0 n=C-6 i=0 c=P:A7
+    row 2 n=C-6 i=0 c=P:A6
+    row 4 n=C-6 i=0 c=P:A5
+    row 6 n=C-6 i=0 c=P:A4
+    row 8 n=C-6 i=0 c=P:A3
+    row 10 n=C-6 i=0 c=P:A2
+    row 12 n=C-6 i=0 c=P:A1
+    row 14 n=C-6 i=0 c=P:A0
+  phrase 12
+    row 0 n=C-6 i=0 c=P:9F
+    row 2 n=C-6 i=0 c=P:9E
+    row 4 n=C-6 i=0 c=P:9D
+    row 6 n=C-6 i=0 c=P:9C
+    row 8 n=C-6 i=0 c=P:9B
+    row 10 n=C-6 i=0 c=P:9A
+    row 12 n=C-6 i=0 c=P:99
+    row 14 n=C-6 i=0 c=P:98
+  phrase 13
+    row 0 n=C-6 i=0 c=P:97
+    row 2 n=C-6 i=0 c=P:96
+    row 4 n=C-6 i=0 c=P:95
+    row 6 n=C-6 i=0 c=P:94
+    row 8 n=C-6 i=0 c=P:93
+    row 10 n=C-6 i=0 c=P:92
+    row 12 n=C-6 i=0 c=P:91
+    row 14 n=C-6 i=0 c=P:90
+  phrase 14
+    row 0 n=C-6 i=0 c=P:8F
+    row 2 n=C-6 i=0 c=P:8E
+    row 4 n=C-6 i=0 c=P:8D
+    row 6 n=C-6 i=0 c=P:8C
+    row 8 n=C-6 i=0 c=P:8B
+    row 10 n=C-6 i=0 c=P:8A
+    row 12 n=C-6 i=0 c=P:89
+    row 14 n=C-6 i=0 c=P:88
+  phrase 15
+    row 0 n=C-6 i=0 c=P:87
+    row 2 n=C-6 i=0 c=P:86
+    row 4 n=C-6 i=0 c=P:85
+    row 6 n=C-6 i=0 c=P:84
+    row 8 n=C-6 i=0 c=P:83
+    row 10 n=C-6 i=0 c=P:82
+    row 12 n=C-6 i=0 c=P:81
+  chain pu1 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15
+
+case d_bend_scale_up
+  desc P at every value from +1 to +64, DRUM: the rate table on the other side
+  frames 1300
+  tempo 120
+  inst 0 pulse env=F0 duty=2 sweep=FF pitch=drum
+  phrase 0
+    row 0 n=C-3 i=0 c=P:01
+    row 2 n=C-3 i=0 c=P:02
+    row 4 n=C-3 i=0 c=P:03
+    row 6 n=C-3 i=0 c=P:04
+    row 8 n=C-3 i=0 c=P:05
+    row 10 n=C-3 i=0 c=P:06
+    row 12 n=C-3 i=0 c=P:07
+    row 14 n=C-3 i=0 c=P:08
+  phrase 1
+    row 0 n=C-3 i=0 c=P:09
+    row 2 n=C-3 i=0 c=P:0A
+    row 4 n=C-3 i=0 c=P:0B
+    row 6 n=C-3 i=0 c=P:0C
+    row 8 n=C-3 i=0 c=P:0D
+    row 10 n=C-3 i=0 c=P:0E
+    row 12 n=C-3 i=0 c=P:0F
+    row 14 n=C-3 i=0 c=P:10
+  phrase 2
+    row 0 n=C-3 i=0 c=P:11
+    row 2 n=C-3 i=0 c=P:12
+    row 4 n=C-3 i=0 c=P:13
+    row 6 n=C-3 i=0 c=P:14
+    row 8 n=C-3 i=0 c=P:15
+    row 10 n=C-3 i=0 c=P:16
+    row 12 n=C-3 i=0 c=P:17
+    row 14 n=C-3 i=0 c=P:18
+  phrase 3
+    row 0 n=C-3 i=0 c=P:19
+    row 2 n=C-3 i=0 c=P:1A
+    row 4 n=C-3 i=0 c=P:1B
+    row 6 n=C-3 i=0 c=P:1C
+    row 8 n=C-3 i=0 c=P:1D
+    row 10 n=C-3 i=0 c=P:1E
+    row 12 n=C-3 i=0 c=P:1F
+    row 14 n=C-3 i=0 c=P:20
+  phrase 4
+    row 0 n=C-3 i=0 c=P:21
+    row 2 n=C-3 i=0 c=P:22
+    row 4 n=C-3 i=0 c=P:23
+    row 6 n=C-3 i=0 c=P:24
+    row 8 n=C-3 i=0 c=P:25
+    row 10 n=C-3 i=0 c=P:26
+    row 12 n=C-3 i=0 c=P:27
+    row 14 n=C-3 i=0 c=P:28
+  phrase 5
+    row 0 n=C-3 i=0 c=P:29
+    row 2 n=C-3 i=0 c=P:2A
+    row 4 n=C-3 i=0 c=P:2B
+    row 6 n=C-3 i=0 c=P:2C
+    row 8 n=C-3 i=0 c=P:2D
+    row 10 n=C-3 i=0 c=P:2E
+    row 12 n=C-3 i=0 c=P:2F
+    row 14 n=C-3 i=0 c=P:30
+  phrase 6
+    row 0 n=C-3 i=0 c=P:31
+    row 2 n=C-3 i=0 c=P:32
+    row 4 n=C-3 i=0 c=P:33
+    row 6 n=C-3 i=0 c=P:34
+    row 8 n=C-3 i=0 c=P:35
+    row 10 n=C-3 i=0 c=P:36
+    row 12 n=C-3 i=0 c=P:37
+    row 14 n=C-3 i=0 c=P:38
+  phrase 7
+    row 0 n=C-3 i=0 c=P:39
+    row 2 n=C-3 i=0 c=P:3A
+    row 4 n=C-3 i=0 c=P:3B
+    row 6 n=C-3 i=0 c=P:3C
+    row 8 n=C-3 i=0 c=P:3D
+    row 10 n=C-3 i=0 c=P:3E
+    row 12 n=C-3 i=0 c=P:3F
+    row 14 n=C-3 i=0 c=P:40
+  chain pu1 0 1 2 3 4 5 6 7
+
+case b_vib_depth
+  desc V at speed 1 and every depth 0-F, PITCH = FAST: the depth table
+  frames 1300
+  tempo 120
+  inst 0 pulse env=F0 duty=2 sweep=FF pitch=fast
+  phrase 0
+    row 0 n=C-5 i=0 c=V:10
+    row 8 n=C-5 i=0 c=V:11
+  phrase 1
+    row 0 n=C-5 i=0 c=V:12
+    row 8 n=C-5 i=0 c=V:13
+  phrase 2
+    row 0 n=C-5 i=0 c=V:14
+    row 8 n=C-5 i=0 c=V:15
+  phrase 3
+    row 0 n=C-5 i=0 c=V:16
+    row 8 n=C-5 i=0 c=V:17
+  phrase 4
+    row 0 n=C-5 i=0 c=V:18
+    row 8 n=C-5 i=0 c=V:19
+  phrase 5
+    row 0 n=C-5 i=0 c=V:1A
+    row 8 n=C-5 i=0 c=V:1B
+  phrase 6
+    row 0 n=C-5 i=0 c=V:1C
+    row 8 n=C-5 i=0 c=V:1D
+  phrase 7
+    row 0 n=C-5 i=0 c=V:1E
+    row 8 n=C-5 i=0 c=V:1F
+  chain pu1 0 1 2 3 4 5 6 7
+
+case b_vib_speed_fast
+  desc V at every speed 0-F and depth F, PITCH = FAST: the phase step
+  frames 1300
+  tempo 120
+  inst 0 pulse env=F0 duty=2 sweep=FF pitch=fast
+  phrase 0
+    row 0 n=C-5 i=0 c=V:0F
+    row 8 n=C-5 i=0 c=V:1F
+  phrase 1
+    row 0 n=C-5 i=0 c=V:2F
+    row 8 n=C-5 i=0 c=V:3F
+  phrase 2
+    row 0 n=C-5 i=0 c=V:4F
+    row 8 n=C-5 i=0 c=V:5F
+  phrase 3
+    row 0 n=C-5 i=0 c=V:6F
+    row 8 n=C-5 i=0 c=V:7F
+  phrase 4
+    row 0 n=C-5 i=0 c=V:8F
+    row 8 n=C-5 i=0 c=V:9F
+  phrase 5
+    row 0 n=C-5 i=0 c=V:AF
+    row 8 n=C-5 i=0 c=V:BF
+  phrase 6
+    row 0 n=C-5 i=0 c=V:CF
+    row 8 n=C-5 i=0 c=V:DF
+  phrase 7
+    row 0 n=C-5 i=0 c=V:EF
+    row 8 n=C-5 i=0 c=V:FF
+  chain pu1 0 1 2 3 4 5 6 7
+
+case b_vib_speed_tick
+  desc V at every speed 0-F and depth F, PITCH = TICK: the phase step per tick
+  frames 1300
+  tempo 120
+  inst 0 pulse env=F0 duty=2 sweep=FF pitch=tick
+  phrase 0
+    row 0 n=C-5 i=0 c=V:0F
+    row 8 n=C-5 i=0 c=V:1F
+  phrase 1
+    row 0 n=C-5 i=0 c=V:2F
+    row 8 n=C-5 i=0 c=V:3F
+  phrase 2
+    row 0 n=C-5 i=0 c=V:4F
+    row 8 n=C-5 i=0 c=V:5F
+  phrase 3
+    row 0 n=C-5 i=0 c=V:6F
+    row 8 n=C-5 i=0 c=V:7F
+  phrase 4
+    row 0 n=C-5 i=0 c=V:8F
+    row 8 n=C-5 i=0 c=V:9F
+  phrase 5
+    row 0 n=C-5 i=0 c=V:AF
+    row 8 n=C-5 i=0 c=V:BF
+  phrase 6
+    row 0 n=C-5 i=0 c=V:CF
+    row 8 n=C-5 i=0 c=V:DF
+  phrase 7
+    row 0 n=C-5 i=0 c=V:EF
+    row 8 n=C-5 i=0 c=V:FF
+  chain pu1 0 1 2 3 4 5 6 7
+
+case f_table_rows
+  desc The same amplitudes with different envelope nibbles: is the nibble the row's length?
+  note Three tables, all stepping 15 then 8: nibble 1, nibble 7, and a row
+  note whose amplitude is zero between them.
+  frames 1400
+  tempo 120
+  inst 0 pulse env=F0 duty=2 sweep=FF table=0
+  inst 1 pulse env=F0 duty=2 sweep=FF table=1
+  inst 2 pulse env=F0 duty=2 sweep=FF table=2
+  table 0
+    row 0 env=F1
+    row 1 env=81
+  table 1
+    row 0 env=F7
+    row 1 env=87
+  table 2
+    row 0 env=F1
+    row 1 env=01
+    row 2 env=81
+  phrase 0
+    row 0 n=C-5 i=0
+    row 8 n=C-5 i=1
+  phrase 1
+    row 0 n=C-5 i=2
+    row 8 n=C-5 i=0
+  chain pu1 0 1

@@ -288,11 +288,14 @@ DRUM_HAT_OPEN = (46, 28)      # slot 14
 DRUM_CRASH = (49, 36)         # slot 15
 
 # The L slide's duration on the lead (bars 13-14). The lead's pitch speed is
-# Fast (Bank.cpp instrument 1), so the unit is 1/360 s: 30 units is 83 ms.
+# Fast (Bank.cpp instrument 1), so the unit is the pitch clock's 1/358 s and
+# the slide takes x + 1 of them: 31 updates is 87 ms (COMMANDS_AND_TEMPO 7).
 LEAD_SLIDE = 30
-# The P bend in bars 15-16, signed around 128: Fast, so -2 period units every
-# 1/360 s -- every note leans downwards out of its attack.
-LEAD_BEND = 126
+# The P bend in bars 15-16. The argument is two's complement now and the step
+# comes from the measured table (section 34, docs/LSDJ_PARITY.md 5): -14 is
+# 32/256 of a semitone a pitch update, an eighth of a semitone, which is the
+# downward lean out of the attack this lane had when P was -2 period units.
+LEAD_BEND = 256 - 14
 
 # Chords per bar: A minor, F, C, G, repeated.
 CHORD_ROOTS = [57, 53, 48, 55]                     # A3 F3 C3 G3 (lead register - 12)
@@ -959,14 +962,14 @@ def write_parameters_md(path, table, envelopes, song_tempo_envelopes):
         ("F", "frame", "frame 1-16 (WAV)", "-"),
         ("G", "groove", "groove slot 1-16, 0 straight", "-"),
         ("K", "kill", "ticks after the note-on", "-"),
-        ("L", "slide", "rate 0-15", "-"),
+        ("L", "slide", "x + 1 updates, linear in semitones", "-"),
         ("M", "master volume", "left 0-7", "right 0-7"),
         ("O", "pan", "0 off, 1 L, 2 R, 3 both", "-"),
-        ("P", "pitch offset", "0-255, signed x - 128 period units", "-"),
-        ("R", "retrigger", "volume step per retrigger", "every y ticks"),
-        ("S", "sweep (PU1)", "rate 0-7, +128 for down", "shift 0-7"),
-        ("T", "tempo", "40-255 BPM, Song source only", "-"),
-        ("V", "vibrato", "speed 1-15", "depth 0-15"),
+        ("P", "pitch offset", "two's complement -128..127, the measured step table", "-"),
+        ("R", "retrigger", "signed nibble of volume per retrigger, 8 resyncs", "y x (rate + 1) + 1 ticks"),
+        ("S", "sweep (PU1)", "rate 0-7", "NR10's low nibble: 0-7 up, 8-15 down"),
+        ("T", "tempo", "LSDj's byte: 28-FF is 40-255 BPM, 00-27 is 256-295", "-"),
+        ("V", "vibrato", "speed 0-15, 64/(x+1) updates a cycle", "depth 0-15, 1/8 to 8 semitones"),
         ("W", "wave", "duty 0-3 on a pulse, wave slot 1-64 on WAV", "-"),
         ("Z", "random", "randomises the other slot's x, up to x", "-"),
     ]:

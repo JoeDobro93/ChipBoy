@@ -26,6 +26,145 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-09 — the driver made LSDj-exact
+
+[`docs/LSDJ_PARITY.md`](docs/LSDJ_PARITY.md) measured eighteen differences
+between what an LSDj 9.2.J ROM writes to the APU and what ChipBoy's driver
+writes. This round closes them: every pitch law, every level write and three
+command encodings are now the ROM's own, measured, and
+[`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md) §7 is rewritten from
+the numbers rather than from the manual. The interface side of §34 — how a
+command's two nibbles or one byte are shown and typed — is the stage beside this
+one; what is here is the driver's reading of them.
+
+**Changed:**
+
+- **The pitch clock is 11712 cycles — 358.12 Hz — and global.** LSDj sets the
+  Game Boy's timer once at boot and never moves it, so ChipBoy uses the same
+  reload and, like a timer interrupt, **one clock for the whole driver that
+  free-runs**: a note-on no longer restarts it. The consequence is that where a
+  note falls inside the period is where the player pressed play — which is true
+  of a ROM too, and is why the parity harness's timing tolerance is a whole
+  period. Considered keeping a per-voice clock restarted at the note, which made
+  a note's vibrato deterministic; rejected, because the first period write after
+  a note-on then lands 11712 cycles late where the ROM's lands wherever the
+  timer happens to be, and no case could be compared write for write.
+- **The note table interpolates in period units.** `Driver::periodForNote` is
+  one entry a semitone, as before, but a fraction between two entries is now
+  interpolated in the *period* rather than in the frequency. That is measurable:
+  a vibrato half a semitone below C-5 lands on 1791 where the exponential curve
+  gives 1790, and the ROM writes 1791. Whole notes are unchanged.
+- **V is a symmetric triangle of 64/(x + 1) updates.** The phase is a six-bit
+  counter stepping by `x + 1`, so **x = 0 is the slowest and not "off"**, and it
+  steps *after* the write, so a note's first update writes the note itself. The
+  depth is LSDj's own table, confirmed against the ROM for all sixteen values
+  (⅛ to 8 semitones), and the swing is **either side of the note** — the
+  direction bit only chooses which half comes first. In **Tick** mode the cycle
+  is a measured table of tick counts (96, 72, 64, 48, 36, 32, 24, 18, 16, 12, 9,
+  8, 6, 4½, 4, 3), not 64/(x + 1) ticks, and in **Drum** the same triangle moves
+  the period register at about 19.1 units a semitone. §7's old "720/x" and its
+  "note to note − depth" are both gone. Saw and square keep ChipBoy's one-sided
+  shapes: the ROM's own produce five to nine period writes a second against the
+  triangle's 360, which is neither, so there is nothing yet to copy.
+- **L takes x + 1 updates and is linear in semitones.** The step is
+  `(target − source) / (x + 1)` in 1/256 of a semitone truncated toward zero, so
+  a little is usually left after the last step and one more update lands the
+  pitch exactly on the note — which is why the ROM's seventeenth step of `L 10`
+  is 1797 and its eighteenth is 1798. `L 00` is one step, the whole distance. A
+  slide's note-on **triggers at the pitch the channel was at**, which is what
+  makes it a portamento.
+- **P's step comes from the measured table.** All 127 values were swept
+  (`d_bend_scale_all`, `d_bend_scale_up`); the rate closes to
+  `S(|x|)/256` of a semitone an update with
+  `S(m) = sum(ceil(j/4), j = 1..m) = (q + 1)(2q + r)`, `q = m/4`, `r = m mod 4`,
+  which fits every measured value to about one part in a hundred — stated as a
+  fit, because it is one. Fast and Tick bend the note, Tick at four of the pitch
+  clock's steps a tick; **Step** is one immediate offset of x/32 of a semitone,
+  applied at the first update rather than in the note's own writes; **Drum**
+  bends the period register and **wraps at 2048**, which is what a P kick falling
+  off the bottom really does. The argument is **two's complement** (§34).
+- **Levels are LSDj's own bytes.** The breadth-first search that found the
+  shortest zombie sequence is gone: the ROM's two primitives are `09 11 18` for
+  one step down and `08` for one step up, and the driver writes exactly those,
+  repeated to the target, whichever way round is fewer writes. The spacing is
+  the ROM's too — sixteen cycles inside a down-triple, a hundred and twelve
+  between triples, sixty-eight between ups. The search was right by construction
+  and wrong by observation: it carried the target level in NRx2's high nibble,
+  which the ROM never does, so no level change could be compared byte for byte.
+- **The chip's envelope never runs.** Every NRx2 goes out with the low nibble
+  forced to **8** — amplitude, direction up, period zero — whatever the
+  instrument's ENV byte says (`F0` → `F8`, `A3` → `A8`, `09` → `08`), and the
+  driver steps the level itself off the pitch clock on the measured table: 6,
+  11, 15, 20, 27, 36, 36 periods for rates 1–7. The direction bit is not
+  cosmetic — it is the state every later zombie write starts from, and it leaves
+  the DAC on at level zero. A note whose envelope reaches silence ends there.
+- **E never triggers** (measured: `E 8 0` on a channel at 15 is seven
+  down-triples and nothing else), and **K is a zombie ramp to zero** with the
+  DAC left on rather than a DAC clear. A panic still clears the DAC.
+- **R is `y × (rate + 1) + 1` ticks**, so `y` = 0 is every tick and not "once"; a
+  tick-driven retrigger writes **the whole note-on sequence again**, not just the
+  trigger; `x` = 8 is LSDj's resync and runs the retrigger on the **pitch clock**,
+  writing only the level and the trigger; and `x` is a **signed nibble** of
+  volume change, 9–15 being down by 16 − x (measured: `R A` steps down by six,
+  not by two).
+- **NRx4 goes out with every NRx3.** There is no trigger bit in it, so it changes
+  nothing but the register log — and the log is what a parity harness can line
+  up. The pitch update writes the period **whenever something is moving it**, and
+  once after a note-on whether anything is moving or not, which is exactly what
+  the ROM does; a chord step or a table's transpose column writes it at its tick.
+- **C's root plays on the note's own tick** and the chord steps from the one
+  after it (measured: `C 3 7` wrote 1798, then 1837, then 1881).
+- **§34's encodings, driver side.** P is two's complement; S's `y` is NR10's low
+  nibble (0–7 up, 8–15 down) instead of a flag on `x`; T's argument is LSDj's
+  byte, `28`–`FF` for 40–255 BPM and `00`–`27` for 256–295, with the tempo
+  derived (`bank::tempoBpmOfByte`); H in a table is `times, row` with 0 times
+  meaning for ever; and Z's and M's arguments clamp to nibbles.
+- **Song format 7.** The song JSON, the bank JSON and a `.cbsong` all carry
+  version 7, and **a file written before it is converted as it is read**: P's
+  `x − 128` becomes two's complement, S's direction moves from bit 7 of `x` into
+  `y`, and H's step becomes `0, step − 1` — the same instruction in the new
+  encoding. V, L, R and T keep their numbers, because what changed there is the
+  law the driver plays them by and no conversion can put a song's musical intent
+  back; this entry is the notice. The factory bank's "Drum drop" table and the
+  demo generators were re-expressed by hand for that reason.
+- **The demo and the six songs, re-expressed.** `tools/demo/make_demo.py`'s P
+  lane is −14 (32/256 of a semitone an update) where it was −2 period units, and
+  its L stays 30 because x + 1 updates is the same 87 ms.
+  `tools/demo/make_songs.py` re-expresses `neon-grid`'s kick drop as `P -38`
+  (about fifteen period units an update in Drum), `wave-study`'s wobbles as
+  `P ±27` and `P ±30`, and every V speed as 0 — the slowest the new law has,
+  5.6 Hz, which is the rate the old speeds 6 to 12 asked for. `Demo/ChipBoy
+  Demo.cbsong`, `Demo/chipboy_demo_hybrid.state`, the three Reaper projects, the
+  automation JSON and three of the six songs are regenerated; the record test's
+  four passes agree register for register again, `demo_song_matches`,
+  `demo_state_matches`, the six `demo_songs_load` and `chipboy_fuzz` pass, and
+  the paramdump table is identical (76 parameters).
+- **The harness.** `tools/lsdjref/cases.spec` gains six finer cases — P swept
+  over every value from −127 to +64, V at all sixteen depths and all sixteen
+  speeds in both clocks, and a table whose rows hold the same amplitudes behind
+  different envelope nibbles — and `lsdjref_compare` was rewritten to compare
+  what a driver decides rather than what a tempo counter does: it repeats each
+  chain for as long as the capture runs (as LSDj loops a song), lines the two
+  streams up **at every note-on**, and allows two pitch-clock periods of timing
+  because the clock's phase against a note is where the player pressed play and
+  because one side occasionally fits an update in that the other does not. Its
+  verdicts are *identical*, *same values, timing within tolerance*, *same values,
+  timing outside tolerance* and *different values*.
+- **What the comparison says now** is `docs/LSDJ_PARITY.md` §16, case by case on
+  DMG and CGB, and §17 is what is still different and why: ChipBoy's table rows
+  are one tick where LSDj's are two (a tracker law, not a driver one, and ChipBoy's
+  tables have a groove of their own), its noise letters and its absolute F and
+  64-slot A are its own by §2, and four things are measured but not resolved —
+  the last one per cent of P's rate, the rounding of V in Drum, the odd speeds of
+  V in Tick, and why LSDj's resync retrigger stops after 38 of them.
+- **Tests.** 160 core tests (the pitch section rewritten around the measured
+  laws: the note table's period-unit interpolation, V's triangle and depth table
+  read off the write log, V's Tick table, L's five equal steps and its `L 00`,
+  P's step table and its four domains with Drum's wrap, the pitch clock's 11712
+  cycles, E never triggering, and the zombie sequence asserted byte for byte and
+  cycle for cycle). `Driver::bendStepFor` and `Driver::periodOfSemitone` are
+  public so a test can pin a table without a rig.
+
 ### 2026-09-09 — channels on their own time, zombie-mode levels, shaped envelopes (engine)
 
 The fourth addendum ([`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md) §25–§28)

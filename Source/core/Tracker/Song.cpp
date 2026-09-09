@@ -135,7 +135,7 @@ void buildTempoMap(Song& s, double baseBpm)
                 const bank::Command* t = cell.cmd1.cmd == bank::Cmd::T ? &cell.cmd1 : cell.cmd2.cmd == bank::Cmd::T ? &cell.cmd2 : nullptr;
                 if (!t) continue;
                 s.tempoMap.push_back({ rowStartTick(s, ch, row) + starts[size_t(step)],
-                                       bank::isRevert(*t) ? base : std::clamp(double(t->a), 40.0, 255.0) });
+                                       bank::isRevert(*t) ? base : double(bank::tempoBpmOfByte(t->a)) });
             }
         }
     }

@@ -141,9 +141,9 @@ bank::Command commandOf(const lsdjref::SpecCommand& c)
         case bank::Cmd::A: case bank::Cmd::G:
             out.a = int16_t(c.value + 1); break;      // ChipBoy's slots start at 1
         case bank::Cmd::P:
-            out.a = int16_t((c.value + 128) & 0xFF); break;   // signed, biased
+            out.a = int16_t(c.value); break;          // two's complement, as LSDj stores it (section 34)
         case bank::Cmd::H:
-            out.a = int16_t(c.value + 1); break;      // step 1-16
+            out.a = int16_t(hi); out.b = int16_t(lo); break;   // times, row (section 34)
         default:
             out.a = int16_t(c.value); break;
     }
@@ -233,9 +233,11 @@ void buildBank(const lsdjref::SpecCase& c, bank::Bank& b)
             if (r.step < 0 || r.step >= bank::kTableSteps) continue;
             auto& s = tab.steps[size_t(r.step)];
             // A table's volume column is LSDj's NRx2 byte; ChipBoy's is a
-            // level 0-15, so the amplitude nibble is what carries over and
-            // the rate nibble is one of the things the report measures.
-            s.vol = int8_t((r.env >> 4) & 0x0F);
+            // level 0-15 with -1 for blank. Measured: a row **writes nothing
+            // at all** unless both nibbles are non-zero -- `F0`, `80`, `01` and
+            // `00` are all blank rows -- so that is how the byte translates.
+            s.vol = ((r.env >> 4) & 0x0F) != 0 && (r.env & 0x0F) != 0
+                    ? int8_t((r.env >> 4) & 0x0F) : int8_t(-1);
             if (r.transpose != 0) { s.hasTranspose = true; s.transpose = int8_t(r.transpose); }
             s.cmd1 = commandOf(r.cmd1);
             s.cmd2 = commandOf(r.cmd2);
@@ -243,10 +245,8 @@ void buildBank(const lsdjref::SpecCase& c, bank::Bank& b)
     }
 }
 
-void buildSong(const lsdjref::SpecCase& c, tracker::Song& s)
+void buildSong(const lsdjref::SpecCase& c, tracker::Song& s, double seconds)
 {
-    s.stepsPerBar = 16;
-    s.beatsPerBar = 4.0;
     s.tempoBpm = double(c.tempo);
     for (const auto& [slot, ticks] : c.grooves) {
         if (slot < 0 || slot >= 16) continue;
@@ -260,7 +260,7 @@ void buildSong(const lsdjref::SpecCase& c, tracker::Song& s)
         p.used = true;
         for (const auto& r : rows) {
             if (r.step < 0 || r.step >= tracker::kMaxSteps) continue;
-            auto& cell = p.steps[size_t(r.step)];
+            auto& cell = p.cells[size_t(r.step)];
             if (!r.note.empty()) {
                 const int midi = lsdjref::midiOf(r.note);
                 if (midi > 0 && midi < 128) cell.note = uint8_t(midi);
@@ -273,9 +273,15 @@ void buildSong(const lsdjref::SpecCase& c, tracker::Song& s)
         if (ch < 0 || ch > 3) continue;
         s.noteSource[size_t(ch)] = tracker::NoteSource::Tracker;
         auto& chain = s.chain[size_t(ch)];
-        for (int p : phrases) chain.push_back(uint8_t(p + 1));
+        // LSDj plays the song round and round for as long as the capture runs,
+        // and nothing is flushed at the seam. Repeating the chain here is that,
+        // and it avoids the plugin transport's loop, which *does* flush.
+        const size_t need = size_t(seconds * 48.0 / 96.0) + 2;
+        while (chain.size() < need && !phrases.empty())
+            for (int p : phrases) chain.push_back(uint8_t(p + 1));
+        if (phrases.empty()) continue;
     }
-    tracker::buildBarTable(s);
+    tracker::buildRowTables(s);
     tracker::buildTempoMap(s, s.tempoBpm);
 }
 
@@ -287,7 +293,7 @@ std::vector<Write> playChipBoy(const lsdjref::SpecCase& c, Console console, doub
     auto bank = std::make_unique<bank::Bank>();
     auto song = std::make_unique<tracker::Song>();
     buildBank(c, *bank);
-    buildSong(c, *song);
+    buildSong(c, *song, seconds);
 
     driver::Clock clock;
     tracker::Player player;
@@ -300,7 +306,6 @@ std::vector<Write> playChipBoy(const lsdjref::SpecCase& c, Console console, doub
     driver::ClockConfig cc;
     cc.source = driver::TempoSource::Song;
     cc.songTempo = double(c.tempo);
-    cc.beatsPerBar = song->beatsPerBar;
     clock.setConfig(cc);
     if (!song->tempoMap.empty()) clock.setTempoMap(song->tempoMap.data(), song->tempoMap.size());
     clock.setOwnsTransport(true);
@@ -321,7 +326,6 @@ std::vector<Write> playChipBoy(const lsdjref::SpecCase& c, Console console, doub
     for (int64_t b = 0; b < blocks; ++b) {
         driver::Transport t;                 // the plugin's own transport owns the clock
         clock.process(t, kBlock, frame);
-        player.setBarTicks(song->barTicks());
         for (int ch = 0; ch < 4; ++ch) {
             const int slot = driver.tableGrooveSlot(ch);
             driver.setTableGroove(ch, slot >= 1 && slot <= 16 ? song->grooves[size_t(slot - 1)].ticks.data() : nullptr);
@@ -349,6 +353,8 @@ struct Verdict {
     std::string text;                 ///< identical | timing | values | no trace
     size_t      lsdjWrites = 0, chipboyWrites = 0;
     size_t      firstDivergence = 0;
+    size_t      phaseWrites = 0;      ///< trailing pitch updates put down to the clock's phase
+    uint64_t    worstSkew = 0;        ///< the widest gap between a write and its opposite number
     std::string detail;
 };
 
@@ -398,45 +404,171 @@ std::string hex2(uint8_t v)
     return buf;
 }
 
+/// The note-ons in a channel's stream, as the index of the **first write of
+/// each one**. A note-on is a burst of five writes ending in the trigger, and
+/// the four before it belong to the note that is starting, not to the one that
+/// is ending: splitting at the trigger would put them in the wrong note and
+/// make every note boundary look like a difference.
+std::vector<size_t> noteOnsOf(const std::vector<Write>& w, int channel)
+{
+    constexpr uint64_t kSetupWindow = 4096;   // a level write this far back makes it a note
+    constexpr uint64_t kBurst = 1024;         // ... and the burst itself is this tight
+    std::vector<size_t> out;
+    for (size_t i = 0; i < w.size(); ++i) {
+        if (channelOf(w[i].addr) != channel || !isTrigger(w[i].addr, w[i].value)) continue;
+        const uint16_t level = levelRegister(channel);
+        bool isNote = false;
+        for (size_t j = i; j-- > 0;) {
+            if (w[i].cycle - w[j].cycle > kSetupWindow) break;
+            if (w[j].addr == level) { isNote = true; break; }
+        }
+        if (!isNote) continue;
+        size_t start = i;
+        while (start > 0 && w[i].cycle - w[start - 1].cycle <= kBurst
+               && !isTrigger(w[start - 1].addr, w[start - 1].value)) --start;
+        out.push_back(start);
+    }
+    return out;
+}
+
+/// Compares one channel of the two streams.
+///
+/// The two are lined up at the **first note-on**, and then again at **every
+/// note-on**, because two things that are not the driver's behaviour separate
+/// them otherwise and would swamp everything that is:
+///
+///  - LSDj counts its tempo in timer interrupts, so a tick is a whole number
+///    of them and jitters by one either way -- 11712 cycles, three times this
+///    tolerance -- while ChipBoy's clock is exact. Over a twenty-second case
+///    the two tick rates also drift apart by 88 parts per million.
+///  - The pitch clock free-runs on both sides, so where a note falls inside
+///    its period is where the player pressed play. That is why the tolerance
+///    is one whole period: a write may be up to a period from its opposite
+///    number without either engine being wrong.
+///
+/// Inside a note the comparison is strict: register for register, value for
+/// value, in order. The one allowance is the **last pitch update** of a note,
+/// which belongs to whichever side's clock ticked once more before the next
+/// note-on; a difference of one trailing NRx3/NRx4 pair is reported as a phase
+/// artefact and not as a difference.
 Verdict compareStreams(const std::vector<Write>& lsdj, const std::vector<Write>& chip,
                        int channel, uint64_t tolerance)
 {
     Verdict v;
     const size_t la = firstNoteOn(lsdj), ca = firstNoteOn(chip);
-    if (la == lsdj.size() || ca == chip.size()) {
-        v.text = "no note-on";
-        return v;
-    }
-    const auto ls = channelStream(lsdj, la, channel, lsdj[la].cycle);
-    const auto cs = channelStream(chip, ca, channel, chip[ca].cycle);
+    if (la == lsdj.size() || ca == chip.size()) { v.text = "no note-on"; return v; }
+    auto ls = channelStream(lsdj, la, channel, lsdj[la].cycle);
+    auto cs = channelStream(chip, ca, channel, chip[ca].cycle);
     v.lsdjWrites = ls.size();
     v.chipboyWrites = cs.size();
     if (ls.empty() && cs.empty()) { v.text = "silent on both"; return v; }
 
-    bool sameValues = true, sameTiming = true;
-    const size_t n = std::min(ls.size(), cs.size());
-    size_t first = n;
-    for (size_t i = 0; i < n; ++i) {
-        const bool value = ls[i].addr == cs[i].addr && ls[i].value == cs[i].value;
-        const bool time = ls[i].cycle > cs[i].cycle ? ls[i].cycle - cs[i].cycle <= tolerance
-                                                    : cs[i].cycle - ls[i].cycle <= tolerance;
-        if (!value) sameValues = false;
-        if (!time) sameTiming = false;
-        if ((!value || !time) && first == n) {
-            first = i;
-            char buf[256];
-            std::snprintf(buf, sizeof buf, "#%zu LSDj %s=%s at %llu, ChipBoy %s=%s at %llu",
-                          i, regName(ls[i].addr), hex2(ls[i].value).c_str(), (unsigned long long) ls[i].cycle,
-                          regName(cs[i].addr), hex2(cs[i].value).c_str(), (unsigned long long) cs[i].cycle);
-            v.detail = buf;
-        }
+    // Compare only as far as both captures go. The two runs are the same
+    // length in *seconds*, but LSDj's tempo counter and ChipBoy's clock do not
+    // agree to the tick, so one of them fits a note more in at the end; what
+    // that note wrote is not a difference between the drivers.
+    auto ln = noteOnsOf(ls, channel), cn = noteOnsOf(cs, channel);
+    if (!ln.empty() && !cn.empty()) {
+        const size_t notes = std::min(ln.size(), cn.size());
+        if (ln.size() > notes) { ls.resize(ln[notes]); ln.resize(notes); }
+        if (cn.size() > notes) { cs.resize(cn[notes]); cn.resize(notes); }
+    } else {
+        const size_t n = std::min(ls.size(), cs.size());
+        ls.resize(n); cs.resize(n);
     }
-    if (ls.size() != cs.size() && v.detail.empty())
-        v.detail = "same as far as both go; the streams are different lengths";
-    v.firstDivergence = first;
-    if (sameValues && sameTiming && ls.size() == cs.size()) v.text = "identical";
-    else if (sameValues && ls.size() == cs.size())          v.text = "same values, different timing";
-    else                                                     v.text = "different values";
+    // Walk the two streams note by note. `li`/`ci` are the read positions and
+    // `lo`/`co` the origins the times are measured from.
+    size_t li = 0, ci = 0, ni = 0;
+    uint64_t lo = 0, co = 0;
+    bool values = true, timing = true;
+    size_t phase = 0;                       // trailing updates written off as clock phase
+    uint64_t worst = 0;
+    size_t index = 0;
+    auto isPeriodWrite = [&](const Write& w) {
+        const uint16_t lo3[4] = { 0xFF13, 0xFF18, 0xFF1D, 0xFF22 };
+        const uint16_t hi4[4] = { 0xFF14, 0xFF19, 0xFF1E, 0xFF23 };
+        return (w.addr == lo3[channel & 3] || w.addr == hi4[channel & 3]) && !isTrigger(w.addr, w.value);
+    };
+    while (li < ls.size() || ci < cs.size()) {
+        const size_t lEnd = ni < ln.size() ? ln[ni] : ls.size();
+        const size_t cEnd = ni < cn.size() ? cn[ni] : cs.size();
+        // The stretch up to the next note-on on each side.
+        while (li < lEnd || ci < cEnd) {
+            if (li >= lEnd || ci >= cEnd) {
+                // One side has more writes in this note than the other. A
+                // trailing pitch update is the free-running clock; anything
+                // else is a real difference.
+                const bool trailing = (li < lEnd ? isPeriodWrite(ls[li]) : isPeriodWrite(cs[ci]));
+                // At the very end of the comparison the two captures simply
+                // stop at different places inside the last note: whatever
+                // pitch updates are left there are the clock's, not a
+                // difference. Inside a note the allowance is one pair.
+                const bool last = lEnd == ls.size() && cEnd == cs.size();
+                if (trailing && (last || (li >= lEnd ? cEnd - ci : lEnd - li) <= 2)) {
+                    ++phase;
+                    if (li < lEnd) ++li; else ++ci;
+                    continue;
+                }
+                if (v.detail.empty()) {
+                    char buf[256];
+                    std::snprintf(buf, sizeof buf, "#%zu one stream has %s and the other has nothing",
+                                  index, li < lEnd ? regName(ls[li].addr) : regName(cs[ci].addr));
+                    v.detail = buf;
+                }
+                values = false;
+                if (li < lEnd) ++li; else ++ci;
+                ++index;
+                continue;
+            }
+            bool same = ls[li].addr == cs[ci].addr && ls[li].value == cs[ci].value;
+            // A local resynchronisation, and the only one: the free-running
+            // pitch clock gives one side an update the other does not have at
+            // the end of a note, so one NRx3/NRx4 pair can be a write ahead.
+            // Skipping it is allowed where the writes after it line up again.
+            if (!same) {
+                auto agrees = [&](size_t i, size_t j) {
+                    for (size_t k = 0; k < 4; ++k) {
+                        if (i + k >= lEnd || j + k >= cEnd) return false;
+                        if (ls[i + k].addr != cs[j + k].addr || ls[i + k].value != cs[j + k].value) return false;
+                    }
+                    return true;
+                };
+                for (size_t skip = 1; skip <= 2 && !same; ++skip) {
+                    if (isPeriodWrite(ls[li]) && agrees(li + skip, ci)) { li += skip; phase += skip; same = ls[li].addr == cs[ci].addr && ls[li].value == cs[ci].value; }
+                    else if (isPeriodWrite(cs[ci]) && agrees(li, ci + skip)) { ci += skip; phase += skip; same = ls[li].addr == cs[ci].addr && ls[li].value == cs[ci].value; }
+                }
+            }
+            const uint64_t lt = ls[li].cycle - lo, ct = cs[ci].cycle - co;
+            const uint64_t skew = lt > ct ? lt - ct : ct - lt;
+            if (skew > worst) worst = skew;
+            if (!same) values = false;
+            if (skew > tolerance) timing = false;
+            if ((!same || skew > tolerance) && v.detail.empty()) {
+                char buf[256];
+                std::snprintf(buf, sizeof buf, "#%zu LSDj %s=%s at %llu, ChipBoy %s=%s at %llu",
+                              index, regName(ls[li].addr), hex2(ls[li].value).c_str(), (unsigned long long) lt,
+                              regName(cs[ci].addr), hex2(cs[ci].value).c_str(), (unsigned long long) ct);
+                v.detail = buf;
+                v.firstDivergence = index;
+            }
+            ++li; ++ci; ++index;
+        }
+        if (ni < ln.size() && ni < cn.size()) { lo = ls[ln[ni]].cycle; co = cs[cn[ni]].cycle; }
+        else if (li >= ls.size() && ci >= cs.size()) break;
+        else if (ni >= ln.size() || ni >= cn.size()) {
+            // One side has more note-ons than the other: that *is* a
+            // difference, and the rest of the stream is reported as one.
+            if (v.detail.empty()) v.detail = "one stream has more note-ons than the other";
+            values = false;
+            break;
+        }
+        ++ni;
+    }
+    v.phaseWrites = phase;
+    v.worstSkew = worst;
+    if (values && timing) v.text = phase ? "same values, timing within tolerance" : "identical";
+    else if (values)      v.text = "same values, timing outside tolerance";
+    else                  v.text = "different values";
     return v;
 }
 
@@ -465,7 +597,13 @@ void usage()
 int main(int argc, char** argv)
 {
     std::string spec, traces, out, dump, model = "dmg";
-    uint64_t tolerance = 4096;      // about a millisecond: a third of LSDj's timer period
+    int startFrame = -1;                 // when the harness pressed START
+    // Two pitch-clock periods. One is where a note falls inside the
+    // free-running timer -- which is where the player pressed play, not a
+    // property of either driver -- and the second covers an update one side
+    // fitted in and the other did not, which shifts everything after it by a
+    // period (see compareStreams).
+    uint64_t tolerance = 2 * 11712;
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -479,6 +617,7 @@ int main(int argc, char** argv)
         else if (a == "--dump")      dump = next("--dump");
         else if (a == "--model")     model = next("--model");
         else if (a == "--tolerance") tolerance = std::strtoull(next("--tolerance").c_str(), nullptr, 10);
+        else if (a == "--start-frame") startFrame = std::atoi(next("--start-frame").c_str());
         else if (a == "-h" || a == "--help") { usage(); return 0; }
         else { std::fprintf(stderr, "lsdjref-compare: unknown option %s\n", a.c_str()); usage(); return 2; }
     }
@@ -492,6 +631,7 @@ int main(int argc, char** argv)
     if (!lsdjref::readSpec(spec, cases, error)) { std::fprintf(stderr, "lsdjref-compare: %s\n", error.c_str()); return 2; }
 
     const Console console = model == "cgb" ? Console::CGB : Console::DMG;
+    if (startFrame < 0) startFrame = model == "cgb" ? 300 : 180;
     std::ostringstream md;
     md << "# LSDj vs ChipBoy: the register streams\n\n"
        << "Written by `lsdjref-compare` from `" << spec << "`, model **" << model
@@ -502,20 +642,20 @@ int main(int argc, char** argv)
 
     int compared = 0, missing = 0;
     std::ostringstream table, detail;
-    table << "| case | channel | LSDj writes | ChipBoy writes | verdict |\n|---|---|---:|---:|---|\n";
+    table << "| case | channel | LSDj writes | ChipBoy writes | verdict | worst skew |\n|---|---|---:|---:|---|---:|\n";
 
     for (const auto& c : cases) {
         const std::string tracePath = traces + "/" + c.name + "." + model + ".csv";
         std::vector<Write> lsdj;
         if (traces.empty() || !readTrace(tracePath, lsdj)) {
             ++missing;
-            table << "| `" << c.name << "` | - | - | - | no trace (" << tracePath << ") |\n";
+            table << "| `" << c.name << "` | - | - | - | no trace (" << tracePath << ") | - |\n";
             continue;
         }
         ++compared;
-        // Play as far as the trace goes, plus a little: the trace's own frames
-        // include LSDj's boot, so the song is shorter than the capture.
-        const double seconds = double(c.frames) / 60.0;
+        // Play as far as the trace does *after* the song starts: the capture's
+        // frames include LSDj's boot and the wait for START.
+        const double seconds = std::max(1.0, double(c.frames - startFrame) / 60.0);
         const auto chip = playChipBoy(c, console, seconds);
         if (!dump.empty()) {
             writeCsv(dump + "/" + c.name + ".chipboy.csv", chip, "ChipBoy's driver");
@@ -528,7 +668,8 @@ int main(int argc, char** argv)
             const Verdict v = compareStreams(lsdj, chip, ch, tolerance);
             if (v.lsdjWrites == 0 && v.chipboyWrites == 0) continue;
             table << "| `" << c.name << "` | " << kNames[ch] << " | " << v.lsdjWrites
-                  << " | " << v.chipboyWrites << " | " << v.text << " |\n";
+                  << " | " << v.chipboyWrites << " | " << v.text
+                  << " | " << v.worstSkew << " |\n";
             detail << "- **" << kNames[ch] << "**: " << v.text
                    << " (" << v.lsdjWrites << " vs " << v.chipboyWrites << " writes)";
             if (!v.detail.empty()) detail << " -- first divergence: " << v.detail;
