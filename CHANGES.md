@@ -26,6 +26,48 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-09 — the LSDj parity harness
+
+`docs/COMMANDS_AND_TEMPO.md` §31 asked for a way to stop guessing at what LSDj
+does, so `tools/lsdjref/` measures it. It authors test songs into an LSDj save,
+plays them on an LSDj 9.2 ROM the user owns inside SameBoy's core with a log on
+FF10–FF3F, plays the same songs through ChipBoy's driver with its own write log,
+and diffs the two streams. The findings are `docs/LSDJ_PARITY.md`; the engine
+changes they call for are a separate round.
+
+- **Opt in and tool only.** `-DCHIPBOY_LSDJREF=ON` fetches SameBoy (MIT) and
+  builds two console tools; without it nothing new is fetched, configured or
+  compiled, and the default build is byte for byte what it was. SameBoy links
+  into `lsdjref_trace` and nothing else — rule L1 stands. Recorded in
+  `docs/LICENSING.md` §1 along with liblsdj, which was read for the save layout
+  and from which no code is taken.
+- **The ROM never enters the tree.** It is named by `CHIPBOY_LSDJ_ROM`; `*.gb`
+  and `*.sav` stay ignored; every test skips (exit 77) when the ROM, the boot
+  ROMs or Python are missing, so `ctest` on a plain checkout is clean and
+  Actions never sees a ROM. Nothing of the ROM's contents is written down —
+  the findings are register addresses, values and cycle counts.
+- **Twenty-three test songs** in `tools/lsdjref/cases.spec`, one file read by
+  both the save writer and the compare tool, covering the plain note-on, V at
+  four speeds × four depths in each of the four PITCH modes, L, P, E, a table's
+  volume column, bare notes, R, K, D, C, grooves and hops, a wave kick and
+  noise.
+- **Eighteen verdicts**, of which fourteen are differences. The consequential
+  ones: LSDj's pitch clock is 11712 cycles and not 11651; one vibrato cycle is
+  64/(x + 1) updates, not 720/x, so ChipBoy's vibrato is twelve to twenty-two
+  times too slow; L takes x + 1 updates and interpolates in semitones; P is
+  neither linear in its value nor in the domain §7 gives it; and every level
+  change LSDj makes is a zombie-mode NRx2 sequence with no trigger — `09 11 18`
+  down, `08` up — which is what §26 already decided and now has numbers behind
+  it. §31's rule that a table's first row fires with the note-on is confirmed
+  against the real thing: 2932 cycles after the trigger, a thirtieth of a tick.
+- **Two CTest entries** appear with the option: `lsdjref_baseline` authors the
+  baseline save, plays it and checks the first note-on is NR10, NR11, NR12,
+  NR13, NR14 in that order; `lsdjref_compare` writes the comparison report as
+  an artefact rather than a pass or a failure — a difference is a finding, not
+  yet a bug.
+
+---
+
 ### 2026-09-08 — six demo songs and the hybrid project (content)
 
 The third addendum's §20 and §24 ([`docs/COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md)),

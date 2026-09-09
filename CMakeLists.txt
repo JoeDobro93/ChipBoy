@@ -10,6 +10,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(CHIPBOY_BUILD_TESTS     "Build the unit tests and the test-ROM harness" ON)
 option(CHIPBOY_BUILD_PLUGIN    "Build the JUCE plugins (JUCE is fetched; off until M3)" OFF)
 option(CHIPBOY_FETCH_TEST_ROMS "Fetch blargg's test ROMs at configure time" ON)
+# The LSDj parity harness (docs/COMMANDS_AND_TEMPO.md 31, docs/LSDJ_PARITY.md):
+# off by default, so the ordinary build fetches nothing new and builds nothing
+# new. With it on, SameBoy is fetched and two console tools are built; their
+# tests skip unless an LSDj ROM the user owns is named by CHIPBOY_LSDJ_ROM.
+option(CHIPBOY_LSDJREF "Build the LSDj parity harness (fetches SameBoy; tools only)" OFF)
 
 include(FetchContent)
 
@@ -309,4 +314,19 @@ if(CHIPBOY_BUILD_PLUGIN)
     set(CHIPBOY_MODAL_LOOPS 1)
     chipboy_configure_plugin(chipboy_uishot)
     set(CHIPBOY_MODAL_LOOPS 0)
+endif()
+
+# ---------------------------------------------------------------------------
+# the LSDj parity harness -- tools only, opt in, and nothing of it links into
+# chipboy_core or a plugin (docs/COMMANDS_AND_TEMPO.md 31)
+# ---------------------------------------------------------------------------
+if(CHIPBOY_LSDJREF)
+    if(MSVC)
+        message(WARNING "ChipBoy: the LSDj parity harness needs GCC or Clang (SameBoy's core is GNU C); not built")
+    else()
+        # CTest has to be enabled from the top of the tree for a subdirectory's
+        # tests to be listed, whether or not the unit tests are being built.
+        enable_testing()
+        add_subdirectory(tools/lsdjref)
+    endif()
 endif()

@@ -1,0 +1,128 @@
+#!/bin/sh
+# lsdjref-run -- the whole parity pipeline, configured into the build tree.
+#
+#   lsdjref-run                 every case, DMG, then the compare report
+#   lsdjref-run --case NAME     one case
+#   lsdjref-run --model cgb     the other console
+#   lsdjref-run --check         the baseline only, as CTest runs it
+#
+# It exits 77 -- CTest's skip -- when there is no LSDj ROM, no boot ROMs or no
+# Python, because none of those belong in the repository and a checkout
+# without them must still run `ctest` clean.
+set -eu
+
+WORK="@LSDJREF_WORK@"
+DIR="@LSDJREF_DIR@"
+PYTHON="@Python3_EXECUTABLE@"
+BOOTROMS="@LSDJREF_BOOTROM_DIR@"
+SPEC="$DIR/cases.spec"
+SKIP=77
+
+MODEL=dmg
+ONE=""
+CHECK=0
+START=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --case)  ONE="$2"; shift 2 ;;
+        --model) MODEL="$2"; shift 2 ;;
+        --check) CHECK=1; ONE=a_baseline; shift ;;
+        --spec)  SPEC="$2"; shift 2 ;;
+        --start-frame) START="$2"; shift 2 ;;
+        *) echo "lsdjref-run: unknown option $1" >&2; exit 2 ;;
+    esac
+done
+
+# When START is pressed, in frames. LSDj is on the song screen about two
+# seconds after a DMG reset and about four after a CGB one -- the CGB boot ROM
+# is longer -- and a press before that is swallowed by the boot ROM.
+if [ -z "$START" ]; then
+    if [ "$MODEL" = cgb ]; then START=300; else START=180; fi
+fi
+
+ROM="${CHIPBOY_LSDJ_ROM:-}"
+if [ -z "$ROM" ] || [ ! -r "$ROM" ]; then
+    echo "lsdjref-run: no LSDj ROM (set CHIPBOY_LSDJ_ROM); skipping"
+    exit $SKIP
+fi
+if [ -z "$BOOTROMS" ] || [ ! -r "$BOOTROMS/dmg_boot.bin" ]; then
+    echo "lsdjref-run: no boot ROMs (RGBDS was not found at configure time); skipping"
+    exit $SKIP
+fi
+if [ -z "$PYTHON" ] || [ ! -x "$PYTHON" ]; then
+    echo "lsdjref-run: no Python 3; skipping"
+    exit $SKIP
+fi
+
+TRACE="$WORK/lsdjref_trace"
+COMPARE="$WORK/lsdjref_compare"
+mkdir -p "$WORK/sav" "$WORK/trace"
+
+# The base save: one LSDj formatted itself, with this ROM's own version byte
+# and defaults. It takes about fifty seconds of emulated time, once.
+BASE="$WORK/base.sav"
+if [ ! -r "$BASE" ]; then
+    echo "lsdjref-run: letting LSDj format its own save (this happens once)"
+    "$TRACE" --rom "$ROM" --bootrom-dir "$BOOTROMS" --frames 3000 \
+             --init-sav "$BASE" --out /dev/null
+fi
+
+if [ -n "$ONE" ]; then
+    "$PYTHON" "$DIR/lsdjref_sav.py" --spec "$SPEC" --base "$BASE" --out "$WORK/sav" --case "$ONE"
+    CASES="$ONE"
+else
+    "$PYTHON" "$DIR/lsdjref_sav.py" --spec "$SPEC" --base "$BASE" --out "$WORK/sav" >/dev/null
+    CASES=$("$PYTHON" "$DIR/lsdjref_sav.py" --spec "$SPEC" --list | awk '{print $1}')
+fi
+
+for c in $CASES; do
+    frames=$(awk -v want="$c" '
+        $1 == "case" { in_case = ($2 == want) }
+        in_case && $1 == "frames" { print $2; exit }' "$SPEC")
+    [ -n "$frames" ] || frames=900
+    echo "lsdjref-run: tracing $c ($MODEL, $frames frames, START at $START)"
+    "$TRACE" --rom "$ROM" --bootrom-dir "$BOOTROMS" --model "$MODEL" \
+             --sav "$WORK/sav/$c.sav" --frames "$frames" --keys "$START:start" \
+             --out "$WORK/trace/$c.$MODEL.csv"
+done
+
+if [ "$CHECK" = 1 ]; then
+    # The baseline's first note-on is the five registers a plain LSDj note
+    # writes, in order (docs/LSDJ_PARITY.md). The values are measured, so only
+    # the registers and their order are asserted here.
+    "$PYTHON" - "$WORK/trace/a_baseline.$MODEL.csv" <<'CHECK'
+import sys
+
+WANT = ["NR10", "NR11", "NR12", "NR13", "NR14"]
+WINDOW = 4096          # cycles: how far back a note-on's setup writes reach
+
+rows = []
+for line in open(sys.argv[1]):
+    if line.startswith("#") or line.startswith("cycle"):
+        continue
+    p = line.strip().split(",")
+    if len(p) >= 4:
+        rows.append((int(p[0]), p[2], int(p[3], 16)))
+
+# The first note-on, not the first trigger: before the song starts LSDj beeps
+# its interface with a bare period write and a trigger, and that is not a note.
+for i, (cy, name, value) in enumerate(rows):
+    if name != "NR14" or not value & 0x80:
+        continue
+    setup = [r for r in rows[max(0, i - 8):i + 1] if cy - r[0] <= WINDOW]
+    if not any(r[1] == "NR12" for r in setup):
+        continue
+    got = [r[1] for r in setup[-5:]]
+    if got != WANT:
+        raise SystemExit("lsdjref: the note-on is %s, wanted %s" % (got, WANT))
+    print("lsdjref: the baseline note-on is "
+          + " ".join("%s=%02X" % (r[1], r[2]) for r in setup[-5:]))
+    raise SystemExit(0)
+raise SystemExit("lsdjref: no note-on in " + sys.argv[1])
+CHECK
+    exit 0
+fi
+
+echo "lsdjref-run: comparing"
+"$COMPARE" --spec "$SPEC" --traces "$WORK/trace" --model "$MODEL" \
+           --dump "$WORK/trace" --out "$WORK/LSDJ_PARITY_REPORT.$MODEL.md"
