@@ -876,3 +876,23 @@ ships frames:
 - The generator is core code (`bank::synthesize`, no JUCE), deterministic and tested; the
   panel edits the parameters, shows the start and end waves and the run, and offers
   drawing with the mouse on any frame as today.
+
+## 34. Command arguments: two values, one byte
+
+A command's arguments stay `x` and `y` in the model; what changes is that every letter
+declares its **shape**, and the window shows one of two views of the same byte:
+
+- **Nibbles** (V, C, R, M, Z, E, S on pulse, H in tables): `x` and `y` are 0–15 each.
+  Decimal mode shows `x,y` (`V 4,6`); Hex mode shows the LSDj byte `xy` (`V46`).
+- **Byte** (D, K, L, T, P): one value. Decimal shows the number — P signed, T in BPM
+  40–295 — and Hex shows the byte LSDj would: P in two's complement (`FE` = −2), T as
+  `28`–`FF` for 40–255 and `00`–`27` for 256–295.
+- **Small** (A, G, W, F, O): one value with its own range, shown as a number or as two
+  hex digits.
+
+Ranges follow: Z's and M's arguments clamp to 0–15; S's `y` is NR10's low nibble (0–7
+up, 8–15 down) instead of a flag on `x`; P is stored two's complement; H in a table takes
+LSDj's `times, row` (0 times = forever). The hex byte is exactly what a playback ROM will
+carry, so the exporter reads one encoding. Typing follows the view: in Hex mode a
+two-digit entry sets the byte, in Decimal mode each value is typed on its own with Tab
+between them.
