@@ -21,7 +21,7 @@ design-log section the change touches. Update this file at the end of every chan
 ## Done (2026-09-09)
 
 - Song format 7 (embeds the bank; converts older), link region v4, 76 host parameters.
-- 172 core tests, 11 plugin checks, all green on Linux, warning-free; the link test
+- 180 core tests, 11 plugin checks, all green on Linux, warning-free; the link test
   passes under a 1 MB stack. CI on push runs only the L1 check.
 - The driver follows LSDj's measured laws (`LSDJ_PARITY.md` §16–§17): 4 harness cases
   identical, 5 within tolerance, the rest listed with reasons.
@@ -46,6 +46,16 @@ design-log section the change touches. Update this file at the end of every chan
   and Hybrid channels show their notes dimmed; a MIDI note-off sorts before a note-on at
   one sample (the FL Studio first-note report, unverified here); LSDj 9.3.9 measured — a
   table row and a chord step are both one tick, so the defaults stand.
+- Round 8 (§45–§50, D-UI-15–17), from recreating an LSDj 9.3.9 song: the noise channel
+  takes the table's transpose column through its map; a cell's TBL lasts until a cell
+  names an instrument; a tick-stream jump (locate, loop wrap) no longer sends All Notes
+  Off and the step it lands in fires a fraction late instead of never (the DAW loop's
+  dropped first note); the chain carries a **transpose** per row and channel
+  (`Song::chainTranspose`, `NoteEvent::transpose`, `"chainTransposes"`), gated by the
+  instrument's Transpose flag like the table's column; pulse instruments carry
+  `pu2Transpose` and F on PU2 sets it; the JSON reader folds a negative P into its byte;
+  grid values wrap on a nudge; the Tracker head has **Follow**; the chain is 236 px with a
+  TSP cell beside each phrase. Tests: four driver cases, two tracker cases.
 - The parity harness runs here now: RGBDS was built from source into `/usr/local`, the
   ROM sits at `/root/lsdj/lsdj9_3_9.gb` (container only), `build-ref/` holds the build.
   `f_table_speed` is a new case; only it and `i_kill_delay_chord` were traced on 9.3.9.
@@ -65,7 +75,17 @@ design-log section the change touches. Update this file at the end of every chan
   `Z 255,255` clips in a lane's command column.
 - Demo songs were re-expressed under the measured laws; worth a listen.
 - The FL Studio first-note drop (§43) is fixed on reasoning — a note-off now sorts before a
-  note-on at the same sample — but was not reproduced here; the user confirms in FL.
+  note-on at the same sample — but was not reproduced here; the user confirms in FL. The
+  tracker's own dropped first note at a DAW loop (§47) is likewise fixed on reasoning: the
+  Player fires the step a jump lands in; the user confirms in the DAW.
+- From the LSDj recreation, open by decision: an **LSDj-shaped noise map** as an
+  instrument option (its map runs into 7-bit values above A-6 and retriggers on such a
+  row; ChipBoy's transposed noise rows land near LSDj's pitches, not on them); the table
+  volume column's **per-row fade speed** (LSDj's ENV low digit); **removing `A`** in favour
+  of the TBL column (needs a say for "stop" and for `A` inside a table); the harness
+  `lsdjref_sav.py` writes **version byte 0**, so LSDj reads its songs with the legacy
+  command table (no `B`) and the legacy noise map — its measurements stand, but a 9.x
+  song needs 0x16 and the B-shifted letter table.
 - The chord rate defaults to LSDj's one step a tick; the demo songs' arpeggios still run
   at that speed. Slowing them is a content decision (`make_songs.py` would need a
   `chordRate` field).

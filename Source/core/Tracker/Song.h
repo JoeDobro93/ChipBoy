@@ -118,6 +118,10 @@ inline bool cellNotes(NoteSource s) { return s == NoteSource::Tracker; }
 struct Song {
     std::array<Phrase, kPhraseSlots> phrases;         ///< slot n is phrases[n-1]
     std::array<std::vector<uint8_t>, 4> chain;        ///< per channel: row -> phrase slot (0 none)
+    /// Per channel: row -> the row's transpose in semitones (section 48), 0
+    /// when absent. Kept beside `chain`, read through transposeAt(), grown by
+    /// setTranspose() and trimmed to the chain by buildRowTables().
+    std::array<std::vector<int8_t>, 4> chainTranspose;
     std::array<NoteSource, 4> noteSource{ NoteSource::PianoRoll, NoteSource::PianoRoll, NoteSource::PianoRoll, NoteSource::PianoRoll };
     /// The record arm per channel (section 14). On for a new song, so a song
     /// written before the arms existed records exactly as it used to.
@@ -141,6 +145,14 @@ struct Song {
 
     const Phrase* phrase(int slot) const { return slot >= 1 && slot <= kPhraseSlots && phrases[size_t(slot - 1)].used ? &phrases[size_t(slot - 1)] : nullptr; }
     uint8_t phraseAt(int ch, int row) const { const auto& c = chain[size_t(ch & 3)]; return row >= 0 && size_t(row) < c.size() ? c[size_t(row)] : 0; }
+    int8_t transposeAt(int ch, int row) const { const auto& t = chainTranspose[size_t(ch & 3)]; return row >= 0 && size_t(row) < t.size() ? t[size_t(row)] : int8_t(0); }
+    void setTranspose(int ch, int row, int8_t semis)
+    {
+        if (row < 0) return;
+        auto& t = chainTranspose[size_t(ch & 3)];
+        if (size_t(row) >= t.size()) { if (semis == 0) return; t.resize(size_t(row) + 1, 0); }
+        t[size_t(row)] = semis;
+    }
     /// How many rows a channel's chain describes.
     int rows(int ch) const { return int(chain[size_t(ch & 3)].size()); }
     /// The longest chain: how many rows the song describes at all.

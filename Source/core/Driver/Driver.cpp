@@ -451,9 +451,14 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
     }
     if (cell) {
         if (cell->inst) { v.ksInstrument = cell->inst; v.ksFromCell = true; }   // a cell's instrument column names it exactly
-        if (cell->table) v.tableOverride = cell->table;      // the channel's table override, from this step on
+        // The channel's table override, from this step on. An instrument
+        // column with a blank TBL ends it (section 46): the note plays the
+        // instrument's own table, or the Table parameter's.
+        if (cell->table) v.tableOverride = cell->table;
+        else if (cell->inst) v.tableOverride = v.tableParam;
         v.noteCmd[0] = cell->cmd1; v.noteCmd[1] = cell->cmd2;
-    }
+        v.cellTranspose = cell->transpose;                    // the chain row's (section 48)
+    } else v.cellTranspose = 0;
     // A tracker cell is plain when its instrument column is filled and bare
     // when it is blank; a MIDI note is bare only when it lands over a held
     // note, would load the instrument already sounding, and that instrument
@@ -609,6 +614,11 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     v.inst = core; v.haveInst = true;
     latch(ch);
     v.note = note; v.vel = vel; v.active = true; v.killed = false; v.releasing = false; v.pulseReleasing = false;
+    // The chain row's transpose, under the instrument's Transpose flag like
+    // the table's column (section 48), and the instrument's own offset on the
+    // second pulse (section 49). The note itself stays what the cell said.
+    v.noteTsp = core.transpose ? v.cellTranspose : int8_t(0);
+    v.instTranspose = (ch == 1 && core.type == InstrumentType::Pulse) ? core.pu2Transpose : int8_t(0);
     v.instKey = instrumentKey(ch, vel);
     v.ticks = 0; v.vibPhase9 = 0; v.pitchCount = 0;
     v.fineOffset = 0; v.fineQueued = 0; v.drumOffset = 0.0; v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0;
@@ -849,14 +859,22 @@ double Driver::vibratoDrumUnits(const Voice& v) const
 double Driver::noteOfVoice(int ch) const
 {
     const Voice& v = v_[size_t(ch)];
-    double note = v.note + v.p.transpose + v.bend;
+    double note = v.note + v.noteTsp + v.instTranspose + v.p.transpose + v.bend;
     if (v.chordN) note += v.chord[v.chordIdx % v.chordN];
-    if (v.tableOn && v.inst.transpose && bank_) {
-        const Table* t = bank_->table(v.tableSlot);
-        if (t) { const auto& st = t->steps[v.tableRow]; if (st.hasTranspose) note += st.transpose; }
-    }
+    note += tableTransposeOf(v);
     const int32_t fine = v.fineOffset + slideResidual(v);
     return note + double(fine) / 256.0;
+}
+
+/// The table row's transpose column, when the table runs and the instrument
+/// admits it (section 7); the noise channel takes it too (section 45).
+int Driver::tableTransposeOf(const Voice& v) const
+{
+    if (!v.tableOn || !v.inst.transpose || !bank_) return 0;
+    const Table* t = bank_->table(v.tableSlot);
+    if (!t) return 0;
+    const auto& st = t->steps[v.tableRow];
+    return st.hasTranspose ? int(st.transpose) : 0;
 }
 
 int Driver::computePeriod(int ch)
@@ -973,7 +991,12 @@ void Driver::writePeriod(int ch, bool trigger)
     if (v.inst.type == InstrumentType::Noise) {
         uint8_t s, d;
         if (v.inst.noiseManual) { s = v.noiseShift; d = v.noiseDiv; }
-        else { const int n = std::clamp(int(v.note) + v.p.transpose, 0, 127); s = uint8_t(noiseShiftMap_[size_t(n)]); d = uint8_t(noiseDivMap_[size_t(n)]); s = uint8_t(std::clamp(int(s) + int(v.noiseShift) - 5, 0, 13)); }
+        else {
+            // The note, the chain row's and the channel's transposes, and the
+            // table row's column (section 45), through the map (section 9.4).
+            const int n = std::clamp(int(v.note) + v.noteTsp + v.p.transpose + tableTransposeOf(v), 0, 127);
+            s = uint8_t(noiseShiftMap_[size_t(n)]); d = uint8_t(noiseDivMap_[size_t(n)]); s = uint8_t(std::clamp(int(s) + int(v.noiseShift) - 5, 0, 13));
+        }
         v.noiseShift = s; v.noiseDiv = d;
         emit(regAddr(3, 3), uint8_t((s << 4) | (v.lfsr7 ? 8 : 0) | (d & 7)), true);
         if (trigger) { emit(regAddr(3, 4), uint8_t(0x80 | (v.inst.length ? 0x40 : 0)), true); markTrigger(ch); }
@@ -1350,7 +1373,13 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
             }
             break;
         }
-        case Cmd::F: if (v.inst.type == InstrumentType::Wave) { const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr; if (w && !w->frames.empty()) { v.frameIdx = uint8_t(std::clamp<int>(c.a - 1, 0, int(w->frames.size()) - 1)); v.frameCount = 0; if (live) loadFrame(ch, w->frames[v.frameIdx], model_ == Console::DMG); } } break;
+        case Cmd::F:
+            if (v.inst.type == InstrumentType::Wave) { const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr; if (w && !w->frames.empty()) { v.frameIdx = uint8_t(std::clamp<int>(c.a - 1, 0, int(w->frames.size()) - 1)); v.frameCount = 0; if (live) loadFrame(ch, w->frames[v.frameIdx], model_ == Console::DMG); } }
+            // On the second pulse F is the instrument's PU2 transpose for the
+            // note in progress and the notes after it, two's complement like
+            // P's argument (section 49); inert on PU1 and NOI.
+            else if (pulse && ch == 1) { v.instTranspose = int8_t(uint8_t(std::clamp<int>(c.a, 0, 255))); if (live) writePeriod(ch, false); }
+            break;
         case Cmd::G:
             // Inside a table G sets that run's row lengths: the driver keeps
             // the slot for the Player, which hands back the groove's ticks
@@ -1505,6 +1534,7 @@ void Driver::revertCommand(int ch, Cmd cmd)
         }
         case Cmd::F:
             if (i.type == InstrumentType::Wave) { const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr; v.frameIdx = 0; v.frameCount = 0; if (live && w && !w->frames.empty()) loadFrame(ch, w->frames[0], model_ == Console::DMG); }
+            else if (pulse && ch == 1) { v.instTranspose = i.pu2Transpose; if (live) writePeriod(ch, false); }   // the instrument's own PU2 transpose back (section 49)
             break;
         case Cmd::M: writeNr50(global_.masterL, global_.masterR); break;
         case Cmd::O: v.pan = v.p.pan != 255 ? Pan(v.p.pan & 3) : i.pan; writeNr51(); break;
@@ -1815,7 +1845,7 @@ void Driver::tick(int ch)
     // transpose column, the channel's own transpose -- goes out here, and only
     // when it really changed something.
     if (retrig) retrigger(ch, true);
-    else if (v.inst.type == InstrumentType::Noise) { if (v.noiseSweep) writePeriod(ch, false); }
+    else if (v.inst.type == InstrumentType::Noise) { if (v.noiseSweep || tickNote() != noteBeforeTick) writePeriod(ch, false); }   // a table's transpose reaches NR43 (section 45)
     else if (tickNote() != noteBeforeTick) writePeriod(ch, false);
 }
 
@@ -1917,6 +1947,7 @@ void Driver::applyCellColumns(int ch, const NoteEvent& e)
     Voice& v = v_[size_t(ch)];
     if (e.hybrid) { applyHybridCell(ch, e); return; }
     if (e.table) { v.tableOverride = e.table; if (v.active) beginTableRun(ch, e.table); }
+    else if (e.inst) v.tableOverride = v.tableParam;         // an instrument column ends the TBL span (section 46)
     if (e.inst && e.inst != v.ksInstrument) {
         v.ksInstrument = e.inst; v.ksFromCell = true;
         // The instrument reloads and fires the slots; the cell's commands
@@ -1937,6 +1968,7 @@ void Driver::applyHybridCell(int ch, const NoteEvent& e)
     Voice& v = v_[size_t(ch)];
     if (e.inst) { v.ksInstrument = e.inst; v.ksFromCell = true; }
     if (e.table) { v.tableOverride = e.table; }
+    else if (e.inst) v.tableOverride = v.tableParam;         // section 46
     v.heldCmd[0] = e.cmd1; v.heldCmd[1] = e.cmd2;
     v.heldCmdOn = e.cmd1.cmd != Cmd::None || e.cmd2.cmd != Cmd::None;
     v.heldDelay = 0;

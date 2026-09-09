@@ -162,6 +162,7 @@ struct InstrumentCore {
     uint8_t  envRate = 0;            ///< 0 = hold
     Envelope env;                    ///< Chip by default; Shaped renders its own level (section 27)
     uint8_t  sweepRate = 0;          ///< PU1 only
+    int8_t   pu2Transpose = 0;       ///< semitones added on the second pulse only (section 49)
     bool     sweepDown = false;
     uint8_t  sweepShift = 0;
     // wave

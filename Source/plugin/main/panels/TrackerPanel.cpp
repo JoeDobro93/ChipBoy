@@ -39,7 +39,7 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
       pos_("1" + String(CharPointer_UTF8("\xc2\xb7")) + "1   0.0 b", Fonts::mono(12.0f), colours::text),
       startLabel_("Start", Fonts::caption(10.0f), colours::textDim),
       tempoLabel_("Tempo", Fonts::caption(10.0f), colours::textDim),
-      play_(String(CharPointer_UTF8("\xe2\x96\xb6 Play"))), stop_(String(CharPointer_UTF8("\xe2\x96\xa0 Stop"))), loop_("Loop"),
+      play_(String(CharPointer_UTF8("\xe2\x96\xb6 Play"))), stop_(String(CharPointer_UTF8("\xe2\x96\xa0 Stop"))), loop_("Loop"), follow_("Follow"),
       rec_(String(CharPointer_UTF8("\xe2\x97\x8f Rec"))),
       saveSong_("Save song" + ellipsis()), loadSong_("Load song" + ellipsis()),
       export_("Export .gb" + ellipsis())
@@ -47,7 +47,7 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     for (auto* l : { &startLabel_, &tempoLabel_ }) l->setUpperCase(true);
     playLed_.setColour(colours::ok);
     playLed_.setInterceptsMouseClicks(false, false);
-    for (auto* c : std::initializer_list<Component*>{ &play_, &stop_, &loop_, &playLed_, &playText_, &pos_, &rec_,
+    for (auto* c : std::initializer_list<Component*>{ &play_, &stop_, &loop_, &follow_, &playLed_, &playText_, &pos_, &rec_,
                                                      &tempoLabel_, &tempo_, &startLabel_, &songStart_,
                                                      &saveSong_, &loadSong_, &export_, &tabs_, &scroll_, &chain_ }) addAndMakeVisible(c);
 
@@ -63,6 +63,16 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
         processor.setLoopRows(0, -1);              // the whole song, end to start
         processor.setLoop(loop_.getToggleState());
     };
+
+    // Follow (UI_DESIGN D-UI-16): on, the row on show is the one playing; off,
+    // the lane stays where it was put so another phrase can be edited while
+    // this one is heard. The chain's per-channel marks light either way.
+    follow_.setClickingTogglesState(true);
+    follow_.setToggleState(true, dontSendNotification);
+    follow_.setColour(TextButton::textColourOnId, colours::text);
+    follow_.setColour(TextButton::buttonOnColourId, colours::accentSoft);
+    follow_.setTooltip("Follow the transport: the row on show and the lane's scroll track what is playing. Off, they stay where you put them while the song plays.");
+    follow_.onClick = [this] { followOn_ = follow_.getToggleState(); };
 
     rec_.setTooltip("Record: the MIDI arriving on an armed channel is written into its cells while the transport runs. The dot beside a channel's name is its arm.");
     rec_.setClickingTogglesState(true);
@@ -124,6 +134,13 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
             if (int(chain.size()) <= bar) chain.resize(size_t(bar) + 1, 0);
             chain[size_t(bar)] = uint8_t(std::clamp(slot, 0, tracker::kPhraseSlots));
             if (slot >= 1 && slot <= tracker::kPhraseSlots) s.phrases[size_t(slot - 1)].used = true;
+        });
+    };
+    // The row's transpose on a channel (docs/COMMANDS_AND_TEMPO.md section 48).
+    chain_.onChainTransposeChange = [this](int ch, int bar, int semis) {
+        editSong("Chain: " + String(colours::channelName(ch)) + " row " + String(bar + 1) + " transpose", [ch, bar, semis](tracker::Song& s) {
+            if (bar < 0 || bar > 4095) return;
+            s.setTranspose(ch, bar, int8_t(std::clamp(semis, -128, 127)));
         });
     };
     // The chain's last column is the row's LEN: it sets the length of every
@@ -285,6 +302,7 @@ void TrackerPanel::songChanged()
 
 void TrackerPanel::restoreView(const juce::ValueTree& v)
 {
+    if (v.hasProperty("follow")) { followOn_ = bool(v["follow"]); follow_.setToggleState(followOn_, dontSendNotification); }
     if (!v.hasProperty("row")) return;
     const auto s = processor.song();
     const int rows = s ? s->rows() : 0;
@@ -446,7 +464,7 @@ void TrackerPanel::tick()
         const int row = playing ? at.row[size_t(ch)] : -1;
         if (row != playingRow_[size_t(ch)]) { playingRow_[size_t(ch)] = row; views = true; }
     }
-    if (playing && bar != bar_) { bar_ = bar; views = true; contextChanged(); }   // the view follows the transport
+    if (playing && followOn_ && bar != bar_) { bar_ = bar; views = true; contextChanged(); }   // the view follows the transport (D-UI-16)
     if (views) refreshViews();
 
     for (int ch = 0; ch < 4; ++ch) {
@@ -460,7 +478,7 @@ void TrackerPanel::tick()
     }
     // Past sixteen steps the lane is taller than its pane, so it follows the
     // row the selected channel is playing.
-    if (playing && gridSteps_ > PhraseGrid::kVisibleSteps) {
+    if (playing && followOn_ && gridSteps_ > PhraseGrid::kVisibleSteps) {
         const int st = lastStep_[size_t(channel)];
         if (st >= 0) scroll_.scrollToKeepVisible(PhraseGrid::kHeaderHeight + st * PhraseGrid::kRowHeight, PhraseGrid::kRowHeight);
     }
@@ -512,6 +530,8 @@ void TrackerPanel::resized()
     place(row1, stop_, 62, 24);
     row1.removeFromLeft(4);
     place(row1, loop_, 52, 24);
+    row1.removeFromLeft(4);
+    place(row1, follow_, 58, 24);
     row1.removeFromLeft(14);
     place(row1, playLed_, 8, 8);
     row1.removeFromLeft(6);

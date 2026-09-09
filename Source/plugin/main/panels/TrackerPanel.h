@@ -37,8 +37,9 @@ public:
     void bankChanged() override { grid_.setBank(processor.bank()); }
     void hexChanged() override;
     void tick() override;
-    /// The row on show survives a close and a reopen (section 35).
-    void saveView(juce::ValueTree& v) const override { v.setProperty("row", bar_, nullptr); }
+    /// The row on show and whether the view follows the transport survive a
+    /// close and a reopen (section 35, UI_DESIGN D-UI-16).
+    void saveView(juce::ValueTree& v) const override { v.setProperty("row", bar_, nullptr); v.setProperty("follow", followOn_, nullptr); }
     void restoreView(const juce::ValueTree& v) override;
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -63,7 +64,7 @@ private:
 
     ui::Led playLed_;
     TextLine playText_, pos_, startLabel_, tempoLabel_;
-    juce::TextButton play_, stop_, loop_, rec_, saveSong_, loadSong_, export_;
+    juce::TextButton play_, stop_, loop_, follow_, rec_, saveSong_, loadSong_, export_;
     // the song's own timeline: its master tempo (section 19) and where its
     // tick 0 sits on the host's. Beats and Steps / bar went with the bars.
     ui::Stepper tempo_, songStart_;
@@ -85,6 +86,9 @@ private:
     std::array<int, 4> lastRoll_{ { -2, -2, -2, -2 } };
     std::array<int, 4> lastStep_{ { -2, -2, -2, -2 } };
     bool songMode_ = false, owns_ = false, wasPlaying_ = false, loopOn_ = false;
+    /// The view follows the transport's row (UI_DESIGN D-UI-16); off, the
+    /// row on show and the lane's scroll are the user's while the song plays.
+    bool followOn_ = true;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TrackerPanel)
 };

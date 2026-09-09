@@ -26,6 +26,9 @@ Command cmdFromVar(const var& v)
         const String l = o->getProperty("c").toString();
         c.cmd = l.isNotEmpty() ? cmdFromLetter(char(l[0])) : Cmd::None;
         c.a = int16_t(int(o->getProperty("a"))); c.b = int16_t(int(o->getProperty("b"))); c.c = int16_t(int(o->getProperty("x")));
+        // P carries a two's-complement byte (section 34); a file that spelt
+        // it as the signed value plays the same (section 50).
+        if (c.cmd == Cmd::P && c.a < 0) c.a = int16_t(int(c.a) & 0xFF);
     }
     return c;
 }
@@ -66,6 +69,7 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     o->setProperty("pan", int(i.pan)); o->setProperty("length", int(i.length)); o->setProperty("table", int(i.table));
     o->setProperty("transpose", i.transpose); o->setProperty("noteOff", int(i.noteOff)); o->setProperty("overlap", int(i.overlap));
     o->setProperty("pitchSpeed", int(i.pitchSpeed)); o->setProperty("cmdRate", int(i.cmdRate)); o->setProperty("chordRate", int(i.chordRate)); o->setProperty("tableMode", int(i.tableMode));
+    if (i.pu2Transpose != 0) o->setProperty("pu2Transpose", int(i.pu2Transpose));   // section 49; absent reads as 0
     o->setProperty("vibShape", int(i.vib.shape)); o->setProperty("vibDir", int(i.vib.dir)); o->setProperty("vibSpeed", int(i.vib.speed)); o->setProperty("vibDepth", int(i.vib.depth)); o->setProperty("vibDelay", int(i.vib.delay));
     o->setProperty("duty", int(i.duty));
     { Array<var> seq; for (int k = 0; k < i.dutySeqLen; ++k) seq.add(int(i.dutySeq[size_t(k)])); o->setProperty("dutySeq", seq); }
@@ -106,6 +110,7 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     // file without one keeps stepping as it did.
     i.chordRate = uint8_t(std::clamp(getOr(o, "chordRate", int(i.cmdRate)), 0, 15));
     i.tableMode = TableMode(std::clamp(getOr(o, "tableMode", 0), 0, 1));
+    i.pu2Transpose = int8_t(std::clamp(getOr(o, "pu2Transpose", 0), -128, 127));
     // The vibrato's shape used to carry its direction (Triangle, Square,
     // SawUp, SawDown); it is a shape and a direction now.
     if (o->hasProperty("vibDir")) {
@@ -385,6 +390,17 @@ var songToVar(const tracker::Song& s)
     o->setProperty("phrases", phrases);
     Array<var> chains; for (const auto& c : s.chain) { Array<var> a; for (auto p : c) a.add(int(p)); chains.add(a); }
     o->setProperty("chains", chains);
+    // The rows' transposes (section 48), beside the chains and only when one
+    // is set, so a song without them reads as it always did.
+    {
+        bool any = false;
+        for (const auto& t : s.chainTranspose) for (auto v : t) any = any || v != 0;
+        if (any) {
+            Array<var> tsp;
+            for (int ch = 0; ch < 4; ++ch) { Array<var> a; const int rows = s.rows(ch); for (int r = 0; r < rows; ++r) a.add(int(s.transposeAt(ch, r))); tsp.add(a); }
+            o->setProperty("chainTransposes", tsp);
+        }
+    }
     Array<var> src; for (auto n : s.noteSource) src.add(int(n)); o->setProperty("noteSource", src);
     Array<var> arm; for (auto a : s.recordArm) arm.add(a); o->setProperty("recordArm", arm);
     // A groove is sixteen tick counts (section 9.2); trailing unused entries
@@ -487,6 +503,8 @@ bool songFromVar(const var& v, tracker::Song& out)
         }
     if (auto* chains = o->getProperty("chains").getArray())
         for (int ch = 0; ch < std::min(4, chains->size()); ++ch) if (auto* a = (*chains)[ch].getArray()) { out.chain[size_t(ch)].clear(); for (const auto& p : *a) out.chain[size_t(ch)].push_back(uint8_t(std::clamp(int(p), 0, 255))); }
+    if (auto* tsp = o->getProperty("chainTransposes").getArray())
+        for (int ch = 0; ch < std::min(4, tsp->size()); ++ch) if (auto* a = (*tsp)[ch].getArray()) { int r = 0; for (const auto& v2 : *a) out.setTranspose(ch, r++, int8_t(std::clamp(int(v2), -128, 127))); }
     if (!haveLengths) {
         std::vector<int> barSteps;
         if (auto* bs = o->getProperty("barSteps").getArray())

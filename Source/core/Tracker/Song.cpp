@@ -58,6 +58,9 @@ void buildRowTables(Song& s)
             acc = std::min<int64_t>(acc + phraseTicks(s, s.phrase(chain[r])), INT32_MAX / 2);
             t.push_back(int32_t(acc));
         }
+        // The transposes are the chain's rows and no more (section 48).
+        auto& tsp = s.chainTranspose[size_t(ch)];
+        if (tsp.size() > chain.size()) tsp.resize(chain.size());
     }
 }
 

@@ -1989,3 +1989,106 @@ TEST_CASE("all notes off drops a note still waiting for its tick", "[driver][not
     CHECK_FALSE(r.drv.view(0).active);
     CHECK_FALSE(r.drv.view(0).dacOn);
 }
+
+// --- sections 45 to 49: noise tables, the TBL span, the chain's and the instrument's transposes
+
+namespace {
+uint8_t nr43For(int note) { uint8_t s = 0, d = 0; Driver::noisePairForNote(note, s, d); return uint8_t((s << 4) | d); }
+}
+
+TEST_CASE("a noise instrument takes its table's transpose column through the map", "[driver][noise]")
+{
+    Rig r;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    { ChannelParams p; p.instrument = 21; for (int ch = 0; ch < 4; ++ch) r.drv.setParams(ch, p); }
+    auto& t = r.bank.tables[9]; t = Table{}; t.used = true;            // slot 10: -24, then +12, then the note
+    t.steps[0].hasTranspose = true; t.steps[0].transpose = -24;
+    t.steps[1].hasTranspose = true; t.steps[1].transpose = 12;
+    auto& i = r.bank.instruments[20]; i = Instrument::defaults(InstrumentType::Noise, "hat"); i.table = 10;   // slot 21
+    // The note-on carries row 0's transpose in its own NR43 (section 31).
+    auto w = r.block({ cellOn(3, 72, 21) }, 200);
+    REQUIRE(last(w, 0xFF22) != nullptr);
+    CHECK(last(w, 0xFF22)->value == nr43For(48));
+    CHECK(r.drv.view(3).tableSlot == 10);
+    // Row 1 at the next tick: a new NR43, no trigger.
+    w = r.block({}, 200);
+    REQUIRE(last(w, 0xFF22) != nullptr);
+    CHECK(last(w, 0xFF22)->value == nr43For(84));
+    CHECK_FALSE(has(w, 0xFF23));
+    // Row 2 is blank: the note itself.
+    w = r.block({}, 200);
+    REQUIRE(last(w, 0xFF22) != nullptr);
+    CHECK(last(w, 0xFF22)->value == nr43For(72));
+    CHECK(r.drv.view(3).tableRow == 2);
+    // With the instrument's Transpose off the column does nothing to noise either.
+    i.transpose = false;
+    w = r.block({ cellOn(3, 72, 21) }, 200);
+    CHECK(last(w, 0xFF22)->value == nr43For(72));
+}
+
+TEST_CASE("a TBL column lasts until a cell names an instrument", "[driver][commands]")
+{
+    Rig r;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    { ChannelParams p; p.instrument = 21; for (int ch = 0; ch < 4; ++ch) r.drv.setParams(ch, p); }
+    for (int slot : { 10, 11 }) { auto& t = r.bank.tables[size_t(slot - 1)]; t = Table{}; t.used = true; t.steps[0].vol = 12; }
+    auto& a = r.bank.instruments[20]; a = Instrument::defaults(InstrumentType::Pulse, "with"); a.table = 10;   // slot 21
+    auto& b = r.bank.instruments[21]; b = Instrument::defaults(InstrumentType::Pulse, "without");             // slot 22, no table
+    auto e = cellOn(0, 60, 22); e.table = 11;
+    r.block({ e }, 200);
+    CHECK(r.drv.view(0).tableSlot == 11);                 // the cell's TBL
+    r.block({ cellOn(0, 62, 0) }, 200);
+    CHECK(r.drv.view(0).tableSlot == 11);                 // a bare cell leaves it (section 46)
+    r.block({ cellOn(0, 64, 22) }, 200);
+    CHECK(r.drv.view(0).tableSlot == 0);                  // an instrument column with a blank TBL: the instrument's own, none
+    r.block({ cellOn(0, 65, 21) }, 200);
+    CHECK(r.drv.view(0).tableSlot == 10);                 // ... or its own table
+}
+
+TEST_CASE("the chain row's transpose moves the note when the instrument's Transpose is on", "[driver][notes]")
+{
+    Rig r;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    { ChannelParams p; p.instrument = 21; for (int ch = 0; ch < 4; ++ch) r.drv.setParams(ch, p); }
+    auto& on = r.bank.instruments[20]; on = Instrument::defaults(InstrumentType::Pulse, "lead");                        // slot 21
+    auto& off = r.bank.instruments[21]; off = Instrument::defaults(InstrumentType::Pulse, "drum"); off.transpose = false;  // slot 22
+    const int plain72 = Driver::periodForNote(72.0, false), plain60 = Driver::periodForNote(60.0, false);
+    auto e = cellOn(0, 60, 21); e.transpose = 12;
+    r.block({ e }, 200);
+    CHECK(r.drv.view(0).period == plain72);
+    CHECK(r.drv.view(0).note == 60);                      // the note stays what the cell said
+    e = cellOn(0, 60, 22); e.transpose = 12;
+    r.block({ e }, 200);
+    CHECK(r.drv.view(0).period == plain60);               // Transpose off: a drum keeps its pitch
+    // Noise goes through the map transposed.
+    auto& n = r.bank.instruments[22]; n = Instrument::defaults(InstrumentType::Noise, "hat");    // slot 23
+    e = cellOn(3, 60, 23); e.transpose = -12;
+    auto w = r.block({ e }, 200);
+    REQUIRE(last(w, 0xFF22) != nullptr);
+    CHECK(last(w, 0xFF22)->value == nr43For(48));
+}
+
+TEST_CASE("an instrument's PU2 transpose applies on the second pulse only, and F sets it", "[driver][commands][pitch]")
+{
+    Rig r;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    { ChannelParams p; p.instrument = 21; for (int ch = 0; ch < 4; ++ch) r.drv.setParams(ch, p); }
+    auto& i = r.bank.instruments[20]; i = Instrument::defaults(InstrumentType::Pulse, "phase"); i.pu2Transpose = 12;   // slot 21
+    const int plain72 = Driver::periodForNote(72.0, false), plain60 = Driver::periodForNote(60.0, false);
+    r.block({ cellOn(1, 60, 21) }, 200);
+    CHECK(r.drv.view(1).period == plain72);
+    r.block({ cellOn(0, 60, 21) }, 200);
+    CHECK(r.drv.view(0).period == plain60);               // PU1: the instrument's own pitch
+    // F on PU2 *is* the offset for the note in progress, two's complement: it
+    // replaces the instrument's, as LSDj's TSP does.
+    auto e = cellOn(1, 60, 21); e.cmd1 = { Cmd::F, 0xF4, 0, 0 };   // -12
+    r.block({ e }, 200);
+    CHECK(r.drv.view(1).period == Driver::periodForNote(48.0, false));
+    // A plain note-on puts the instrument's own back.
+    r.block({ cellOn(1, 60, 21) }, 200);
+    CHECK(r.drv.view(1).period == plain72);
+    // F on PU1 stays inert.
+    e = cellOn(0, 60, 21); e.cmd1 = { Cmd::F, 12, 0, 0 };
+    r.block({ e }, 200);
+    CHECK(r.drv.view(0).period == plain60);
+}

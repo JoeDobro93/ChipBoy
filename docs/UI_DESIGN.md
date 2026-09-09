@@ -614,10 +614,12 @@ the bars, §25) and **FILE** (*Save song…* 104, *Load song…* 104, *Export .g
 so the head reads as four things and not as nine controls. The **readout is the song's
 time and the selected channel's own row·step** — `2·13   7.2 b` — because the channels
 drift apart by design and only one of them can be shown. Across, the chain takes 164 px
-off the right with a 12 px gap, leaving 980 for the lane: a 34 px step column and four
+off the right with a 12 px gap, leaving 908 for the lane: a 34 px step column and four
 channel groups of 236, each a 39 px note, 31 vel, 31 ins, 29 tbl and two 53 px commands.
-The chain's own 164 is a 25 px gutter for the row number and five 25 px cells 2 px apart,
-under a 48 px head that lines up with the lane's. **Past sixteen steps** the lane is
+The chain's own 236 is a 22 px gutter for the row number and, per channel, a 25 px phrase
+cell with an 18 px transpose cell against it ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md)
+§48), then the 25 px LEN, 2 px apart, under a 48 px head that lines up with the lane's.
+While *Follow* is off (D-UI-16) the row on show is the user's, not the transport's. **Past sixteen steps** the lane is
 taller than its pane and scrolls inside it — the tab's only scrollbar — following the
 cursor as it is typed down the phrase and the row the selected channel is playing; a
 phrase of 64 steps is 1456 px of lane. The playing row is highlighted per channel on the
@@ -746,3 +748,6 @@ recorded in `CHANGES.md`.
 | D-UI-12 | One grammar for every value field? | **Yes** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §35): click selects, typing edits in place with refusal past the limit and Backspace taking digits back, double-click is the box — the item's tab on a slot field (D-UI-9) — right-click is the list, Shift+arrows move by one and by sixteen |
 | D-UI-13 | Where does the window open? | **Where it was left** (§35): the tab, the channel and each tab's selection are kept in the plugin state as `ui_view`, so a closed and reopened editor — or a reopened project — shows what it did rather than the Instrument tab on slot 1 |
 | D-UI-14 | Can the two ends of a wave morph have different shapes? | **Yes** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §36): the shape moved into the state, the two are rendered and crossfaded before the chain, and the run is placed by From and To frame numbers instead of a count |
+| D-UI-15 | Does a value stop at its limit or wrap? | **Wraps, in the grids.** Shift+arrows, +/−, and a drag on a cell of the lane, a table or the chain go from the top back to the bottom and from 00 up to the top (FF for a command's byte, the last slot for INS and TBL, 64 for LEN). Notes still stop at the range's ends: an octave past C-8 is not C-0. Typing never wraps — a value past the limit is refused as before (§2.1). The Instrument tab's steppers keep their ends: a tempo that wraps is a mistake, not a convenience |
+| D-UI-16 | Does the Tracker tab always follow the transport? | **Only while *Follow* is on** (a toggle in the head's TRANSPORT group, on by default, kept in `ui_view`). Off, the row on show and the lane's scroll stay where the user put them while the song plays, so a phrase can be edited while another is heard; the per-channel playing marks in the chain still light |
+| D-UI-17 | Where does the chain's transpose go? | **A second, narrower cell beside each phrase** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §48), signed in the display's base and blank at 0; the chain widens from 164 to 236 px and the lane gives up the difference. Digits type a positive value, +/−, Shift+arrows and a drag move it through zero, and the box takes a signed number |

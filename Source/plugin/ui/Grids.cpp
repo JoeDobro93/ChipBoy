@@ -183,6 +183,18 @@ int shiftDelta(const juce::KeyPress& k, int vertical = 16)
          : code == juce::KeyPress::upKey ? vertical : code == juce::KeyPress::downKey ? -vertical : 0;
 }
 
+/// A nudged value -- Shift+arrows, +/-, a drag -- wraps at the range's ends
+/// (UI_DESIGN D-UI-15): one down from 00 is the top, one up from the top is
+/// the bottom. Typing never comes here; a typed value past the limit is refused.
+int wrapRange(int v, int lo, int hi)
+{
+    const int span = hi - lo + 1;
+    if (span <= 0) return lo;
+    int r = (v - lo) % span;
+    if (r < 0) r += span;
+    return lo + r;
+}
+
 bool isBackspace(const juce::KeyPress& k) { return k.getKeyCode() == juce::KeyPress::backspaceKey; }
 bool isDelete(const juce::KeyPress& k) { return k.getKeyCode() == juce::KeyPress::deleteKey; }
 bool isBlankKey(const juce::KeyPress& k) { return isBackspace(k) || isDelete(k); }
@@ -220,14 +232,14 @@ bool editVol(int8_t& vol, const juce::KeyPress& k, Entry& e)
     const bool hex = ValueFormat::hex();
     if (isBackspace(k)) { int m = 0; vol = popDigit(e, hex, m) ? int8_t(m) : int8_t(-1); return true; }
     if (isDelete(k)) { e.restart(); vol = -1; return true; }
-    if (isPlus(k) || isMinus(k)) { e.restart(); vol = int8_t(juce::jlimit(0, 15, (vol < 0 ? (isPlus(k) ? -1 : 16) : int(vol)) + (isPlus(k) ? 1 : -1))); return true; }
+    if (isPlus(k) || isMinus(k)) { e.restart(); vol = int8_t(wrapRange((vol < 0 ? (isPlus(k) ? -1 : 16) : int(vol)) + (isPlus(k) ? 1 : -1), 0, 15)); return true; }
     int mag = 0;
     if (!typeDigit(e, k.getTextCharacter(), hex, 15, mag)) return false;
     if (mag >= 0) vol = int8_t(mag);
     return true;
 }
 
-bool editTranspose(bool& has, int8_t& t, const juce::KeyPress& k, Entry& e)
+bool editTranspose(bool& has, int8_t& t, const juce::KeyPress& k, Entry& e, int hi = 60)
 {
     const bool hex = ValueFormat::hex();
     if (isBackspace(k)) {
@@ -239,10 +251,10 @@ bool editTranspose(bool& has, int8_t& t, const juce::KeyPress& k, Entry& e)
     if (isDelete(k)) { e.restart(); has = false; t = 0; return true; }
     if (isMinus(k) && e.count == 0) { has = true; t = int8_t(-int(t)); e.negative = t < 0 || t == 0; return true; }
     if (isPlus(k) && e.count == 0) { has = true; t = int8_t(std::abs(int(t))); e.negative = false; return true; }
-    if (isMinus(k) || isPlus(k)) { e.restart(); has = true; t = int8_t(juce::jlimit(-60, 60, int(t) + (isPlus(k) ? 1 : -1))); return true; }
+    if (isMinus(k) || isPlus(k)) { e.restart(); has = true; t = int8_t(wrapRange(int(t) + (isPlus(k) ? 1 : -1), -hi, hi)); return true; }
     if (e.count == 0) e.negative = t < 0 || (has && t == 0 && e.negative);
     int mag = 0;
-    if (!typeDigit(e, k.getTextCharacter(), hex, 60, mag)) return false;
+    if (!typeDigit(e, k.getTextCharacter(), hex, hi, mag)) return false;
     if (mag < 0) return true;
     has = true;
     t = int8_t(e.negative ? -mag : mag);
@@ -254,7 +266,7 @@ bool editSlot(uint8_t& v, int hi, const juce::KeyPress& k, Entry& e)
     const bool hex = ValueFormat::hex();
     if (isBackspace(k)) { int m = 0; v = popDigit(e, hex, m) ? uint8_t(m) : uint8_t(0); return true; }
     if (isDelete(k)) { e.restart(); v = 0; return true; }
-    if (isPlus(k) || isMinus(k)) { e.restart(); v = uint8_t(juce::jlimit(0, hi, int(v) + (isPlus(k) ? 1 : -1))); return true; }
+    if (isPlus(k) || isMinus(k)) { e.restart(); v = uint8_t(wrapRange(int(v) + (isPlus(k) ? 1 : -1), 0, hi)); return true; }
     int mag = 0;
     if (!typeDigit(e, k.getTextCharacter(), hex, hi, mag)) return false;
     if (mag >= 0) v = uint8_t(mag);
@@ -268,11 +280,11 @@ bool nudgeCommand(bank::Command& c, int arg, int delta)
 {
     const auto* info = commandInfo(c.cmd);
     if (info == nullptr) return false;
-    if (ValueFormat::hex()) return plugin::setCommandByte(c, juce::jlimit(0, 255, plugin::commandByte(c) + delta));
+    if (ValueFormat::hex()) return plugin::setCommandByte(c, wrapRange(plugin::commandByte(c) + delta, 0, 255));
     const int a = juce::jlimit(0, info->nargs - 1, arg);
     int lo = 0, hi = 0;
     plugin::commandShownRange(c.cmd, a, lo, hi);
-    return plugin::setCommandShownValue(c, a, juce::jlimit(lo, hi, plugin::commandShownValue(c, a) + delta));
+    return plugin::setCommandShownValue(c, a, wrapRange(plugin::commandShownValue(c, a) + delta, lo, hi));
 }
 
 bool editCmd(bank::Command& c, const juce::KeyPress& k, Entry& e)
@@ -781,8 +793,8 @@ struct TableGrid::Impl {
     {
         const auto& c = core.cols[size_t(col)];
         auto& s = table.steps[size_t(row)];
-        if (c.kind == Kind::Vol) { const auto v = int8_t(juce::jlimit(0, 15, want)); if (s.vol == v) return; s.vol = v; }
-        else if (c.kind == Kind::Transpose) { const auto v = int8_t(juce::jlimit(-60, 60, want)); if (s.hasTranspose && s.transpose == v) return; s.hasTranspose = true; s.transpose = v; }
+        if (c.kind == Kind::Vol) { const auto v = int8_t(wrapRange(want, 0, 15)); if (s.vol == v) return; s.vol = v; }
+        else if (c.kind == Kind::Transpose) { const auto v = int8_t(wrapRange(want, -60, 60)); if (s.hasTranspose && s.transpose == v) return; s.hasTranspose = true; s.transpose = v; }
         else if (c.kind == Kind::Cmd) {
             auto& cmd = c.ch == 0 ? s.cmd1 : s.cmd2;
             if (cmd.cmd == bank::Cmd::None) return;
@@ -869,8 +881,8 @@ struct TableGrid::Impl {
         auto& s = table.steps[size_t(row)];
         const auto& c = core.cols[size_t(col)];
         core.entry.restart();
-        if (c.kind == Kind::Vol) s.vol = int8_t(juce::jlimit(0, 15, (s.vol < 0 ? 0 : int(s.vol)) + delta));
-        else if (c.kind == Kind::Transpose) { s.hasTranspose = true; s.transpose = int8_t(juce::jlimit(-60, 60, int(s.transpose) + delta)); }
+        if (c.kind == Kind::Vol) s.vol = int8_t(wrapRange((s.vol < 0 ? 0 : int(s.vol)) + delta, 0, 15));
+        else if (c.kind == Kind::Transpose) { s.hasTranspose = true; s.transpose = int8_t(wrapRange(int(s.transpose) + delta, -60, 60)); }
         else if (c.kind == Kind::Cmd) { if (!nudgeCommand(c.ch == 0 ? s.cmd1 : s.cmd2, core.entry.arg, delta)) return true; }
         else return false;
         changed(row);
@@ -1350,9 +1362,9 @@ struct PhraseGrid::Impl {
         auto& cell = cells[size_t(c.ch)][size_t(row)];
         const tracker::Cell before = cell;
         if (c.kind == Kind::Note) { if (cell.note == 0 || cell.note == tracker::kNoteOff) return; cell.note = uint8_t(juce::jlimit(1, 127, want)); }
-        else if (c.kind == Kind::Vel) cell.vel = uint8_t(juce::jlimit(0, 127, want));
-        else if (c.kind == Kind::Inst) cell.inst = uint8_t(juce::jlimit(0, bank::kInstrumentSlots, want));
-        else if (c.kind == Kind::Table) cell.table = uint8_t(juce::jlimit(0, bank::kTableSlots, want));
+        else if (c.kind == Kind::Vel) cell.vel = uint8_t(wrapRange(want, 0, 127));
+        else if (c.kind == Kind::Inst) cell.inst = uint8_t(wrapRange(want, 0, bank::kInstrumentSlots));
+        else if (c.kind == Kind::Table) cell.table = uint8_t(wrapRange(want, 0, bank::kTableSlots));
         else if (c.kind == Kind::Cmd) {
             auto& cmd = cmdSlot(col) == 0 ? cell.cmd1 : cell.cmd2;
             if (cmd.cmd == bank::Cmd::None) return;
@@ -1442,9 +1454,9 @@ struct PhraseGrid::Impl {
         auto& cell = cells[size_t(c.ch)][size_t(row)];
         const tracker::Cell before = cell;
         core.entry.restart();
-        if (c.kind == Kind::Vel) cell.vel = uint8_t(juce::jlimit(0, 127, int(cell.vel) + delta));
-        else if (c.kind == Kind::Inst) cell.inst = uint8_t(juce::jlimit(0, bank::kInstrumentSlots, int(cell.inst) + delta));
-        else if (c.kind == Kind::Table) cell.table = uint8_t(juce::jlimit(0, bank::kTableSlots, int(cell.table) + delta));
+        if (c.kind == Kind::Vel) cell.vel = uint8_t(wrapRange(int(cell.vel) + delta, 0, 127));
+        else if (c.kind == Kind::Inst) cell.inst = uint8_t(wrapRange(int(cell.inst) + delta, 0, bank::kInstrumentSlots));
+        else if (c.kind == Kind::Table) cell.table = uint8_t(wrapRange(int(cell.table) + delta, 0, bank::kTableSlots));
         else if (c.kind == Kind::Cmd) nudgeCommand(cmdSlot(col) == 0 ? cell.cmd1 : cell.cmd2, core.entry.arg, delta);
         else return false;
         if (!sameCell(before, cell)) changed(c.ch, row);
@@ -2032,7 +2044,7 @@ struct ChainColumn::Impl {
     /// column lights one cell per channel rather than a whole row (25).
     std::array<int, 4> playingRow{ { -1, -1, -1, -1 } };
     int firstBar = 0;
-    int cursorCol = 0;            ///< 0-3 a channel, 4 the bar's step count
+    int cursorCol = 0;            ///< 0-7 a channel's phrase (even) or its transpose (odd), 8 the bar's step count
     int hoverCol = -1, hoverBar = -1;
     Entry entry;
     TypedEntry box;
@@ -2040,14 +2052,21 @@ struct ChainColumn::Impl {
     bool dragged = false;
     float wheelAcc = 0.0f;
 
-    /// 164 px across: five 25 px cells with 2 px between them, and what is
-    /// left is the gutter the bar number stands in.
-    static constexpr int kPad = 3, kMinGutter = 22, kGap = 2, kCols = 5, kSteps = 4;
+    /// 236 px across (UI_DESIGN section 7): per channel a 25 px phrase cell
+    /// with an 18 px transpose cell against it (docs/COMMANDS_AND_TEMPO.md
+    /// section 48), then the 25 px LEN, 2 px between them, and what is left
+    /// is the gutter the row number stands in.
+    static constexpr int kPad = 3, kMinGutter = 22, kGap = 2, kCols = 9, kSteps = 8, kPhraseW = 25, kTspW = 18;
 
     explicit Impl(ChainColumn& o) : owner(o) {}
 
-    int cellW() const { return juce::jmax(14, (owner.getWidth() - 2 * kPad - kMinGutter - kGap * (kCols - 1)) / kCols); }
-    int gutter() const { return juce::jmax(kMinGutter, owner.getWidth() - 2 * kPad - kCols * cellW() - kGap * (kCols - 1)); }
+    static bool isTsp(int col) { return col >= 0 && col < kSteps && (col & 1) != 0; }
+    static bool isPhrase(int col) { return col >= 0 && col < kSteps && (col & 1) == 0; }
+    static int chOf(int col) { return juce::jlimit(0, 3, col >> 1); }
+    static int colW(int col) { return isTsp(col) ? kTspW : kPhraseW; }
+    static int cellsW() { return 4 * (kPhraseW + kTspW) + kPhraseW + kGap * (kCols - 1); }
+    int gutter() const { return juce::jmax(kMinGutter, owner.getWidth() - 2 * kPad - cellsW()); }
+    int colX(int col) const { int x = kPad + gutter(); for (int c = 0; c < col; ++c) x += colW(c) + kGap; return x; }
     int visibleBars() const { return juce::jmax(1, (owner.getHeight() - kHeaderHeight) / kRowHeight); }
     int songBars() const { return song != nullptr ? song->rows() : 0; }
     /// One row past the song, so typing there grows it (UI_DESIGN section 7).
@@ -2055,7 +2074,8 @@ struct ChainColumn::Impl {
     bool anyPlaying(int bar) const { for (int v : playingRow) if (v == bar) return true; return false; }
     int barCount() const { return juce::jmax(songBars(), juce::jmax(selectedBar, playingMax()) + 1) + 1; }
     int slotAt(int ch, int bar) const { return song != nullptr ? song->phraseAt(ch, bar) : 0; }
-    /// The fifth column is the row's LEN: a phrase carries its own length now
+    int tspAt(int ch, int bar) const { return song != nullptr ? int(song->transposeAt(ch, bar)) : 0; }
+    /// The last column is the row's LEN: a phrase carries its own length now
     /// (section 25), so it reads the first phrase this row holds and typing
     /// there sets the length of every phrase in the row.
     int stepsAt(int bar) const
@@ -2065,12 +2085,18 @@ struct ChainColumn::Impl {
             if (const auto* p = song->phrase(song->phraseAt(ch, bar))) return p->length();
         return 0;
     }
-    int valueAt(int col, int bar) const { return col == kSteps ? stepsAt(bar) : slotAt(col, bar); }
+    int valueAt(int col, int bar) const { return col == kSteps ? stepsAt(bar) : isTsp(col) ? tspAt(chOf(col), bar) : slotAt(chOf(col), bar); }
+    /// The range a column's value moves in, which a nudge wraps within (D-UI-15).
+    static void rangeOf(int col, int& lo, int& hi)
+    {
+        if (col == kSteps) { lo = 1; hi = tracker::kMaxSteps; }
+        else if (isTsp(col)) { lo = -128; hi = 127; }
+        else { lo = 0; hi = tracker::kPhraseSlots; }
+    }
 
     juce::Rectangle<int> cellRect(int col, int bar) const
     {
-        const int w = cellW();
-        return { kPad + gutter() + col * (w + kGap), kHeaderHeight + (bar - firstBar) * kRowHeight, w, kRowHeight - 1 };
+        return { colX(col), kHeaderHeight + (bar - firstBar) * kRowHeight, colW(col), kRowHeight - 1 };
     }
     juce::Rectangle<int> rowRect(int bar) const
     {
@@ -2083,9 +2109,8 @@ struct ChainColumn::Impl {
         if (row < 0 || row >= visibleBars()) return false;
         bar = firstBar + row;
         if (bar >= barCount()) return false;
-        const int w = cellW(), g = gutter();
-        const int i = (p.x - kPad - g) / (w + kGap);
-        col = p.x < kPad + g ? -1 : (i >= 0 && i < kCols ? i : -1);
+        col = -1;
+        for (int c = 0; c < kCols; ++c) { const int x = colX(c); if (p.x >= x && p.x < x + colW(c) + kGap) { col = c; break; } }
         return true;
     }
     void clampScroll() { firstBar = juce::jlimit(0, juce::jmax(0, barCount() - visibleBars()), firstBar); }
@@ -2106,18 +2131,32 @@ struct ChainColumn::Impl {
         owner.repaint();
         if (changed && owner.onSelectBar) owner.onSelectBar(bar);
     }
-    /// Writes one cell: a phrase slot, or the bar's own step count.
+    /// Writes one cell: a phrase slot, a channel's transpose for the row, or
+    /// the bar's own step count. Typed values are clamped, never wrapped.
     void setValue(int col, int bar, int value)
     {
         if (col < 0 || col > kSteps || bar < 0) return;
-        const int v = juce::jlimit(0, col == kSteps ? tracker::kMaxSteps : tracker::kPhraseSlots, value);
+        int lo = 0, hi = 0;
+        rangeOf(col, lo, hi);
+        const int v = juce::jlimit(col == kSteps ? 0 : lo, hi, value);
         if (v == valueAt(col, bar)) return;
         if (col == kSteps) { if (owner.onRowLengthChange) owner.onRowLengthChange(bar, v); }
-        else if (owner.onChainChange) owner.onChainChange(col, bar, v);
+        else if (isTsp(col)) { if (owner.onChainTransposeChange) owner.onChainTransposeChange(chOf(col), bar, v); }
+        else if (owner.onChainChange) owner.onChainChange(chOf(col), bar, v);
         owner.repaint();
     }
+    /// Shift+arrows and +/-: the value moves and wraps (D-UI-15). A LEN with
+    /// no phrase under it starts from one.
+    void nudge(int col, int bar, int delta)
+    {
+        int lo = 0, hi = 0;
+        rangeOf(col, lo, hi);
+        const int cur = valueAt(col, bar);
+        if (col == kSteps && cur == 0) { setValue(col, bar, juce::jlimit(lo, hi, delta > 0 ? delta : hi + 1 + delta)); return; }
+        setValue(col, bar, wrapRange(cur + delta, lo, hi));
+    }
 
-    static const char* colName(int col) { return col == kSteps ? "LEN" : colours::channelName(col); }
+    static const char* colName(int col) { return col == kSteps ? "LEN" : isTsp(col) ? "TSP" : colours::channelName(chOf(col)); }
 
     /// The phrases the song uses, by slot, with how many bars play each:
     /// the list a right click on a chain cell opens (UI_DESIGN section 2.1).
@@ -2140,18 +2179,21 @@ struct ChainColumn::Impl {
     }
 
     /// The double click on a cell: the inline box holding it (section 35).
-    /// A phrase slot follows the display's base; LEN is a plain number.
+    /// A phrase slot follows the display's base, a transpose is a signed
+    /// number in it, and LEN is a plain number.
     void openEntry(int col, int bar)
     {
         if (col < 0 || col > kSteps || bar < 0) return;
-        const bool len = col == kSteps;
+        const bool len = col == kSteps, tsp = isTsp(col);
         const int v = valueAt(col, bar);
-        box.begin(owner, cellRect(col, bar), v == 0 ? juce::String() : len ? juce::String(v) : ValueFormat::number(v), juce::Justification::centred,
-                  [this, col, bar, len](const juce::String& text) {
+        const juce::String now = v == 0 ? juce::String() : len ? juce::String(v) : tsp ? ValueFormat::signedNumber(v) : ValueFormat::number(v);
+        box.begin(owner, cellRect(col, bar), now, juce::Justification::centred,
+                  [this, col, bar, len, tsp](const juce::String& text) {
                       const juce::String t = text.trim();
                       int nv = 0;
                       if (t.isNotEmpty()) {
                           if (len) { if (!t.containsOnly("0123456789")) { owner.repaint(); return; } nv = t.getIntValue(); }
+                          else if (tsp) { if (!detail::parseTypedInt(t, -128, 127, nv)) { owner.repaint(); return; } }
                           else if (!detail::parseTypedInt(t, 0, tracker::kPhraseSlots, nv)) { owner.repaint(); return; }
                       }
                       setValue(col, bar, nv);
@@ -2160,11 +2202,12 @@ struct ChainColumn::Impl {
 
     void openPhraseMenu(int col, int bar)
     {
-        if (col < 0 || col >= kSteps) return;
+        if (!isPhrase(col)) return;
+        const int ch = chOf(col);
         const auto rows = phraseRows();
         if (rows.empty()) return;
-        showSlotMenu(owner, cellRect(col, bar), juce::String(colours::channelName(col)) + " phrase, row " + juce::String(bar + 1),
-                     rows, slotAt(col, bar), [this, col, bar](int slot) { setValue(col, bar, slot); });
+        showSlotMenu(owner, cellRect(col, bar), juce::String(colours::channelName(ch)) + " phrase, row " + juce::String(bar + 1),
+                     rows, slotAt(ch, bar), [this, col, bar](int slot) { setValue(col, bar, slot); });
     }
 
     void paintHead(juce::Graphics& g)
@@ -2181,8 +2224,8 @@ struct ChainColumn::Impl {
         draw::caption(g, "Row", { kPad, 26, gutter(), kHeaderHeight - 26 }, juce::Justification::centredLeft, textDim, 8.0f);
         for (int col = 0; col < kCols; ++col) {
             const auto r = cellRect(col, firstBar).withY(26).withHeight(kHeaderHeight - 26);
-            g.setFont(Fonts::pixel(9.0f));
-            g.setColour(col == kSteps ? textDim : channel(col));
+            g.setFont(Fonts::pixel(isTsp(col) ? 7.0f : 9.0f));
+            g.setColour(isPhrase(col) ? channel(chOf(col)) : textDim);
             g.drawText(colName(col), r, juce::Justification::centred, false);
         }
     }
@@ -2203,11 +2246,12 @@ struct ChainColumn::Impl {
             for (int col = 0; col < kCols; ++col) {
                 const auto r = cellRect(col, bar);
                 const int v = valueAt(col, bar);
+                const bool tsp = isTsp(col);
                 const bool empty = v == 0, hover = col == hoverCol && bar == hoverBar;
                 const bool hasCursor = cur && col == cursorCol;
                 // Each channel lights its own playing row, so two channels a
                 // row apart both show where they are (section 25).
-                const bool lit = col < kSteps && playingRow[size_t(col)] == bar;
+                const bool lit = col < kSteps && playingRow[size_t(chOf(col))] == bar;
                 g.setColour(lit ? playRow : cur ? accentSoft : hover ? raised : panel2);
                 g.fillRoundedRectangle(r.toFloat(), 3.0f);
                 g.setColour(lit ? accentHi : cur ? accent : lineSoft);
@@ -2221,9 +2265,9 @@ struct ChainColumn::Impl {
                 }
                 else g.drawRoundedRectangle(r.toFloat().reduced(0.5f), 3.0f, 1.0f);
                 if (hasCursor) { g.setColour(accentHi.withAlpha(focused ? 0.95f : 0.45f)); g.drawRoundedRectangle(r.toFloat().reduced(1.5f), 2.0f, focused ? 2.0f : 1.0f); }
-                g.setFont(Fonts::mono(11.0f));
+                g.setFont(Fonts::mono(tsp ? 9.5f : 11.0f));
                 g.setColour(empty ? textDim : lit ? text : col == kSteps ? textMute : cur ? text : textMute);
-                g.drawText(empty ? juce::String::charToString(0x00b7) : col == kSteps ? juce::String(v) : ValueFormat::number(v),
+                g.drawText(empty ? juce::String::charToString(0x00b7) : col == kSteps ? juce::String(v) : tsp ? ValueFormat::signedNumber(v) : ValueFormat::number(v),
                            r, juce::Justification::centred, false);
             }
         }
@@ -2251,7 +2295,7 @@ void ChainColumn::resized() { impl_->clampScroll(); }
 juce::String ChainColumn::getTooltip()
 {
     auto& im = *impl_;
-    if (im.hoverBar < 0) return "The chain: one row per row of the song, the four channels' phrases across it and the row's LEN at the end. "
+    if (im.hoverBar < 0) return "The chain: one row per row of the song, each channel's phrase with its transpose beside it, and the row's LEN at the end. "
                                 "Type a slot, Backspace blanks it, double-click for a box, right-click lists the phrases, Shift+arrows move it; the wheel scrolls.";
     const juce::String at = " Row " + juce::String(im.hoverBar + 1) + ".";
     if (im.hoverCol == Impl::kSteps) {
@@ -2260,8 +2304,14 @@ juce::String ChainColumn::getTooltip()
                       : "LEN " + juce::String(v) + ": every phrase in this row runs that many steps." + at;
     }
     if (im.hoverCol < 0) return "Row " + juce::String(im.hoverBar + 1) + ". Click a cell to edit that row; the lane shows whichever row is selected.";
-    const int slot = im.slotAt(im.hoverCol, im.hoverBar);
-    return juce::String(colours::channelName(im.hoverCol)) + (slot == 0 ? " has no phrase here -- it just plays its notes." : " plays phrase " + ValueFormat::number(slot) + ".") + at;
+    const int ch = Impl::chOf(im.hoverCol);
+    if (Impl::isTsp(im.hoverCol)) {
+        const int t = im.tspAt(ch, im.hoverBar);
+        return juce::String(colours::channelName(ch)) + (t == 0 ? " plays this row as written." : " plays this row " + ValueFormat::signedNumber(t) + " semitones, on instruments whose Transpose is on.")
+               + " Type a number, \"-\" flips its sign; Shift+arrows move it." + at;
+    }
+    const int slot = im.slotAt(ch, im.hoverBar);
+    return juce::String(colours::channelName(ch)) + (slot == 0 ? " has no phrase here -- it just plays its notes." : " plays phrase " + ValueFormat::number(slot) + ".") + at;
 }
 
 void ChainColumn::paint(juce::Graphics& g)
@@ -2326,11 +2376,11 @@ bool ChainColumn::keyPressed(const juce::KeyPress& k)
 {
     auto& im = *impl_;
     const int code = k.getKeyCode();
-    // Shift with the arrows moves the cell's value (section 35); the plain
-    // arrows move the cursor.
+    // Shift with the arrows moves the cell's value (section 35), wrapping at
+    // the ends (D-UI-15); the plain arrows move the cursor.
     if (const int d = shiftDelta(k); d != 0) {
         im.entry.restart();
-        im.setValue(im.cursorCol, im.selectedBar, im.valueAt(im.cursorCol, im.selectedBar) + d);
+        im.nudge(im.cursorCol, im.selectedBar, d);
         return true;
     }
     if (code == juce::KeyPress::returnKey) { im.openEntry(im.cursorCol, im.selectedBar); return true; }
@@ -2351,14 +2401,22 @@ bool ChainColumn::keyPressed(const juce::KeyPress& k)
     if (code == juce::KeyPress::escapeKey) { im.entry.reset(); return true; }
     const int col = im.cursorCol, bar = im.selectedBar;
     const int cur = im.valueAt(col, bar);
+    if (Impl::isTsp(col)) {
+        // The transpose types like a table's column (section 35): digits are
+        // a magnitude, "-" with nothing typed flips the sign, +/- move it.
+        bool has = cur != 0; int8_t t = int8_t(cur);
+        if (!editTranspose(has, t, k, im.entry, 127)) return false;
+        im.setValue(col, bar, has ? int(t) : 0);
+        return true;
+    }
     // LEN is a plain number 1-64; a phrase slot follows the display's base
     // like every other slot.
     const bool hex = col != Impl::kSteps && ValueFormat::hex();
     const int hi = col == Impl::kSteps ? tracker::kMaxSteps : tracker::kPhraseSlots;
     if (isBackspace(k)) { int m = 0; im.setValue(col, bar, popDigit(im.entry, hex, m) ? m : 0); return true; }
     if (isDelete(k)) { im.entry.reset(); im.setValue(col, bar, 0); return true; }
-    if (isPlus(k)) { im.entry.reset(); im.setValue(col, bar, cur + 1); return true; }
-    if (isMinus(k)) { im.entry.reset(); im.setValue(col, bar, cur - 1); return true; }
+    if (isPlus(k)) { im.entry.reset(); im.nudge(col, bar, 1); return true; }
+    if (isMinus(k)) { im.entry.reset(); im.nudge(col, bar, -1); return true; }
     int mag = 0;
     if (typeDigit(im.entry, k.getTextCharacter(), hex, hi, mag)) { if (mag >= 0) im.setValue(col, bar, mag); return true; }
     return false;

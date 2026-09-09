@@ -432,22 +432,48 @@ TEST_CASE("all notes off when the transport stops", "[tracker]")
     CHECK(p.position(0).row == -1);
 }
 
-TEST_CASE("all notes off when the tick stream jumps", "[tracker]")
+TEST_CASE("a jump in the tick stream neither kills nor drops the step it lands in", "[tracker]")
 {
     const auto owned = demoSong(); Song& s = *owned;
     Player p; p.prepare(48000.0); p.setSong(&s); ticks(p, 0, 8);
-    // Forwards: a locate to the middle of the bar.
+    // Forwards: a locate onto step 8's tick. Nothing is silenced (section 47);
+    // the step plays.
     const auto fwd = ticks(p, 48, 1);
-    REQUIRE(fwd.size() >= 1);
-    CHECK(fwd[0].kind == NoteEvent::AllNotesOff);
-    // Backwards: a loop wrapping to the top.
-    const auto back = ticks(p, 0, 1);
-    REQUIRE(back.size() == 2);
-    CHECK(back[0].kind == NoteEvent::AllNotesOff);
-    CHECK(back[1].kind == NoteEvent::NoteOn);      // step 0 fires after the flush
-    // A tick that follows the last one is not a jump.
-    const auto on = ticks(p, 1, 5);
+    REQUIRE(fwd.size() == 1);
+    CHECK(fwd[0].kind == NoteEvent::NoteOn);
+    CHECK(fwd[0].a == 67);
+    // Backwards: a loop wrapping to one tick past the top -- the host wrapped
+    // mid-block -- still plays step 0, a tick late rather than never.
+    const auto back = ticks(p, 1, 1);
+    REQUIRE(back.size() == 1);
+    CHECK(back[0].kind == NoteEvent::NoteOn);
+    CHECK(back[0].a == 60);
+    // The ticks that follow fire their own steps once, and no flush.
+    const auto on = ticks(p, 2, 23);
     CHECK(countOf(on, NoteEvent::AllNotesOff) == 0);
+    REQUIRE(countOf(on, NoteEvent::NoteOn) == 1);       // step 4 at tick 24
+    // A locate into the middle of a step plays that step, not the one after.
+    const auto mid = ticks(p, 50, 1);
+    REQUIRE(mid.size() == 1);
+    CHECK(mid[0].a == 67);
+}
+
+TEST_CASE("the chain row's transpose rides on every note the row fires", "[tracker]")
+{
+    const auto owned = demoSong(); Song& s = *owned;
+    s.chain[0] = { 1, 1, 1 };
+    s.setTranspose(0, 1, -5);
+    CHECK(s.transposeAt(0, 0) == 0); CHECK(s.transposeAt(0, 1) == -5); CHECK(s.transposeAt(0, 7) == 0);
+    buildRowTables(s);
+    Player p; p.prepare(48000.0); p.setSong(&s);
+    const auto row0 = ticks(p, 0, 1);
+    REQUIRE(row0.size() == 1); CHECK(row0[0].transpose == 0);
+    const auto row1 = ticks(p, 96, 1);
+    REQUIRE(row1.size() == 1); CHECK(row1[0].kind == NoteEvent::NoteOn); CHECK(row1[0].transpose == -5);
+    // Trimmed to the chain when the song is published.
+    s.setTranspose(0, 9, 3);
+    buildRowTables(s);
+    CHECK(s.chainTranspose[0].size() == 3);
 }
 
 TEST_CASE("all notes off when the lane goes", "[tracker]")

@@ -245,6 +245,7 @@ struct InstrumentPanel::Widgets {
     HeadRow* head = nullptr;
     // sound
     Segmented* duty = nullptr; NameField* dutySeq = nullptr; Stepper* sweepRate = nullptr; Segmented* sweepDir = nullptr; Stepper* sweepShift = nullptr;
+    Stepper* pu2Transpose = nullptr;
     Stepper* wave = nullptr; Stepper* frameAdv = nullptr; Segmented* frameLoop = nullptr; Segmented* waveLevel = nullptr;
     Stepper* kit = nullptr; Segmented* kitLoop = nullptr; TextLine* kitRate = nullptr;
     Segmented* lfsr = nullptr; Segmented* pitchMode = nullptr; Stepper* shift = nullptr; Stepper* divisor = nullptr; Stepper* noiseSweep = nullptr;
@@ -665,6 +666,10 @@ void InstrumentPanel::rebuildEditor()
         w_->sweepRate = stepper(*sound, "Sweep rate", "NR10 bits 6-4. PU1 only.", 0, 7, 0, {}, [](bank::Instrument& i, int v) { i.sweepRate = uint8_t(v); });
         w_->sweepDir = seg(*sound, "Sweep dir", "NR10 bit 3.", { "Up", "Down" }, [](bank::Instrument& i, int v) { i.sweepDown = v == 1; });
         w_->sweepShift = stepper(*sound, "Sweep shift", "NR10 bits 2-0.", 0, 7, 0, {}, [](bank::Instrument& i, int v) { i.sweepShift = uint8_t(v); });
+        // LSDj's PU2 TSP (docs/COMMANDS_AND_TEMPO.md section 49): the detune
+        // behind a phasing lead, applied on the second pulse only.
+        w_->pu2Transpose = stepper(*sound, "PU2 transpose", "Semitones added when this instrument plays on PU2 and nowhere else -- LSDj's PU2 TSP. An F on PU2 sets it for the note in progress.",
+                                   -128, 127, 0, [](int v) { return ValueFormat::signedNumber(v); }, [](bank::Instrument& i, int v) { i.pu2Transpose = int8_t(v); });
     } else if (type == bank::InstrumentType::Wave) {
         w_->wave = stepper(*sound, "Wave", "The wave RAM source; a W command overrides it. Right-click lists the bank, double-click opens it.", 1, bank::kWaveSlots, 1,
                            [this](int v) { const auto bk = processor.bank(); const bank::Wave* wv = bk ? bk->wave(v) : nullptr; return wv ? slotAndName(v, wv->name) : slotAndName(v, "empty"); },
@@ -903,7 +908,7 @@ void InstrumentPanel::syncValues()
     }
     S(w.duty, i.duty);
     if (w.dutySeq && w.dutySeq->text() != dutySeqText(i)) w.dutySeq->setText(dutySeqText(i));
-    T(w.sweepRate, i.sweepRate); S(w.sweepDir, i.sweepDown ? 1 : 0); T(w.sweepShift, i.sweepShift);
+    T(w.sweepRate, i.sweepRate); S(w.sweepDir, i.sweepDown ? 1 : 0); T(w.sweepShift, i.sweepShift); T(w.pu2Transpose, i.pu2Transpose);
     T(w.wave, i.wave); T(w.frameAdv, i.frameAdvance); S(w.frameLoop, int(i.frameLoop)); S(w.waveLevel, i.waveLevel);
     T(w.kit, i.kit); S(w.kitLoop, int(i.kitLoop));
     if (w.kitRate) {

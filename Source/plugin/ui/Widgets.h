@@ -357,10 +357,11 @@ public:
     /// told when a typed value is finished with (a click, a cursor move).
     std::function<void()> onEntryEnd;
     std::function<void(int ch, int bar, int phraseSlot)> onChainChange;   ///< 0 clears
+    std::function<void(int ch, int bar, int semis)> onChainTransposeChange;   ///< the row's transpose on that channel (section 48)
     std::function<void(int row, int steps)> onRowLengthChange;            ///< the length of the phrases in that row (section 25)
     juce::String getTooltip() override;
-    /// 164 wide and the lane's rhythm: a 48 px head over 22 px rows.
-    static constexpr int kRowHeight = 22, kHeaderHeight = 48, kWidth = 164;
+    /// 236 wide and the lane's rhythm: a 48 px head over 22 px rows.
+    static constexpr int kRowHeight = 22, kHeaderHeight = 48, kWidth = 236;
     void resized() override; void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override;

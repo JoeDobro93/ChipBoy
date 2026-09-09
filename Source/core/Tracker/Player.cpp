@@ -76,6 +76,7 @@ void Player::fireStep(int ch, int row, int step, uint8_t slot, uint32_t offset, 
     NoteEvent e;
     e.offset = offset; e.channel = uint8_t(ch); e.source = NoteEvent::Tracker;
     e.inst = c.inst; e.table = c.table; e.cmd1 = c.cmd1; e.cmd2 = c.cmd2;
+    e.transpose = song_->transposeAt(ch, row);       // the chain row's (section 48)
     if (!notes) { e.kind = NoteEvent::Command; e.hybrid = true; }
     else if (c.note == kNoteOff) { e.kind = NoteEvent::NoteOff; e.a = lastNote_[ch]; lastNote_[ch] = 0; }
     else if (c.note) { e.kind = NoteEvent::NoteOn; e.a = c.note; e.b = velocityOf(c); e.velSet = c.vel != 0; lastNote_[ch] = c.note; }
@@ -126,10 +127,15 @@ void Player::process(const TickPoint* ticks, size_t nTicks, bool playing, std::v
     for (size_t k = 0; k < nTicks; ++k) {
         const int64_t tick = ticks[k].tick;
         // A tick that is not the one after the last means the transport jumped
-        // (a locate, a loop wrap): what was sounding has no note-off coming.
-        if (haveTick_ && tick != lastTick_ + 1) {
-            for (int ch = 0; ch < 4; ++ch) if (lane[ch] && ownedNotes_[size_t(ch)]) allNotesOff(ch, ticks[k].offset, out);
-            for (auto& g : grooveCell_) g = kGrooveNone;   // the groove starts again from the song
+        // (a locate, a loop wrap), and so does the first tick after Play. What
+        // was sounding is left alone -- only a stop, a pause or the lane going
+        // silence a channel (section 47) -- the groove starts again from the
+        // song, and this one tick is allowed to land inside a step: the host
+        // wraps mid-block, so the tick a step sits on was in the block before
+        // and the step would otherwise never fire.
+        const bool late = !haveTick_ || tick != lastTick_ + 1;
+        if (late) {
+            for (auto& g : grooveCell_) g = kGrooveNone;
             for (auto& b : firedRow_) b = -1;
             for (auto& b : builtRow) b = -1;
         }
@@ -162,7 +168,10 @@ void Player::process(const TickPoint* ticks, size_t nTicks, bool playing, std::v
             const int steps = ph->length();
             for (int s = 0; s < steps; ++s) {
                 if (starts[ch][s] >= length) break;     // a groove that ends early: that step never fires
-                if (starts[ch][s] == inRow) {
+                // The step at this tick; after a jump, the latest step at or
+                // before it (section 47).
+                const bool lastBefore = late && starts[ch][s] < inRow && (s + 1 >= steps || starts[ch][s + 1] >= length || starts[ch][s + 1] > inRow);
+                if (starts[ch][s] == inRow || lastBefore) {
                     // A groove that changes mid-row re-lays the steps after
                     // it; a step already played in this row is not played
                     // again because the new grid puts it later.

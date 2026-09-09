@@ -68,6 +68,9 @@ struct NoteEvent {
     /// whatever the channel's Velocity mode; blank keeps the instrument's own
     /// volume. A song file must sound the same in any instance (section 9.1).
     bool     velSet = false;
+    /// Tracker cells: the chain row's transpose (section 48), added at the
+    /// note-on when the instrument's Transpose is on. MIDI notes carry 0.
+    int8_t   transpose = 0;
 };
 
 struct RegWrite { uint64_t cycle; uint16_t addr; uint8_t value; };
@@ -223,6 +226,9 @@ private:
         uint8_t  tableGroove = 0;                     ///< the groove a G inside the table asked for
         uint8_t  hopLeft = 0, hopFrom = 0xFF;         ///< H's `times` counter and the row it counts for
         uint8_t  tableOverride = 0, tableParam = 0;   ///< in force (parameter or cell), and the parameter it came from
+        int8_t   cellTranspose = 0;   ///< the chain row's transpose the last cell carried (section 48)
+        int8_t   noteTsp = 0;         ///< of it, what this note took: 0 when the instrument's Transpose is off
+        int8_t   instTranspose = 0;   ///< the instrument's PU2 transpose, or what an F on PU2 set (section 49)
         uint8_t  chord[3] = { 0, 0, 0 }; uint8_t chordN = 0, chordIdx = 0, chordCount = 0;
         uint8_t  dutyIdx = 0, duty = 2;
         // The envelope the driver *wants*: what a note-on writes into NRx2 and
@@ -402,6 +408,7 @@ private:
     void restartPitchClock(int ch);
     bank::PitchSpeed pitchSpeed(const Voice& v) const;
     double  noteOfVoice(int ch) const;                ///< the note in semitones, vibrato apart
+    int     tableTransposeOf(const Voice& v) const;   ///< the table row's transpose column in force, else 0 (sections 7, 45)
     int     vibratoFine(const Voice& v) const;        ///< 1/256 semitones, from the phase
     double  vibratoDrumUnits(const Voice& v) const;   ///< the same swing in period units (Drum)
     /// One step of the instrument's own envelope, run in software off the

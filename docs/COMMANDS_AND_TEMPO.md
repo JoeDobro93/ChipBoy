@@ -1354,3 +1354,95 @@ harness cases against it:
 So the defaults stand: a new instrument's **Chord rate** is 0 (one step a tick, §37), and
 a new table runs one row a tick with no rate field to add. LSDj has no separate table
 speed — its tables take the groove a `G` inside them names, as ChipBoy's do (§32).
+
+## 45. The noise channel takes the table's transpose column
+
+Recreating an LSDj song showed the noise drums flat: the snare's table (−32, +7, then the
+note) and the crash's (−3, −9, −9) did nothing, because the noise period was computed
+from the note and the channel transpose alone — "noise has no pitch effects" (§7) had
+swallowed the transpose column with the bends. The LSDj 9.3.9 trace of the song writes a
+new NR43 on every transposed row, one row a tick, the first inside the note-on: the snare
+is a three-value pitch sequence, not a hit.
+
+**Now:** a noise note's NR43 is looked up for `note + channel transpose + the table row's
+transpose`, on the note-on and again on every tick that changes it, through ChipBoy's own
+map (§9.4). P, V and L stay inert on noise (§7). Two measured details are *not* modelled:
+LSDj's map runs into 7-bit LFSR values above its A-6 and retriggers the channel when a
+row lands there (the snare's +7 row); ChipBoy's map has no 7-bit region — 7-bit is the
+instrument's flag — so there is nothing to retrigger for. A converter maps LSDj's rows by
+LFSR clock; the curves differ, so a transposed row lands near, not on, LSDj's value. An
+LSDj-shaped map as an instrument option is the open item (`HANDOFF.md`).
+
+## 46. The TBL column's span ends where an instrument column begins
+
+A cell's TBL set the channel's table override and nothing cleared it: every later note,
+whatever instrument its cell named, played that table until the channel's Table parameter
+moved. The command columns never stuck because both are re-read from every cell.
+
+**Now:** a cell that names an **instrument** with a blank TBL puts the override back to
+the Table parameter's value (0 when the parameter is off), so the note plays the
+instrument's own table — LSDj's rule too, an `A` table lasts until the next instrument
+load. A cell with a TBL keeps setting it; a bare cell (blank INS, blank TBL) leaves it
+alone. The same holds for a Hybrid channel's cells (§20).
+*As built:* `Driver::noteOn`'s cell handling and `Driver::hybridCell`.
+
+## 47. A jump in the tick stream no longer kills, and the step it landed in still fires
+
+Looping in a DAW dropped or clipped the first note of the loop. Two causes, one place:
+
+- The Player treated any tick that was not the last one plus one as a locate and sent
+  **All Notes Off** on every lane before playing the tick. The user's request: only a
+  **stop or pause** silences the channels; a wrap or a locate does not. A tracker leaves a
+  note ringing until the next cell on its channel anyway, so a note carried over a loop
+  point is what a tracker does.
+- The host wraps mid-block: the block starting at the loop start reports a position a
+  fraction of a tick past it, the tick the first step sits on was in the block before,
+  and the step never matched a tick exactly. **Now** the first tick after a jump — or
+  after Play — fires the **latest step at or before it in its row**, so a step missed by
+  a fraction of a tick plays a fraction late instead of not at all. Every later tick
+  matches exactly, as before.
+
+Stop, pause, the lane leaving (a source switch, a mute for recording) still send All Notes
+Off (§9.1, §20). *As built:* `Player::process`.
+
+## 48. The chain's transpose column
+
+LSDj's chain screen has a transpose beside every phrase; ChipBoy's chain had the phrase
+only, so a song imported from LSDj needed a copy of a phrase per transpose. **Now each
+chain row carries a transpose per channel**, −128..127 semitones, 0 by default:
+
+- The Player stamps it on every note-on it fires from that row (`NoteEvent::transpose`);
+  MIDI notes carry none.
+- The driver adds it at the note-on **when the instrument's Transpose is on** — the same
+  flag that admits the table's transpose column (§7), which is LSDj's rule as well: a
+  drum's TRANSPOSE OFF keeps it out of both. A bare note takes the flag of the instrument
+  sounding. Noise notes go through the map transposed (§45).
+- The recorded note is the untransposed one; the transpose is the row's, not the cell's.
+- Song file: `"chainTransposes"`, four arrays beside `"chains"`; absent reads as 0, so
+  every existing file opens unchanged. Rows past a channel's chain read as 0 and the
+  arrays are trimmed to the chain when the song is published.
+
+The window shows it as a second, narrower column beside each channel's phrase in the chain
+(`UI_DESIGN.md` §7), signed in the display's base, blank at 0.
+
+## 49. An instrument's PU2 transpose, and F on PU2
+
+LSDj's pulse instruments carry **PU2 TSP**, a signed semitone offset that applies only
+when the instrument plays on the second pulse — the detune trick behind its phasing
+leads — and an `F` on PU2 sets it for the note in progress until the next note (measured
+on 9.3.9). ChipBoy's `F` was the wave frame on WAV and inert on the pulses.
+
+**Now** a pulse instrument has `pu2Transpose` (−128..127, 0 default): added to the note
+on channel 2 at every note-on, on top of the channel and chain transposes, under no flag
+(it is the instrument's own pitch, not a musical transpose). `F x` on PU2 sets the offset
+to `x` read two's-complement, like P's argument (§34), for the note in progress and the
+notes after it until a plain note-on puts the instrument's own back; the revert form
+puts it back at once. F on PU1 and NOI stays inert, and on WAV stays the frame.
+*As built:* `InstrumentCore::pu2Transpose`, `Voice::instTranspose`, `Driver::noteOfVoice`.
+
+## 50. P's argument is normalised as it is read
+
+The two's-complement byte P carries (§34) is what a file holds; a file written with the
+signed value instead — a converter did — clamped to 0 in the driver and the bend was
+gone. The JSON reader now folds a negative `a` on a P into its byte, so both spellings
+play the same. Nothing written by ChipBoy changes.
