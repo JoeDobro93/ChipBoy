@@ -2,33 +2,37 @@
 // column and the wave editor (UI_DESIGN sections 6-7; the mockup's .tracker,
 // .chain and .wavegrid, with the keyboard of a tracker).
 //
-// Keyboard, in every grid: arrows / Tab move the cursor, digits type a value
-// (multi-digit entry, decimal or hex with the display), Backspace and
-// Delete blank the cell, + and - step it. The wheel never edits: it scrolls
-// the pane the grid stands in (UI_DESIGN section 2.1).
+// One grammar in every grid (docs/COMMANDS_AND_TEMPO.md section 35): a click
+// selects a cell, digits typed at it build a value -- the first replaces,
+// the rest append, one that would pass the limit is refused -- Backspace
+// takes the last digit back and then blanks the cell, Delete blanks it, +
+// and - step it, Shift with the arrows moves it by one (left, right) and by
+// sixteen (up, down), a double click opens the inline box and a right click
+// lists the choices the cell has. Arrows / Tab move the cursor. The wheel
+// never edits: it scrolls the pane the grid stands in (UI_DESIGN 2.1).
 //
 // Command cells are two parts and read as two (docs/COMMANDS_AND_TEMPO.md
-// section 34): the letter, chosen from the palette a click on it opens or by
-// typing the letter, and the values -- "4,6" in Decimal, the LSDj byte "46"
-// in Hex. A click on a value opens an inline box holding it; Tab moves to
-// the next argument, Enter commits, Escape cancels, and anything outside the
-// letter's range is refused. Digits typed straight at the cell still work,
-// with a comma to move on. "=" makes the letter its revert form ("E =": put
-// the envelope back where the instrument left it) and typing a value again
-// clears that.
+// section 34): the letter, chosen from the palette a right click (or a
+// double click on the letter) opens or by typing the letter, and the values
+// -- "4,6" in Decimal, the LSDj byte "46" in Hex. A double click on a value
+// opens an inline box holding it; Tab moves to the next argument, Enter
+// commits, Escape cancels, and anything outside the letter's range is
+// refused. Digits typed straight at the cell still work, with a comma to
+// move on. "=" makes the letter its revert form ("E =": put the envelope
+// back where the instrument left it) and typing a value again clears that.
 //
 // The note column is a piano: z s x d c v g b h n j m are C..B, comma l
 // period continue into the next octave, q 2 w 3 e r 5 t 6 y 7 u are the
 // octave above and i 9 o 0 p the one above that; minus enters note off;
 // Ctrl/Alt with + or - changes the octave. Shift with the arrows moves the
-// note itself -- up and down a semitone, left and right an octave -- a
+// note itself -- left and right a semitone, up and down an octave -- a
 // vertical drag moves it a semitone every six pixels (Shift: octaves), and a
 // double click types it with auto-correction: a1, A 1, a#1 and bb2 are A-1,
-// A-1, A#1 and A#2, and "off" or "-" is a note off (section 30).
+// A-1, A#1 and A#2, and "off" or "-" is a note off (sections 30 and 35).
 //
-// Every slot field obeys one convention (section 30): a click selects it and
-// types, a right click lists the bank's slots by name, and a double click
-// opens that item's own tab.
+// Every slot field obeys one convention (section 35): a click selects it and
+// types, a double click opens the box, and a right click lists the bank's
+// slots by name with, at the top, the entry that opens that item's own tab.
 #include "plugin/shared/Parameters.h"
 #include "plugin/ui/InlineEntry.h"
 #include "plugin/ui/Widgets.h"
@@ -124,6 +128,8 @@ struct Entry {
     int acc = 0, count = 0, arg = 0;
     bool negative = false;
     void reset() { acc = 0; count = 0; arg = 0; negative = false; }
+    /// The digits end but the argument stays: + and -, a nudge, a comma.
+    void restart() { acc = 0; count = 0; }
 };
 
 int digitValue(juce::juce_wchar ch, bool hex)
@@ -135,30 +141,50 @@ int digitValue(juce::juce_wchar ch, bool hex)
     }
     return -1;
 }
-int maxDigits(int hi, bool hex) { return hex ? (hi > 255 ? 3 : 2) : (hi >= 100 ? 3 : hi >= 10 ? 2 : 1); }
-
-/// Types one digit into a magnitude in [0, hi]: a digit that would overflow
-/// starts a new entry, and one the field cannot hold at all is refused --
-/// the cell keeps what it had (UI_DESIGN section 2.1). False when `ch` is
-/// not a digit in the display's base, or when it is refused.
+/// Types one digit into a magnitude in [0, hi] (section 35): the first digit
+/// of an entry replaces the value, every further one is appended, and a
+/// digit that would push the value past `hi` is refused -- the value stays
+/// where it was. False when `ch` is not a digit in the display's base;
+/// otherwise `magnitude` is the new value, or -1 for a refused digit.
 bool typeDigit(Entry& e, juce::juce_wchar ch, bool hex, int hi, int& magnitude)
 {
     const int d = digitValue(ch, hex);
     if (d < 0) return false;
-    int v = e.acc * (hex ? 16 : 10) + d;
-    if (v > hi) {
-        if (d > hi) return false;
-        v = d;
-        e.count = 0;
-    }
+    const int v = e.acc * (hex ? 16 : 10) + d;
+    if (v > hi) { magnitude = -1; return true; }
     e.acc = v;
     ++e.count;
     magnitude = v;
-    if (e.count >= maxDigits(hi, hex)) { e.acc = 0; e.count = 0; }
     return true;
 }
 
-bool isBlankKey(const juce::KeyPress& k) { return k.getKeyCode() == juce::KeyPress::backspaceKey || k.getKeyCode() == juce::KeyPress::deleteKey; }
+/// Backspace inside an entry takes the digit typed last back (section 35):
+/// "56" becomes "5". False when there was nothing typed to take back, or
+/// when the last digit has just gone -- either way the cell is blanked, as
+/// Backspace always did.
+bool popDigit(Entry& e, bool hex, int& magnitude)
+{
+    if (e.count == 0) return false;
+    e.acc /= hex ? 16 : 10;
+    --e.count;
+    magnitude = e.acc;
+    return e.count > 0;
+}
+
+/// Shift with the arrows moves a value (section 35): left and right by one,
+/// up and down by `vertical` -- sixteen, or an octave on a note. 0 when the
+/// key is not one of the four.
+int shiftDelta(const juce::KeyPress& k, int vertical = 16)
+{
+    if (!k.getModifiers().isShiftDown()) return 0;
+    const int code = k.getKeyCode();
+    return code == juce::KeyPress::rightKey ? 1 : code == juce::KeyPress::leftKey ? -1
+         : code == juce::KeyPress::upKey ? vertical : code == juce::KeyPress::downKey ? -vertical : 0;
+}
+
+bool isBackspace(const juce::KeyPress& k) { return k.getKeyCode() == juce::KeyPress::backspaceKey; }
+bool isDelete(const juce::KeyPress& k) { return k.getKeyCode() == juce::KeyPress::deleteKey; }
+bool isBlankKey(const juce::KeyPress& k) { return isBackspace(k) || isDelete(k); }
 bool isPlus(const juce::KeyPress& k) { return k.getTextCharacter() == '+' || k.getTextCharacter() == '='; }
 bool isMinus(const juce::KeyPress& k) { return k.getTextCharacter() == '-'; }
 bool hasModifier(const juce::KeyPress& k) { const auto m = k.getModifiers(); return m.isCtrlDown() || m.isAltDown() || m.isCommandDown(); }
@@ -190,23 +216,33 @@ bool editNote(uint8_t& note, const juce::KeyPress& k, int& octave)
 }
 bool editVol(int8_t& vol, const juce::KeyPress& k, Entry& e)
 {
-    if (isBlankKey(k)) { vol = -1; return true; }
-    if (isPlus(k) || isMinus(k)) { vol = int8_t(juce::jlimit(0, 15, (vol < 0 ? (isPlus(k) ? -1 : 16) : int(vol)) + (isPlus(k) ? 1 : -1))); return true; }
+    const bool hex = ValueFormat::hex();
+    if (isBackspace(k)) { int m = 0; vol = popDigit(e, hex, m) ? int8_t(m) : int8_t(-1); return true; }
+    if (isDelete(k)) { e.restart(); vol = -1; return true; }
+    if (isPlus(k) || isMinus(k)) { e.restart(); vol = int8_t(juce::jlimit(0, 15, (vol < 0 ? (isPlus(k) ? -1 : 16) : int(vol)) + (isPlus(k) ? 1 : -1))); return true; }
     int mag = 0;
-    if (!typeDigit(e, k.getTextCharacter(), ValueFormat::hex(), 15, mag)) return false;
-    vol = int8_t(mag);
+    if (!typeDigit(e, k.getTextCharacter(), hex, 15, mag)) return false;
+    if (mag >= 0) vol = int8_t(mag);
     return true;
 }
 
 bool editTranspose(bool& has, int8_t& t, const juce::KeyPress& k, Entry& e)
 {
-    if (isBlankKey(k)) { has = false; t = 0; return true; }
+    const bool hex = ValueFormat::hex();
+    if (isBackspace(k)) {
+        int m = 0;
+        if (popDigit(e, hex, m)) { has = true; t = int8_t(e.negative ? -m : m); }
+        else { has = false; t = 0; }
+        return true;
+    }
+    if (isDelete(k)) { e.restart(); has = false; t = 0; return true; }
     if (isMinus(k) && e.count == 0) { has = true; t = int8_t(-int(t)); e.negative = t < 0 || t == 0; return true; }
     if (isPlus(k) && e.count == 0) { has = true; t = int8_t(std::abs(int(t))); e.negative = false; return true; }
-    if (isMinus(k) || isPlus(k)) { has = true; t = int8_t(juce::jlimit(-60, 60, int(t) + (isPlus(k) ? 1 : -1))); return true; }
+    if (isMinus(k) || isPlus(k)) { e.restart(); has = true; t = int8_t(juce::jlimit(-60, 60, int(t) + (isPlus(k) ? 1 : -1))); return true; }
     if (e.count == 0) e.negative = t < 0 || (has && t == 0 && e.negative);
     int mag = 0;
-    if (!typeDigit(e, k.getTextCharacter(), ValueFormat::hex(), 60, mag)) return false;
+    if (!typeDigit(e, k.getTextCharacter(), hex, 60, mag)) return false;
+    if (mag < 0) return true;
     has = true;
     t = int8_t(e.negative ? -mag : mag);
     return true;
@@ -214,17 +250,33 @@ bool editTranspose(bool& has, int8_t& t, const juce::KeyPress& k, Entry& e)
 
 bool editSlot(uint8_t& v, int hi, const juce::KeyPress& k, Entry& e)
 {
-    if (isBlankKey(k)) { v = 0; return true; }
-    if (isPlus(k) || isMinus(k)) { v = uint8_t(juce::jlimit(0, hi, int(v) + (isPlus(k) ? 1 : -1))); return true; }
+    const bool hex = ValueFormat::hex();
+    if (isBackspace(k)) { int m = 0; v = popDigit(e, hex, m) ? uint8_t(m) : uint8_t(0); return true; }
+    if (isDelete(k)) { e.restart(); v = 0; return true; }
+    if (isPlus(k) || isMinus(k)) { e.restart(); v = uint8_t(juce::jlimit(0, hi, int(v) + (isPlus(k) ? 1 : -1))); return true; }
     int mag = 0;
-    if (!typeDigit(e, k.getTextCharacter(), ValueFormat::hex(), hi, mag)) return false;
-    v = uint8_t(mag);
+    if (!typeDigit(e, k.getTextCharacter(), hex, hi, mag)) return false;
+    if (mag >= 0) v = uint8_t(mag);
     return true;
+}
+
+/// Shift with the arrows on a command cell (section 35): the argument the
+/// cursor is on moves by `delta`, or the whole byte in Hex. False when the
+/// slot holds no command.
+bool nudgeCommand(bank::Command& c, int arg, int delta)
+{
+    const auto* info = commandInfo(c.cmd);
+    if (info == nullptr) return false;
+    if (ValueFormat::hex()) return plugin::setCommandByte(c, juce::jlimit(0, 255, plugin::commandByte(c) + delta));
+    const int a = juce::jlimit(0, info->nargs - 1, arg);
+    int lo = 0, hi = 0;
+    plugin::commandShownRange(c.cmd, a, lo, hi);
+    return plugin::setCommandShownValue(c, a, juce::jlimit(lo, hi, plugin::commandShownValue(c, a) + delta));
 }
 
 bool editCmd(bank::Command& c, const juce::KeyPress& k, Entry& e)
 {
-    if (isBlankKey(k)) { c = {}; e.reset(); return true; }
+    if (isDelete(k)) { c = {}; e.reset(); return true; }
     const auto ch = k.getTextCharacter();
     // "=" is the letter's revert form, for the letters that leave something
     // behind; a value typed afterwards clears it (docs/COMMANDS_AND_TEMPO.md
@@ -239,8 +291,8 @@ bool editCmd(bank::Command& c, const juce::KeyPress& k, Entry& e)
         return true;
     }
     const auto* info = commandInfo(c.cmd);
-    if (info == nullptr) return false;
-    if (ch == ',' || ch == '.') { e.arg = (e.arg + 1) % info->nargs; e.acc = 0; e.count = 0; return true; }
+    if (info == nullptr) { if (isBackspace(k)) { c = {}; e.reset(); return true; } return false; }
+    if (ch == ',' || ch == '.') { e.arg = (e.arg + 1) % info->nargs; e.restart(); return true; }
     const int a = juce::jlimit(0, info->nargs - 1, e.arg);
     // The range the window shows, which is the stored one everywhere but P:
     // it is a byte read as two's complement (section 34).
@@ -248,12 +300,19 @@ bool editCmd(bank::Command& c, const juce::KeyPress& k, Entry& e)
     plugin::commandShownRange(c.cmd, a, lo, hi);
     const int cur = plugin::commandShownValue(c, a);
     auto put = [&c, a](int shown) { plugin::setCommandShownValue(c, a, shown); };
+    // Backspace takes a typed digit back; with none left the slot empties.
+    if (isBackspace(k)) {
+        int m = 0;
+        if (popDigit(e, false, m)) put(juce::jlimit(lo, hi, e.negative ? -m : m));
+        else { c = {}; e.reset(); }
+        return true;
+    }
     if (isMinus(k) && lo < 0 && e.count == 0) { put(juce::jlimit(lo, hi, -cur)); e.negative = cur >= 0; return true; }
-    if (isPlus(k) || isMinus(k)) { put(juce::jlimit(lo, hi, cur + (isPlus(k) ? 1 : -1))); return true; }
+    if (isPlus(k) || isMinus(k)) { e.restart(); put(juce::jlimit(lo, hi, cur + (isPlus(k) ? 1 : -1))); return true; }
     if (e.count == 0) e.negative = lo < 0 && cur < 0;
     int mag = 0;
     if (!typeDigit(e, ch, false, juce::jmax(hi, -lo), mag)) return false;
-    put(juce::jlimit(lo, hi, e.negative ? -mag : mag));
+    if (mag >= 0) put(juce::jlimit(lo, hi, e.negative ? -mag : mag));
     return true;
 }
 
@@ -378,14 +437,26 @@ void applyPalette(bank::Command& c, int id, bank::Cmd cmd)
     setCmdLetter(c, cmd);
 }
 
+constexpr int kMenuOpen = 1000;
+
 /// The bank's instruments, by slot and name: the list a right click on an
 /// INS cell opens. Only slots in use; the ones this channel plays come
-/// first, the rest are marked with their type (UI_DESIGN section 2.1).
+/// first, the rest are marked with their type (UI_DESIGN section 2.1). At
+/// the top, where the cell names a slot and `open` is given, the entry that
+/// opens that item's own tab (section 35).
 void showSlotMenu(juce::Component& target, juce::Rectangle<int> cellArea, const juce::String& heading,
-                  const std::vector<SlotRow>& rows, int current, std::function<void(int slot)> done)
+                  const std::vector<SlotRow>& rows, int current, std::function<void(int slot)> done,
+                  std::function<void()> open = {})
 {
     juce::PopupMenu m;
     m.addSectionHeader(heading);
+    if (open && current > 0) {
+        juce::String name;
+        for (const auto& r : rows) if (r.slot == current) name = r.name;
+        m.addItem(kMenuOpen, "Open " + heading.toLowerCase() + " " + ValueFormat::number(current)
+                                 + (name.isNotEmpty() ? juce::String(juce::CharPointer_UTF8(" \xc2\xb7 ")) + name : juce::String()) + " in its tab");
+        m.addSeparator();
+    }
     m.addItem(1, juce::String(juce::CharPointer_UTF8("\xe2\x80\x93   none")), true, current == 0);
     bool separated = false;
     for (const auto& r : rows) {
@@ -397,8 +468,9 @@ void showSlotMenu(juce::Component& target, juce::Rectangle<int> cellArea, const 
         m.addItem(item);
     }
     m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(target).withTargetScreenArea(target.localAreaToGlobal(cellArea)).withMinimumWidth(240).withMaximumNumColumns(1),
-                    [done, safe = juce::Component::SafePointer<juce::Component>(&target)](int id) {
+                    [done, open, safe = juce::Component::SafePointer<juce::Component>(&target)](int id) {
                         if (safe == nullptr || id == 0) return;
+                        if (id == kMenuOpen) { if (open) open(); return; }
                         done(id - 1);
                     });
 }
@@ -663,6 +735,50 @@ struct TableGrid::Impl {
         return true;
     }
 
+    /// The double click on a volume or a transpose: the inline box holding
+    /// it (section 35). An empty box blanks the cell; anything that is not a
+    /// number in the display's base is refused and the cell keeps what it had.
+    void openNumberEntry(int row, int col)
+    {
+        if (row < 0 || row >= core.rows || col < 0 || col >= int(core.cols.size())) return;
+        const auto kind = core.cols[size_t(col)].kind;
+        if (kind != Kind::Vol && kind != Kind::Transpose) return;
+        const auto& s = table.steps[size_t(row)];
+        juce::String now;
+        if (kind == Kind::Vol && s.vol >= 0) now = ValueFormat::number(s.vol);
+        if (kind == Kind::Transpose && s.hasTranspose) now = ValueFormat::signedNumber(s.transpose);
+        core.setCursor(row, col);
+        box.begin(owner, core.cellRect(row, col).reduced(1), now, juce::Justification::centredLeft,
+                  [this, row, kind](const juce::String& text) {
+                      auto& step = table.steps[size_t(row)];
+                      if (text.trim().isEmpty()) {
+                          if (kind == Kind::Vol) step.vol = -1; else { step.hasTranspose = false; step.transpose = 0; }
+                          changed(row);
+                          return;
+                      }
+                      int v = 0;
+                      const bool ok = kind == Kind::Vol ? detail::parseTypedInt(text, 0, 15, v) : detail::parseTypedInt(text, -60, 60, v);
+                      if (!ok) { owner.repaint(); return; }
+                      if (kind == Kind::Vol) step.vol = int8_t(v); else { step.hasTranspose = true; step.transpose = int8_t(v); }
+                      changed(row);
+                  });
+    }
+
+    /// Shift with the arrows: the cell's value moves by `delta` (section 35).
+    bool nudge(int row, int col, int delta)
+    {
+        if (delta == 0 || row < 0 || row >= core.rows || !core.editable(col)) return false;
+        auto& s = table.steps[size_t(row)];
+        const auto& c = core.cols[size_t(col)];
+        core.entry.restart();
+        if (c.kind == Kind::Vol) s.vol = int8_t(juce::jlimit(0, 15, (s.vol < 0 ? 0 : int(s.vol)) + delta));
+        else if (c.kind == Kind::Transpose) { s.hasTranspose = true; s.transpose = int8_t(juce::jlimit(-60, 60, int(s.transpose) + delta)); }
+        else if (c.kind == Kind::Cmd) { if (!nudgeCommand(c.ch == 0 ? s.cmd1 : s.cmd2, core.entry.arg, delta)) return true; }
+        else return false;
+        changed(row);
+        return true;
+    }
+
     void openPalette(int row, int col)
     {
         if (col < 0 || col >= int(core.cols.size()) || core.cols[size_t(col)].kind != Kind::Cmd) return;
@@ -684,8 +800,8 @@ struct TableGrid::Impl {
         if (row < 0 || row >= core.rows || col < 0 || col >= int(core.cols.size())) return {};
         const auto& c = core.cols[size_t(col)];
         const auto& s = table.steps[size_t(row)];
-        if (c.kind == Kind::Vol) return "Volume at this step, 0-15; blank leaves it alone";
-        if (c.kind == Kind::Transpose) return "Semitones added to the note at this step; blank leaves it alone";
+        if (c.kind == Kind::Vol) return "Volume at this step, 0-15; blank leaves it alone. Type it, double-click for a box, Shift+arrows move it.";
+        if (c.kind == Kind::Transpose) return "Semitones added to the note at this step; blank leaves it alone. Type it, double-click for a box, Shift+arrows move it.";
         if (c.kind == Kind::Cmd) return cmdTooltip(c.ch == 0 ? s.cmd1 : s.cmd2);
         return {};
     }
@@ -758,29 +874,39 @@ void TableGrid::mouseDown(const juce::MouseEvent& e)
     int r = 0, c = 0;
     if (!core.cellAt(e.getPosition(), r, c)) return;
     if (core.editable(c)) { core.setCursor(r, c); repaint(); }
-    // The letter is its own part of the cell: a click on it picks one, and a
-    // click on a value opens the box that types it (section 34).
-    if (e.mods.isPopupMenu() || core.onLetter(c, e.x)) { impl_->openPalette(r, c); return; }
-    if (core.cols[size_t(c)].kind == Kind::Cmd) {
-        const bank::Command* cmd = impl_->commandAt(r, c);
-        if (cmd != nullptr && cmd->cmd != bank::Cmd::None) impl_->openValueEntry(r, c, core.argAt(*cmd, r, c, e.x));
-    }
+    // A click selects; the palette is the right click's and the box the
+    // double click's (section 35).
+    if (e.mods.isPopupMenu()) impl_->openPalette(r, c);
 }
 void TableGrid::mouseDoubleClick(const juce::MouseEvent& e)
 {
+    auto& im = *impl_;
+    auto& core = im.core;
     int r = 0, c = 0;
-    if (impl_->core.cellAt(e.getPosition(), r, c) && impl_->core.onLetter(c, e.x)) impl_->openPalette(r, c);
+    if (!core.cellAt(e.getPosition(), r, c) || !core.editable(c)) return;
+    if (core.cols[size_t(c)].kind == Kind::Cmd) {
+        // The letter is its own part of the cell: a double click on it picks
+        // one, and on the values opens the box that types them (section 34).
+        const bank::Command* cmd = im.commandAt(r, c);
+        if (core.onLetter(c, e.x) || cmd == nullptr || cmd->cmd == bank::Cmd::None) im.openPalette(r, c);
+        else im.openValueEntry(r, c, core.argAt(*cmd, r, c, e.x));
+        return;
+    }
+    im.openNumberEntry(r, c);
 }
 bool TableGrid::keyPressed(const juce::KeyPress& k)
 {
     auto& core = impl_->core;
     if (k.getKeyCode() == juce::KeyPress::escapeKey) { core.entry.reset(); return true; }
-    // Enter opens the value box on a command, the palette on its letter.
+    // Enter opens the box: the values of a command (Shift: its palette), or
+    // the number a volume or transpose cell holds.
     if (k.getKeyCode() == juce::KeyPress::returnKey) {
-        if (k.getModifiers().isShiftDown() || !impl_->openValueEntry(core.curRow, core.curCol, core.entry.arg))
+        if (core.editable(core.curCol) && core.cols[size_t(core.curCol)].kind != Kind::Cmd) impl_->openNumberEntry(core.curRow, core.curCol);
+        else if (k.getModifiers().isShiftDown() || !impl_->openValueEntry(core.curRow, core.curCol, core.entry.arg))
             impl_->openPalette(core.curRow, core.curCol);
         return true;
     }
+    if (const int d = shiftDelta(k); d != 0 && impl_->nudge(core.curRow, core.curCol, d)) return true;
     if (core.navigate(k)) { repaint(); return true; }
     return impl_->edit(k);
 }
@@ -825,6 +951,11 @@ struct PhraseGrid::Impl {
     TypedEntry box;
     int octave = 4;
     int hoverGroove = -1, hoverArm = -1, hoverLen = -1;
+    /// The head chip the cursor is on, if any (section 35): a click on LEN
+    /// or the groove chip selects it, digits type into it, a double click
+    /// opens its box, and the arrows hand the cursor back to the cells.
+    int headCh = -1, headField = -1;   ///< headField: 0 LEN, 1 groove
+    Entry headEntry;
     /// A vertical drag on a note: a semitone every six pixels, octaves with
     /// Shift (docs/COMMANDS_AND_TEMPO.md section 30).
     static constexpr int kDragPixels = 6;
@@ -1032,6 +1163,51 @@ struct PhraseGrid::Impl {
         return true;
     }
 
+    /// The double click on a velocity, an instrument or a table: the inline
+    /// box holding it (section 35). An empty box blanks the cell; anything
+    /// that is not a number in the display's base is refused.
+    void openNumberEntry(int row, int col)
+    {
+        if (row < 0 || row >= core.rows || col < 0 || col >= int(core.cols.size())) return;
+        const auto& c = core.cols[size_t(col)];
+        const auto kind = c.kind;
+        if (kind != Kind::Vel && kind != Kind::Inst && kind != Kind::Table) return;
+        const int ch = c.ch;
+        const auto& cell = cells[size_t(ch)][size_t(row)];
+        const int cur = kind == Kind::Vel ? int(cell.vel) : kind == Kind::Inst ? int(cell.inst) : int(cell.table);
+        const int hi = kind == Kind::Vel ? 127 : kind == Kind::Inst ? bank::kInstrumentSlots : bank::kTableSlots;
+        core.setCursor(row, col);
+        box.begin(owner, core.cellRect(row, col).reduced(1), cur == 0 ? juce::String() : ValueFormat::number(cur), juce::Justification::centredLeft,
+                  [this, row, ch, kind, hi](const juce::String& text) {
+                      int v = 0;
+                      if (!text.trim().isEmpty() && !detail::parseTypedInt(text, 0, hi, v)) { owner.repaint(); return; }
+                      auto& target = cells[size_t(ch)][size_t(row)];
+                      uint8_t& field = kind == Kind::Vel ? target.vel : kind == Kind::Inst ? target.inst : target.table;
+                      if (int(field) == v) { owner.repaint(); return; }
+                      field = uint8_t(v);
+                      changed(ch, row);
+                  });
+    }
+
+    /// Shift with the arrows: the cell's value moves by `delta` -- a note by
+    /// semitones, everything else by one or sixteen (section 35).
+    bool nudge(int row, int col, int delta)
+    {
+        if (delta == 0 || row < 0 || row >= core.rows || !core.editable(col)) return false;
+        const auto& c = core.cols[size_t(col)];
+        if (c.kind == Kind::Note) return moveNote(row, col, delta);
+        auto& cell = cells[size_t(c.ch)][size_t(row)];
+        const tracker::Cell before = cell;
+        core.entry.restart();
+        if (c.kind == Kind::Vel) cell.vel = uint8_t(juce::jlimit(0, 127, int(cell.vel) + delta));
+        else if (c.kind == Kind::Inst) cell.inst = uint8_t(juce::jlimit(0, bank::kInstrumentSlots, int(cell.inst) + delta));
+        else if (c.kind == Kind::Table) cell.table = uint8_t(juce::jlimit(0, bank::kTableSlots, int(cell.table) + delta));
+        else if (c.kind == Kind::Cmd) nudgeCommand(cmdSlot(col) == 0 ? cell.cmd1 : cell.cmd2, core.entry.arg, delta);
+        else return false;
+        if (!sameCell(before, cell)) changed(c.ch, row);
+        return true;
+    }
+
     /// A double click on a note types it, with the auto-correction of
     /// section 30: "a1", "A 1", "a#1", "bb2", "off", "-".
     void openNoteEntry(int row, int col)
@@ -1054,8 +1230,8 @@ struct PhraseGrid::Impl {
                   });
     }
 
-    /// Shift with the arrows, and a vertical drag: the note moves in
-    /// semitones, or in octaves with Shift (section 30).
+    /// Shift with the arrows (left and right a semitone, up and down an
+    /// octave), and a vertical drag: the note moves in semitones (section 35).
     bool moveNote(int row, int col, int semitones)
     {
         if (semitones == 0 || col < 0 || col >= int(core.cols.size())) return false;
@@ -1130,14 +1306,70 @@ struct PhraseGrid::Impl {
         if (rows.empty()) return;
         const auto& cell = cells[size_t(c.ch)][size_t(row)];
         const int ch = c.ch;
-        showSlotMenu(owner, core.cellRect(row, col), instruments ? "Instrument" : "Table", rows,
-                     instruments ? int(cell.inst) : int(cell.table),
+        const int current = instruments ? int(cell.inst) : int(cell.table);
+        showSlotMenu(owner, core.cellRect(row, col), instruments ? "Instrument" : "Table", rows, current,
                      [this, row, ch, instruments](int slot) {
                          auto& target = cells[size_t(ch)][size_t(row)];
                          (instruments ? target.inst : target.table) = uint8_t(juce::jmax(0, slot));
                          core.entry.reset();
                          changed(ch, row);
-                     });
+                     },
+                     [this, instruments, current] { openSlot(instruments ? SlotKind::Instrument : SlotKind::Table, current); });
+    }
+
+    /* ------------------------------------------------- the head's chips */
+
+    /// A click on LEN or the groove chip puts the cursor there (section 35).
+    void selectHead(int ch, int field)
+    {
+        if (owner.onEntryEnd) owner.onEntryEnd();
+        headCh = ch; headField = field;
+        headEntry.reset();
+        owner.repaint();
+    }
+    void leaveHead()
+    {
+        if (headField < 0) return;
+        headField = -1; headCh = -1;
+        headEntry.reset();
+        owner.repaint();
+    }
+    void setHeadValue(int v)
+    {
+        const size_t ch = size_t(headCh);
+        if (headField == 0) {
+            v = juce::jlimit(1, tracker::kMaxSteps, v);
+            if (v == length[ch]) return;
+            length[ch] = v;
+            owner.repaint();
+            if (owner.onLengthChange) owner.onLengthChange(headCh, v);
+        } else {
+            v = juce::jlimit(0, 16, v);
+            if (v == groove[ch]) return;
+            groove[ch] = v;
+            owner.repaint();
+            if (owner.onGrooveChange) owner.onGrooveChange(headCh, v);
+        }
+    }
+    /// The keys a selected chip takes: the grammar of section 35, with the
+    /// range's low end where a cell would blank (a phrase is never shorter
+    /// than one step; groove 0 is straight). False hands the key on -- the
+    /// arrows and Tab go back to the cells.
+    bool headKey(const juce::KeyPress& k)
+    {
+        if (headField < 0 || headCh < 0) return false;
+        const bool len = headField == 0;
+        const int cur = len ? length[size_t(headCh)] : groove[size_t(headCh)];
+        const int lo = len ? 1 : 0, hi = len ? tracker::kMaxSteps : 16;
+        const bool hex = !len && ValueFormat::hex();
+        if (k.getKeyCode() == juce::KeyPress::returnKey) { if (len) openLengthEntry(headCh); else openGrooveEntry(headCh); return true; }
+        if (const int d = shiftDelta(k); d != 0) { headEntry.restart(); setHeadValue(cur + d); return true; }
+        if (isPlus(k) || isMinus(k)) { headEntry.restart(); setHeadValue(cur + (isPlus(k) ? 1 : -1)); return true; }
+        if (isBackspace(k)) { int m = 0; setHeadValue(popDigit(headEntry, hex, m) ? m : lo); return true; }
+        if (isDelete(k)) { headEntry.restart(); setHeadValue(lo); return true; }
+        int mag = 0;
+        if (typeDigit(headEntry, k.getTextCharacter(), hex, hi, mag)) { if (mag >= lo) setHeadValue(mag); return true; }
+        return false;
     }
 
     /// The head's LEN: the length of the phrase this channel plays in the row
@@ -1189,9 +1421,9 @@ struct PhraseGrid::Impl {
         if (hoverArm >= 0)
             return juce::String("Record arm for ") + colours::channelName(hoverArm) + ": its MIDI is written into its cells while Rec is on.";
         if (hoverLen >= 0)
-            return juce::String("LEN: the steps this phrase holds, 1-64. Click to type it.");
+            return juce::String("LEN: the steps this phrase holds, 1-64. Click and type it, or double-click for a box.");
         if (hoverGroove >= 0)
-            return "Groove: the ticks each step lasts. Click to type a slot, right-click to list them, double-click to edit it.";
+            return "Groove: the ticks each step lasts. Click and type a slot, double-click for a box, right-click to list them or open the one on show.";
         const int row = core.hoverRow, col = core.hoverCol;
         if (row < 0 || row >= core.rows || col < 0 || col >= int(core.cols.size())) return {};
         const auto& c = core.cols[size_t(col)];
@@ -1200,10 +1432,10 @@ struct PhraseGrid::Impl {
             return plays[size_t(c.ch)] == tracker::NoteSource::Hybrid
                        ? juce::String("The note the host sent here. Hybrid takes its notes from MIDI; the columns beside them still fire.")
                        : juce::String("The note the host sent here. Set the channel to Trkr to type notes.");
-        if (c.kind == Kind::Note) return "The note this step plays. Shift with the arrows moves it, a drag moves it, a double click types it; minus is a note off.";
-        if (c.kind == Kind::Vel) return "Velocity, 1-127; blank is " + juce::String(int(tracker::kDefaultVelocity)) + ".";
-        if (c.kind == Kind::Inst) return "Instrument at this step. Right-click lists the bank, double-click opens it.";
-        if (c.kind == Kind::Table) return "Table override at this step. Right-click lists the bank, double-click opens it.";
+        if (c.kind == Kind::Note) return "The note this step plays. Shift+arrows move it (left/right a semitone, up/down an octave), a drag moves it, a double click types it; minus is a note off.";
+        if (c.kind == Kind::Vel) return "Velocity, 1-127; blank is " + juce::String(int(tracker::kDefaultVelocity)) + ". Type it, double-click for a box, Shift+arrows move it.";
+        if (c.kind == Kind::Inst) return "Instrument at this step. Type it, double-click for a box; right-click lists the bank and opens the one on show.";
+        if (c.kind == Kind::Table) return "Table override at this step. Type it, double-click for a box; right-click lists the bank and opens the one on show.";
         if (c.kind == Kind::Cmd) return cmdTooltip(cmdSlot(col) == 0 ? cell.cmd1 : cell.cmd2);
         return {};
     }
@@ -1212,13 +1444,19 @@ struct PhraseGrid::Impl {
     {
         juce::PopupMenu m;
         m.addSectionHeader("Groove");
-        m.addItem(1, "Straight (6/6)", true, groove[size_t(ch)] == 0);
+        const int cur = groove[size_t(ch)];
+        if (cur > 0) {
+            m.addItem(kMenuOpen, "Open groove " + ValueFormat::number(cur) + " in its tab");
+            m.addSeparator();
+        }
+        m.addItem(1, "Straight (6/6)", true, cur == 0);
         if (song != nullptr)
             for (int g = 1; g <= int(song->grooves.size()); ++g)
-                m.addItem(1 + g, ValueFormat::number(g) + "  " + grooveTicks(g) + " ticks", true, groove[size_t(ch)] == g);
+                m.addItem(1 + g, ValueFormat::number(g) + "  " + grooveTicks(g) + " ticks", true, cur == g);
         m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(owner).withTargetScreenArea(owner.localAreaToGlobal(grooveRects[size_t(ch)])),
-                        [this, ch, safe = juce::Component::SafePointer<juce::Component>(&owner)](int id) {
+                        [this, ch, cur, safe = juce::Component::SafePointer<juce::Component>(&owner)](int id) {
                             if (safe == nullptr || id == 0) return;
+                            if (id == kMenuOpen) { openSlot(SlotKind::Groove, cur); return; }
                             groove[size_t(ch)] = id - 1;
                             owner.repaint();
                             if (owner.onGrooveChange) owner.onGrooveChange(ch, id - 1);
@@ -1248,6 +1486,11 @@ struct PhraseGrid::Impl {
             g.drawText(channelName(ch), juce::Rectangle<int>(ar.getRight() + 5, 0, 40, h1), juce::Justification::centredLeft, false);
             // LEN, then the groove chip: the two numbers that say how long
             // this channel's row is and how its steps are laid out (25).
+            const bool focused = owner.hasKeyboardFocus(false);
+            auto ring = [&g, focused](juce::Rectangle<int> r) {
+                g.setColour(accentHi.withAlpha(focused ? 0.95f : 0.45f));
+                g.drawRoundedRectangle(r.toFloat().reduced(0.5f), 3.0f, focused ? 2.0f : 1.0f);
+            };
             const auto lr = lenRects[size_t(ch)];
             if (lr.getWidth() >= 24) {
                 draw::panel(g, lr, hoverLen == ch ? raisedHi : raised, line, 3.0f);
@@ -1258,6 +1501,7 @@ struct PhraseGrid::Impl {
                 g.setFont(Fonts::mono(10.5f));
                 g.setColour(hoverLen == ch ? text : textMute);
                 g.drawText(juce::String(length[size_t(ch)]), lr.withTrimmedLeft(capW + 4).withTrimmedRight(3), juce::Justification::centredRight, false);
+                if (headCh == ch && headField == 0) ring(lr);
             }
             const auto gr = grooveRects[size_t(ch)];
             if (gr.getWidth() >= 20) {
@@ -1265,6 +1509,7 @@ struct PhraseGrid::Impl {
                 g.setFont(Fonts::mono(10.5f));
                 g.setColour(hoverGroove == ch ? text : textMute);
                 g.drawFittedText(grooveText(ch, gr.getWidth()), gr.reduced(4, 0), juce::Justification::centred, 1, 0.72f);
+                if (headCh == ch && headField == 1) ring(gr);
             }
         }
         for (size_t i = 1; i < core.cols.size(); ++i)
@@ -1385,18 +1630,20 @@ void PhraseGrid::mouseDown(const juce::MouseEvent& e)
     grabKeyboardFocus();
     im.dragging = false;
     im.dragRow = im.dragCol = -1;
-    // The head's three fields: the arm toggles, LEN types, and the groove
-    // chip types on a click and lists on a right click (section 30).
+    // The head's three fields: the arm toggles; LEN and the groove chip take
+    // the cursor, and the chip lists on a right click (section 35).
     for (int ch = 0; ch < 4; ++ch) {
         if (im.armRects[size_t(ch)].contains(e.getPosition())) { im.toggleArm(ch); return; }
-        if (im.lenRects[size_t(ch)].contains(e.getPosition())) { im.openLengthEntry(ch); return; }
+        if (im.lenRects[size_t(ch)].contains(e.getPosition())) { im.selectHead(ch, 0); return; }
         if (im.grooveRects[size_t(ch)].contains(e.getPosition())) {
-            if (e.mods.isPopupMenu()) im.openGrooveMenu(ch); else im.openGrooveEntry(ch);
+            im.selectHead(ch, 1);
+            if (e.mods.isPopupMenu()) im.openGrooveMenu(ch);
             return;
         }
     }
     int r = 0, c = 0;
     if (!core.cellAt(e.getPosition(), r, c)) return;
+    im.leaveHead();
     if (core.editable(c)) {
         // A click ends whatever value was being typed: what follows is a
         // new undo (UI_DESIGN section 2.1).
@@ -1404,13 +1651,9 @@ void PhraseGrid::mouseDown(const juce::MouseEvent& e)
         core.setCursor(r, c);
         repaint();
     }
+    // A click selects; the lists are the right click's and the boxes the
+    // double click's (section 35).
     if (e.mods.isPopupMenu()) { im.openPalette(r, c); im.openSlotMenu(r, c); return; }
-    if (core.onLetter(c, e.x)) { im.openPalette(r, c); return; }
-    if (core.cols[size_t(c)].kind == Kind::Cmd) {
-        const bank::Command* cmd = im.commandAt(r, c);
-        if (cmd != nullptr && cmd->cmd != bank::Cmd::None) im.openValueEntry(r, c, core.argAt(*cmd, r, c, e.x));
-        return;
-    }
     // A note takes a vertical drag: a semitone every six pixels (section 30).
     if (core.cols[size_t(c)].kind == Kind::Note) {
         im.dragRow = r; im.dragCol = c;
@@ -1449,41 +1692,53 @@ void PhraseGrid::mouseDoubleClick(const juce::MouseEvent& e)
 {
     auto& im = *impl_;
     auto& core = im.core;
-    // The one selector convention: a double click opens the item's own tab
-    // (UI_DESIGN section 2.1).
-    for (int ch = 0; ch < 4; ++ch)
-        if (im.grooveRects[size_t(ch)].contains(e.getPosition())) { im.openSlot(SlotKind::Groove, im.groove[size_t(ch)]); return; }
+    // The double click is the box, everywhere (section 35): a head chip's,
+    // a note's, a number's, a command's values -- or its palette on the
+    // letter and where the slot holds no command.
+    for (int ch = 0; ch < 4; ++ch) {
+        if (im.grooveRects[size_t(ch)].contains(e.getPosition())) { im.openGrooveEntry(ch); return; }
+        if (im.lenRects[size_t(ch)].contains(e.getPosition())) { im.openLengthEntry(ch); return; }
+    }
     int r = 0, c = 0;
-    if (!core.cellAt(e.getPosition(), r, c)) return;
+    if (!core.cellAt(e.getPosition(), r, c) || !core.editable(c)) return;
     const auto kind = core.cols[size_t(c)].kind;
-    const auto& cell = im.cells[size_t(core.cols[size_t(c)].ch)][size_t(r)];
-    if (kind == Kind::Inst) { if (cell.inst > 0) im.openSlot(SlotKind::Instrument, cell.inst); return; }
-    if (kind == Kind::Table) { if (cell.table > 0) im.openSlot(SlotKind::Table, cell.table); return; }
     if (kind == Kind::Note) { im.openNoteEntry(r, c); return; }
-    if (kind == Kind::Cmd && core.onLetter(c, e.x)) im.openPalette(r, c);
+    if (kind == Kind::Cmd) {
+        const bank::Command* cmd = im.commandAt(r, c);
+        if (core.onLetter(c, e.x) || cmd == nullptr || cmd->cmd == bank::Cmd::None) im.openPalette(r, c);
+        else im.openValueEntry(r, c, core.argAt(*cmd, r, c, e.x));
+        return;
+    }
+    im.openNumberEntry(r, c);
 }
 
 bool PhraseGrid::keyPressed(const juce::KeyPress& k)
 {
-    auto& core = impl_->core;
-    if (k.getKeyCode() == juce::KeyPress::escapeKey) { core.entry.reset(); return true; }
+    auto& im = *impl_;
+    auto& core = im.core;
+    if (k.getKeyCode() == juce::KeyPress::escapeKey) { core.entry.reset(); im.leaveHead(); return true; }
+    // A selected head chip takes the keys first; the arrows fall through and
+    // hand the cursor back to the cells (section 35).
+    if (im.headField >= 0 && im.headKey(k)) return true;
+    // Enter opens the box the cell has: the note's, a number's, a command's
+    // values (Shift: its palette).
     if (k.getKeyCode() == juce::KeyPress::returnKey) {
-        if (k.getModifiers().isShiftDown() || !impl_->openValueEntry(core.curRow, core.curCol, core.entry.arg))
-            impl_->openPalette(core.curRow, core.curCol);
+        const auto kind = core.editable(core.curCol) ? core.cols[size_t(core.curCol)].kind : Kind::Step;
+        if (kind == Kind::Note) im.openNoteEntry(core.curRow, core.curCol);
+        else if (kind == Kind::Vel || kind == Kind::Inst || kind == Kind::Table) im.openNumberEntry(core.curRow, core.curCol);
+        else if (k.getModifiers().isShiftDown() || !im.openValueEntry(core.curRow, core.curCol, core.entry.arg))
+            im.openPalette(core.curRow, core.curCol);
         return true;
     }
-    // Shift with the arrows moves the note itself: up and down a semitone,
-    // left and right an octave (section 30). Everything else navigates.
-    if (k.getModifiers().isShiftDown() && core.editable(core.curCol) && core.cols[size_t(core.curCol)].kind == Kind::Note) {
-        const int code = k.getKeyCode();
-        int semis = 0;
-        if (code == juce::KeyPress::upKey) semis = 1;
-        else if (code == juce::KeyPress::downKey) semis = -1;
-        else if (code == juce::KeyPress::rightKey) semis = 12;
-        else if (code == juce::KeyPress::leftKey) semis = -12;
-        if (semis != 0 && impl_->moveNote(core.curRow, core.curCol, semis)) return true;
+    // Shift with the arrows moves the value: left and right by one (a
+    // semitone), up and down by sixteen (an octave). Everything else
+    // navigates (section 35).
+    {
+        const bool note = core.editable(core.curCol) && core.cols[size_t(core.curCol)].kind == Kind::Note;
+        if (const int d = shiftDelta(k, note ? 12 : 16); d != 0 && im.nudge(core.curRow, core.curCol, d)) return true;
     }
     if (core.navigate(k)) {
+        im.leaveHead();
         repaint();
         if (onEntryEnd) onEntryEnd();
         // Past sixteen steps the grid is taller than its pane, so the tab
@@ -1494,7 +1749,7 @@ bool PhraseGrid::keyPressed(const juce::KeyPress& k)
     return impl_->edit(k);
 }
 void PhraseGrid::focusGained(FocusChangeType) { repaint(); }
-void PhraseGrid::focusLost(FocusChangeType) { impl_->core.entry.reset(); repaint(); }
+void PhraseGrid::focusLost(FocusChangeType) { impl_->core.entry.reset(); impl_->headEntry.reset(); repaint(); }
 
 // ===========================================================================
 // ChainColumn
@@ -1510,6 +1765,7 @@ struct ChainColumn::Impl {
     int cursorCol = 0;            ///< 0-3 a channel, 4 the bar's step count
     int hoverCol = -1, hoverBar = -1;
     Entry entry;
+    TypedEntry box;
     int dragStartFirst = 0;
     bool dragged = false;
     float wheelAcc = 0.0f;
@@ -1613,6 +1869,25 @@ struct ChainColumn::Impl {
         return rows;
     }
 
+    /// The double click on a cell: the inline box holding it (section 35).
+    /// A phrase slot follows the display's base; LEN is a plain number.
+    void openEntry(int col, int bar)
+    {
+        if (col < 0 || col > kSteps || bar < 0) return;
+        const bool len = col == kSteps;
+        const int v = valueAt(col, bar);
+        box.begin(owner, cellRect(col, bar), v == 0 ? juce::String() : len ? juce::String(v) : ValueFormat::number(v), juce::Justification::centred,
+                  [this, col, bar, len](const juce::String& text) {
+                      const juce::String t = text.trim();
+                      int nv = 0;
+                      if (t.isNotEmpty()) {
+                          if (len) { if (!t.containsOnly("0123456789")) { owner.repaint(); return; } nv = t.getIntValue(); }
+                          else if (!detail::parseTypedInt(t, 0, tracker::kPhraseSlots, nv)) { owner.repaint(); return; }
+                      }
+                      setValue(col, bar, nv);
+                  });
+    }
+
     void openPhraseMenu(int col, int bar)
     {
         if (col < 0 || col >= kSteps) return;
@@ -1707,7 +1982,7 @@ juce::String ChainColumn::getTooltip()
 {
     auto& im = *impl_;
     if (im.hoverBar < 0) return "The chain: one row per row of the song, the four channels' phrases across it and the row's LEN at the end. "
-                                "Type a slot, blank it with Backspace, right-click to list the phrases; the wheel scrolls.";
+                                "Type a slot, Backspace blanks it, double-click for a box, right-click lists the phrases, Shift+arrows move it; the wheel scrolls.";
     const juce::String at = " Row " + juce::String(im.hoverBar + 1) + ".";
     if (im.hoverCol == Impl::kSteps) {
         const int v = im.stepsAt(im.hoverBar);
@@ -1750,6 +2025,13 @@ void ChainColumn::mouseDown(const juce::MouseEvent& e)
     im.selectBar(bar);
     if (e.mods.isPopupMenu()) im.openPhraseMenu(col, bar);
 }
+void ChainColumn::mouseDoubleClick(const juce::MouseEvent& e)
+{
+    auto& im = *impl_;
+    int col = -1, bar = -1;
+    if (!im.cellAt(e.getPosition(), col, bar) || col < 0) return;
+    im.openEntry(col, bar);
+}
 void ChainColumn::mouseDrag(const juce::MouseEvent& e)
 {
     auto& im = *impl_;
@@ -1774,6 +2056,14 @@ bool ChainColumn::keyPressed(const juce::KeyPress& k)
 {
     auto& im = *impl_;
     const int code = k.getKeyCode();
+    // Shift with the arrows moves the cell's value (section 35); the plain
+    // arrows move the cursor.
+    if (const int d = shiftDelta(k); d != 0) {
+        im.entry.restart();
+        im.setValue(im.cursorCol, im.selectedBar, im.valueAt(im.cursorCol, im.selectedBar) + d);
+        return true;
+    }
+    if (code == juce::KeyPress::returnKey) { im.openEntry(im.cursorCol, im.selectedBar); return true; }
     if (code == juce::KeyPress::upKey) { im.selectBar(im.selectedBar - 1); return true; }
     if (code == juce::KeyPress::downKey) { im.selectBar(im.selectedBar + 1); return true; }
     if (code == juce::KeyPress::pageUpKey) { im.selectBar(im.selectedBar - im.visibleBars()); return true; }
@@ -1791,14 +2081,16 @@ bool ChainColumn::keyPressed(const juce::KeyPress& k)
     if (code == juce::KeyPress::escapeKey) { im.entry.reset(); return true; }
     const int col = im.cursorCol, bar = im.selectedBar;
     const int cur = im.valueAt(col, bar);
-    if (isBlankKey(k)) { im.entry.reset(); im.setValue(col, bar, 0); return true; }
-    if (isPlus(k)) { im.entry.reset(); im.setValue(col, bar, cur + 1); return true; }
-    if (isMinus(k)) { im.entry.reset(); im.setValue(col, bar, cur - 1); return true; }
     // LEN is a plain number 1-64; a phrase slot follows the display's base
     // like every other slot.
+    const bool hex = col != Impl::kSteps && ValueFormat::hex();
     const int hi = col == Impl::kSteps ? tracker::kMaxSteps : tracker::kPhraseSlots;
+    if (isBackspace(k)) { int m = 0; im.setValue(col, bar, popDigit(im.entry, hex, m) ? m : 0); return true; }
+    if (isDelete(k)) { im.entry.reset(); im.setValue(col, bar, 0); return true; }
+    if (isPlus(k)) { im.entry.reset(); im.setValue(col, bar, cur + 1); return true; }
+    if (isMinus(k)) { im.entry.reset(); im.setValue(col, bar, cur - 1); return true; }
     int mag = 0;
-    if (typeDigit(im.entry, k.getTextCharacter(), col != Impl::kSteps && ValueFormat::hex(), hi, mag)) { im.setValue(col, bar, mag); return true; }
+    if (typeDigit(im.entry, k.getTextCharacter(), hex, hi, mag)) { if (mag >= 0) im.setValue(col, bar, mag); return true; }
     return false;
 }
 void ChainColumn::focusGained(FocusChangeType) { repaint(); }
@@ -1809,18 +2101,28 @@ void ChainColumn::focusLost(FocusChangeType) { impl_->entry.reset(); repaint(); 
 // ===========================================================================
 struct WaveGrid::Impl {
     bank::Frame frame;
+    View view = View::Bars;
     int lastI = -1, lastV = -1;
+    int hoverI = -1, hoverV = -1;       ///< the cell under the pointer, -1 outside
     static constexpr int kPad = 6;
 
     static juce::Rectangle<int> inner(const juce::Component& c) { return c.getLocalBounds().reduced(kPad); }
+
+    /// The grid cell a point lands on, clamped into the 32 by 16.
+    static void cellAt(const juce::Component& c, juce::Point<int> p, int& i, int& v)
+    {
+        const auto in = inner(c);
+        i = juce::jlimit(0, 31, int(std::floor(float(p.x - in.getX()) / (float(in.getWidth()) / 32.0f))));
+        v = juce::jlimit(0, 15, 15 - int(std::floor(float(p.y - in.getY()) / (float(in.getHeight()) / 16.0f))));
+    }
 
     /// Sets one sample; drags interpolate between the previous and the new column.
     bool paintAt(const juce::Component& c, juce::Point<int> p, bool continuing)
     {
         const auto in = inner(c);
         if (in.getWidth() < 32 || in.getHeight() < 16) return false;
-        const int i = juce::jlimit(0, 31, int(std::floor(float(p.x - in.getX()) / (float(in.getWidth()) / 32.0f))));
-        const int v = juce::jlimit(0, 15, 15 - int(std::floor(float(p.y - in.getY()) / (float(in.getHeight()) / 16.0f))));
+        int i = 0, v = 0;
+        cellAt(c, p, i, v);
         bool changed = false;
         if (continuing && lastI >= 0 && std::abs(i - lastI) > 1) {
             const int dir = i > lastI ? 1 : -1;
@@ -1834,6 +2136,15 @@ struct WaveGrid::Impl {
         lastI = i; lastV = v;
         return changed;
     }
+
+    bool hover(const juce::Component& c, juce::Point<int> p)
+    {
+        int i = -1, v = -1;
+        if (inner(c).contains(p)) cellAt(c, p, i, v);
+        if (i == hoverI && v == hoverV) return false;
+        hoverI = i; hoverV = v;
+        return true;
+    }
 };
 
 WaveGrid::WaveGrid() : impl_(std::make_unique<Impl>())
@@ -1845,35 +2156,82 @@ WaveGrid::~WaveGrid() = default;
 
 void WaveGrid::setFrame(const bank::Frame& f) { impl_->frame = f; repaint(); }
 const bank::Frame& WaveGrid::frame() const { return impl_->frame; }
+void WaveGrid::setView(View v) { if (v != impl_->view) { impl_->view = v; repaint(); } }
+WaveGrid::View WaveGrid::view() const { return impl_->view; }
 
 void WaveGrid::paint(juce::Graphics& g)
 {
     using namespace colours;
+    auto& im = *impl_;
     g.setColour(lcd);
     g.fillRect(getLocalBounds());
     g.setColour(scopeBorder);
     g.drawRect(getLocalBounds(), 1);
     const auto in = Impl::inner(*this);
     if (in.getWidth() < 32 || in.getHeight() < 16) return;
-    const float colW = (float(in.getWidth()) - 31.0f) / 32.0f;
+    const float cellW = float(in.getWidth()) / 32.0f;
     const float levelH = float(in.getHeight()) / 16.0f;
+    const bool points = im.view == View::Points;
+    // The level lines; in the Points view the columns are ruled too, so the
+    // dots sit on a grid (section 36).
     g.setColour(lcdGrid);
     for (int k = 1; k < 16; ++k) g.fillRect(float(in.getX()), float(in.getBottom()) - float(k) * levelH - 1.0f, float(in.getWidth()), 1.0f);
-    g.setColour(wav.withAlpha(0.9f));
-    for (int i = 0; i < 32; ++i) {
-        const float x = float(in.getX()) + float(i) * (colW + 1.0f);
-        const float h = float(impl_->frame.s[size_t(i)] + 1) / 16.0f * float(in.getHeight());
-        g.fillRect(x + 1.0f, float(in.getBottom()) - h, colW - 2.0f, h);
+    if (points) for (int i = 1; i < 32; ++i) g.fillRect(float(in.getX()) + float(i) * cellW, float(in.getY()), 1.0f, float(in.getHeight()));
+    // The pointer's column and row, lit softly.
+    if (im.hoverI >= 0) {
+        g.setColour(wav.withAlpha(0.10f));
+        g.fillRect(float(in.getX()) + float(im.hoverI) * cellW, float(in.getY()), cellW, float(in.getHeight()));
+        g.fillRect(float(in.getX()), float(in.getBottom()) - float(im.hoverV + 1) * levelH, float(in.getWidth()), levelH);
+    }
+    if (points) {
+        const float d = juce::jmax(3.0f, juce::jmin(cellW, levelH) * 0.55f);
+        for (int i = 0; i < 32; ++i) {
+            const float cx = float(in.getX()) + (float(i) + 0.5f) * cellW;
+            const float cy = float(in.getBottom()) - (float(im.frame.s[size_t(i)]) + 0.5f) * levelH;
+            g.setColour(i == im.hoverI ? wav : wav.withAlpha(0.9f));
+            g.fillEllipse(cx - d * 0.5f, cy - d * 0.5f, d, d);
+        }
+    } else {
+        const float colW = (float(in.getWidth()) - 31.0f) / 32.0f;
+        for (int i = 0; i < 32; ++i) {
+            const float x = float(in.getX()) + float(i) * (colW + 1.0f);
+            const float h = float(im.frame.s[size_t(i)] + 1) / 16.0f * float(in.getHeight());
+            g.setColour(i == im.hoverI ? wav : wav.withAlpha(0.9f));
+            g.fillRect(x + 1.0f, float(in.getBottom()) - h, colW - 2.0f, h);
+        }
+    }
+    // The coordinates, the way LSDj's wave screen shows them: the sample
+    // under the pointer and its level, in a corner, out of the way.
+    if (im.hoverI >= 0) {
+        const juce::String text = "sample " + ValueFormat::number(im.hoverI) + "  level " + ValueFormat::number(im.hoverV)
+                                + "  (" + ValueFormat::number(im.frame.s[size_t(im.hoverI)]) + ")";
+        g.setFont(Fonts::mono(10.0f));
+        const int w = juce::roundToInt(draw::textWidth(Fonts::mono(10.0f), text)) + 10;
+        // In the corner away from the pointer, so it never sits under the hand.
+        const bool left = im.hoverI >= 16;
+        const juce::Rectangle<int> r(left ? in.getX() + 2 : in.getRight() - 2 - w, in.getY() + 2, w, 16);
+        g.setColour(lcd.withAlpha(0.85f));
+        g.fillRoundedRectangle(r.toFloat(), 3.0f);
+        g.setColour(lcdGrid);
+        g.drawRoundedRectangle(r.toFloat(), 3.0f, 1.0f);
+        g.setColour(wav);
+        g.drawText(text, r, juce::Justification::centred, false);
     }
 }
+void WaveGrid::mouseMove(const juce::MouseEvent& e) { if (impl_->hover(*this, e.getPosition())) repaint(); }
+void WaveGrid::mouseExit(const juce::MouseEvent&) { impl_->hoverI = impl_->hoverV = -1; repaint(); }
 void WaveGrid::mouseDown(const juce::MouseEvent& e)
 {
     impl_->lastI = -1;
-    if (impl_->paintAt(*this, e.getPosition(), false)) { repaint(); if (onChange) onChange(impl_->frame); }
+    impl_->hover(*this, e.getPosition());
+    if (impl_->paintAt(*this, e.getPosition(), false)) { if (onChange) onChange(impl_->frame); }
+    repaint();
 }
 void WaveGrid::mouseDrag(const juce::MouseEvent& e)
 {
-    if (impl_->paintAt(*this, e.getPosition(), true)) { repaint(); if (onChange) onChange(impl_->frame); }
+    impl_->hover(*this, e.getPosition());
+    if (impl_->paintAt(*this, e.getPosition(), true)) { if (onChange) onChange(impl_->frame); }
+    repaint();
 }
 void WaveGrid::mouseUp(const juce::MouseEvent&) { impl_->lastI = -1; }
 

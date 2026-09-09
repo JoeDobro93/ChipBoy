@@ -1,12 +1,13 @@
 // ChipBoy -- the Waves tab (spec 9.7): 64 slots, up to 16 frames of 32
-// samples by 16 levels, drawn with the mouse.
+// samples by 16 levels, drawn with the mouse as bars or as points on a grid
+// (docs/COMMANDS_AND_TEMPO.md section 36).
 //
-// A wave's run can also be generated (docs/COMMANDS_AND_TEMPO.md section 33):
-// the bank keeps a bank::Synth per slot -- a source, a chain of shapers, a
-// start and an end state and the frames to morph between them -- and the
-// panel edits it beside previews of the two ends and of the run. Generate
-// writes the frames into the slot, undoably; the exporter still only ships
-// frames.
+// A wave's run can also be generated (section 33, amended in 36): the bank
+// keeps a bank::Synth per slot -- a chain of shapers, a start and an end
+// state each with its own shape, and the frames of the slot the run goes
+// into -- and the panel edits it beside previews of the two ends and of the
+// run. Generate writes the run into the slot's frames, undoably; the
+// exporter still only ships frames.
 #pragma once
 
 #include "core/Bank/WaveSynth.h"
@@ -21,15 +22,19 @@ public:
 
     RichText contextLine() const override;
     void selectSlot(int slot) override { showSlot(slot); }
+    void saveView(juce::ValueTree& v) const override;
+    void restoreView(const juce::ValueTree& v) override;
     void bankChanged() override;
     void hexChanged() override;
     void resized() override;
 
 private:
     class FrameStrip;
+    class ToolsRow;
     class MiniWave;
     class RunStrip;
     class PartialsBar;
+    class ShaperRow;
     struct SynthWidgets;
 
     void rebuildList();
@@ -39,26 +44,27 @@ private:
     void editWave(const juce::String& what, const std::function<void(bank::Wave&)>& fn, bool pushToGrid);
     void generate(int shape);
     void interpolate();
-    /// The synth section (section 33): built when the source changes, read
-    /// back whenever the bank does.
+    /// The synth section (sections 33 and 36): built when the edited end's
+    /// shape changes, read back whenever the bank does.
     void buildSynth();
+    void rebuildSynthLater();
     void syncSynth();
     /// One edit of the shown wave's synth; `editEnd_` says which of the two
     /// states a value belongs to.
     void editSynth(const juce::String& what, const std::function<void(bank::Synth&)>& fn);
     void editState(const juce::String& what, const std::function<void(bank::SynthState&)>& fn);
     bank::Synth currentSynth() const;
-    /// The frame the Drawn source reads: the one on show.
+    /// The frame the Drawn shape reads: the one on show.
     bank::Frame drawnFrame() const;
-    /// Generate: the run written into the slot, as one undo.
+    /// Generate: the run written into the slot's frames From..To, as one undo.
     void runSynth();
 
     ui::SlotList list_;
     TextLine listTitle_;
     juce::TextButton newBtn_;
     ui::NameField name_;
-    TextLine frameLabel_, frameText_, shapeLabel_;
-    ui::Segmented shape_;
+    TextLine frameLabel_, frameText_;
+    ui::Segmented shape_, view_;
     juce::TextButton interp_;
     ScrollBlock scroll_, synthScroll_;
     ui::WaveGrid grid_;

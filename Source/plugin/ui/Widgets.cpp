@@ -370,18 +370,35 @@ struct Stepper::Impl {
     int hover = -1;   ///< 0 minus, 1 plus
     bool stepping = false;
     TypedEntry entry;
-    /// Typed entry, as the grids read digits: a digit that would overflow
-    /// starts a new value, and the entry ends when the value is full.
-    int acc = 0;
-    void resetEntry() { acc = 0; }
-    /// The value after typing `d` into the entry.
-    int typeDigit(int d)
+    /// Typed entry, as the grids read digits (docs/COMMANDS_AND_TEMPO.md
+    /// section 35): the first digit replaces the value and the rest append,
+    /// a digit that would pass the top is refused, and Backspace takes the
+    /// last one back. The base is the one the inline box would parse.
+    int acc = 0, count = 0;
+    void resetEntry() { acc = 0; count = 0; }
+    int base() const { return entryFromText ? 10 : (ValueFormat::hex() ? 16 : 10); }
+    /// The value after typing `ch` into the entry; -1 when `ch` is not a
+    /// digit in the base, -2 when it is one but would push the value past
+    /// the range and is refused.
+    int typeDigit(juce::juce_wchar ch)
     {
-        int v = acc * 10 + d;
-        if (v > bind.hi) v = juce::jmin(bind.hi, d);
+        int d = -1;
+        if (ch >= '0' && ch <= '9') d = int(ch - '0');
+        else if (base() == 16 && ch >= 'a' && ch <= 'f') d = int(ch - 'a') + 10;
+        else if (base() == 16 && ch >= 'A' && ch <= 'F') d = int(ch - 'A') + 10;
+        if (d < 0) return -1;
+        const int v = acc * base() + d;
+        if (v > bind.hi) return -2;
         acc = v;
-        if (v * 10 > bind.hi) resetEntry();     // no room for another digit
+        ++count;
         return juce::jmax(bind.lo, v);
+    }
+    /// The value after Backspace: the last digit gone, or, with none left to
+    /// take, zero (the range's low end above it) -- a stepper has no blank.
+    int popDigit()
+    {
+        if (count > 0) { acc /= base(); --count; }
+        return count > 0 ? juce::jmax(bind.lo, acc) : juce::jlimit(bind.lo, bind.hi, 0);
     }
 
     juce::String text() const
@@ -497,10 +514,9 @@ void Stepper::mouseDown(const juce::MouseEvent& e)
     impl_->resetEntry();
     if (e.mods.isPopupMenu() && onList) { onList(); return; }
     const bool onButton = e.x < 23 || e.x >= getWidth() - 23;
-    // A slot field keeps its double click for opening the item, so the
-    // readout's click only takes the focus -- digits type straight at it and
-    // Enter opens the box (UI_DESIGN section 2.1).
-    if (!onButton) { if (!onOpen) beginTypedEntry(); return; }
+    // A click on the readout selects it and nothing else: digits type
+    // straight at it, and the box is the double click's (section 35).
+    if (!onButton) return;
     // Press and hold is one undo, however many steps it makes.
     impl_->stepping = true;
     if (auto* history = historyFor(*this))
@@ -516,20 +532,25 @@ void Stepper::mouseUp(const juce::MouseEvent&)
 void Stepper::mouseDoubleClick(const juce::MouseEvent& e)
 {
     if (e.x < 23 || e.x >= getWidth() - 23) return;
-    if (onOpen) onOpen(); else beginTypedEntry();
+    beginTypedEntry();
 }
 bool Stepper::keyPressed(const juce::KeyPress& k)
 {
     const int code = k.getKeyCode();
     auto& im = *impl_;
-    if (code == juce::KeyPress::upKey || code == juce::KeyPress::rightKey || k.getTextCharacter() == '+') { im.resetEntry(); setValue(im.stepped(1)); return true; }
-    if (code == juce::KeyPress::downKey || code == juce::KeyPress::leftKey || k.getTextCharacter() == '-') { im.resetEntry(); setValue(im.stepped(-1)); return true; }
+    // Shift with the arrows: left and right by one, up and down by sixteen
+    // (section 35). Without it the arrows step by one, as the buttons do.
+    const bool shift = k.getModifiers().isShiftDown();
+    if (code == juce::KeyPress::upKey || code == juce::KeyPress::rightKey || k.getTextCharacter() == '+') { im.resetEntry(); setValue(im.stepped(shift && code == juce::KeyPress::upKey ? 16 : 1)); return true; }
+    if (code == juce::KeyPress::downKey || code == juce::KeyPress::leftKey || k.getTextCharacter() == '-') { im.resetEntry(); setValue(im.stepped(shift && code == juce::KeyPress::downKey ? -16 : -1)); return true; }
     if (code == juce::KeyPress::returnKey || code == juce::KeyPress::F2Key) { beginTypedEntry(); return true; }
     if (!im.typed) return false;
-    if (code == juce::KeyPress::backspaceKey || code == juce::KeyPress::deleteKey || code == juce::KeyPress::escapeKey) { im.resetEntry(); return true; }
-    const auto ch = k.getTextCharacter();
-    if (ch < '0' || ch > '9') return false;
-    setValue(im.typeDigit(int(ch - '0')));
+    if (code == juce::KeyPress::escapeKey) { im.resetEntry(); return true; }
+    if (code == juce::KeyPress::backspaceKey) { setValue(im.popDigit()); return true; }
+    if (code == juce::KeyPress::deleteKey) { im.resetEntry(); setValue(juce::jlimit(im.bind.lo, im.bind.hi, 0)); return true; }
+    const int v = im.typeDigit(k.getTextCharacter());
+    if (v == -1) return false;
+    if (v >= 0) setValue(v);      // -2: refused, and the value stays
     return true;
 }
 

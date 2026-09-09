@@ -167,7 +167,8 @@ log, this section says so.
 |---|---|---|
 | **Pitch speed** | Fast (default), Tick, Step, Drum | how P, L and V move. *Fast*: on the pitch clock, 358 updates a second, tempo-independent. *Tick*: once per tracker tick (24 per beat), so the effect follows the tempo. *Step*: as Fast, except P is an immediate offset instead of a bend. *Drum*: as Fast, but P and V move the **period register** rather than the note — for P kicks. Not on noise; kits have no Drum. |
 | **Vibrato shape** | Triangle, Saw, Square × Down, Up | the waveform of V and of the instrument's own vibrato. *Triangle* is a **symmetric swing about the note**, and Down or Up only chooses which half of it comes first. Saw and square stay one-sided — from the note to note ± depth — because the ROM's own saw and square could not be read off the register log (LSDJ_PARITY §13). |
-| **Command rate** | 0–15, default 0 | slows C and R (an interval of rate + 1 ticks per chord/retrigger step), and P and V when the pitch speed is Tick (they advance every rate + 1 ticks). Nothing else. |
+| **Command rate** | 0–15, default 0 | slows R (an interval of rate + 1 ticks per retrigger step), and P and V when the pitch speed is Tick (they advance every rate + 1 ticks). Nothing else. *(C had this rate until §37 gave it its own.)* |
+| **Chord rate** | 0–15, default 0 | how fast a C chord steps: one step every rate + 1 ticks. 0 is LSDj's one step a tick (§37). |
 | **Table mode** | Tick (default), Step | *Tick*: the table runs one row per tick (or per its own G). *Step*: the table advances one row each time the instrument is triggered (a plain note), LSDj's old "automate". |
 
 ### The pitch clock
@@ -278,7 +279,8 @@ Not on noise (LSDj's noise P is a shape command and is out of scope).
 
 **C chord** (`C x y`): the cycle is 0, x, y per step; if `y` = 0 the cycle is 0, x;
 `C 0 0` stops. The note's own tick plays the root and the chord steps from the tick after
-it, one step per rate + 1 ticks (measured: `C 3 7` wrote 1798, then 1837, then 1881).
+it, one step per **chord rate** + 1 ticks (§37; measured at rate 0: `C 3 7` wrote 1798,
+then 1837, then 1881).
 
 **R retrigger** (`R x y`): the interval is **y × (rate + 1) + 1 ticks**, so `y` = 0 is
 every tick and not "once". A retrigger writes **the whole note-on sequence again** —
@@ -1140,3 +1142,112 @@ side — `P` is read as two's complement (`Driver.cpp` no longer does `c.a - 128
 direction comes from `y`'s bit 3 (`c.b & 8`) rather than `x`'s bit 7, and a table's `H`
 is read as `times, row` rather than a bare hop target — so the window and the driver now
 agree on all three.
+
+---
+
+# Addendum, 2026-09-09 (fourth): one editing grammar, the window remembers, the Waves tab
+
+Agreed after using the sixth round. Binding. Amends §30 (the one selector convention and
+the note gestures), §33 (the synth's data and its panel) and UI_DESIGN §2.1.
+
+## 35. One editing grammar for every value field
+
+Every value field in the window — a lane cell, a table cell, a chain cell, the head's
+LEN and groove chips, a stepper's readout — takes the same five gestures, so nothing has
+to be learned twice and no field surprises:
+
+| Gesture | What it does |
+|---|---|
+| **Click** | selects the field (the cursor lands on it) and nothing else |
+| **Type** | edits the selected field in place, without a box (below) |
+| **Double-click** | opens the inline box holding the value — Enter commits, Escape cancels |
+| **Right-click** | lists the choices where the field has them: the bank's slots by *slot · name*, the command palette, the phrases, the grooves — and, at the top, **Open in its tab** for the slot the field names |
+| **Shift + arrows** | moves the value: ←/→ by one, ↑/↓ by sixteen (a note: a semitone and an octave) |
+
+- **Typing in place.** The first digit typed at a selected field **replaces** what was
+  there and starts an entry; every further digit is appended. A digit that would push the
+  value past the field's limit is **refused** and the value stays where it was — `5`, `56`
+  are taken in a 0–127 field and a third digit is not. **Backspace** removes the digit
+  typed last (`56` → `5`); once the entry is empty it blanks the cell, as it always did,
+  and the next digit starts a new entry (`8`). A stepper has no blank, so an emptied
+  entry there leaves the value at zero, or at the range's low end above zero. The digit
+  that starts a fresh entry after a full one is the same rule — it replaces. This
+  replaces the old behaviour where an overflowing digit silently started a new value.
+  Hex display types hex digits, in the grids and at the steppers alike.
+- **Double-click is the box, everywhere.** A note, a velocity, a slot, a table's volume
+  and transpose, a chain cell, LEN, the groove chip, a stepper's readout. The command
+  cell's double-click opens the box on its values; on the letter, or when the cell holds
+  no command, it opens the palette. Enter on a selected field still opens the box, as
+  before; on a command cell, Shift+Enter still opens the palette.
+- **The item's own tab moves into the right-click menu.** Since §30 a double click on a
+  slot field opened the item's tab. That gesture is now the box, so the menu every slot
+  field already has gains a first entry — *Open instrument 05 · Bass* — that does what the
+  double click did. It covers the lane's INS and TBL, the groove chip, the strips'
+  instrument and table steppers, and the Instrument tab's Table, Wave and Kit fields.
+  D-UI-9 is amended accordingly; `Stepper::onOpen` is called from the menu rather than
+  from the double click, and a slot stepper's single click selects like every other
+  stepper's now.
+- **Shift with the arrows** was Shift+↑/↓ a semitone and Shift+←/→ an octave on a note;
+  it is **swapped**: ↑/↓ move the octave, ←/→ the semitone, left lowering and right
+  raising. Every other value field takes the same keys: ←/→ by one, ↑/↓ by sixteen — in
+  Hex that is the byte's high digit; in Decimal the step stays sixteen for consistency,
+  clamped to the range. A command cell moves the argument the cursor is on (the byte in
+  Hex). The vertical drag on a note is unchanged.
+- **The window remembers where it was.** Closing the editor and opening it again shows
+  the tab, the channel, each tab's selected slot, the Waves tab's frame and morph end, and
+  the Tracker's row that were showing, instead of the Instrument tab on slot 1. They are
+  kept as `ui_view` in the plugin's state beside `ui_scale`, so a project reopens where
+  it was left too.
+
+## 36. The Waves tab, second pass
+
+- The frame strip lays its thumbnails **eight to a row**, stretched to the strip's width,
+  with `+` and `−` after the sixteenth; the row of a frame is then its half of the run.
+- The synth's **Source** is renamed **Shape**: it is what the wave starts as. Each end of
+  the morph has its **own shape** (`SynthState::source`): a run can go from a sine to a
+  saw. The render makes both ends' shapes and crossfades them by the morph position
+  before the chain, so where the two shapes are the same the bytes are exactly what they
+  were; the width and the partials already belonged to the state. A synth file that
+  carries the old single `source` reads it into both ends.
+- The run is placed by **From** and **To** frame numbers rather than a count:
+  `Synth::first` (0-based in the data, 1-based on the panel) and `Synth::frames` together.
+  Generate writes the run into frames From…To of the slot, growing the wave to reach
+  To when it is shorter and leaving the frames outside the range as they were, so a
+  sixteen-frame wave can have its second half regenerated. `bank::synthWriteRun` is the
+  one place that does the writing, tested.
+- The synth section is regrouped so each control says what it does: **Shape** (the
+  Start/End switch, the shape and its own fields — width, partials, the noise seed),
+  **Chain** (four rows, each a shaper with its amount and, on the filters only, its
+  resonance; a dim line under each row says what that shaper's amount means, from
+  `synthShaperHelp`), **Run** (From, To, Generate) and **Preview** (the two ends and the
+  run). Resonance is hidden rather than greyed where the shaper has none.
+- The tools over the drawing grid are one row under it — **Draw** a sine / triangle /
+  saw / pulse into the frame, **Interpolate** the frames between the first and the last,
+  and the **view** switch — so the Interpolate button no longer collides with the shape
+  selector in the top row.
+- The drawing grid gains a second **view**, *Points*: each sample is a dot on a 32×16
+  grid instead of a bar. In both views the pointer's column and row are lit softly and a
+  small caption in the grid's corner reads the sample number and its level, the way
+  LSDj's wave screen shows the coordinates, without a tooltip window in the way.
+- Considered and kept out: nothing else of LSDj's synth (its filters are these), and a
+  per-frame source list — two ends are what a morph has.
+
+## 37. The chord's own rate
+
+LSDj's one **command rate** slows C, R and the Tick-speed P and V together. A chord at
+one step a tick is the LSDj sound and too fast for much else, and slowing it with the
+command rate slowed the retrigger with it. The instrument gains a **Chord rate**, 0–15,
+beside the command rate: a C steps every *chord rate + 1* ticks and nothing else reads
+it; the command rate keeps R, P and V and no longer touches C.
+
+- **Default 0**, one step a tick, so every measured parity case and every existing song
+  plays as it did. *As built:* `InstrumentCore::chordRate`; `Driver` reads it where it
+  read `cmdRate` for the chord and nowhere else.
+- **Files**: `chordRate` in the instrument's JSON. A file without one — every song and
+  preset before this section — takes its **command rate** as the chord rate, so it plays
+  exactly as before; the parity harness sets both from LSDj's one rate. The demo song
+  and the hybrid project's state are regenerated for the new property.
+- **Tab**: *Chord rate* under *Cmd rate* in the Instrument tab's Pitch & modulation
+  group, reading "every tick", "every 2" ….
+- **Test**: `C arpeggiates 0, x, y and the chord rate slows it` — the chord rate slows
+  the chord, the command rate does not, and neither disturbs the other.

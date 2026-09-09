@@ -37,6 +37,9 @@ public:
     void bankChanged() override { grid_.setBank(processor.bank()); }
     void hexChanged() override;
     void tick() override;
+    /// The row on show survives a close and a reopen (section 35).
+    void saveView(juce::ValueTree& v) const override { v.setProperty("row", bar_, nullptr); }
+    void restoreView(const juce::ValueTree& v) override;
     void paint(juce::Graphics&) override;
     void resized() override;
 

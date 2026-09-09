@@ -9,16 +9,16 @@ using namespace chipboy::ui;
 
 namespace {
 constexpr int kListWidth = 220, kGap = 14, kListHeader = 28, kTopRow = 30, kGridHeight = 200;
-constexpr int kThumbW = 40, kThumbH = 30, kThumbGap = 4;
-/// The synth takes the column to the right of the drawing grid
-/// (docs/COMMANDS_AND_TEMPO.md section 33).
+/// The frames strip: eight thumbnails to a row, stretched to the strip
+/// (docs/COMMANDS_AND_TEMPO.md section 36), with + and - after the sixteenth.
+constexpr int kThumbsPerRow = 8, kThumbH = 34, kThumbGap = 4;
+/// The synth takes the column to the right of the drawing grid (section 33).
 constexpr int kSynthWidth = 356, kSynthGap = 18, kSynthLabel = 78;
 constexpr int kPreviewHeight = 58, kPartialsHeight = 44;
 String middot() { return String(CharPointer_UTF8(" \xc2\xb7 ")); }
 
 /// A handful of controls side by side in one form row, laid out by a
-/// function the caller gives: FormRow holds one control, and some of these
-/// rows are three.
+/// function the caller gives.
 class RowOf : public juce::Component {
 public:
     void add(std::unique_ptr<juce::Component> c) { addAndMakeVisible(*c); parts_.push_back(std::move(c)); }
@@ -59,17 +59,14 @@ public:
     std::function<void(int)> onSelect, onExtendTo;
     std::function<void()> onAdd, onRemove;
 
-    int perRow() const { return std::max(1, (getWidth() + kThumbGap) / (kThumbW + kThumbGap)); }
-    int preferredHeight(int width) override
-    {
-        const int per = std::max(1, (width + kThumbGap) / (kThumbW + kThumbGap));
-        const int rows = (bank::kMaxFrames + 2 + per - 1) / per;
-        return rows * (kThumbH + kThumbGap) - kThumbGap;
-    }
+    static constexpr int kCells = bank::kMaxFrames + 2;
+    static int rows() { return (kCells + kThumbsPerRow - 1) / kThumbsPerRow; }
+    int preferredHeight(int) override { return rows() * (kThumbH + kThumbGap) - kThumbGap; }
+    int thumbW() const { return std::max(24, (getWidth() - (kThumbsPerRow - 1) * kThumbGap) / kThumbsPerRow); }
     Rectangle<int> cell(int index) const
     {
-        const int per = perRow();
-        return { (index % per) * (kThumbW + kThumbGap), (index / per) * (kThumbH + kThumbGap), kThumbW, kThumbH };
+        const int w = thumbW();
+        return { (index % kThumbsPerRow) * (w + kThumbGap), (index / kThumbsPerRow) * (kThumbH + kThumbGap), w, kThumbH };
     }
     void paint(Graphics& g) override
     {
@@ -87,6 +84,11 @@ public:
                     const float h = (r.getHeight() - 8.0f) * (f.s[size_t(i)] + 1) / 16.0f;
                     g.fillRect(r.getX() + 3.0f + cw * float(i), r.getBottom() - 4.0f - h, std::max(1.0f, cw - 0.5f), h);
                 }
+                // The frame's number in its corner, so the strip reads as the run
+                // it is and From / To can be read off it (section 36).
+                g.setColour(sel ? colours::text : colours::textDim);
+                g.setFont(Fonts::mono(9.0f));
+                g.drawText(String(k + 1), cell(k).reduced(4, 2), Justification::topLeft, false);
             } else {
                 g.setColour(colours::textDim);
                 g.setFont(Fonts::mono(11.0f));
@@ -110,7 +112,7 @@ public:
     }
     void mouseDown(const MouseEvent& e) override
     {
-        for (int k = 0; k < bank::kMaxFrames + 2; ++k) {
+        for (int k = 0; k < kCells; ++k) {
             if (!cell(k).contains(e.getPosition())) continue;
             const int n = int(frames_.size());
             if (k == bank::kMaxFrames) { if (onAdd) onAdd(); }
@@ -123,6 +125,38 @@ public:
 private:
     std::vector<bank::Frame> frames_;
     int selected_ = 0;
+};
+
+/// The tools under the drawing grid (section 36): draw a shape into the
+/// frame, interpolate the frames between the first and the last, and the
+/// grid's view. Holds the panel's own widgets, so it owns nothing.
+class WavesPanel::ToolsRow : public Block {
+public:
+    ToolsRow(Segmented& shape, TextButton& interp, Segmented& view)
+        : drawLabel_("Draw", Fonts::caption(10.0f), colours::textDim), viewLabel_("View", Fonts::caption(10.0f), colours::textDim),
+          shape_(shape), interp_(interp), view_(view)
+    {
+        drawLabel_.setUpperCase(true);
+        viewLabel_.setUpperCase(true);
+        for (auto* c : std::initializer_list<Component*>{ &drawLabel_, &shape_, &interp_, &viewLabel_, &view_ }) addAndMakeVisible(c);
+    }
+    int preferredHeight(int) override { return 26; }
+    void resized() override
+    {
+        auto area = getLocalBounds();
+        drawLabel_.setBounds(area.removeFromLeft(38));
+        shape_.setBounds(area.removeFromLeft(shape_.preferredWidth()).withSizeKeepingCentre(shape_.preferredWidth(), shape_.preferredHeight()));
+        area.removeFromLeft(8);
+        interp_.setBounds(area.removeFromLeft(88).reduced(0, 2));
+        view_.setBounds(area.removeFromRight(view_.preferredWidth()).withSizeKeepingCentre(view_.preferredWidth(), view_.preferredHeight()));
+        area.removeFromRight(6);
+        viewLabel_.setBounds(area.removeFromRight(34));
+    }
+private:
+    TextLine drawLabel_, viewLabel_;
+    Segmented& shape_;
+    TextButton& interp_;
+    Segmented& view_;
 };
 
 /// One frame as a picture: the start and the end of the morph.
@@ -149,7 +183,7 @@ private:
     std::vector<bank::Frame> frames_;
 };
 
-/// The additive source's eight partials, drawn and dragged like the wave
+/// The additive shape's eight partials, drawn and dragged like the wave
 /// grid: a column each, 0-15.
 class WavesPanel::PartialsBar : public Component, public SettableTooltipClient {
 public:
@@ -185,17 +219,74 @@ private:
     std::array<uint8_t, bank::kSynthPartials> partials_{};
 };
 
+/// One link of the chain (section 36): the shaper, its amount and -- on
+/// the filters only -- its resonance, with a dim line underneath that says
+/// what this shaper's amount does. The line is there only while a shaper is
+/// chosen, so an empty stage is one row.
+class WavesPanel::ShaperRow : public Block, public SettableTooltipClient {
+public:
+    explicit ShaperRow(const String& label) : label_(label)
+    {
+        kind.setScrollWheelEnabled(false);
+        for (int i = 0; i < bank::kSynthShaperCount; ++i) kind.addItem(bank::synthShaperName(bank::SynthShaper(i)), i + 1);
+        amount.setRange(-15, 15, 0);
+        amount.setTextFunction([](int v) { return ValueFormat::signedNumber(v); });
+        amount.setTooltip("How much, -15 to 15: 0 is a no-op, and the sign is the direction where the shaper has one.");
+        resonance.setRange(0, 15, 0);
+        resonance.setTooltip("Resonance, 0-15: the peak at the filter's corner.");
+        addAndMakeVisible(kind);
+        addAndMakeVisible(amount);
+        addChildComponent(resonance);
+    }
+    static constexpr int kControls = 26, kHelp = 28;
+    /// What the row shows for a shaper: its help line, and the resonance
+    /// where the shaper reads one. True when the row's height changed.
+    bool setShaper(bank::SynthShaper s)
+    {
+        const bool was = shown_;
+        shown_ = s != bank::SynthShaper::None;
+        help_ = shown_ ? String(bank::synthShaperHelp(s)) : String();
+        resonance.setVisible(bank::synthShaperHasResonance(s));
+        amount.setEnabled(shown_);
+        repaint();
+        return was != shown_;
+    }
+    int preferredHeight(int) override { return kControls + (shown_ ? kHelp : 0); }
+    void resized() override
+    {
+        auto row = getLocalBounds().removeFromTop(kControls).withTrimmedLeft(kSynthLabel);
+        kind.setBounds(row.removeFromLeft(112).withSizeKeepingCentre(112, 24));
+        row.removeFromLeft(4);
+        if (resonance.isVisible()) { resonance.setBounds(row.removeFromRight(76).withSizeKeepingCentre(76, Stepper::kHeight)); row.removeFromRight(4); }
+        amount.setBounds(row.withSizeKeepingCentre(row.getWidth(), Stepper::kHeight));
+    }
+    void paint(Graphics& g) override
+    {
+        g.setFont(Fonts::sans(12.0f));
+        g.setColour(colours::textMute);
+        g.drawText(label_, 0, 0, kSynthLabel - 8, kControls, Justification::centredLeft, false);
+        if (!shown_) return;
+        g.setFont(Fonts::sans(10.5f));
+        g.setColour(colours::textDim);
+        g.drawFittedText(help_, Rectangle<int>(kSynthLabel, kControls - 2, getWidth() - kSynthLabel, kHelp - 2), Justification::topLeft, 2, 0.9f);
+    }
+    ComboBox kind;
+    Stepper amount, resonance;
+private:
+    String label_, help_;
+    bool shown_ = false;
+};
+
 /// Everything the synth section holds, so the values can be read back.
 struct WavesPanel::SynthWidgets {
     Segmented* which = nullptr;               ///< which state the fields write
-    ComboBox* source = nullptr;
+    ComboBox* source = nullptr;               ///< the edited end's shape
     Stepper* width = nullptr;
     PartialsBar* partials = nullptr;
-    ComboBox* shaper[bank::kSynthStages] = { nullptr, nullptr, nullptr, nullptr };
-    Stepper* amount[bank::kSynthStages] = { nullptr, nullptr, nullptr, nullptr };
-    Stepper* resonance[bank::kSynthStages] = { nullptr, nullptr, nullptr, nullptr };
-    Stepper* frames = nullptr;
     Stepper* seed = nullptr;
+    ShaperRow* stage[bank::kSynthStages] = { nullptr, nullptr, nullptr, nullptr };
+    Stepper* from = nullptr;
+    Stepper* to = nullptr;
     juce::TextButton* generate = nullptr;
     MiniWave* start = nullptr;
     MiniWave* end = nullptr;
@@ -208,14 +299,13 @@ WavesPanel::WavesPanel(ChipBoyProcessor& p)
       newBtn_("New"),
       frameLabel_("Frame", Fonts::caption(10.0f), colours::textDim),
       frameText_({}, Fonts::mono(12.0f), colours::text),
-      shapeLabel_("Shape", Fonts::caption(10.0f), colours::textDim),
       shape_({ "Sine", "Triangle", "Saw", "Pulse" }),
+      view_({ "Bars", "Points" }),
       interp_("Interpolate")
 {
     frameLabel_.setUpperCase(true);
-    shapeLabel_.setUpperCase(true);
     sw_ = std::make_unique<SynthWidgets>();
-    for (auto* c : std::initializer_list<Component*>{ &list_, &listTitle_, &newBtn_, &name_, &frameLabel_, &frameText_, &shapeLabel_, &shape_, &interp_, &scroll_, &synthScroll_ }) addAndMakeVisible(c);
+    for (auto* c : std::initializer_list<Component*>{ &list_, &listTitle_, &newBtn_, &name_, &frameLabel_, &frameText_, &scroll_, &synthScroll_ }) addAndMakeVisible(c);
     list_.onSelect = [this](int slot) { showSlot(slot); };
     list_.onRename = [this](int slot, const String& n) {
         const int s = std::clamp(slot, 1, bank::kWaveSlots);
@@ -243,9 +333,14 @@ WavesPanel::WavesPanel(ChipBoyProcessor& p)
     shape_.onChange = [this](int i) { generate(i); };
     interp_.setTooltip("Every frame between the first and the last becomes a blend of the two.");
     interp_.onClick = [this] { interpolate(); };
+    view_.setMini(true);
+    view_.setTooltip("Bars, or each sample as a point on the 32 by 16 grid. Either way the pointer's column and row are lit and the corner reads the coordinates.");
+    view_.setSelected(0, dontSendNotification);
+    view_.onChange = [this](int i) { grid_.setView(i == 1 ? WaveGrid::View::Points : WaveGrid::View::Bars); };
 
     auto stack = std::make_unique<Stack>(8);
     stack->add(std::make_unique<Hold>(grid_, kGridHeight));
+    stack->add(std::make_unique<ToolsRow>(shape_, interp_, view_));
     auto frames = std::make_unique<FrameStrip>();
     frames_ = frames.get();
     frames->onSelect = [this](int k) { frame_ = k; syncFromBank(true); contextChanged(); };
@@ -293,6 +388,20 @@ RichText WavesPanel::contextLine() const
     r.plain("Wave ").bold(w ? slotAndName(slot_, w->name) : slotAndName(slot_, "empty"));
     if (w) r.plain(middot() + String(int(w->frames.size())) + (w->frames.size() == 1 ? " frame" : " frames") + middot() + "frame " + String(frame_ + 1));
     return r;
+}
+
+void WavesPanel::saveView(juce::ValueTree& v) const
+{
+    v.setProperty("slot", slot_, nullptr);
+    v.setProperty("frame", frame_, nullptr);
+    v.setProperty("end", editEnd_, nullptr);
+}
+
+void WavesPanel::restoreView(const juce::ValueTree& v)
+{
+    if (v.hasProperty("end")) editEnd_ = int(v["end"]) == 1 ? 1 : 0;
+    if (v.hasProperty("slot")) showSlot(int(v["slot"]));
+    if (v.hasProperty("frame")) { frame_ = std::max(0, int(v["frame"])); syncFromBank(true); contextChanged(); }
 }
 
 void WavesPanel::rebuildList()
@@ -383,9 +492,12 @@ void WavesPanel::bankChanged()
 {
     const auto b = processor.bank();
     rebuildList();
-    // The source decides which of the synth's own fields the section holds,
-    // so it is the one change that rebuilds it (section 33).
-    if (b && int(b->waves[size_t(slot_ - 1)].synth.source) != builtSource_) buildSynth();
+    // The edited end's shape decides which of the synth's own fields the
+    // section holds, so it is the one change that rebuilds it (section 36).
+    if (b) {
+        const auto& sy = b->waves[size_t(slot_ - 1)].synth;
+        if (int((editEnd_ == 1 ? sy.end : sy.start).source) != builtSource_) buildSynth();
+    }
     if (b && b.get() != selfBank_) syncFromBank(true);
     else syncSynth();
     contextChanged();
@@ -426,6 +538,19 @@ void WavesPanel::editState(const String& what, const std::function<void(bank::Sy
     editSynth(what, [&fn, end](bank::Synth& sy) { fn(end == 1 ? sy.end : sy.start); });
 }
 
+/// The section is rebuilt from inside one of its own widgets' callbacks (the
+/// Start / End switch, the shape combo), so the rebuild waits for the
+/// message loop: the widget that asked for it is gone by then.
+void WavesPanel::rebuildSynthLater()
+{
+    Component::SafePointer<WavesPanel> safe(this);
+    MessageManager::callAsync([safe] {
+        if (safe == nullptr) return;
+        safe->buildSynth();
+        safe->resized();
+    });
+}
+
 void WavesPanel::buildSynth()
 {
     const auto b = processor.bank();
@@ -433,125 +558,128 @@ void WavesPanel::buildSynth()
     auto stack = std::make_unique<Stack>(10);
     if (!b) { synthScroll_.setContent(std::move(stack)); return; }
     const bank::Synth sy = b->waves[size_t(slot_ - 1)].synth;
-    builtSource_ = int(sy.source);
+    const bank::SynthState& st = editEnd_ == 1 ? sy.end : sy.start;
+    builtSource_ = int(st.source);
 
-    auto group = std::make_unique<FormGroup>("Synth", kSynthLabel);
-
-    // Which end of the morph the fields below write. The kinds -- the source
-    // and the chain's shapers -- belong to both (section 33).
+    // --- SHAPE: which end is being edited, what it starts as, and the
+    // shape's own numbers (section 36).
+    auto shape = std::make_unique<FormGroup>("Shape", kSynthLabel);
     {
         auto which = std::make_unique<Segmented>(StringArray{ "Start", "End" });
         which->setMini(true);
-        which->setTooltip("Which end of the morph these values belong to. The source and the shapers are shared; the numbers are not.");
+        which->setTooltip("Which end of the morph the shape and the numbers below belong to. The chain's shapers are shared; their amounts are not.");
         which->setSelected(editEnd_, dontSendNotification);
-        which->onChange = [this](int v) { editEnd_ = v == 1 ? 1 : 0; syncSynth(); };
+        which->onChange = [this](int v) { editEnd_ = v == 1 ? 1 : 0; rebuildSynthLater(); };
         sw_->which = which.get();
         const int w = which->preferredWidth(), h = which->preferredHeight();
-        group->add("Editing", std::move(which), w, h, "Which end of the morph these values belong to.");
+        shape->add("Editing", std::move(which), w, h, "Which end of the morph these values belong to.");
     }
     {
         auto src = std::make_unique<ComboBox>();
         src->setScrollWheelEnabled(false);
         for (int k = 0; k < bank::kSynthSourceCount; ++k) src->addItem(bank::synthSourceName(bank::SynthSource(k)), k + 1);
-        src->setSelectedId(int(sy.source) + 1, dontSendNotification);
-        src->setTooltip("What the frame starts as, before the shapers. Drawn reads the frame on show.");
+        src->setSelectedId(int(st.source) + 1, dontSendNotification);
+        src->setTooltip(String("What this end of the morph starts as, before the chain. ") + bank::synthSourceHelp(st.source));
         src->onChange = [this] {
             if (sw_ == nullptr || sw_->source == nullptr) return;
             const int id = sw_->source->getSelectedId();
             if (id < 1) return;
             const auto v = bank::SynthSource(id - 1);
-            editSynth(String("source ") + bank::synthSourceName(v), [v](bank::Synth& sy2) { sy2.source = v; });
-            buildSynth();
-            resized();
-            syncSynth();
+            editState(String("shape ") + bank::synthSourceName(v), [v](bank::SynthState& s2) { s2.source = v; });
+            rebuildSynthLater();
         };
         sw_->source = src.get();
-        group->add("Source", std::move(src), 148, 24, "What the frame starts as, before the shapers.");
+        shape->add("Shape", std::move(src), 148, 24, String("What this end starts as, before the chain. ") + bank::synthSourceHelp(st.source));
     }
-    if (bank::synthSourceHasWidth(sy.source)) {
+    if (bank::synthSourceHasWidth(st.source)) {
         auto width = std::make_unique<Stepper>();
         width->setRange(1, 31, 16);
-        width->setTooltip("The square's pulse width, in samples of the 32.");
-        width->onChange = [this](int v) { editState("width " + String(v), [v](bank::SynthState& st) { st.width = uint8_t(std::clamp(v, 1, 31)); }); };
+        width->setTooltip("The square's pulse width: how many of the 32 samples are high.");
+        width->onChange = [this](int v) { editState("width " + String(v), [v](bank::SynthState& s2) { s2.width = uint8_t(std::clamp(v, 1, 31)); }); };
         sw_->width = width.get();
-        group->add("Width", std::move(width), 90, Stepper::kHeight, "The square's pulse width, in samples of the 32.");
+        shape->add("Width", std::move(width), 90, Stepper::kHeight, "The square's pulse width: how many of the 32 samples are high.");
     }
-    if (bank::synthSourceHasPartials(sy.source)) {
+    if (bank::synthSourceHasPartials(st.source)) {
         auto bar = std::make_unique<PartialsBar>();
         bar->setTooltip("Eight harmonics, 0-15 each, drawn with the mouse. The sum is scaled to the rails.");
         bar->onChange = [this](int k, int v) {
-            editState("partial " + String(k + 1) + " " + String(v), [k, v](bank::SynthState& st) { st.partials[size_t(k)] = uint8_t(std::clamp(v, 0, 15)); });
+            editState("partial " + String(k + 1) + " " + String(v), [k, v](bank::SynthState& s2) { s2.partials[size_t(k)] = uint8_t(std::clamp(v, 0, 15)); });
         };
         sw_->partials = bar.get();
-        group->add("Partials", std::move(bar), 190, kPartialsHeight, "Eight harmonics, 0-15 each, drawn with the mouse.");
+        shape->add("Partials", std::move(bar), 190, kPartialsHeight, "Eight harmonics, 0-15 each, drawn with the mouse.");
     }
-    // The chain: four shapers in order, each with its amount and, on the
-    // filters, its resonance. An amount of 0 is a no-op.
+    if (st.source == bank::SynthSource::Noise) {
+        auto seed = std::make_unique<Stepper>();
+        seed->setRange(0, 255, 1);
+        seed->setTooltip("The noise's seed, so a run is repeatable. One seed for both ends.");
+        seed->onChange = [this](int v) { editSynth("seed " + String(v), [v](bank::Synth& sy2) { sy2.seed = uint8_t(std::clamp(v, 0, 255)); }); };
+        sw_->seed = seed.get();
+        shape->add("Seed", std::move(seed), 90, Stepper::kHeight, "The noise's seed, so a run is repeatable.");
+    }
+    stack->add(std::move(shape));
+
+    // --- CHAIN: four shapers in order, each with its amount and, on the
+    // filters, its resonance; a line under each says what its amount does.
+    auto chain = std::make_unique<FormGroup>("Chain", kSynthLabel);
     for (int k = 0; k < bank::kSynthStages; ++k) {
-        auto kind = std::make_unique<ComboBox>();
-        kind->setScrollWheelEnabled(false);
-        for (int i = 0; i < bank::kSynthShaperCount; ++i) kind->addItem(bank::synthShaperName(bank::SynthShaper(i)), i + 1);
-        kind->setSelectedId(int(sy.chain[size_t(k)]) + 1, dontSendNotification);
-        kind->onChange = [this, k] {
-            if (sw_ == nullptr || sw_->shaper[k] == nullptr) return;
-            const int id = sw_->shaper[k]->getSelectedId();
+        auto row = std::make_unique<ShaperRow>("Shaper " + String(k + 1));
+        row->setTooltip("Shaper " + String(k + 1) + " of the chain, applied in order. Its amount is the edited end's; the shaper itself is shared.");
+        row->kind.setSelectedId(int(sy.chain[size_t(k)]) + 1, dontSendNotification);
+        row->setShaper(sy.chain[size_t(k)]);
+        row->kind.onChange = [this, k] {
+            if (sw_ == nullptr || sw_->stage[k] == nullptr) return;
+            const int id = sw_->stage[k]->kind.getSelectedId();
             if (id < 1) return;
             const auto v = bank::SynthShaper(id - 1);
             editSynth("shaper " + String(k + 1) + " " + bank::synthShaperName(v), [k, v](bank::Synth& sy2) { sy2.chain[size_t(k)] = v; });
             syncSynth();
         };
-        auto amount = std::make_unique<Stepper>();
-        amount->setRange(-15, 15, 0);
-        amount->setTextFunction([](int v) { return ValueFormat::signedNumber(v); });
-        amount->onChange = [this, k](int v) {
-            editState("shaper " + String(k + 1) + " amount " + String(v), [k, v](bank::SynthState& st) { st.amount[size_t(k)] = int8_t(std::clamp(v, -15, 15)); });
+        row->amount.onChange = [this, k](int v) {
+            editState("shaper " + String(k + 1) + " amount " + String(v), [k, v](bank::SynthState& s2) { s2.amount[size_t(k)] = int8_t(std::clamp(v, -15, 15)); });
         };
-        auto res = std::make_unique<Stepper>();
-        res->setRange(0, 15, 0);
-        res->onChange = [this, k](int v) {
-            editState("shaper " + String(k + 1) + " resonance " + String(v), [k, v](bank::SynthState& st) { st.resonance[size_t(k)] = uint8_t(std::clamp(v, 0, 15)); });
+        row->resonance.onChange = [this, k](int v) {
+            editState("shaper " + String(k + 1) + " resonance " + String(v), [k, v](bank::SynthState& s2) { s2.resonance[size_t(k)] = uint8_t(std::clamp(v, 0, 15)); });
         };
-        sw_->shaper[k] = kind.get();
-        sw_->amount[k] = amount.get();
-        sw_->resonance[k] = res.get();
-        auto row = std::make_unique<RowOf>();
-        row->add(std::move(kind));
-        row->add(std::move(amount));
-        row->add(std::move(res));
-        row->layout = [](RowOf& r, Rectangle<int> area) {
-            r.part(0).setBounds(area.removeFromLeft(112).withSizeKeepingCentre(112, 24));
-            area.removeFromLeft(4);
-            r.part(2).setBounds(area.removeFromRight(76));
-            area.removeFromRight(4);
-            r.part(1).setBounds(area);
-        };
-        group->add("Shaper " + String(k + 1), std::move(row), 0, Stepper::kHeight,
-                   String(bank::synthShaperHelp(sy.chain[size_t(k)])) + "  The amount is 0-15 either way, 0 a no-op; the last field is the filters' resonance.");
+        sw_->stage[k] = row.get();
+        chain->addWide(std::move(row));
     }
+    stack->add(std::move(chain));
+
+    // --- RUN: where in the slot the frames go, and the button.
+    auto run = std::make_unique<FormGroup>("Run", kSynthLabel);
     {
-        auto frames = std::make_unique<Stepper>();
-        frames->setRange(1, bank::kMaxFrames, 1);
-        frames->setTooltip("How many frames the run holds. They morph from the start state to the end state.");
-        frames->onChange = [this](int v) { editSynth("frames " + String(v), [v](bank::Synth& sy2) { sy2.frames = uint8_t(std::clamp(v, 1, bank::kMaxFrames)); }); };
-        sw_->frames = frames.get();
-        group->add("Frames", std::move(frames), 90, Stepper::kHeight, "How many frames the run holds; they morph from the start state to the end state.");
-        auto seed = std::make_unique<Stepper>();
-        seed->setRange(0, 255, 1);
-        seed->setTooltip("The Noise source's seed, so a run is repeatable.");
-        seed->onChange = [this](int v) { editSynth("seed " + String(v), [v](bank::Synth& sy2) { sy2.seed = uint8_t(std::clamp(v, 0, 255)); }); };
-        sw_->seed = seed.get();
-        group->add("Seed", std::move(seed), 90, Stepper::kHeight, "The Noise source's seed, so a run is repeatable.");
-    }
-    {
+        auto from = std::make_unique<Stepper>();
+        from->setRange(1, bank::kMaxFrames, 1);
+        from->setTooltip("The slot frame the run starts at. The frames before it stay as they are.");
+        from->onChange = [this](int v) {
+            editSynth("from frame " + String(v), [v](bank::Synth& sy2) {
+                const int to = bank::synthFirstFrame(sy2) + bank::synthFrameCount(sy2);   // 1-based: the last frame of the run
+                sy2.first = uint8_t(std::clamp(v - 1, 0, bank::kMaxFrames - 1));
+                sy2.frames = uint8_t(std::clamp(to - int(sy2.first), 1, bank::kMaxFrames - int(sy2.first)));
+            });
+        };
+        sw_->from = from.get();
+        run->add("From frame", std::move(from), 90, Stepper::kHeight, "The slot frame the run starts at; the frames before it stay as they are.");
+        auto to = std::make_unique<Stepper>();
+        to->setRange(1, bank::kMaxFrames, 1);
+        to->setTooltip("The slot frame the run ends at. The wave grows to reach it; the frames after it stay.");
+        to->onChange = [this](int v) {
+            editSynth("to frame " + String(v), [v](bank::Synth& sy2) {
+                const int first = bank::synthFirstFrame(sy2);
+                sy2.frames = uint8_t(std::clamp(v - first, 1, bank::kMaxFrames - first));
+            });
+        };
+        sw_->to = to.get();
+        run->add("To frame", std::move(to), 90, Stepper::kHeight, "The slot frame the run ends at; the wave grows to reach it and the frames after it stay.");
         auto go = std::make_unique<juce::TextButton>("Generate");
-        go->setTooltip("Write the run into this slot's frames. One undo; the parameters stay, so the run can be made again.");
+        go->setTooltip("Write the run into the slot's frames From..To. One undo; the parameters stay, so the run can be made again.");
         go->onClick = [this] { runSynth(); };
         sw_->generate = go.get();
-        group->add("", std::move(go), 110, 24, "Write the run into this slot's frames.");
+        run->add("", std::move(go), 110, 24, "Write the run into the slot's frames.");
     }
-    stack->add(std::move(group));
+    stack->add(std::move(run));
 
-    // The two ends and the run they morph through.
+    // --- PREVIEW: the two ends and the run they morph through.
     auto previews = std::make_unique<FormGroup>("Preview", kSynthLabel);
     {
         auto a = std::make_unique<MiniWave>();
@@ -569,10 +697,10 @@ void WavesPanel::buildSynth()
             r.part(1).setBounds(area);
         };
         previews->add("Start / end", std::move(ends), 0, kPreviewHeight, "The two ends of the morph.");
-        auto run = std::make_unique<RunStrip>();
-        run->setTooltip("The frames Generate would write, oldest first.");
-        sw_->run = run.get();
-        previews->add("Run", std::move(run), 0, kPreviewHeight, "The frames Generate would write.");
+        auto strip = std::make_unique<RunStrip>();
+        strip->setTooltip("The frames Generate would write, From to To.");
+        sw_->run = strip.get();
+        previews->add("Run", std::move(strip), 0, kPreviewHeight, "The frames Generate would write.");
     }
     stack->add(std::move(previews));
 
@@ -588,20 +716,24 @@ void WavesPanel::syncSynth()
     const bank::Synth sy = b->waves[size_t(slot_ - 1)].synth;
     const bank::SynthState& st = editEnd_ == 1 ? sy.end : sy.start;
     if (sw_->which) sw_->which->setSelected(editEnd_, dontSendNotification);
-    if (sw_->source) sw_->source->setSelectedId(int(sy.source) + 1, dontSendNotification);
+    if (sw_->source) sw_->source->setSelectedId(int(st.source) + 1, dontSendNotification);
     if (sw_->width) sw_->width->setValue(st.width, dontSendNotification);
     if (sw_->partials) sw_->partials->set(st.partials);
-    for (int k = 0; k < bank::kSynthStages; ++k) {
-        if (sw_->shaper[k]) sw_->shaper[k]->setSelectedId(int(sy.chain[size_t(k)]) + 1, dontSendNotification);
-        if (sw_->amount[k]) sw_->amount[k]->setValue(st.amount[size_t(k)], dontSendNotification);
-        if (sw_->resonance[k]) {
-            sw_->resonance[k]->setValue(st.resonance[size_t(k)], dontSendNotification);
-            sw_->resonance[k]->setEnabled(bank::synthShaperHasResonance(sy.chain[size_t(k)]));
-        }
-        if (sw_->amount[k]) sw_->amount[k]->setEnabled(sy.chain[size_t(k)] != bank::SynthShaper::None);
-    }
-    if (sw_->frames) sw_->frames->setValue(std::clamp<int>(sy.frames, 1, bank::kMaxFrames), dontSendNotification);
     if (sw_->seed) sw_->seed->setValue(sy.seed, dontSendNotification);
+    bool relayout = false;
+    for (int k = 0; k < bank::kSynthStages; ++k) {
+        auto* row = sw_->stage[k];
+        if (row == nullptr) continue;
+        row->kind.setSelectedId(int(sy.chain[size_t(k)]) + 1, dontSendNotification);
+        row->amount.setValue(st.amount[size_t(k)], dontSendNotification);
+        row->resonance.setValue(st.resonance[size_t(k)], dontSendNotification);
+        if (row->setShaper(sy.chain[size_t(k)])) relayout = true;
+        row->resized();
+    }
+    if (relayout) synthScroll_.relayout();
+    const int first = bank::synthFirstFrame(sy), count = bank::synthFrameCount(sy);
+    if (sw_->from) sw_->from->setValue(first + 1, dontSendNotification);
+    if (sw_->to) sw_->to->setValue(first + count, dontSendNotification);
     // The pictures are the synth rendered, so they say exactly what Generate
     // would write (section 33).
     const bank::Frame drawn = drawnFrame();
@@ -623,11 +755,12 @@ void WavesPanel::runSynth()
     std::vector<bank::Frame> run;
     bank::synthesize(sy, drawn, run);
     if (run.empty()) return;
-    editWave("generated " + String(int(run.size())) + (run.size() == 1 ? " frame" : " frames"),
-             [&run](bank::Wave& w) { w.frames = run; w.synth.used = true; }, true);
-    frame_ = 0;
+    const int first = bank::synthFirstFrame(sy), last = first + int(run.size());
+    const String where = run.size() == 1 ? "frame " + String(first + 1) : "frames " + String(first + 1) + "-" + String(last);
+    editWave("generated " + where, [&run, &sy](bank::Wave& w) { bank::synthWriteRun(sy, run, w); w.synth.used = true; }, true);
+    frame_ = first;
     syncFromBank(true);
-    message("Generated " + String(int(run.size())) + (run.size() == 1 ? " frame" : " frames") + " into wave " + ValueFormat::number(slot_));
+    message("Generated " + where + " of wave " + ValueFormat::number(slot_));
 }
 
 void WavesPanel::resized()
@@ -639,8 +772,8 @@ void WavesPanel::resized()
     listTitle_.setBounds(head.withTrimmedLeft(8));
     list_.setBounds(left);
     area.removeFromLeft(kGap);
-    // The synth takes the right column, the drawing grid and its frames the
-    // rest (docs/COMMANDS_AND_TEMPO.md section 33).
+    // The synth takes the right column, the drawing grid, its tools and its
+    // frames the rest (docs/COMMANDS_AND_TEMPO.md sections 33 and 36).
     auto synth = area.removeFromRight(std::min(kSynthWidth, std::max(0, area.getWidth() / 2)));
     area.removeFromRight(kSynthGap);
     auto top = area.removeFromTop(kTopRow);
@@ -648,11 +781,6 @@ void WavesPanel::resized()
     top.removeFromLeft(12);
     frameLabel_.setBounds(top.removeFromLeft(44));
     frameText_.setBounds(top.removeFromLeft(64));
-    interp_.setBounds(top.removeFromRight(88).reduced(0, 3));
-    top.removeFromRight(8);
-    shape_.setBounds(top.removeFromRight(shape_.preferredWidth()).withSizeKeepingCentre(shape_.preferredWidth(), shape_.preferredHeight()));
-    top.removeFromRight(6);
-    shapeLabel_.setBounds(top.removeFromRight(42));
     area.removeFromTop(6);
     scroll_.setBounds(area);
     synthScroll_.setBounds(synth);

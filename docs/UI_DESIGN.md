@@ -121,18 +121,27 @@ MODIFIED badge; the Hardware tab keeps the same three rows with the measured fac
 Every control in both windows obeys the same three rules, so nothing has to be learned
 twice.
 
-**Every number is typeable.** A stepper's readout is a text field: click it (or press
-Enter on it) and type. A knob or the trim fader opens the same small box on a double
-click. **Enter** commits, **Escape** cancels, and moving the focus away commits, as a
-name field does. What is accepted is digits, a leading minus where the range goes below
-zero, and hex digits while *Hex* is on — anything else is **refused**, and the field
-keeps what it had rather than guessing. A number inside the range is taken as typed; one
-outside it is clamped to the range, because the range is the hardware's and there is
-nothing else to do with 300 in a 0–15 field. Steppers also take digits typed straight
-at them, the grids' convention, and a knob with Alt on the double click goes back to its
-default. Segmented rows and switches stay click-only: they are a choice, not a number.
-Command arguments are the exception to the base: they are base 10 by definition
-(spec §9.6) and stay decimal in hex display.
+**Every number is typeable, and every value field speaks one grammar**
+([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §35). A **click** selects a field — a
+grid cell, a stepper's readout, the lane head's LEN or groove chip — and nothing else.
+**Typing** edits it in place, without a box: the first digit replaces what was there,
+further digits append, a digit that would push the value past the field's limit is
+refused and the value stays (`5`, `56`, and a third digit is not taken in a 0–127
+field), and **Backspace** takes the last digit back (`56` → `5`) and then blanks the cell
+— a stepper, which has no blank, goes to zero or the range's low end. A **double click**
+(or **Enter**) opens the small box holding the value; a knob or the trim fader opens the
+same box on a double click. **Enter** commits, **Escape** cancels, and moving the focus
+away commits, as a name field does. What is accepted is digits, a leading minus where
+the range goes below zero, and hex digits while *Hex* is on — anything else is
+**refused**, and the field keeps what it had rather than guessing. A number inside the
+range is taken as typed; one outside it is clamped to the range, because the range is
+the hardware's and there is nothing else to do with 300 in a 0–15 field. **Shift with
+the arrows** moves a value: ←/→ by one, ↑/↓ by sixteen (the byte's high digit in Hex,
+and the same sixteen in Decimal for consistency); on a note, a semitone and an octave.
+A knob with Alt on the double click goes back to its default. Segmented rows and
+switches stay click-only: they are a choice, not a number. Command arguments are the
+exception to the base: they are base 10 by definition (spec §9.6) and stay decimal in hex
+display.
 
 **The wheel never edits.** It scrolls whatever is under it — a tab's pane, a bank list,
 the chain's rows — and nothing else. A wheel that changed values meant that scrolling
@@ -152,14 +161,15 @@ belong to the Voice's own history, and anything the audio thread does. One gestu
 one undo: a knob drag, a stepper held down and the digits of one typed value each
 collapse into a single step.
 
-**Command cells are two parts.** The letter is chosen, the values are typed. Clicking
-the **letter** (the first glyph of the cell, drawn against its own hairline) opens a
-palette of the letters this channel can carry, each with its name and what its arguments
-mean, plus *none* and the letter's revert form; typing a letter key does the same. The
-**values** are typed as numbers and validated against that letter's ranges: a digit the
-letter cannot take is refused and the cell shows what it had. Changing the letter keeps
-the values, clamped into the new letter's ranges — an empty cell instead takes the
-letter's own defaults, so one keystroke still writes a command that does something.
+**Command cells are two parts.** The letter is chosen, the values are typed. A
+**right click** on the cell, or a double click on the **letter** (the first glyph of the
+cell, drawn against its own hairline), opens a palette of the letters this channel can
+carry, each with its name and what its arguments mean, plus *none* and the letter's
+revert form; typing a letter key does the same. The **values** are typed as numbers and
+validated against that letter's ranges: a digit the letter cannot take is refused and the
+cell shows what it had. Changing the letter keeps the values, clamped into the new
+letter's ranges — an empty cell instead takes the letter's own defaults, so one keystroke
+still writes a command that does something.
 
 **One convention for every slot field.** Wherever a slot is picked — the lane's **ins**
 and **tbl** cells, the groove chip, the strips' instrument and table steppers, the
@@ -168,19 +178,19 @@ gestures apply ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §30):
 
 | Gesture | What it does |
 |---|---|
-| **Click** | selects the field and lets you type into it — digits at a grid cell or a stepper, the inline box on a chip |
-| **Right-click** | lists the slots by **slot · name** — only the ones in use, the ones this channel plays first and the rest marked with their type — and picks one |
-| **Double-click** | **opens that item's own tab** with it selected: Instrument, Tables, Waves, Kits or Grooves |
+| **Click** | selects the field and lets you type into it — digits at a grid cell, a stepper or a chip |
+| **Right-click** | lists the slots by **slot · name** — only the ones in use, the ones this channel plays first and the rest marked with their type — and picks one; its first entry, **Open … in its tab**, opens the item the field names: Instrument, Tables, Waves, Kits or Grooves |
+| **Double-click** | opens the inline box holding the value, as on every other field |
 
-The double click is why a slot stepper's readout takes the focus on a click instead of
-opening its box straight away; **Enter** opens the box, as it does on every other
-stepper, and typing digits at it works either way. The chain's cells have no tab of
-their own to open, so a double click there does nothing.
+Until §35 the double click opened the item's tab and a slot stepper's click only took
+the focus so the double click could be seen; the tab moved into the list every slot
+field already has, and the double click became the box everywhere. The chain's cells
+have no tab of their own to open, so their list has no such entry.
 
 **Notes are moved as well as typed** (§7 and [`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md)
-§30). **Shift+↑/↓** moves the note a semitone, **Shift+←/→** an octave; a **vertical
-drag** on a note moves it a semitone every six pixels, octaves with Shift, and the whole
-drag is one undo. A **double click** opens a box that types it with auto-correction:
+§30, §35). **Shift+←/→** moves the note a semitone, **Shift+↑/↓** an octave — the same
+keys that move every other value by one and by sixteen; a **vertical drag** on a note
+moves it a semitone every six pixels, octaves with Shift, and the whole drag is one undo. A **double click** opens a box that types it with auto-correction:
 `a1`, `A 1`, `a#1` and `bb2` become `A-1`, `A-1`, `A#1` and `A#2`, `off` or `-` is a
 note off, an empty box blanks the cell, and anything else is refused. The piano keys and
 `-` for a note off are unchanged.
@@ -188,8 +198,8 @@ note off, an empty box blanks the cell, and anything else is refused. The piano 
 **A command is two views of one byte** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md)
 §34). Every letter declares a shape — **Nibbles** (two values 0–15), **Byte** (one value
 that fills the byte) or **Small** (one value with its own range). Decimal shows `x,y`
-(`V 4,6`); Hex shows the byte a playback ROM will carry (`V46`). Clicking a **value**
-opens an inline box holding it: **Enter** commits, **Tab** moves to the next argument,
+(`V 4,6`); Hex shows the byte a playback ROM will carry (`V46`). A double click on a
+**value** opens an inline box holding it: **Enter** commits, **Tab** moves to the next argument,
 **Escape** cancels, and anything outside the letter's range is refused — in Hex the box
 is the whole byte and two digits set it. `P` is signed, so its box takes `-73`. The
 strips' command slots and the Voice window show the same two views: two steppers in
@@ -489,9 +499,10 @@ commands are applied once, there, and the persistent letters then hold until the
 plain note reloads the instrument (§12) — the lane and the automation lanes are one
 mechanism, not two. **Vel** is the note's velocity, 1–127, blank meaning the default 100;
 a recorded note keeps the velocity it arrived with, and every column takes the same
-gestures — typed digits, + and −, Backspace to blank (§2.1: the wheel scrolls the pane,
-it never edits). The note column takes the gestures of §2.1 as well: Shift with the
-arrows, a vertical drag, and a double click that types a note with auto-correction.
+gestures — typed digits, + and −, Backspace to take a digit back and then blank, Shift
+with the arrows, a double click for the box (§2.1: the wheel scrolls the pane, it never
+edits). The note column takes them as well, with Shift+←/→ a semitone and Shift+↑/↓ an
+octave, a vertical drag, and a double click that types a note with auto-correction.
 
 A command cell is drawn as the two things it is (§2.1): the **letter**, in the accent
 colour against a hairline, then its **values**. The letter is picked from the palette a
@@ -724,6 +735,9 @@ recorded in `CHANGES.md`.
 |---|---|---|
 | D-UI-7 | Knobs or steppers on the Instrument tab? | **Steppers with readouts.** A knob is 70 px with its caption and says its value on a 50 px dial; a stepper says "4 Hz" in 24. The form fits because of it (§6) |
 | D-UI-8 | Where does the phrase's LEN live? | **Both**: per channel in the lane's head, and per row in the chain's last column. A phrase's length is the channel's business and a row's is the song's (§7) |
-| D-UI-9 | What does a double click on a slot field do? | **Opens that item's own tab.** It is the one gesture every selector was missing, and it costs a slot stepper its click-to-type — the click focuses and Enter opens the box (§2.1) |
+| D-UI-9 | What does a double click on a slot field do? | ~~Opens that item's own tab.~~ **Amended by D-UI-12**: it opens the inline box, like every other field; the tab is the first entry of the field's right-click list (§2.1) |
 | D-UI-10 | One field or two for a command's arguments? | **Two in Decimal, one in Hex.** The byte is what a playback ROM carries and what LSDj shows; the two values are what the letter means (§2.1, [`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §34) |
 | D-UI-11 | Does the synth own the wave's frames? | **No.** It writes them on Generate and the frames stay the truth; the parameters ride along so a run can be made again (§6) |
+| D-UI-12 | One grammar for every value field? | **Yes** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §35): click selects, typing edits in place with refusal past the limit and Backspace taking digits back, double-click is the box, right-click is the list, Shift+arrows move by one and by sixteen. The cost is D-UI-9's double click, which moved into the list |
+| D-UI-13 | Where does the window open? | **Where it was left** (§35): the tab, the channel and each tab's selection are kept in the plugin state as `ui_view`, so a closed and reopened editor — or a reopened project — shows what it did rather than the Instrument tab on slot 1 |
+| D-UI-14 | Can the two ends of a wave morph have different shapes? | **Yes** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §36): the shape moved into the state, the two are rendered and crossfaded before the chain, and the run is placed by From and To frame numbers instead of a count |

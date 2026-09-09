@@ -65,7 +65,7 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     o->setProperty("type", int(i.type));
     o->setProperty("pan", int(i.pan)); o->setProperty("length", int(i.length)); o->setProperty("table", int(i.table));
     o->setProperty("transpose", i.transpose); o->setProperty("noteOff", int(i.noteOff)); o->setProperty("overlap", int(i.overlap));
-    o->setProperty("pitchSpeed", int(i.pitchSpeed)); o->setProperty("cmdRate", int(i.cmdRate)); o->setProperty("tableMode", int(i.tableMode));
+    o->setProperty("pitchSpeed", int(i.pitchSpeed)); o->setProperty("cmdRate", int(i.cmdRate)); o->setProperty("chordRate", int(i.chordRate)); o->setProperty("tableMode", int(i.tableMode));
     o->setProperty("vibShape", int(i.vib.shape)); o->setProperty("vibDir", int(i.vib.dir)); o->setProperty("vibSpeed", int(i.vib.speed)); o->setProperty("vibDepth", int(i.vib.depth)); o->setProperty("vibDelay", int(i.vib.delay));
     o->setProperty("duty", int(i.duty));
     { Array<var> seq; for (int k = 0; k < i.dutySeqLen; ++k) seq.add(int(i.dutySeq[size_t(k)])); o->setProperty("dutySeq", seq); }
@@ -102,6 +102,9 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     else i.overlap = Instrument::defaults(i.type).overlap;
     i.pitchSpeed = PitchSpeed(std::clamp(getOr(o, "pitchSpeed", 0), 0, 3));
     i.cmdRate = uint8_t(std::clamp(getOr(o, "cmdRate", 0), 0, 15));
+    // The chord had the command rate before it got its own (section 37): a
+    // file without one keeps stepping as it did.
+    i.chordRate = uint8_t(std::clamp(getOr(o, "chordRate", int(i.cmdRate)), 0, 15));
     i.tableMode = TableMode(std::clamp(getOr(o, "tableMode", 0), 0, 1));
     // The vibrato's shape used to carry its direction (Triangle, Square,
     // SawUp, SawDown); it is a shape and a direction now.
@@ -171,6 +174,7 @@ void tableFromVarImpl(const var& v, Table& t)
 var synthStateToVar(const SynthState& st)
 {
     auto* o = new DynamicObject();
+    o->setProperty("source", int(st.source));
     o->setProperty("width", int(st.width));
     Array<var> partials;
     for (auto v : st.partials) partials.add(int(v));
@@ -185,6 +189,7 @@ var synthStateToVar(const SynthState& st)
 void synthStateFromVar(const var& v, SynthState& st)
 {
     auto* o = v.getDynamicObject(); if (!o) return;
+    if (o->hasProperty("source")) st.source = SynthSource(std::clamp(getOr(o, "source", 0), 0, kSynthSourceCount - 1));
     st.width = uint8_t(std::clamp(getOr(o, "width", 16), 1, 31));
     if (auto* p = o->getProperty("partials").getArray())
         for (int k = 0; k < std::min(kSynthPartials, p->size()); ++k) st.partials[size_t(k)] = uint8_t(std::clamp(int((*p)[k]), 0, 15));
@@ -196,12 +201,12 @@ void synthStateFromVar(const var& v, SynthState& st)
 var synthToVar(const Synth& sy)
 {
     auto* o = new DynamicObject();
-    o->setProperty("source", int(sy.source));
     Array<var> chain;
     for (auto c : sy.chain) chain.add(int(c));
     o->setProperty("chain", chain);
     o->setProperty("start", synthStateToVar(sy.start));
     o->setProperty("end", synthStateToVar(sy.end));
+    o->setProperty("first", int(sy.first));
     o->setProperty("frames", int(sy.frames));
     o->setProperty("seed", int(sy.seed));
     return var(o);
@@ -210,12 +215,15 @@ void synthFromVar(const var& v, Synth& sy)
 {
     auto* o = v.getDynamicObject(); if (!o) return;
     sy.used = true;
-    sy.source = SynthSource(std::clamp(getOr(o, "source", 0), 0, kSynthSourceCount - 1));
+    // A file from before section 36 carries one shape for both ends.
+    const auto shared = SynthSource(std::clamp(getOr(o, "source", int(SynthSource::Drawn)), 0, kSynthSourceCount - 1));
+    sy.start.source = sy.end.source = shared;
     if (auto* c = o->getProperty("chain").getArray())
         for (int k = 0; k < std::min(kSynthStages, c->size()); ++k) sy.chain[size_t(k)] = SynthShaper(std::clamp(int((*c)[k]), 0, kSynthShaperCount - 1));
     synthStateFromVar(o->getProperty("start"), sy.start);
     synthStateFromVar(o->getProperty("end"), sy.end);
-    sy.frames = uint8_t(std::clamp(getOr(o, "frames", 1), 1, kMaxFrames));
+    sy.first = uint8_t(std::clamp(getOr(o, "first", 0), 0, kMaxFrames - 1));
+    sy.frames = uint8_t(std::clamp(getOr(o, "frames", 1), 1, kMaxFrames - int(sy.first)));
     sy.seed = uint8_t(std::clamp(getOr(o, "seed", 1), 0, 255));
 }
 

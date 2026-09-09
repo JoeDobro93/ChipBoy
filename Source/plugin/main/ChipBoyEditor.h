@@ -53,6 +53,11 @@ private:
     void refreshContext();
     void toggleVisualizer();
     void layoutContent();
+    /// The tab, the channel and each panel's own view, kept in the plugin's
+    /// state as "ui_view" so a closed and reopened window, or a reopened
+    /// project, shows what it did (docs/COMMANDS_AND_TEMPO.md section 35).
+    void saveView();
+    void restoreView();
     /// True while a text box has the keys, so Ctrl+Z belongs to it.
     bool typing() const;
 

@@ -73,8 +73,11 @@ private:
 };
 
 /// [-] value [+] (the mockup's .stepper). Whole values, hardware ranges.
-/// The readout is a typed field: click it and type, Enter commits, Escape
-/// cancels, and the wheel never edits (UI_DESIGN section 2.1).
+/// The readout is a typed field with the grids' grammar (UI_DESIGN section
+/// 2.1, docs/COMMANDS_AND_TEMPO.md section 35): a click selects it, digits
+/// typed at it build a value and Backspace takes them back, a double click
+/// or Enter opens the inline box, Shift with the arrows moves it by one and
+/// by sixteen, and the wheel never edits.
 class Stepper : public juce::Component, public juce::SettableTooltipClient {
 public:
     Stepper();
@@ -86,22 +89,21 @@ public:
     void setTextFunction(std::function<juce::String(int)> fn);
     void setWraps(bool wraps);
     /// Digits typed straight at the readout, the grids' convention: they
-    /// build a value and Backspace clears it. On everywhere; turning it off
-    /// leaves a stepper that only steps and only takes the inline box.
+    /// build a value and Backspace takes the last one back. On everywhere;
+    /// turning it off leaves a stepper that only steps and only takes the
+    /// inline box.
     void setTyped(bool typed);
     /// How the inline box reads and parses when the readout is not a plain
     /// number in the field's own units (the song start, held in tenths of a
     /// second). Both or neither.
     void setEntryFormat(std::function<juce::String(int)> toText, std::function<bool(const juce::String&, int&)> fromText);
-    /// Open the inline box on the readout, as a click on it does.
+    /// Open the inline box on the readout, as a double click on it does.
     void beginTypedEntry();
     std::function<void(int)> onChange;
-    /// A slot stepper follows the one selector convention (UI_DESIGN 2.1):
-    /// a right click lists the slots by name and a double click opens that
-    /// item's own tab. Where onOpen is set the readout's click focuses the
-    /// field for typing rather than opening the box, so the double click can
-    /// be seen; Enter still opens the box.
-    std::function<void()> onList, onOpen;
+    /// A slot stepper follows the one selector convention (UI_DESIGN 2.1): a
+    /// right click lists the slots by name, and that list carries the entry
+    /// that opens the item's own tab (section 35).
+    std::function<void()> onList;
     static constexpr int kHeight = 24;
     int preferredWidth() const;           ///< 80: two 22 px buttons and a 34 px readout
     void resized() override; void paint(juce::Graphics&) override;
@@ -169,9 +171,10 @@ private:
 };
 
 /// Which of the bank's lists a slot field names. Every selector in the
-/// window obeys one convention (UI_DESIGN section 2.1): a click selects the
-/// field and types into it, a right click lists the slots by name, and a
-/// double click opens that item's own tab.
+/// window obeys one convention (UI_DESIGN section 2.1, COMMANDS_AND_TEMPO
+/// section 35): a click selects the field and types into it, a double click
+/// opens its box, and a right click lists the slots by name with the entry
+/// that opens that item's own tab at the top.
 enum class SlotKind { Instrument, Table, Wave, Kit, Groove };
 
 /// One row of a bank list: "01 . Square lead".
@@ -308,8 +311,8 @@ public:
     std::function<void(int ch, int steps)> onLengthChange;
     std::function<void(int ch, bool armed)> onArmChange;       ///< the channel's record arm (section 14)
     std::function<void(int row)> onCursorRow;                  ///< the cursor moved: keep this row in view
-    /// A double click on a slot field: open that item's own tab with it
-    /// selected (UI_DESIGN section 2.1).
+    /// The right-click list's first entry on a slot field: open that item's
+    /// own tab with it selected (section 35).
     std::function<void(SlotKind, int slot)> onOpenSlot;
     juce::String getTooltip() override;   ///< the hovered cell: what the column is, and what the command says
     static constexpr int kRowHeight = 22, kHeaderHeight = 48, kVisibleSteps = 16;
@@ -354,21 +357,29 @@ public:
     static constexpr int kRowHeight = 22, kHeaderHeight = 48, kWidth = 164;
     void resized() override; void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
+    void mouseDoubleClick(const juce::MouseEvent&) override;
     void mouseDrag(const juce::MouseEvent&) override; void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     bool keyPressed(const juce::KeyPress&) override; void focusGained(FocusChangeType) override; void focusLost(FocusChangeType) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
 
-/// 32 samples by 16 levels, drawn with the mouse (spec 9.7).
+/// 32 samples by 16 levels, drawn with the mouse (spec 9.7). Two views
+/// (docs/COMMANDS_AND_TEMPO.md section 36): bars, and points on a grid. In
+/// both the pointer's column and row are lit and a caption in the corner
+/// reads the sample number and its level.
 class WaveGrid : public juce::Component {
 public:
+    enum class View { Bars, Points };
     WaveGrid();
     ~WaveGrid() override;
     void setFrame(const bank::Frame& f);
     const bank::Frame& frame() const;
+    void setView(View v);
+    View view() const;
     std::function<void(const bank::Frame&)> onChange;
     void paint(juce::Graphics&) override;
+    void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override;
     void mouseDown(const juce::MouseEvent&) override; void mouseDrag(const juce::MouseEvent&) override; void mouseUp(const juce::MouseEvent&) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;

@@ -17,7 +17,7 @@ Synth plain(SynthSource src)
 {
     Synth s;
     s.used = true;
-    s.source = src;
+    s.start.source = s.end.source = src;
     s.frames = 1;
     return s;
 }
@@ -339,4 +339,73 @@ TEST_CASE("a frame is always four bits", "[synth]")
                 const Frame f = render(s, rampFrame());
                 for (auto v : f.s) CHECK(v <= 15);
             }
+}
+
+TEST_CASE("each end of the morph has its own shape", "[synth]")
+{
+    // Section 36: a run can go from a sine to a saw. The ends are the two
+    // shapes exactly and the middle is the crossfade.
+    Synth s = plain(SynthSource::Sine);
+    s.end.source = SynthSource::Saw;
+    s.frames = 5;
+    std::vector<Frame> run;
+    synthesize(s, Frame{}, run);
+    REQUIRE(run.size() == 5);
+    CHECK(run.front().s == frameSine().s);
+    CHECK(run.back().s == frameSaw().s);
+    CHECK(run[2].s != run.front().s);
+    CHECK(run[2].s != run.back().s);
+    // Sample 8 is the sine's peak (15) and the saw's 4: the middle frame is between.
+    CHECK(run[2].s[8] < 15);
+    CHECK(run[2].s[8] > 4);
+
+    // The same shape at both ends is the one shape, byte for byte, as before.
+    Synth same = plain(SynthSource::Triangle);
+    same.frames = 3;
+    std::vector<Frame> flat;
+    synthesize(same, Frame{}, flat);
+    for (const auto& f : flat) CHECK(f.s == frameTriangle().s);
+}
+
+TEST_CASE("the run is written from its first frame and the rest of the wave stays", "[synth]")
+{
+    // Section 36: From and To place the run inside the slot.
+    Synth s = plain(SynthSource::Saw);
+    s.first = 4;
+    s.frames = 3;
+    CHECK(synthFirstFrame(s) == 4);
+    CHECK(synthFrameCount(s) == 3);
+    std::vector<Frame> run;
+    synthesize(s, Frame{}, run);
+    REQUIRE(run.size() == 3);
+
+    // A two-frame wave grows to seven: the gap copies the run's last frame.
+    Wave w;
+    w.frames = { rampFrame(), frameSine() };
+    synthWriteRun(s, run, w);
+    REQUIRE(w.frames.size() == 7);
+    CHECK(w.frames[0].s == rampFrame().s);
+    CHECK(w.frames[1].s == frameSine().s);
+    CHECK(w.frames[2].s == frameSaw().s);
+    CHECK(w.frames[3].s == frameSaw().s);
+    for (int k = 4; k < 7; ++k) CHECK(w.frames[size_t(k)].s == run[size_t(k - 4)].s);
+
+    // A longer wave keeps what lies past the run.
+    Wave big;
+    for (int k = 0; k < 10; ++k) big.frames.push_back(k % 2 ? frameSine() : rampFrame());
+    synthWriteRun(s, run, big);
+    REQUIRE(big.frames.size() == 10);
+    for (int k = 0; k < 4; ++k) CHECK(big.frames[size_t(k)].s == (k % 2 ? frameSine() : rampFrame()).s);
+    for (int k = 7; k < 10; ++k) CHECK(big.frames[size_t(k)].s == (k % 2 ? frameSine() : rampFrame()).s);
+
+    // The count is clamped to what fits after the first frame.
+    Synth tail = plain(SynthSource::Sine);
+    tail.first = 14;
+    tail.frames = 16;
+    CHECK(synthFrameCount(tail) == 2);
+    std::vector<Frame> two;
+    synthesize(tail, Frame{}, two);
+    Wave sixteen;
+    synthWriteRun(tail, two, sixteen);
+    CHECK(sixteen.frames.size() == 16);
 }

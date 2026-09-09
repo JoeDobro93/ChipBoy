@@ -291,7 +291,8 @@ void applyShaper(SynthShaper kind, double amount, double resonance, double* x)
 
 } // namespace
 
-int synthFrameCount(const Synth& s) { return std::clamp<int>(s.frames, 1, kMaxFrames); }
+int synthFirstFrame(const Synth& s) { return std::clamp<int>(s.first, 0, kMaxFrames - 1); }
+int synthFrameCount(const Synth& s) { return std::clamp<int>(s.frames, 1, kMaxFrames - synthFirstFrame(s)); }
 
 Frame synthesizeFrame(const Synth& s, const Frame& drawn, int index)
 {
@@ -300,8 +301,16 @@ Frame synthesizeFrame(const Synth& s, const Frame& drawn, int index)
     const double t = n <= 1 ? 0.0 : double(i) / double(n - 1);
     const Params p = morph(s.start, s.end, t);
 
+    // Each end has its own shape (section 36): where they differ the two are
+    // made and crossfaded by the morph position before the chain sees them,
+    // and where they agree the bytes are exactly the one shape's.
     double x[kN] = {};
-    makeSource(s.source, p, s.seed, drawn, x);
+    makeSource(s.start.source, p, s.seed, drawn, x);
+    if (s.end.source != s.start.source && t > 0.0) {
+        double y[kN] = {};
+        makeSource(s.end.source, p, s.seed, drawn, y);
+        for (int k = 0; k < kN; ++k) x[k] = lerp(x[k], y[k], t);
+    }
     for (int stage = 0; stage < kSynthStages; ++stage)
         applyShaper(s.chain[size_t(stage)], p.amount[stage], p.resonance[stage], x);
 
@@ -318,6 +327,22 @@ void synthesize(const Synth& s, const Frame& drawn, std::vector<Frame>& out)
     for (int i = 0; i < n; ++i) out.push_back(synthesizeFrame(s, drawn, i));
 }
 
+void synthWriteRun(const Synth& s, const std::vector<Frame>& run, Wave& w)
+{
+    if (run.empty()) return;
+    const int first = synthFirstFrame(s);
+    const int count = std::min<int>(int(run.size()), kMaxFrames - first);
+    // Grow to reach the run: the frames before it that did not exist yet
+    // copy the run's last frame, so nothing blank sits in the wave.
+    while (int(w.frames.size()) < first) w.frames.push_back(run.back());
+    for (int k = 0; k < count; ++k) {
+        const size_t at = size_t(first + k);
+        if (at < w.frames.size()) w.frames[at] = run[size_t(k)];
+        else w.frames.push_back(run[size_t(k)]);
+    }
+    if (w.frames.size() > size_t(kMaxFrames)) w.frames.resize(size_t(kMaxFrames));
+}
+
 const char* synthSourceName(SynthSource s)
 {
     switch (s) {
@@ -330,6 +355,20 @@ const char* synthSourceName(SynthSource s)
         case SynthSource::Drawn: return "Drawn";
     }
     return "Sine";
+}
+
+const char* synthSourceHelp(SynthSource s)
+{
+    switch (s) {
+        case SynthSource::Sine: return "One cycle of a sine: the fundamental alone.";
+        case SynthSource::Triangle: return "Up over the first half, down over the second: odd harmonics falling fast.";
+        case SynthSource::Saw: return "A ramp with one hard edge: every harmonic, falling slowly.";
+        case SynthSource::Square: return "High for Width samples of the 32, low for the rest: a pulse.";
+        case SynthSource::Additive: return "Eight harmonics at the levels of the Partials bar, scaled to the rails.";
+        case SynthSource::Noise: return "Random samples from the Seed, the same every time.";
+        case SynthSource::Drawn: return "The frame on show, as drawn -- so the chain shapes what is already there.";
+    }
+    return "";
 }
 
 const char* synthShaperName(SynthShaper s)

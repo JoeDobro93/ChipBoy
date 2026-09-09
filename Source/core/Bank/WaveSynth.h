@@ -20,8 +20,11 @@
 
 namespace chipboy::bank {
 
-/// How many frames a Synth's run holds: its `frames`, clamped to 1-16.
+/// How many frames a Synth's run holds: its `frames`, clamped to 1-16 and to
+/// what fits after `first`.
 int synthFrameCount(const Synth& s);
+/// The slot frame the run starts at: `first`, clamped to 0-15.
+int synthFirstFrame(const Synth& s);
 
 /// One frame of the run. `index` is 0 .. synthFrameCount - 1 and picks the
 /// morph position: 0 is the start state exactly, the last frame is the end
@@ -34,8 +37,16 @@ Frame synthesizeFrame(const Synth& s, const Frame& drawn, int index);
 /// resized to the count.
 void synthesize(const Synth& s, const Frame& drawn, std::vector<Frame>& out);
 
+/// Generate's write (section 36): the run goes into the wave's frames from
+/// `synthFirstFrame(s)` on, the wave grows to reach the run's last frame when
+/// it is shorter (the new frames before the run copy its last frame), and
+/// every frame outside the run stays as it was. Never more than kMaxFrames.
+void synthWriteRun(const Synth& s, const std::vector<Frame>& run, Wave& w);
+
 /// The letters a panel puts on the controls. Never null.
 const char* synthSourceName(SynthSource s);
+/// What a shape is, for a tooltip. Never null.
+const char* synthSourceHelp(SynthSource s);
 const char* synthShaperName(SynthShaper s);
 /// What a shaper's amount does, for a tooltip: whether its sign matters and
 /// what the number means. Never null.

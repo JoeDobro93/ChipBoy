@@ -21,6 +21,8 @@ public:
 
     void setChannel(int ch) override;
     void selectSlot(int slot) override { showSlot(slot); }
+    void saveView(juce::ValueTree& v) const override { v.setProperty("slot", slot_, nullptr); }
+    void restoreView(const juce::ValueTree& v) override { if (v.hasProperty("slot")) showSlot(int(v["slot"])); }
     RichText contextLine() const override;
     void bankChanged() override;
     void songChanged() override;

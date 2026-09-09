@@ -283,6 +283,16 @@ void TrackerPanel::songChanged()
     contextChanged();
 }
 
+void TrackerPanel::restoreView(const juce::ValueTree& v)
+{
+    if (!v.hasProperty("row")) return;
+    const auto s = processor.song();
+    const int rows = s ? s->rows() : 0;
+    bar_ = std::clamp(int(v["row"]), 0, std::max(0, rows));
+    refreshViews();
+    contextChanged();
+}
+
 void TrackerPanel::hexChanged()
 {
     chain_.repaint();

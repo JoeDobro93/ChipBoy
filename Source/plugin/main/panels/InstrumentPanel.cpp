@@ -11,6 +11,8 @@ using namespace juce;
 using namespace chipboy::ui;
 
 namespace {
+/// The right-click list's first entry: open the item in its own tab (section 35).
+constexpr int kMenuOpen = 1000;
 constexpr int kListWidth = 220, kGap = 14, kListHeader = 28, kListButtons = 26;
 constexpr int kOpenFlags = FileBrowserComponent::openMode | FileBrowserComponent::canSelectFiles;
 constexpr int kSaveFlags = FileBrowserComponent::saveMode | FileBrowserComponent::canSelectFiles | FileBrowserComponent::warnAboutOverwriting;
@@ -255,7 +257,7 @@ struct InstrumentPanel::Widgets {
     Segmented* attackCurve = nullptr; Segmented* decayCurve = nullptr; Segmented* releaseCurve = nullptr;
     // pitch and modulation
     Segmented* vibShape = nullptr; Segmented* vibDir = nullptr; Stepper* vibSpeed = nullptr; Stepper* vibDepth = nullptr; Stepper* vibDelay = nullptr;
-    Segmented* pitchSpeed = nullptr; Stepper* cmdRate = nullptr; Segmented* tableMode = nullptr;
+    Segmented* pitchSpeed = nullptr; Stepper* cmdRate = nullptr; Stepper* chordRate = nullptr; Segmented* tableMode = nullptr;
     // table and note behaviour
     Stepper* table = nullptr; Segmented* transpose = nullptr; Segmented* noteOff = nullptr; Segmented* overlap = nullptr; Stepper* length = nullptr;
 };
@@ -668,7 +670,6 @@ void InstrumentPanel::rebuildEditor()
                            [this](int v) { const auto bk = processor.bank(); const bank::Wave* wv = bk ? bk->wave(v) : nullptr; return wv ? slotAndName(v, wv->name) : slotAndName(v, "empty"); },
                            [](bank::Instrument& i, int v) { i.wave = uint8_t(v); }, 190);
         w_->wave->onList = [this] { showWaveMenu(); };
-        w_->wave->onOpen = [this] { openSlot(ui::SlotKind::Wave, w_ && w_->wave ? w_->wave->value() : 0); };
         w_->frameAdv = stepper(*sound, "Frame advance", "Ticks per frame; 0 holds the frame.", 0, 15, 0, {}, [](bank::Instrument& i, int v) { i.frameAdvance = uint8_t(v); });
         w_->frameLoop = seg(*sound, "Frame loop", "How the frames run.", { "Loop", "One-shot", "Ping-pong" }, [](bank::Instrument& i, int v) { i.frameLoop = bank::FrameLoop(std::clamp(v, 0, 2)); });
         w_->waveLevel = seg(*sound, "Level", "NR32 bits 6-5: four levels, and no envelope unit on this channel.", { "mute", "25", "50", "100" }, [](bank::Instrument& i, int v) { i.waveLevel = uint8_t(v); });
@@ -677,7 +678,6 @@ void InstrumentPanel::rebuildEditor()
                           [this](int v) { const auto bk = processor.bank(); const bank::Kit* k = bk ? bk->kit(v) : nullptr; return k ? slotAndName(v, k->name) : slotAndName(v, "empty"); },
                           [](bank::Instrument& i, int v) { i.kit = uint8_t(v); }, 190);
         w_->kit->onList = [this] { showKitMenu(); };
-        w_->kit->onOpen = [this] { openSlot(ui::SlotKind::Kit, w_ && w_->kit ? w_->kit->value() : 0); };
         w_->kitLoop = seg(*sound, "Loop", "Per note.", { "One-shot", "Loop", "From point" }, [](bank::Instrument& i, int v) { i.kitLoop = bank::KitLoop(std::clamp(v, 0, 2)); });
         auto rate = std::make_unique<TextLine>(String(), Fonts::mono(12.0f), colours::text);
         w_->kitRate = sound->add("Rate", std::move(rate), 190, Stepper::kHeight, "NR33/34: one register does the pitch and the rate.");
@@ -765,8 +765,12 @@ void InstrumentPanel::rebuildEditor()
                                                                              : "Drum: as Fast, but P and L move in semitones, so a P kick falls logarithmically.");
         if (type == bank::InstrumentType::Kit) w_->pitchSpeed->setOptionEnabled(3, false);
     }
-    w_->cmdRate = stepper(*mod, "Cmd rate", "0-15: C and R step every rate + 1 ticks, and so do P and V when the pitch speed is Tick.",
+    w_->cmdRate = stepper(*mod, "Cmd rate", "0-15: R steps every rate + 1 ticks, and so do P and V when the pitch speed is Tick.",
                           0, 15, 0, [](int v) { return cmdRateText(v); }, [](bank::Instrument& i, int v) { i.cmdRate = uint8_t(v); }, 120);
+    // The chord's own rate (docs/COMMANDS_AND_TEMPO.md section 37): at 0 a C
+    // steps every tick, LSDj's speed, and a slower chord no longer slows R.
+    w_->chordRate = stepper(*mod, "Chord rate", "0-15: a C chord steps every rate + 1 ticks. 0 is LSDj's one step a tick.",
+                            0, 15, 0, [](int v) { return cmdRateText(v); }, [](bank::Instrument& i, int v) { i.chordRate = uint8_t(v); }, 120);
 
     // --- TABLE & NOTE BEHAVIOUR -------------------------------------------
     auto tab = std::make_unique<FormGroup>("Table & note behaviour");
@@ -775,7 +779,6 @@ void InstrumentPanel::rebuildEditor()
                         [this](int v) { if (v == 0) return String("none"); const auto bk = processor.bank(); const bank::Table* t = bk ? bk->table(v) : nullptr; return t ? slotAndName(v, t->name) : slotAndName(v, "empty"); },
                         [](bank::Instrument& i, int v) { i.table = uint8_t(v); }, 190);
     w_->table->onList = [this] { showTableMenu(); };
-    w_->table->onOpen = [this] { openSlot(ui::SlotKind::Table, w_ && w_->table ? w_->table->value() : 0); };
     w_->tableMode = seg(*tab, "Table mode", "Tick: one row a tick, or per its own G. Step: one row every time the instrument is triggered.",
                         { "Tick", "Step" }, [](bank::Instrument& i, int v) { i.tableMode = v == 1 ? bank::TableMode::Step : bank::TableMode::Tick; });
     w_->transpose = seg(*tab, "Transpose", "Whether the table's transpose column applies.", { "On", "Off" }, [](bank::Instrument& i, int v) { i.transpose = v == 0; });
@@ -814,12 +817,19 @@ void InstrumentPanel::showTableMenu()
     PopupMenu m;
     m.addSectionHeader("Table");
     const int current = w_->table->value();
+    // The item's own tab, first (docs/COMMANDS_AND_TEMPO.md section 35).
+    if (current > 0) {
+        const auto* cur = b->table(current);
+        m.addItem(kMenuOpen, "Open table " + (cur ? slotAndName(current, cur->name) : ValueFormat::number(current)) + " in its tab");
+        m.addSeparator();
+    }
     m.addItem(1, utf8("\xe2\x80\x93") + "   none", true, current == 0);
     for (int slot = 1; slot <= bank::kTableSlots; ++slot)
         if (const auto* t = b->table(slot)) m.addItem(slot + 1, slotAndName(slot, t->name), true, slot == current);
     Component::SafePointer<InstrumentPanel> safe(this);
-    m.showMenuAsync(PopupMenu::Options().withTargetComponent(w_->table), [safe](int r) {
+    m.showMenuAsync(PopupMenu::Options().withTargetComponent(w_->table), [safe, current](int r) {
         if (safe == nullptr || r < 1 || safe->w_ == nullptr || safe->w_->table == nullptr) return;
+        if (r == kMenuOpen) { safe->openSlot(ui::SlotKind::Table, current); return; }
         safe->w_->table->setValue(r - 1);
     });
 }
@@ -831,6 +841,10 @@ void InstrumentPanel::showWaveMenu()
     PopupMenu m;
     m.addSectionHeader("Wave");
     const int current = w_->wave->value();
+    if (const auto* cur = b->wave(current)) {
+        m.addItem(kMenuOpen, "Open wave " + slotAndName(current, cur->name) + " in its tab");
+        m.addSeparator();
+    }
     for (int slot = 1; slot <= bank::kWaveSlots; ++slot)
         if (const auto* wv = b->wave(slot)) {
             PopupMenu::Item item(slotAndName(slot, wv->name));
@@ -840,8 +854,9 @@ void InstrumentPanel::showWaveMenu()
             m.addItem(std::move(item));
         }
     Component::SafePointer<InstrumentPanel> safe(this);
-    m.showMenuAsync(PopupMenu::Options().withTargetComponent(w_->wave), [safe](int r) {
+    m.showMenuAsync(PopupMenu::Options().withTargetComponent(w_->wave), [safe, current](int r) {
         if (safe == nullptr || r < 1 || safe->w_ == nullptr || safe->w_->wave == nullptr) return;
+        if (r == kMenuOpen) { safe->openSlot(ui::SlotKind::Wave, current); return; }
         safe->w_->wave->setValue(r);
     });
 }
@@ -853,11 +868,16 @@ void InstrumentPanel::showKitMenu()
     PopupMenu m;
     m.addSectionHeader("Kit");
     const int current = w_->kit->value();
+    if (const auto* cur = b->kit(current)) {
+        m.addItem(kMenuOpen, "Open kit " + slotAndName(current, cur->name) + " in its tab");
+        m.addSeparator();
+    }
     for (int slot = 1; slot <= bank::kKitSlots; ++slot)
         if (const auto* k = b->kit(slot)) m.addItem(slot, slotAndName(slot, k->name), true, slot == current);
     Component::SafePointer<InstrumentPanel> safe(this);
-    m.showMenuAsync(PopupMenu::Options().withTargetComponent(w_->kit), [safe](int r) {
+    m.showMenuAsync(PopupMenu::Options().withTargetComponent(w_->kit), [safe, current](int r) {
         if (safe == nullptr || r < 1 || safe->w_ == nullptr || safe->w_->kit == nullptr) return;
+        if (r == kMenuOpen) { safe->openSlot(ui::SlotKind::Kit, current); return; }
         safe->w_->kit->setValue(r);
     });
 }
@@ -895,7 +915,7 @@ void InstrumentPanel::syncValues()
     T(w.attack, i.env.attackTicks); T(w.peak, i.env.peak); T(w.decay, i.env.decayTicks); T(w.sustain, i.env.sustain); T(w.release, i.env.releaseTicks);
     S(w.attackCurve, int(i.env.attackCurve)); S(w.decayCurve, int(i.env.decayCurve)); S(w.releaseCurve, int(i.env.releaseCurve));
     S(w.vibShape, int(i.vib.shape)); S(w.vibDir, int(i.vib.dir)); T(w.vibSpeed, i.vib.speed); T(w.vibDepth, i.vib.depth); T(w.vibDelay, i.vib.delay);
-    S(w.pitchSpeed, int(i.pitchSpeed)); T(w.cmdRate, i.cmdRate); S(w.tableMode, int(i.tableMode));
+    S(w.pitchSpeed, int(i.pitchSpeed)); T(w.cmdRate, i.cmdRate); T(w.chordRate, i.chordRate); S(w.tableMode, int(i.tableMode));
     T(w.table, i.table); S(w.transpose, i.transpose ? 0 : 1); S(w.noteOff, int(i.noteOff)); S(w.overlap, i.overlap == bank::Overlap::Retrig ? 1 : 0);
     T(w.length, i.length); S(w.pan, panIndex(i.pan));
     refreshDerived();

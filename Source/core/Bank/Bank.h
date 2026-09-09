@@ -149,7 +149,8 @@ struct InstrumentCore {
     NoteOff  noteOff = NoteOff::Kill;
     Overlap  overlap = Overlap::Legato;
     PitchSpeed pitchSpeed = PitchSpeed::Fast;
-    uint8_t  cmdRate = 0;            ///< 0-15: C and R (and P, V in Tick) step every cmdRate + 1 ticks
+    uint8_t  cmdRate = 0;            ///< 0-15: R (and P, V in Tick) step every cmdRate + 1 ticks
+    uint8_t  chordRate = 0;          ///< 0-15: C steps every chordRate + 1 ticks (section 37)
     TableMode tableMode = TableMode::Tick;
     Vibrato  vib;
     // pulse
@@ -221,27 +222,28 @@ constexpr int kSynthShaperCount = 16;
 constexpr int kSynthStages = 4;        ///< shapers in the chain, applied in order
 constexpr int kSynthPartials = 8;      ///< the additive source's harmonics
 
-/// One end of the morph: every number the shape is made from. The kinds --
-/// the source and the chain's shapers -- are the Synth's; only the values
-/// move between the start and the end (section 33).
+/// One end of the morph: the shape it starts as and every number the shape
+/// is made from. The chain's shapers are the Synth's; the shape and the
+/// values are the state's, so a run can go from a sine to a saw (section 36).
 struct SynthState {
+    /// Drawn by default, so a fresh synth is the wave that is already there
+    /// and every shaper starts from it.
+    SynthSource source = SynthSource::Drawn;
     uint8_t width = 16;                                  ///< Square: samples high, 1-31
     std::array<uint8_t, kSynthPartials> partials{ { 15, 0, 0, 0, 0, 0, 0, 0 } };   ///< Additive: 0-15 each
     std::array<int8_t, kSynthStages> amount{};           ///< -15..15 per stage; 0 is a no-op
     std::array<uint8_t, kSynthStages> resonance{};       ///< 0-15, the filters' Q
 };
 
-/// The synth behind one wave slot's frame run: a source, a chain of shapers,
-/// a start and an end state, and how many frames to morph between them. The
-/// frames themselves stay the wave's -- this is what made them.
+/// The synth behind one wave slot's frame run: a chain of shapers, a start
+/// and an end state, and where in the slot the frames that morph between
+/// them go. The frames themselves stay the wave's -- this is what made them.
 struct Synth {
     bool used = false;                 ///< false = the frames were drawn, not generated
-    /// Drawn by default, so a fresh synth is the wave that is already there
-    /// and every shaper starts from it.
-    SynthSource source = SynthSource::Drawn;
     std::array<SynthShaper, kSynthStages> chain{};
     SynthState start, end;
-    uint8_t frames = 1;                ///< 1-16, the run Generate writes
+    uint8_t first = 0;                 ///< 0-15, the slot frame the run starts at (section 36)
+    uint8_t frames = 1;                ///< 1-16, the run Generate writes; first + frames <= 16
     uint8_t seed = 1;                  ///< the Noise source, so a run is repeatable
 };
 

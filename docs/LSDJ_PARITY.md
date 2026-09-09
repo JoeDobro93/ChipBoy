@@ -401,6 +401,8 @@ and §2 says y = 0 retriggers once.
   rate + 1 ticks** otherwise (measured 4 ticks at rate 3). `C 3 7` wrote periods
   1798, 1837, 1881 — 0, +3, +7 semitones exactly. `C C 0` wrote 1798, 1923 —
   a two-step cycle, 0 and +12. `C 0 0` stopped it. **This agrees with ChipBoy.**
+  ChipBoy has since given the chord a rate of its own (`COMMANDS_AND_TEMPO.md` §37);
+  the harness sets it from LSDj's one CMD/RATE, so the comparison stands.
 
 ## 10. Tables, bare notes and hops
 

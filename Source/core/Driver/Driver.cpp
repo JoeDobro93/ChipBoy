@@ -1322,7 +1322,7 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
             if (c.a <= 0) v.tableOn = false;
             else beginTableRun(ch, uint8_t(std::clamp<int>(c.a, 1, kTableSlots)));
             break;
-        case Cmd::C:                                  // 0, x, y one step per cmdRate + 1 ticks
+        case Cmd::C:                                  // 0, x, y one step per chordRate + 1 ticks
             if (noise) break;
             v.chord[0] = 0; v.chord[1] = uint8_t(std::clamp<int>(c.a, 0, 60)); v.chord[2] = uint8_t(std::clamp<int>(c.b, 0, 60));
             v.chordN = c.b ? 3 : (c.a ? 2 : 0);
@@ -1767,10 +1767,12 @@ void Driver::tick(int ch)
     // just have taken it over (sections 26 and 27).
     stepShaped(ch);
     if (!v.active) return;
-    // chord: one step every cmdRate + 1 ticks
-    // The note's own tick plays the root: the chord steps from the tick after
-    // it (measured -- C 3 7 wrote 1798, then 1837, then 1881, a tick apart).
-    if (v.chordN && v.ticks > 1 && ++v.chordCount >= uint8_t(v.inst.cmdRate + 1)) { v.chordCount = 0; v.chordIdx = uint8_t((v.chordIdx + 1) % v.chordN); }
+    // chord: one step every chordRate + 1 ticks -- the instrument's own rate
+    // for C, apart from the command rate R and the Tick-speed P and V run on
+    // (section 37). The note's own tick plays the root: the chord steps from
+    // the tick after it (measured -- C 3 7 wrote 1798, then 1837, then 1881,
+    // a tick apart).
+    if (v.chordN && v.ticks > 1 && ++v.chordCount >= uint8_t(v.inst.chordRate + 1)) { v.chordCount = 0; v.chordIdx = uint8_t((v.chordIdx + 1) % v.chordN); }
     // duty sequence
     if (v.inst.type == InstrumentType::Pulse && v.inst.dutySeqLen) {
         v.dutyIdx = uint8_t((v.dutyIdx + 1) % v.inst.dutySeqLen);

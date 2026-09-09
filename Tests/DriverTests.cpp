@@ -1260,12 +1260,12 @@ TEST_CASE("the Instrument parameter moving clears a keyswitch", "[driver]")
 
 /* ---------------------------------------------------- the other letters */
 
-TEST_CASE("C arpeggiates 0, x, y and the command rate slows it", "[driver][commands]")
+TEST_CASE("C arpeggiates 0, x, y and the chord rate slows it", "[driver][commands]")
 {
-    auto series = [](uint8_t rate, int16_t x, int16_t y, int n) {
+    auto series = [](uint8_t rate, int16_t x, int16_t y, int n, uint8_t cmdRate = 0) {
         Rig r;
         r.tickHz = 100.0;
-        r.bank.instruments[0].cmdRate = rate; r.bank.instruments[0].vib.depth = 0;
+        r.bank.instruments[0].chordRate = rate; r.bank.instruments[0].cmdRate = cmdRate; r.bank.instruments[0].vib.depth = 0;
         ChannelParams p; p.instrument = 1; p.velocityMode = 2; p.cmd[0] = { Cmd::C, x, y, 0 };
         r.drv.setParams(0, p);
         r.block({ Rig::on(0, 60, 100) }, 480);
@@ -1288,6 +1288,23 @@ TEST_CASE("C arpeggiates 0, x, y and the command rate slows it", "[driver][comma
     CHECK(slow[1] == slow[2]);
     CHECK(slow[3] == slow[4]);
     CHECK(slow[1] != slow[3]);
+    // The chord's rate is its own (section 37): the command rate does not
+    // touch it, and it does not touch the command rate.
+    const auto cmdOnly = series(0, 3, 7, 9, 3);
+    for (size_t i = 0; i + 3 < cmdOnly.size(); ++i) CHECK(cmdOnly[i] == cmdOnly[i + 3]);
+    CHECK(cmdOnly[1] != cmdOnly[2]);
+    // At chord rate 2 the steps come three ticks apart: from the first change
+    // on, runs of three.
+    const auto both = series(2, 3, 7, 20, 0);
+    size_t f = 1;
+    while (f < both.size() && both[f] == both[0]) ++f;
+    REQUIRE(f + 6 < both.size());
+    CHECK(both[f] == both[f + 1]);
+    CHECK(both[f + 1] == both[f + 2]);
+    CHECK(both[f + 2] != both[f + 3]);
+    CHECK(both[f + 3] == both[f + 4]);
+    CHECK(both[f + 4] == both[f + 5]);
+    CHECK(both[f + 5] != both[f + 6]);
 }
 
 TEST_CASE("R retriggers and steps the volume", "[driver][commands]")

@@ -62,7 +62,7 @@ console could **not** have done was the quiet-edge marker, and it is gone.
 | **Vibrato (V, and the instrument's own)** | The pitch clock steps a six-bit phase by `x + 1` and writes the period: a symmetric triangle of `64/(x + 1)` updates about the note, amplitude from LSDj's depth table, and in Tick mode the measured table of tick counts (LSDJ_PARITY §3). A ROM does the same from two small tables; nothing is per sample. |
 | **Slide (L)** | A residual walked to zero over the duration, in period units — or in semitones in Drum mode, where the driver re-reads the note table each update. |
 | **Bend (P)** | An offset added per update. `P 128` stops it and keeps the offset. |
-| **Chord (C)** | The note changes every *rate + 1* ticks; the period is rewritten, no trigger. |
+| **Chord (C)** | The note changes every *chord rate + 1* ticks (the instrument's own rate for C since `COMMANDS_AND_TEMPO.md` §37; LSDj's one rate covers C and R together); the period is rewritten, no trigger. |
 | **Sweep (S)** | NR10 on CH1 only, the chip's own sweep unit. The negate quirk (reference §10.1) is the chip's, and the driver does not work around it. |
 | **Noise pitch** | NR43's shift and divisor from the curated map (spec §9.4) — a ROM ships the same 128-byte table. |
 | **Kits** | NR33/NR34 hold the sample rate; the note transposes it. |

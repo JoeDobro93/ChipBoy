@@ -212,6 +212,7 @@ void buildBank(const lsdjref::SpecCase& c, bank::Bank& b)
         inst.used = true;
         inst.pitchSpeed = pitchOf(spec.text("pitch", "fast"));
         inst.cmdRate = uint8_t(spec.get("cmdrate", 0));
+        inst.chordRate = inst.cmdRate;              // LSDj has the one rate for both (section 37)
         inst.pan = panOf(spec.get("out", 3));
         inst.vib.shape = bank::VibShape(std::min(2, spec.get("vib_shape", 0)));
         inst.vib.dir = spec.get("vib_dir", 0) ? bank::VibDir::Up : bank::VibDir::Down;

@@ -19,7 +19,7 @@ using namespace chipboy::ui;
 
 namespace {
 constexpr int kTabsHeight = 34, kEditorPad = 12, kTabBarWidth = 660;
-const Identifier kScaleProp("ui_scale"), kHeightProp("ui_height");
+const Identifier kScaleProp("ui_scale"), kHeightProp("ui_height"), kViewNode("ui_view"), kTabProp("tab"), kChannelProp("channel");
 const char* kTabNames[] = { "Instrument", "Tables", "Grooves", "Waves", "Kits", "Tracker", "Link", "Hardware" };
 static_assert(int(std::size(kTabNames)) == int(ChipBoyEditor::kTabs), "a tab needs a name");
 }
@@ -119,14 +119,43 @@ ChipBoyEditor::ChipBoyEditor(ChipBoyProcessor& p)
     lastSong_ = processor_.song().get();
     selectChannel(0);
     showTab(Instrument);
+    restoreView();
     startTimerHz(30);
 }
 
 ChipBoyEditor::~ChipBoyEditor()
 {
     stopTimer();
+    saveView();
     visualizer_.reset();
     setLookAndFeel(nullptr);
+}
+
+/* -------------------------------------------------------------- view */
+
+void ChipBoyEditor::saveView()
+{
+    auto view = processor_.apvts.state.getOrCreateChildWithName(kViewNode, nullptr);
+    view.setProperty(kTabProp, tab_, nullptr);
+    view.setProperty(kChannelProp, selected_, nullptr);
+    for (int i = 0; i < int(kTabs); ++i) {
+        if (!panels_[size_t(i)]) continue;
+        auto node = view.getOrCreateChildWithName(Identifier("panel" + String(i)), nullptr);
+        panels_[size_t(i)]->saveView(node);
+    }
+}
+
+void ChipBoyEditor::restoreView()
+{
+    const auto view = processor_.apvts.state.getChildWithName(kViewNode);
+    if (!view.isValid()) return;
+    for (int i = 0; i < int(kTabs); ++i) {
+        if (!panels_[size_t(i)]) continue;
+        const auto node = view.getChildWithName(Identifier("panel" + String(i)));
+        if (node.isValid()) panels_[size_t(i)]->restoreView(node);
+    }
+    if (view.hasProperty(kChannelProp)) selectChannel(int(view[kChannelProp]));
+    if (view.hasProperty(kTabProp)) showTab(int(view[kTabProp]));
 }
 
 void ChipBoyEditor::selectChannel(int ch)
@@ -148,6 +177,9 @@ void ChipBoyEditor::showTab(int tab)
     tab_ = t;
     tabs_->setCurrent(t);
     refreshContext();
+    // Remembered as it changes, so a host that drops the editor without
+    // destroying it in order still finds the tab (section 35).
+    if (isTimerRunning()) saveView();
 }
 
 /// One convention for every slot field (UI_DESIGN section 2.1): a double

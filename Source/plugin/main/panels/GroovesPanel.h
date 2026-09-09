@@ -20,6 +20,8 @@ public:
 
     RichText contextLine() const override;
     void selectSlot(int slot) override { showSlot(slot); }
+    void saveView(juce::ValueTree& v) const override { v.setProperty("slot", slot_, nullptr); }
+    void restoreView(const juce::ValueTree& v) override { if (v.hasProperty("slot")) showSlot(int(v["slot"])); }
     void setChannel(int ch) override;
     void songChanged() override;
     void hexChanged() override;

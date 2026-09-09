@@ -235,13 +235,16 @@ sound still audible 100 ms after all-notes-off, and prints its seed on failure
     own time**: a phrase's **LEN** is typed, 1–64 steps, in the lane's head beside the
     groove chip, and the chain's own LEN column sits where the old bar override did —
     there are no bars, and channels whose phrases run different lengths drift apart by
-    design, each lit in the chain at its own row. A note takes **Shift+↑/↓** for a
-    semitone, **Shift+←/→** for an octave, a vertical drag for a semitone every six
-    pixels, or a **double-click** that types it with auto-correction (`a1`, `a#1`,
+    design, each lit in the chain at its own row. Every value field speaks one
+    grammar: click selects, typing edits in place (a digit past the limit is refused,
+    Backspace takes the last one back), **double-click** opens a box, right-click lists
+    the choices, and **Shift+←/→** moves by one, **Shift+↑/↓** by sixteen. A note takes
+    the same keys as a semitone and an octave, a vertical drag for a semitone every six
+    pixels, or a double-click that types it with auto-correction (`a1`, `a#1`,
     `bb2` → `A-1`, `A#1`, `A#2`; `off` or `-` is a note off). Every slot field — a
     cell's **INS** and **TBL**, the groove chip, a strip's instrument and table
-    steppers — shares **one convention**: click selects and types, right-click lists
-    the slots by name, double-click opens that item's own tab. A cell's two commands
+    steppers — lists its slots by name on a right-click, with *Open … in its tab* at
+    the top. A cell's two commands
     fire once, at their step: the persistent letters (`A E F G M O P S T V W`) hold
     until the next note that carries an instrument, same as a slot; the rest
     (`C D K L R Z`) shape only that note. Each lane carries a record **arm** and a
@@ -281,8 +284,8 @@ sound still audible 100 ms after all-notes-off, and prints its seed on failure
     [`docs/HARDWARE_DRIVER_AUDIT.md`](docs/HARDWARE_DRIVER_AUDIT.md) lists every driver
     behaviour against the register writes and clock a real program would use, and
     `chipboy_fuzz` (above) is the stability check that runs beside the others.
-15. **Typing, the wheel and undo.** Every number is typeable: click a stepper's readout
-    or double-click a knob or the trim fader and a small box opens — Enter commits,
+15. **Typing, the wheel and undo.** Every number is typeable: type at a selected
+    stepper, or double-click it, a knob or the trim fader and a small box opens — Enter commits,
     Escape cancels, and what is not a number in the field's base is refused rather than
     guessed at, while a number outside the hardware's range is clamped to it. The mouse
     wheel never changes a value anywhere; it scrolls the pane, the list or the chain

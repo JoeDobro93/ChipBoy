@@ -9,6 +9,8 @@ using namespace juce;
 using namespace chipboy::ui;
 
 namespace {
+/// The right-click list's first entry: open the item in its own tab (section 35).
+constexpr int kMenuOpen = 1000;
 constexpr int kPad = 8, kGap = 6, kTightGap = 4;
 constexpr int kHead = 20, kScope = 60, kRegs = 14, kRow = 24, kQuick = 70, kSeg = 22, kCaption = 10;
 constexpr int kButton = 26, kButtonH = 20;
@@ -82,11 +84,9 @@ ChannelStrip::ChannelStrip(ChipBoyProcessor& p, int ch)
     instrument_.setTooltip(kInstTip);
     instrument_.attach(param(processor_, channelParamId(ch_, ids::instrument)));
     instrument_.onList = [this] { showInstrumentMenu(); };
-    instrument_.onOpen = [this] { if (onOpenSlot && instrument_.value() > 0) onOpenSlot(SlotKind::Instrument, instrument_.value()); };
     table_.setTooltip(kTableTip);
     table_.attach(param(processor_, channelParamId(ch_, ids::table)));
     table_.onList = [this] { showTableMenu(); };
-    table_.onOpen = [this] { if (onOpenSlot && table_.value() > 0) onOpenSlot(SlotKind::Table, table_.value()); };
     transpose_.setTooltip(kTransposeTip);
     transpose_.attach(param(processor_, channelParamId(ch_, ids::transpose)));
     transpose_.setTextFunction([](int v) { return (v > 0 ? "+" : "") + String(v); });
@@ -204,6 +204,12 @@ void ChannelStrip::showInstrumentMenu()
     PopupMenu m;
     m.addSectionHeader("Instrument");
     const int current = instrument_.value();
+    // The item's own tab, first (docs/COMMANDS_AND_TEMPO.md section 35).
+    if (current > 0) {
+        const auto* cur = b->instrument(current);
+        m.addItem(kMenuOpen, "Open instrument " + (cur ? slotAndName(current, cur->name) : ValueFormat::number(current)) + " in its tab");
+        m.addSeparator();
+    }
     m.addItem(1, String(CharPointer_UTF8("\xe2\x80\x93   none")), true, current == 0);
     for (int slot = 1; slot <= bank::kInstrumentSlots; ++slot) {
         const auto* inst = b->instrument(slot);
@@ -216,8 +222,9 @@ void ChannelStrip::showInstrumentMenu()
         m.addItem(std::move(item));
     }
     Component::SafePointer<ChannelStrip> safe(this);
-    m.showMenuAsync(PopupMenu::Options().withTargetComponent(&instrument_), [safe](int r) {
+    m.showMenuAsync(PopupMenu::Options().withTargetComponent(&instrument_), [safe, current](int r) {
         if (safe == nullptr || r < 1) return;
+        if (r == kMenuOpen) { if (safe->onOpenSlot) safe->onOpenSlot(SlotKind::Instrument, current); return; }
         setParam(*safe, param(safe->processor_, channelParamId(safe->ch_, ids::instrument)), float(r - 1));
     });
 }
@@ -229,12 +236,18 @@ void ChannelStrip::showTableMenu()
     PopupMenu m;
     m.addSectionHeader("Table");
     const int current = table_.value();
+    if (current > 0) {
+        const auto* cur = b->table(current);
+        m.addItem(kMenuOpen, "Open table " + (cur ? slotAndName(current, cur->name) : ValueFormat::number(current)) + " in its tab");
+        m.addSeparator();
+    }
     m.addItem(1, String(CharPointer_UTF8("\xe2\x80\x93   the instrument's")), true, current == 0);
     for (int slot = 1; slot <= bank::kTableSlots; ++slot)
         if (const auto* t = b->table(slot)) m.addItem(slot + 1, slotAndName(slot, t->name), true, slot == current);
     Component::SafePointer<ChannelStrip> safe(this);
-    m.showMenuAsync(PopupMenu::Options().withTargetComponent(&table_), [safe](int r) {
+    m.showMenuAsync(PopupMenu::Options().withTargetComponent(&table_), [safe, current](int r) {
         if (safe == nullptr || r < 1) return;
+        if (r == kMenuOpen) { if (safe->onOpenSlot) safe->onOpenSlot(SlotKind::Table, current); return; }
         setParam(*safe, param(safe->processor_, channelParamId(safe->ch_, ids::table)), float(r - 1));
     });
 }

@@ -340,11 +340,17 @@ public:
     virtual void shown(bool) {}
     std::function<void()> onContextChanged;
     std::function<void(int)> onSelectChannel;
-    /// A double click on a slot field anywhere: open that item's own tab
-    /// with it selected (UI_DESIGN section 2.1, the one selector convention).
+    /// The right-click list's first entry on a slot field anywhere: open
+    /// that item's own tab with it selected (UI_DESIGN section 2.1, the one
+    /// selector convention, docs/COMMANDS_AND_TEMPO.md section 35).
     std::function<void(ui::SlotKind, int slot)> onOpenSlot;
     /// The window is opening this panel on one of its slots.
     virtual void selectSlot(int) {}
+    /// What the panel was showing, kept across a close and a reopen of the
+    /// window (section 35): the slot, the frame, the row. The tree is the
+    /// panel's own; the window stores it beside its scale.
+    virtual void saveView(juce::ValueTree&) const {}
+    virtual void restoreView(const juce::ValueTree&) {}
     /// A line for the status bar: what a file did, what a preset went where.
     std::function<void(const juce::String&)> onMessage;
 protected:
