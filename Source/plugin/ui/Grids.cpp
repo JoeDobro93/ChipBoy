@@ -275,6 +275,7 @@ bool cmdEntryCommit(bank::Command& c, int arg, const juce::String& text)
     const juce::String t = text.trim();
     if (t.isEmpty()) return false;
     if (ValueFormat::hex()) {
+        if (t.length() > 2) return false;              // the byte is two digits
         for (int i = 0; i < t.length(); ++i) {
             const auto d = t[i];
             const bool digit = (d >= '0' && d <= '9') || (d >= 'a' && d <= 'f') || (d >= 'A' && d <= 'F');

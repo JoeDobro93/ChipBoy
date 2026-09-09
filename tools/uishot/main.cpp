@@ -5,7 +5,7 @@
 // whether a tab fits the window. Needs a display (Xvfb will do).
 //
 //   chipboy_uishot <output folder> [--desktop] [--song <file.cbsong>]
-//                  [--hybrid] [--shaped] [--scope-check] [--tab-switch]
+//                  [--hybrid] [--shaped] [--hex] [--scope-check] [--tab-switch]
 //
 // --song opens a .cbsong in a tab of its own before the editor opens and
 // leaves the processor without a play head, so the plugin owns the transport
@@ -17,6 +17,9 @@
 // --hybrid puts two of the song's channels on Hybrid, so a shot shows the
 // three-way playback switch and the strip controls a Hybrid channel does not
 // read (section 20).
+//
+// --hex turns the Hex display on, so the shots show a command as the one byte
+// a playback ROM will carry rather than as its two values (section 34).
 //
 // --shaped gives the first instrument a shaped envelope, so the Instrument
 // tab's shot shows the ADSR graph and its curves rather than the chip's ramp
@@ -205,12 +208,13 @@ int main(int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI init;
     juce::String out = "shots", songPath;
     bool desktop = false;                       // a real window: the scopes' timers run
-    bool hybrid = false, shaped = false, scopeCheck = false, tabSwitch = false;
+    bool hybrid = false, shaped = false, hex = false, scopeCheck = false, tabSwitch = false;
     for (int i = 1; i < argc; ++i) {
         const juce::String a(argv[i]);
         if (a == "--desktop") desktop = true;
         else if (a == "--hybrid") hybrid = true;
         else if (a == "--shaped") shaped = true;
+        else if (a == "--hex") hex = true;
         else if (a == "--scope-check") scopeCheck = true;
         else if (a == "--tab-switch") tabSwitch = true;
         else if (a == "--song" && i + 1 < argc) songPath = argv[++i];
@@ -339,6 +343,8 @@ int main(int argc, char** argv)
             i.env.decayCurve = chipboy::bank::EnvCurve::Logarithmic;
             i.env.releaseCurve = chipboy::bank::EnvCurve::Linear;
         });
+
+    if (hex) set(proc.apvts, ids::hexDisplay, 1.0f);
 
     setCommands(proc);
     play(proc, ph, 200);
