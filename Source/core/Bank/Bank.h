@@ -172,7 +172,11 @@ struct InstrumentCore {
     uint8_t  sweepShift = 0;
     // wave
     uint8_t  wave = 1;               ///< wave slot 1-64
-    uint8_t  waveFrame = 0;          ///< the frame a note starts on, 0 based (section 60)
+    /// The run a note walks (section 65): `frameLength` frames spread across the
+    /// wave's own, 0 meaning every one of them; Loop and PingPong turn at
+    /// `frameLoopStep`, which is a step of that run and not a frame number.
+    uint8_t  frameLength = 0;
+    uint8_t  frameLoopStep = 0;
     uint8_t  frameAdvance = 0;       ///< ticks per frame, 0 holds
     FrameLoop frameLoop = FrameLoop::Loop;
     uint8_t  waveLevel = 3;          ///< 0 mute, 1 25%, 2 50%, 3 100%
@@ -193,8 +197,12 @@ struct Instrument : InstrumentCore {
     static Instrument defaults(InstrumentType t, const char* name = "");
 };
 
+/// A table's row. Its three lanes step on their own pointers (section 64):
+/// VOL and LEN are one, TSP and `cmd1` the second, `cmd2` the third.
 struct TableStep {
     int8_t  vol = -1;                ///< -1 blank, else 0-15
+    uint8_t volTicks = 0;            ///< 0 = as long as the table's row, else 1-15 ticks (section 64)
+    int8_t  volHop = -1;             ///< -1 none, else 0-15: the row the volume lane hops to
     bool    hasTranspose = false;
     int8_t  transpose = 0;           ///< -128..127, the byte LSDj shows (section 52)
     Command cmd1, cmd2;
@@ -261,6 +269,22 @@ struct Wave {
     std::vector<Frame> frames;       ///< 1-16
     Synth       synth;               ///< what generated the run, when it was generated (section 33)
 };
+
+/// The run a wave instrument walks (section 65): `frameLength` frames spread
+/// evenly across the wave's own, 0 (or a length past them) meaning every one.
+/// `n` is how many frames the wave has. Writes the frame indices into `out` and
+/// returns how many steps the run has, at least one.
+inline int waveRun(int n, int frameLength, uint8_t* out)
+{
+    const int frames = n < 1 ? 1 : (n > 16 ? 16 : n);
+    int len = frameLength <= 0 || frameLength > frames ? frames : frameLength;
+    if (len < 1) len = 1;
+    for (int i = 0; i < len; ++i) {
+        const int f = len == 1 ? 0 : (i * frames) / (len - 1);
+        out[i] = uint8_t(f < frames - 1 ? f : frames - 1);
+    }
+    return len;
+}
 
 struct KitSample {
     std::string name;

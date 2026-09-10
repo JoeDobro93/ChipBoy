@@ -211,6 +211,27 @@ design-log section the change touches. Update this file at the end of every chan
   - The user's copy of LSDj's official **CHANGELOG** is at `/root/lsdj/CHANGELOG.txt`
     (container only; `littlesounddj.com` is blocked by the egress proxy here). It is the
     fastest way to date a behaviour: §62 came out of it in one grep.
+- Round 15: **a table's three lanes and the wave instrument's frame run**
+  (`COMMANDS_AND_TEMPO.md` §64–§65, `plan-table-lanes-and-wave.md`; CHANGES 2026-09-10).
+  - §64: a table's **VOL+LEN, TSP+CMD 1 and CMD 2 each keep their own row pointer**, in
+    ChipBoy as in LSDj (whose changelog says so at v1.3.0B). `Driver::stepTable` became
+    `stepTableLane(ch, lane)` and the tick counts three waits; `applyCommand` takes the lane
+    so an `H` hops only its own. §62's import workaround is gone -- the hop is carried.
+  - The **ENV byte's low digit is a duration in ticks**, not a fade speed: `1` holds one tick
+    and `E` fourteen, `0` blanks the row (so `A0` is *not* amplitude 10) and `F` hops the
+    volume lane to the row the high digit names. `TableStep` gained `volTicks` and `volHop`,
+    the table grid a **Len** column that types a number or `H` and a step.
+  - §65: the wave instrument's run. **PLAY** is byte 9's low two bits (manual / once / loop /
+    ping-pong), **LENGTH** is `16 - (byte 10 & 15)` frames *spread* across the wave's sixteen
+    (`frame(i) = min(15, i * 16 / (L - 1))`, exact on every length traced), **SPEED** is byte
+    11 and costs `s + 4` ticks a frame, and the synth byte's low nibble is **LOOP POS**, whose
+    loop covers the last `16 - LOOP POS` steps of the run. `Instrument` gained `frameLength`
+    and `frameLoopStep` and **lost `waveFrame`** -- §60 had read LOOP POS as a start frame,
+    and the run always starts at its first. The Instrument tab shows **Frames** and
+    **Loop from** where **Start frame** was.
+  - Measured with `/root/lsdj/archive/probe/wframe.py`, which decodes each wave RAM load in a
+    trace against the song's own frames, and `reg.py` / `wsum.py` beside it. Every one of the
+    wave instrument's sixteen bytes was swept; only 9, 10, 11 and the synth byte move anything.
 - **Adding an LSDj version** when the user supplies its ROM (the steps also head
   `Source/core/Import/LsdjModel.h`): put the ROM beside the others outside the tree
   (`/root/lsdj/` here), copy the 9.3.9 entry in `LsdjModel.cpp`, set the format it writes
@@ -267,18 +288,8 @@ design-log section the change touches. Update this file at the end of every chan
   A probe save that has never been opened in the LSDj editor writes the stage levels of
   instrument 00 whatever plays, while the timing follows the playing instrument: a stale editor
   pointer. Real saves are fine; keep it in mind when probing envelopes.
-- **The table ENV column's low digit is a duration, not a fade speed**, and the column runs
-  on its own pointer like the two command columns (§62). LSDj's changelog: v1.3.0 "implemented
-  carillon-style envelope column in tables … the first digit sets amplitude, the second digit
-  sets duration"; v7.8.1 "table envelope xF now hops to step x"; v8.9.3 made that hop
-  immediate. ChipBoy writes the amplitude at the row and drops the digit, which is why ~20 of
-  SPACE TI's tables carry that note. Mapping it needs an envelope runner in a table with its
-  own step and its own hop — the largest remaining table gap, and the next one to take.
-- **Wave frame animation is still dropped**: `LsdjSong.cpp` hard-codes `frameAdvance = 0` and
-  only notes byte 9's PLAY / SPEED / LENGTH. ChipBoy has `frameAdvance` (ticks a frame) and
-  `frameLoop`, so the mapping is there to be measured — SPACE TI's WAV channel is the worst
-  scoring of the four (a longest common run of 63 of 400 note-ons against LSDj), and nine of
-  its wave instruments set that byte.
+- A table **ENV hop** row costs a tick in ChipBoy, which is LSDj before 8.9.3; from 8.9.3 the
+  hop is free, so a 9.x import runs a tick slow at each one (three across the user's saves).
 - From the LSDj recreation, open by decision: an **LSDj-shaped noise map** as an
   instrument option (its map runs into 7-bit values above A-6 and retriggers on such a
   row; ChipBoy's transposed noise rows land near LSDj's pitches, not on them); **removing `A`** in favour

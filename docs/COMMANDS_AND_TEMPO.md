@@ -1776,10 +1776,10 @@ than 9 collapsed onto synth 0 — LSDj's default ramp — and a song's whole wav
 out as one saw. `LsdjModel::waveByte` names the byte now.
 
 The frame within the synth matters as much as the synth: nine of the ten wave instruments
-in one of the user's format-11 songs start on a frame other than the first. ChipBoy's
-instrument gains **Start frame** (`Instrument::waveFrame`, 0 based, default 0, in the Wave
-group): the frame a note begins on, from which `Frame advance` animates and which the `F`
-command still overrides by absolute number. The importer sets it from the low nibble.
+in one of the user's format-11 songs carry a non-zero low nibble. **The reading of that nibble
+here is wrong**: §65 measured it as LSDj's LOOP POS, the frame a run returns to, not the frame
+a note starts on. `Instrument::waveFrame` and the **Start frame** control it added are
+withdrawn there; only the byte's *position* -- 2 before 9, 3 from 9 -- stands.
 
 ## 61. What the instrument's Transpose flag gates, and the song's own transpose
 
@@ -1886,3 +1886,90 @@ and never opened in LSDj's editor reports a hop from a table's *second* command 
 real save does not (§62), and drops a table's `G` entirely. Rebuilding the same table inside a
 real song's working area gives the real answer. Table work is measured that way from now on;
 this is a second artifact of the same kind as §58's envelope stages.
+
+## 64. A table's three lanes run on their own pointers
+
+§62 found LSDj's two command columns looping independently and worked around ChipBoy's single
+table pointer by dropping the second column's hop. That was the wrong way round: the
+independence is a feature, not a quirk to be flattened. One column can walk the pan while the
+other walks the duty at another rate, and a great deal of what an LSDj table sounds like comes
+out of that. **ChipBoy gets the lanes**, and the import stops dropping anything.
+
+There are **three**, not two. LSDj's changelog at v1.3.0 calls the ENV column "carillon-style
+... the first digit sets amplitude, the second digit sets duration", and it runs on its own
+clock too. Measured on 8.4.4 in the user's song, one table with the transpose column stepping
+every tick and the ENV rows lasting four: the pitch moved every 6.5 pitch clocks while `NR22`
+moved every 25.9.
+
+| lane | columns | steps on | hops on |
+|---|---|---|---|
+| **volume** | VOL, LEN | its row's LEN, else the table's row length | its row's LEN set to `H` |
+| **one** | TSP, CMD 1 | the table's row length (§57, §63) | an `H` in CMD 1 |
+| **two** | CMD 2 | the table's row length | an `H` in CMD 2 |
+
+The row *length* stays shared -- LSDj's changelog is explicit that "both command columns still
+use the same groove" -- so §57's `G` and §63's older reading of it time all three; the volume
+lane's LEN is what overrides it.
+
+**The ENV byte, measured on 8.4.4** (one `NR22` write per lane step): the low digit is a
+duration in ticks, `1` giving 6.5 pitch clocks and `E` giving 89.7, exactly *n* ticks. `0`
+kills the lane -- nothing is written at all, so `A0` is a blank row and not "amplitude 10".
+`F` is a **hop**: the lane jumps to the row the high digit names. The amplitude `0` is a real
+level: `01` writes `NR22 = 00`.
+
+**The volume lane ends at its first empty row.** Traced with rows 0 and 1 set, row 2 empty and
+row 3 set: LSDj plays the first two and stops -- it never reaches row 3, and it does not loop
+back to row 0 either. Only its own hop brings it round. So the lane is a little program of its
+own, self-delimiting, where the other two walk the whole table and take its End. ChipBoy does
+the same, which is a change for a song written before this round whose VOL column had a gap in
+it (`CHANGES.md`).
+
+ChipBoy's table gains a **Len** column beside Vol: blank, `1`-`15` ticks, or `H0`-`HF` to hop
+the volume lane. `TableStep` carries `volTicks` (0 = as long as the table's row) and `volHop`
+(-1 = none). A song written before this round has `volTicks = 0` on every row, so its volume
+column still steps with the table's row; the one thing that changes for it is that an `H` in
+CMD 1 no longer drags the volume column along, which is recorded in `CHANGES.md`.
+
+The `H` a table run reaches on a lane counts its `times` on that lane, and a note-on resets all
+three pointers together. A hop row of the volume lane costs its own length like any other,
+which is one tick unless it carries a LEN. That is LSDj before 8.9.3; from 8.9.3 on the hop is
+free ("table envelope hops ... now happen immediately"), so a 9.x import is a tick slow at each
+ENV hop -- three of them across every save the user has sent.
+
+## 65. The wave instrument's frame run: LENGTH, LOOP POS, SPEED and PLAY
+
+§60 read the low nibble of the wave instrument's synth byte as *the frame a note starts on*.
+It is not. Measured on 8.4.4 by decoding every wave RAM load against the song's own frames:
+the run **always starts at frame 0**, and the nibble is LSDj's **LOOP POS**, the point a LOOP
+or PING-PONG returns to. ChipBoy's `Instrument::waveFrame` is withdrawn, and the
+instrument's **Start frame** control with it.
+
+Sweeping all sixteen instrument bytes, three carry the run and nothing else does:
+
+| byte | field | values |
+|---|---|---|
+| 9, bits 0-1 | **PLAY** | 0 manual (no advance), 1 once, 2 loop, 3 ping-pong |
+| 10, low nibble `n` | **LENGTH** | the run visits `L = 16 - n` frames; `n = F` freezes on one |
+| 11 | **SPEED** `s` | a frame every **`s + 4` ticks** (`s = 0` gave 25.9 pitch clocks = 4 ticks, `s = F` gave 122.8 = 19) |
+
+LENGTH does not shorten the run to its first frames -- it **spreads** it across all sixteen:
+
+```
+frame(i) = min(15, (i * 16) / (L - 1))     i = 0 .. L-1, integer division; L = 1 is frame 0
+```
+
+which is exact on every length traced (`0 5 10 15` for L = 4; `0 2 4 6 9 11 13 15` for L = 8;
+`0 15` for L = 2).
+
+**LOOP POS is counted against the sixteen, not against the run**: the loop covers the last
+`16 - LOOP POS` steps, clamped to the run. LENGTH 8 with LOOP POS 9 loops from run step 1;
+LOOP POS 4 with the same length loops the whole run. PING-PONG bounces between that step and
+the run's end (`0 5 10 15 10 5 0 ...`).
+
+ChipBoy's wave instrument gains **Frames** (`frameLength`, 0 = every frame) and **Loop from**
+(`frameLoopStep`, a *run* step, not a frame) beside **Frame advance**, which keeps its meaning
+of ticks per frame. The importer does the `16 - LOOP POS` arithmetic once, so ChipBoy's field
+means one plain thing, and sets `frameAdvance = SPEED + 4`. `F` still names the frame itself, whether
+or not the run visits it -- traced with a run of eight on 8.4.4, `F 06` loaded frame 5, which
+that run skips -- and the run's step goes to the nearest so a later advance carries on from
+about there.

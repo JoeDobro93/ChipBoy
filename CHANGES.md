@@ -2178,6 +2178,47 @@ under the harness, and the generated probe saves proved unreliable for table com
 report a hop from the second column that a real save does not, and drop a table's `G`).
 Those formats take the pre-9 rule, which both formats either side of them follow.
 
+### 2026-09-10 — a table's three lanes, and the wave instrument's frame run (spec §64, §65)
+
+**Changed:** ChipBoy's tables and wave instruments gain what LSDj has, rather than the import
+flattening it.
+
+1. **A table's three lanes run on their own pointers.** VOL with its new LEN is one, TSP with
+   CMD 1 the second, CMD 2 the third; an `H` hops only its own column. §62 had dropped the
+   second column's hop because ChipBoy had one pointer -- the importer carries it now.
+2. **The table's LEN column**: `TableStep::volTicks` (0 = as long as the table's row, else
+   ticks) and `volHop` (the row the volume lane jumps to). The importer reads them from
+   LSDj's ENV byte, whose low digit was being dropped with a note in about twenty tables of
+   the user's first song.
+3. **The wave instrument's run**: `frameLength` (frames visited, spread across the wave's own)
+   and `frameLoopStep` (where Loop and Ping-pong return) beside `frameAdvance`. The importer
+   reads LSDj's PLAY, LENGTH, LOOP POS and SPEED, all four of which it used to drop.
+4. **`Instrument::waveFrame` is withdrawn.** §60 read the low nibble of the wave instrument's
+   synth byte as a start frame; §65 measured it as LSDj's LOOP POS. The run always starts at
+   its first frame, so there was nothing for the field to mean.
+
+**Why:** the user asked for the independent columns as a ChipBoy feature -- one column walking
+the pan while the other walks the duty at another rate is most of what an LSDj table sounds
+like -- and for the wave channel to be able to express anything an LSDj wave instrument can.
+
+**Considered:** keeping the lanes locked and handling the difference in the importer, which is
+what §62 did -- rejected on the user's instruction and on the merits: the independence is
+useful in its own right, and every LSDj format ChipBoy reads is after v1.3.0B, where the
+columns became independent, so no import wants them locked. Copying LSDj's `xF` packing into
+ChipBoy's VOL cell -- rejected for a LEN cell that says `H` and a step instead.
+
+**Two behaviour changes to a song written before this round:** an `H` in CMD 1 no longer drags
+the volume column with it, because the volume column has its own pointer; and the volume lane
+now ends at its first empty row, as LSDj's does, where it used to walk the whole table and
+loop. Rows keep their timing (`volTicks` reads back as 0, which is "as long as the table's
+row"). The second is what stops an imported drum re-applying its whole envelope every sixteen
+rows; a ChipBoy table whose VOL column has a gap in it loses what came after the gap, and
+wants the levels moved up or a hop put in.
+
+**Not modelled:** a volume-lane hop row costs a tick in ChipBoy, which is LSDj before 8.9.3;
+from 8.9.3 the hop is free, so a 9.x import is a tick slow at each one. There are three across
+every save the user has sent.
+
 ---
 
 ## Departures from the spec

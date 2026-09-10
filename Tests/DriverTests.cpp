@@ -2235,3 +2235,151 @@ TEST_CASE("a shaped envelope can start above silence and fade past its sustain",
     for (int t = 0; t < 30; ++t) r.block({}, 200);
     CHECK(r.drv.view(0).envVol == 13);
 }
+
+TEST_CASE("a table's volume lane keeps its own time", "[driver][commands]")
+{
+    // Section 64: the transpose column steps a row a tick while the volume
+    // column holds each of its rows for its own LEN.
+    Rig r;
+    r.tickHz = 100.0;
+    Table t; t.used = true; t.name = "Lanes";
+    for (int i = 0; i < 4; ++i) { t.steps[size_t(i)].hasTranspose = true; t.steps[size_t(i)].transpose = int8_t(i * 5); }
+    t.steps[0].vol = 12; t.steps[0].volTicks = 4;
+    t.steps[1].vol = 4;  t.steps[1].volTicks = 4;
+    t.end = TableEnd::Stop;
+    r.bank.tables[7] = t;
+    r.bank.instruments[0].table = 8; r.bank.instruments[0].vib.depth = 0;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    r.block({ Rig::on(0, 60, 100) }, 480);
+    std::vector<int> notes, vols;
+    for (int i = 0; i < 7; ++i) { r.block({}, 480); notes.push_back(int(r.drv.view(0).period)); vols.push_back(int(r.drv.view(0).envVol)); }
+    // The transpose walks every tick: 60, 65, 70, 75 and then the table stops.
+    CHECK(notes[0] == note(65)); CHECK(notes[1] == note(70)); CHECK(notes[2] == note(75));
+    // The volume lane is still on its first row through all of that.
+    CHECK(vols[0] == 12); CHECK(vols[1] == 12); CHECK(vols[2] == 12);
+    CHECK(vols[3] == 4);                                  // its second row, four ticks in
+    r.bank.instruments[0].table = 0;
+}
+
+TEST_CASE("an H in the second command column loops that column alone", "[driver][commands]")
+{
+    // Section 64: the transpose column and CMD 1 run to the end of the table
+    // while CMD 2 replays its own first two rows.
+    Rig r;
+    r.tickHz = 100.0;
+    Table t; t.used = true; t.name = "Two lanes";
+    for (int i = 0; i < 6; ++i) { t.steps[size_t(i)].hasTranspose = true; t.steps[size_t(i)].transpose = int8_t(i); }
+    t.steps[0].cmd2 = { Cmd::O, int16_t(bank::Pan::Left), 0, 0 };
+    t.steps[1].cmd2 = { Cmd::H, 0, 0, 0 };                // hop this column back to its row 0, for ever
+    t.end = TableEnd::Stop;
+    r.bank.tables[7] = t;
+    r.bank.instruments[0].table = 8; r.bank.instruments[0].vib.depth = 0;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    r.block({ Rig::on(0, 60, 100) }, 480);
+    std::vector<int> notes;
+    for (int i = 0; i < 5; ++i) { r.block({}, 480); notes.push_back(int(r.drv.view(0).period)); }
+    CHECK(notes[0] == note(61)); CHECK(notes[1] == note(62));     // the transpose column ran past the hop
+    CHECK(notes[2] == note(63)); CHECK(notes[3] == note(64));
+    CHECK(r.drv.view(0).pan == uint8_t(bank::Pan::Left));         // and CMD 2 kept setting its own row 0
+    r.bank.instruments[0].table = 0;
+}
+
+TEST_CASE("the volume lane hops on its own", "[driver][commands]")
+{
+    // Section 64: volHop moves the volume lane and leaves the transpose alone.
+    Rig r;
+    r.tickHz = 100.0;
+    Table t; t.used = true; t.name = "Vol hop";
+    for (int i = 0; i < 6; ++i) { t.steps[size_t(i)].hasTranspose = true; t.steps[size_t(i)].transpose = int8_t(i); }
+    t.steps[0].vol = 15; t.steps[0].volTicks = 1;
+    t.steps[1].vol = 7;  t.steps[1].volTicks = 1;
+    t.steps[2].volHop = 1;                                 // back to row 1, for ever
+    t.end = TableEnd::Stop;
+    r.bank.tables[7] = t;
+    r.bank.instruments[0].table = 8; r.bank.instruments[0].vib.depth = 0;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    r.block({ Rig::on(0, 60, 100) }, 480);
+    std::vector<int> notes, vols;
+    for (int i = 0; i < 6; ++i) { r.block({}, 480); notes.push_back(int(r.drv.view(0).period)); vols.push_back(int(r.drv.view(0).envVol)); }
+    CHECK(notes[0] == note(61)); CHECK(notes[3] == note(64));     // the transpose column runs on
+    CHECK(vols[0] == 7);                                          // row 1
+    CHECK(vols[2] == 7);                                          // and row 1 again after the hop
+    r.bank.instruments[0].table = 0;
+}
+
+TEST_CASE("a wave instrument's frame run takes its length and loops from its own step", "[driver][wave]")
+{
+    // Section 65: four frames of a sixteen frame wave are 0, 5, 10, 15, and the
+    // loop returns to the run's own step.
+    uint8_t run[16];
+    CHECK(bank::waveRun(16, 4, run) == 4);
+    CHECK(int(run[0]) == 0); CHECK(int(run[1]) == 5); CHECK(int(run[2]) == 10); CHECK(int(run[3]) == 15);
+    CHECK(bank::waveRun(16, 8, run) == 8);
+    CHECK(int(run[1]) == 2); CHECK(int(run[3]) == 6); CHECK(int(run[4]) == 9); CHECK(int(run[7]) == 15);
+    CHECK(bank::waveRun(16, 1, run) == 1); CHECK(int(run[0]) == 0);
+    CHECK(bank::waveRun(16, 0, run) == 16); CHECK(int(run[15]) == 15);
+
+    Rig r;
+    r.tickHz = 100.0;
+    auto& w = r.bank.waves[0];
+    w.used = true; w.frames.clear();
+    for (int f = 0; f < 16; ++f) { bank::Frame fr; fr.s.fill(uint8_t(f)); w.frames.push_back(fr); }
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Run");
+    i.used = true; i.wave = 1; i.frameLength = 4; i.frameAdvance = 1; i.frameLoop = bank::FrameLoop::Loop; i.frameLoopStep = 2;
+    ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(2, p);
+    r.block({ Rig::on(2, 60, 100) }, 480);
+    std::vector<int> frames{ int(r.drv.view(2).frame) };
+    for (int k = 0; k < 6; ++k) { r.block({}, 480); frames.push_back(int(r.drv.view(2).frame)); }
+    // view().frame is the frame plus one. The run walks its four steps once --
+    // frames 0, 5, 10, 15 -- and then repeats from step 2.
+    CHECK(frames[0] == 5 + 1); CHECK(frames[1] == 10 + 1); CHECK(frames[2] == 15 + 1);
+    CHECK(frames[3] == 10 + 1); CHECK(frames[4] == 15 + 1); CHECK(frames[5] == 10 + 1);
+}
+
+TEST_CASE("PingPong turns at the run's loop step, not at its first", "[driver][wave]")
+{
+    // Section 65: LSDj bounces between LOOP POS and the run's end.
+    Rig r;
+    r.tickHz = 100.0;
+    auto& w = r.bank.waves[0];
+    w.used = true; w.frames.clear();
+    for (int f = 0; f < 16; ++f) { bank::Frame fr; fr.s.fill(uint8_t(f)); w.frames.push_back(fr); }
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Bounce");
+    i.used = true; i.wave = 1; i.frameLength = 4; i.frameAdvance = 1;   // the run is 0, 5, 10, 15
+    i.frameLoop = bank::FrameLoop::PingPong; i.frameLoopStep = 1;       // bounce over 5, 10, 15
+    ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(2, p);
+    r.block({ Rig::on(2, 60, 100) }, 480);
+    std::vector<int> f;
+    for (int k = 0; k < 24; ++k) { r.block({}, 480); f.push_back(int(r.drv.view(2).frame) - 1); }
+    // It bounces over the run's last three steps and never returns to frame 0,
+    // which is the run's first: the turn is at the loop step.
+    for (int v : f) { CHECK(v != 0); CHECK((v == 5 || v == 10 || v == 15)); }
+    CHECK(std::find(f.begin(), f.end(), 15) != f.end());   // it does reach the run's end
+    CHECK(std::find(f.begin(), f.end(), 5) != f.end());    // and comes back to the loop step
+}
+
+TEST_CASE("F names a wave frame the run skips", "[driver][wave]")
+{
+    // Section 65: measured on 8.4.4, F loads the frame it names whether or not
+    // the instrument's LENGTH leaves that frame in the run.
+    Rig r;
+    r.tickHz = 100.0;
+    auto& w = r.bank.waves[0];
+    w.used = true; w.frames.clear();
+    for (int f = 0; f < 16; ++f) { bank::Frame fr; fr.s.fill(uint8_t(f)); w.frames.push_back(fr); }
+    Table t; t.used = true; t.name = "Frame";
+    t.steps[1].cmd1 = { Cmd::F, 7, 0, 0 };
+    t.end = TableEnd::Stop;
+    r.bank.tables[7] = t;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Manual");
+    i.used = true; i.wave = 1; i.frameLength = 4; i.frameAdvance = 0; i.table = 8;   // the run is 0, 5, 10, 15
+    ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(2, p);
+    r.block({ Rig::on(2, 60, 100) }, 480);
+    CHECK(int(r.drv.view(2).frame) == 0 + 1);             // the run's first step
+    std::vector<int> seen;
+    for (int k = 0; k < 4; ++k) { r.block({}, 480); seen.push_back(int(r.drv.view(2).frame)); }
+    CHECK(std::find(seen.begin(), seen.end(), 6 + 1) != seen.end());   // frame 6, which that run skips
+}

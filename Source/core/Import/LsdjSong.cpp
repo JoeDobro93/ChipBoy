@@ -397,13 +397,25 @@ struct Reader {
             } else if (t == 1) {
                 static const uint8_t kLevel[4] = { 0, 3, 2, 1 };       // the stored bits are the NR32 code, 1 = 100 %
                 o.waveLevel = kLevel[(b[1] >> 5) & 3];
-                // The synth and frame live in byte 2 before 9.x, byte 3 after (section 60).
+                // The synth byte is 2 before 9.x and 3 after (section 60); its low
+                // nibble is LSDj's LOOP POS, not a start frame (section 65).
                 const uint8_t wb = b[size_t(m.waveByte == 3 ? 3 : 2)];
-                const int synth = wb >> 4, w = wb & 15;
-                o.wave = uint8_t(waveSlotFor(synth)); o.frameAdvance = 0; o.frameLoop = bank::FrameLoop::Loop;
-                o.waveFrame = uint8_t(w);
+                const int synth = wb >> 4, loopPos = wb & 15;
+                o.wave = uint8_t(waveSlotFor(synth));
                 o.pitchSpeed = m.pitchLaw == PitchLaw::Register ? bank::PitchSpeed::Drum : pitchSpeedOf(b[5]);
-                if (b[9] & 3) notes.add("wave instrument " + name + ": PLAY / SPEED / LENGTH frame animation is not mapped");
+                // The run: LENGTH is 16 - the low nibble of byte 10, SPEED is byte
+                // 11 and costs four ticks on top, PLAY is byte 9's low two bits,
+                // and the loop covers the last 16 - LOOP POS steps of the run.
+                const int len = 16 - int(b[10] & 15);
+                o.frameLength = uint8_t(len);
+                o.frameLoopStep = uint8_t(std::max(0, len - (16 - loopPos)));
+                switch (b[9] & 3) {
+                    case 0: o.frameAdvance = 0; o.frameLoop = bank::FrameLoop::Loop; break;      // MANUAL: only an F moves it
+                    case 1: o.frameLoop = bank::FrameLoop::Once; break;
+                    case 3: o.frameLoop = bank::FrameLoop::PingPong; break;
+                    default: o.frameLoop = bank::FrameLoop::Loop; break;
+                }
+                if (b[9] & 3) o.frameAdvance = uint8_t(std::min(255, int(b[11]) + 4));
             } else if (t == 2) {
                 if (!kitInstrument(i, b, o, name)) return false;
             } else {
@@ -592,7 +604,7 @@ struct Reader {
             auto& tb = bank.tables[size_t(t)];
             tb = bank::Table{};
             tb.used = true; tb.name = "Table " + hex2(t); tb.end = bank::TableEnd::Loop; tb.hopStep = 1;
-            bool fade = false, resolvedS = false, hopInCmd2 = false;
+            bool resolvedS = false;
             // Section 56: the noise rows are resolved for the lowest note the
             // table runs with -- the transpose column through the shape rule,
             // an S through the nibble rule into ChipBoy's S (section 55), whose
@@ -605,8 +617,13 @@ struct Reader {
                 const size_t i = size_t(t) * 16 + size_t(r);
                 const uint8_t env = at(kTableEnv + i), tsp = at(kTableTsp + i);
                 auto& st = tb.steps[size_t(r)];
-                st.vol = env ? int8_t(env >> 4) : int8_t(-1);
-                if (env & 15) fade = true;
+                // Section 64: the ENV byte is an amplitude and a duration in ticks;
+                // a low digit of 0 is a blank row and F hops the lane to the row the
+                // high digit names.
+                const int amp = env >> 4, dur = env & 15;
+                if (dur == 0) st.vol = -1;
+                else if (dur == 15) { st.vol = -1; st.volHop = int8_t(amp); }
+                else { st.vol = int8_t(amp); st.volTicks = uint8_t(dur); }
                 const std::pair<uint8_t, uint8_t> cmds[2] = { { at(kTableCmd1 + i), at(kTableCmd1V + i) }, { at(kTableCmd2 + i), at(kTableCmd2V + i) } };
                 if (tsp) {
                     st.hasTranspose = true;
@@ -622,14 +639,6 @@ struct Reader {
                 for (int k = 0; k < 2; ++k) {
                     const char letter = letterOf(cmds[k].first);
                     if (!letter) continue;
-                    if (letter == 'H' && k == 1) {
-                        // Section 62: LSDj's two table command columns keep their own
-                        // row pointers, so this hop loops the second column alone. With
-                        // one pointer here it would loop the whole table, and the rows
-                        // it replays are set-a-value commands, so it is dropped.
-                        hopInCmd2 = true;
-                        continue;
-                    }
                     Command c;
                     if (letter == 'S' && noiseBase >= 0 && m.noiseS == NoiseS::Nibbles) {
                         const uint8_t nr = nibbleS(runNr, cmds[k].second);
@@ -642,9 +651,7 @@ struct Reader {
                     if (command(letter, cmds[k].second, "table " + hex2(t) + " row " + std::to_string(r), -1, noiseBase >= 0 ? 3 : -1, nullptr, c)) (k == 0 ? st.cmd1 : st.cmd2) = c;
                 }
             }
-            if (hopInCmd2) notes.add("table " + hex2(t) + ": an H in its second command column loops that column alone in LSDj, which ChipBoy's single table pointer cannot do; it is dropped (section 62)");
             if (resolvedS) notes.add("table " + hex2(t) + ": its S rows on noise (the nibble rule) are resolved to ChipBoy's S for the loop's first pass; later passes add the same semitones");
-            if (fade) notes.add("table " + hex2(t) + ": the ENV column's low digit (fade speed per row) is not mapped; the amplitude is written at the row");
             ++sum.tables;
         }
     }

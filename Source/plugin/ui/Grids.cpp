@@ -227,6 +227,22 @@ bool editNote(uint8_t& note, const juce::KeyPress& k, int& octave)
     note = uint8_t(juce::jlimit(1, 127, 12 * (octave + 1) + semi));
     return true;
 }
+/// A table's LEN cell (section 64): blank, 1-15 ticks, or "H" and a row to hop
+/// the volume lane there. Typing H arms the hop; the digit after it is the row.
+bool editVolLen(uint8_t& ticks, int8_t& hop, const juce::KeyPress& k, Entry& e)
+{
+    const bool hex = ValueFormat::hex();
+    const auto ch = juce::CharacterFunctions::toUpperCase(k.getTextCharacter());
+    if (isBackspace(k) || isDelete(k)) { e.restart(); ticks = 0; hop = -1; return true; }
+    if (ch == 'H') { e.restart(); hop = hop >= 0 ? hop : 0; ticks = 0; return true; }
+    int mag = 0;
+    if (!typeDigit(e, k.getTextCharacter(), hex, 15, mag)) return false;
+    if (mag < 0) return true;
+    if (hop >= 0) hop = int8_t(mag);
+    else { ticks = uint8_t(mag); hop = -1; }
+    return true;
+}
+
 bool editVol(int8_t& vol, const juce::KeyPress& k, Entry& e)
 {
     const bool hex = ValueFormat::hex();
@@ -507,13 +523,13 @@ const juce::String kBlank2 = "--", kBlank3 = "---";
 // ---------------------------------------------------------------------------
 // the grid core: columns, cursor, hover, navigation, painting
 // ---------------------------------------------------------------------------
-enum class Kind { Step, Vol, Transpose, Cmd, Note, Vel, Inst, Table, Ghost, Info };
+enum class Kind { Step, Vol, VolLen, Transpose, Cmd, Note, Vel, Inst, Table, Ghost, Info };
 
 struct Column { Kind kind = Kind::Step; int ch = 0; int x = 0, w = 0; juce::String title; };
 
 bool editableKind(Kind k)
 {
-    return k == Kind::Vol || k == Kind::Transpose || k == Kind::Cmd || k == Kind::Note || k == Kind::Vel || k == Kind::Inst || k == Kind::Table;
+    return k == Kind::Vol || k == Kind::VolLen || k == Kind::Transpose || k == Kind::Cmd || k == Kind::Note || k == Kind::Vel || k == Kind::Inst || k == Kind::Table;
 }
 
 struct GridCore {
@@ -698,7 +714,7 @@ struct TableGrid::Impl {
     int playing = -1;
     /// The column's most recent values, what a blank cell fills with
     /// (section 38): refreshed from every step the grid writes.
-    struct Recent { int vol = -1; bool hasTranspose = false; int8_t transpose = 0; bank::Command cmd[2]; } recent;
+    struct Recent { int vol = -1; int volTicks = 0; bool hasTranspose = false; int8_t transpose = 0; bank::Command cmd[2]; } recent;
     /// A vertical drag on a value cell: one unit every six pixels, sixteen
     /// with Shift, the whole drag one undo (section 38).
     static constexpr int kDragPixels = 6;
@@ -715,11 +731,11 @@ struct TableGrid::Impl {
     {
         auto& cols = core.cols;
         cols.clear();
-        const int widths[5] = { 38, 52, 72, 74, 74 };
-        const Kind kinds[5] = { Kind::Step, Kind::Vol, Kind::Transpose, Kind::Cmd, Kind::Cmd };
-        const char* titles[5] = { "Step", "Vol", "Trans", "Cmd 1", "Cmd 2" };
+        const int widths[6] = { 38, 52, 46, 72, 74, 74 };
+        const Kind kinds[6] = { Kind::Step, Kind::Vol, Kind::VolLen, Kind::Transpose, Kind::Cmd, Kind::Cmd };
+        const char* titles[6] = { "Step", "Vol", "Len", "Trans", "Cmd 1", "Cmd 2" };
         int x = 0;
-        for (int i = 0; i < 5; ++i) { cols.push_back({ kinds[i], i == 4 ? 1 : 0, x, widths[i], titles[i] }); x += widths[i]; }
+        for (int i = 0; i < 6; ++i) { cols.push_back({ kinds[i], i == 5 ? 1 : 0, x, widths[i], titles[i] }); x += widths[i]; }
         if (width - x >= 70) cols.push_back({ Kind::Info, 0, x, width - x, juce::String::charToString(0x2192) + " written as" });
     }
 
@@ -729,6 +745,11 @@ struct TableGrid::Impl {
         const auto k = core.cols[size_t(col)].kind;
         blank = false;
         if (k == Kind::Vol) { blank = s.vol < 0; return blank ? kBlank2 : ValueFormat::number(s.vol); }
+        if (k == Kind::VolLen) {
+            if (s.volHop >= 0) return "H" + juce::String::toHexString(int(s.volHop)).toUpperCase();
+            blank = s.volTicks == 0;
+            return blank ? kBlank2 : ValueFormat::number(s.volTicks);
+        }
         if (k == Kind::Transpose) { blank = !s.hasTranspose; return blank ? kBlank2 : ValueFormat::transpose(s.transpose); }
         // A command cell is drawn in two parts by paintCmdCell, not here.
         if (k == Kind::Info) {
@@ -751,6 +772,7 @@ struct TableGrid::Impl {
     void remember(const bank::TableStep& s)
     {
         if (s.vol >= 0) recent.vol = s.vol;
+        if (s.volTicks) recent.volTicks = s.volTicks;
         if (s.hasTranspose) { recent.hasTranspose = true; recent.transpose = s.transpose; }
         if (s.cmd1.cmd != bank::Cmd::None) recent.cmd[0] = s.cmd1;
         if (s.cmd2.cmd != bank::Cmd::None) recent.cmd[1] = s.cmd2;
@@ -770,6 +792,11 @@ struct TableGrid::Impl {
             int v = recent.vol;
             for (int i = row - 1; v < 0 && i >= 0; --i) v = table.steps[size_t(i)].vol;
             s.vol = int8_t(v >= 0 ? v : 15);
+        } else if (c.kind == Kind::VolLen) {
+            if (s.volTicks || s.volHop >= 0) return false;
+            int v = recent.volTicks;
+            for (int i = row - 1; v <= 0 && i >= 0; --i) v = table.steps[size_t(i)].volTicks;
+            s.volTicks = uint8_t(v > 0 ? v : 1);
         } else if (c.kind == Kind::Transpose) {
             if (s.hasTranspose) return false;
             int8_t t = 0; bool found = recent.hasTranspose;
@@ -795,6 +822,7 @@ struct TableGrid::Impl {
         const auto& c = core.cols[size_t(col)];
         const auto& s = table.steps[size_t(row)];
         if (c.kind == Kind::Vol) return juce::jmax(0, int(s.vol));
+        if (c.kind == Kind::VolLen) return s.volHop >= 0 ? int(s.volHop) : int(s.volTicks);
         if (c.kind == Kind::Transpose) return s.hasTranspose ? int(s.transpose) : 0;
         if (c.kind == Kind::Cmd) {
             const auto& cmd = c.ch == 0 ? s.cmd1 : s.cmd2;
@@ -808,6 +836,10 @@ struct TableGrid::Impl {
         const auto& c = core.cols[size_t(col)];
         auto& s = table.steps[size_t(row)];
         if (c.kind == Kind::Vol) { const auto v = int8_t(wrapRange(want, 0, 15)); if (s.vol == v) return; s.vol = v; }
+        else if (c.kind == Kind::VolLen) {
+            if (s.volHop >= 0) { const auto v = int8_t(wrapRange(want, 0, 15)); if (s.volHop == v) return; s.volHop = v; }
+            else { const auto v = uint8_t(wrapRange(want, 1, 15)); if (s.volTicks == v) return; s.volTicks = v; }
+        }
         else if (c.kind == Kind::Transpose) { const auto v = int8_t(wrapRange(want, -128, 127)); if (s.hasTranspose && s.transpose == v) return; s.hasTranspose = true; s.transpose = v; }
         else if (c.kind == Kind::Cmd) {
             auto& cmd = c.ch == 0 ? s.cmd1 : s.cmd2;
@@ -824,6 +856,7 @@ struct TableGrid::Impl {
         const auto& col = core.cols[size_t(core.curCol)];
         bool done = false;
         if (col.kind == Kind::Vol) done = editVol(s.vol, k, core.entry);
+        else if (col.kind == Kind::VolLen) done = editVolLen(s.volTicks, s.volHop, k, core.entry);
         else if (col.kind == Kind::Transpose) done = editTranspose(s.hasTranspose, s.transpose, k, core.entry);
         else if (col.kind == Kind::Cmd) done = editCmd(col.ch == 0 ? s.cmd1 : s.cmd2, k, core.entry);
         if (done) changed(core.curRow);
@@ -896,6 +929,10 @@ struct TableGrid::Impl {
         const auto& c = core.cols[size_t(col)];
         core.entry.restart();
         if (c.kind == Kind::Vol) s.vol = int8_t(wrapRange((s.vol < 0 ? 0 : int(s.vol)) + delta, 0, 15));
+        else if (c.kind == Kind::VolLen) {
+            if (s.volHop >= 0) s.volHop = int8_t(wrapRange(int(s.volHop) + delta, 0, 15));
+            else s.volTicks = uint8_t(wrapRange((s.volTicks == 0 ? (delta > 0 ? 0 : 16) : int(s.volTicks)) + delta, 1, 15));
+        }
         else if (c.kind == Kind::Transpose) { s.hasTranspose = true; s.transpose = int8_t(wrapRange(int(s.transpose) + delta, -128, 127)); }
         else if (c.kind == Kind::Cmd) { if (!nudgeCommand(c.ch == 0 ? s.cmd1 : s.cmd2, core.entry.arg, delta)) return true; }
         else return false;
@@ -925,6 +962,10 @@ struct TableGrid::Impl {
         const auto& c = core.cols[size_t(col)];
         const auto& s = table.steps[size_t(row)];
         if (c.kind == Kind::Vol) return "Volume at this step, 0-15; blank leaves it alone. Type it, double-click for a box, Shift+arrows move it.";
+        if (c.kind == Kind::VolLen)
+            return s.volHop >= 0
+                 ? "The volume column hops to step " + ValueFormat::index(s.volHop) + " here and carries on from there; the other columns keep their own place (section 64). Backspace clears it."
+                 : "How long this step's volume holds, in ticks; blank is as long as the table's row. The volume column keeps its own place, so it can run at its own rate. Type a number, or H and a step to hop it.";
         if (c.kind == Kind::Transpose) return "Semitones added to the note at this step; blank leaves it alone. Type it, double-click for a box, Shift+arrows move it.";
         if (c.kind == Kind::Cmd) return cmdTooltip(c.ch == 0 ? s.cmd1 : s.cmd2);
         return {};

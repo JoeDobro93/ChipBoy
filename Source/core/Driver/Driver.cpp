@@ -624,7 +624,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     v.ticks = 0; v.vibPhase9 = 0; v.pitchCount = 0;
     v.fineOffset = 0; v.fineQueued = 0; v.drumOffset = 0.0; v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0;
     v.chordN = 0; v.chordIdx = 0; v.chordCount = 0;
-    v.dutyIdx = 0; v.kill = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigFast = false; v.envCount = 0; v.lastCmd = {}; v.frameIdx = core.waveFrame;   // the instrument's start frame (section 60)
+    v.dutyIdx = 0; v.kill = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigFast = false; v.envCount = 0; v.lastCmd = {}; v.frameStep = 0; v.frameIdx = 0;   // the run starts at its first step (section 65)
     v.rng = v.rng * 1664525u + 1013904223u + note;
     restartPitchClock(ch);
     // volume from velocity: a MIDI note asks the Velocity mode, a cell's VEL is
@@ -645,12 +645,16 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // table
     const uint8_t tbl = v.tableOverride ? v.tableOverride : core.table;
     v.tableSlot = tbl; v.tableOn = tbl && bank_ && bank_->table(tbl);
-    v.tableWait = 0;
+    v.tableWait = v.tableWait2 = v.tableWaitE = 0;        // every lane starts its row afresh (section 64)
     if (v.tableOn) ++v.tableRun;                  // a note-on starts a run of its own (section 32)
     // A Step-mode table advances one row per trigger instead of restarting,
     // which is the whole point of it; a table that was not already running
     // starts at its first row (section 7).
-    if (core.tableMode != TableMode::Step || hadTable != tbl) { v.tableStep = 0; v.tableRow = 0; v.tableGroove = 0; }
+    if (core.tableMode != TableMode::Step || hadTable != tbl) {
+        v.tableStep = v.tableStep2 = v.tableStepE = 0;
+        v.tableRow = v.tableRow2 = v.tableRowE = 0;
+        v.tableGroove = 0; v.volLaneOn = true;
+    }
     if (core.dutySeqLen) v.duty = uint8_t(core.dutySeq[0] & 3);
     // The table's first row fires with the note-on, in the same event, never
     // at the next tick (section 31): a table that drops the pitch or the level
@@ -702,6 +706,9 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
             const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr;
             const Frame* f = w && !w->frames.empty() ? &w->frames[0] : nullptr;
             v.frameCount = 0; v.frameDir = 1; v.kitOn = false; v.streamActive = false;
+            // The run starts at its first step, which is always frame 0
+            // (section 65); the reset above put the voice there, so an F on this
+            // very row -- applied with the note's other commands -- still stands.
             if (w && !w->frames.empty()) v.frameIdx = uint8_t(std::min<int>(v.frameIdx, int(w->frames.size()) - 1));
             else v.frameIdx = 0;
             static const Frame silent{};
@@ -1328,7 +1335,7 @@ int masterFromArg(int x, int cur)
 
 } // namespace
 
-void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
+void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
 {
     Voice& v = v_[size_t(ch)];
     const Command c = cIn;
@@ -1385,7 +1392,21 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
             break;
         }
         case Cmd::F:
-            if (v.inst.type == InstrumentType::Wave) { const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr; if (w && !w->frames.empty()) { v.frameIdx = uint8_t(std::clamp<int>(c.a - 1, 0, int(w->frames.size()) - 1)); v.frameCount = 0; if (live) loadFrame(ch, w->frames[v.frameIdx], model_ == Console::DMG); } }
+            if (v.inst.type == InstrumentType::Wave) {
+                // F names the frame itself, whether or not the run visits it
+                // (measured on 8.4.4 with a run of eight: F 06 loaded frame 5).
+                // The run step goes to the nearest, so an advance carries on
+                // from about there (section 65).
+                const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr;
+                if (w && !w->frames.empty()) {
+                    const int want = std::clamp<int>(c.a - 1, 0, int(w->frames.size()) - 1);
+                    uint8_t run[16]; const int len = waveRunOf(ch, run);
+                    int best = 0, bestD = 256;
+                    for (int k = 0; k < len; ++k) { const int d = std::abs(int(run[size_t(k)]) - want); if (d < bestD) { bestD = d; best = k; } }
+                    v.frameStep = uint8_t(best); v.frameCount = 0; v.frameIdx = uint8_t(want);
+                    if (live) loadFrame(ch, w->frames[size_t(want)], model_ == Console::DMG);
+                }
+            }
             // On the second pulse F is the instrument's PU2 transpose for the
             // note in progress and the notes after it, two's complement like
             // P's argument (section 49); inert on PU1 and NOI.
@@ -1410,10 +1431,15 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
             // `y`, `x` times; `x` = 0 hops for ever. The count is per table
             // run, so a new note starts it again.
             if (fromTable) {
+                // Each command column hops its own lane (section 64).
                 const int times = std::clamp<int>(c.a, 0, 15), row = std::clamp<int>(c.b, 0, 15);
-                if (times == 0) { v.tableStep = uint8_t(row); v.hopLeft = 0; }
-                else if (v.hopLeft == 0 && v.hopFrom != v.tableRow) { v.hopFrom = v.tableRow; v.hopLeft = uint8_t(times); v.tableStep = uint8_t(row); }
-                else if (v.hopLeft > 0) { if (--v.hopLeft > 0) v.tableStep = uint8_t(row); else v.hopFrom = 0xFF; }
+                uint8_t& step = lane == 2 ? v.tableStep2 : v.tableStep;
+                uint8_t& left = lane == 2 ? v.hopLeft2 : v.hopLeft;
+                uint8_t& from = lane == 2 ? v.hopFrom2 : v.hopFrom;
+                const uint8_t here = lane == 2 ? v.tableRow2 : v.tableRow;
+                if (times == 0) { step = uint8_t(row); left = 0; }
+                else if (left == 0 && from != here) { from = here; left = uint8_t(times); step = uint8_t(row); }
+                else if (left > 0) { if (--left > 0) step = uint8_t(row); else from = 0xFF; }
             }
             break;
         case Cmd::K: v.kill = int16_t(std::clamp<int>(c.a, 0, 255)); break;
@@ -1557,12 +1583,7 @@ void Driver::revertCommand(int ch, Cmd cmd)
             break;
         }
         case Cmd::F:
-            if (i.type == InstrumentType::Wave) {
-                const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr;
-                v.frameIdx = w && !w->frames.empty() ? uint8_t(std::min<int>(i.waveFrame, int(w->frames.size()) - 1)) : uint8_t(0);
-                v.frameCount = 0;
-                if (live && w && !w->frames.empty()) loadFrame(ch, w->frames[v.frameIdx], model_ == Console::DMG);
-            }
+            if (i.type == InstrumentType::Wave) setFrameStep(ch, 0, live);
             else if (pulse && ch == 1) { v.instTranspose = i.pu2Transpose; if (live) writePeriod(ch, false); }   // the instrument's own PU2 transpose back (section 49)
             break;
         case Cmd::M: writeNr50(global_.masterL, global_.masterR); break;
@@ -1582,11 +1603,8 @@ void Driver::revertCommand(int ch, Cmd cmd)
             break;
         case Cmd::W:
             if (wave) {
-                const Wave* w = bank_ ? bank_->wave(i.wave) : nullptr;
                 v.waveSlot = i.wave;
-                v.frameIdx = w && !w->frames.empty() ? uint8_t(std::min<int>(i.waveFrame, int(w->frames.size()) - 1)) : uint8_t(0);
-                v.frameCount = 0;
-                if (live && w && !w->frames.empty()) loadFrame(ch, w->frames[v.frameIdx], model_ == Console::DMG);
+                setFrameStep(ch, 0, live);
             }
             else if (pulse) { v.duty = i.duty; if (live) emit(regAddr(ch, 1), uint8_t((v.duty << 6) | lengthCode6(i.length))); }
             break;
@@ -1714,46 +1732,97 @@ uint16_t Driver::tableRowTicks(int ch, int row) const
 void Driver::beginTableRun(int ch, uint8_t slot)
 {
     Voice& v = v_[size_t(ch)];
-    v.tableSlot = slot; v.tableStep = 0; v.hopLeft = 0; v.hopFrom = 0xFF; v.tableRow = 0; v.tableWait = 0; v.tableGroove = 0;
+    v.tableSlot = slot; v.tableGroove = 0;
+    // Every lane starts at row 0 with its hop counter clear (section 64).
+    v.tableStep = v.tableStep2 = v.tableStepE = 0;
+    v.tableRow = v.tableRow2 = v.tableRowE = 0;
+    v.tableWait = v.tableWait2 = v.tableWaitE = 0;
+    v.hopLeft = v.hopLeft2 = 0; v.hopFrom = v.hopFrom2 = 0xFF;
+    v.volLaneOn = true;
     v.tableOn = slot != 0 && bank_ && bank_->table(slot);
     if (v.tableOn) ++v.tableRun;
 }
 
+/// Section 65: the frames a wave instrument's run visits, and the frame a run
+/// step lands on. `out` takes at most sixteen; the return is the run's length.
+int Driver::waveRunOf(int ch, uint8_t* out) const
+{
+    const Voice& v = v_[size_t(ch)];
+    const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr;
+    const int n = w ? int(w->frames.size()) : 0;
+    if (n <= 0) { out[0] = 0; return 1; }
+    return bank::waveRun(n, int(v.inst.frameLength), out);
+}
+
+/// Put the voice on a run step and load the frame it lands on.
+void Driver::setFrameStep(int ch, int step, bool live)
+{
+    Voice& v = v_[size_t(ch)];
+    const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr;
+    if (w == nullptr || w->frames.empty()) { v.frameStep = 0; v.frameIdx = 0; return; }
+    uint8_t run[16]; const int len = waveRunOf(ch, run);
+    const int st = step < 0 ? 0 : (step >= len ? len - 1 : step);
+    v.frameStep = uint8_t(st); v.frameCount = 0;
+    v.frameIdx = uint8_t(std::min<int>(run[size_t(st)], int(w->frames.size()) - 1));
+    if (live) loadFrame(ch, w->frames[v.frameIdx], model_ == Console::DMG);
+}
+
 void Driver::stepTable(int ch)
+{
+    // Kept for the note-on, which fires every lane's row 0 together.
+    stepTableLane(ch, 0); stepTableLane(ch, 1); stepTableLane(ch, 2);
+}
+
+/// One lane of the table (section 64): 1 is the transpose column and CMD 1,
+/// 2 is CMD 2, 0 is the volume column and its LEN. Each keeps its own row.
+void Driver::stepTableLane(int ch, int lane)
 {
     Voice& v = v_[size_t(ch)];
     if (!v.tableOn) return;
     const Table* t = bank_ ? bank_->table(v.tableSlot) : nullptr;
     if (!t) { v.tableOn = false; return; }
     if (v.delay > 0) { --v.delay; return; }
-    // The row's transpose column and its commands take effect together.
-    v.tableRow = v.tableStep;
-    const TableStep& s = t->steps[v.tableRow];
-    if (s.vol >= 0) {
-        // A level change, never a retrigger (section 26); inside a note-on it
-        // only changes the running state and the note's own writes carry it.
-        // It takes a shaped envelope over: the segments left stop until the
-        // next plain note-on (section 27).
-        v.shapedTaken = true;
-        if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) v.waveLevel = uint8_t(std::clamp<int>(s.vol / 4, 0, 3));
-        else v.envVol = uint8_t(std::clamp<int>(s.vol, 0, 15));
-        setLevel(ch);
-        // The same rule an E follows (section 59): before 8.8 the new level
-        // only starts on a trigger, and a table's volume column is how LSDj's
-        // old drums stutter. Never on the wave channel, whose level is NR32.
-        if (v.inst.envRetrig && v.inst.type != InstrumentType::Wave && v.inst.type != InstrumentType::Kit && !inNoteOn_) retrigger(ch, true);
+    uint8_t& step = lane == 2 ? v.tableStep2 : lane == 0 ? v.tableStepE : v.tableStep;
+    uint8_t& row  = lane == 2 ? v.tableRow2  : lane == 0 ? v.tableRowE  : v.tableRow;
+    uint16_t& wait = lane == 2 ? v.tableWait2 : lane == 0 ? v.tableWaitE : v.tableWait;
+    if (lane == 0 && !v.volLaneOn) return;
+    row = step;
+    const TableStep& s = t->steps[row];
+    bool hopped = false;
+    if (lane == 0) {
+        // The lane runs its own little program and ends at its first empty row,
+        // as LSDj's does (section 64).
+        if (s.vol < 0 && s.volHop < 0 && s.volTicks == 0) { v.volLaneOn = false; return; }
+        if (s.volHop >= 0) { step = uint8_t(std::clamp<int>(s.volHop, 0, kTableSteps - 1)); hopped = true; }
+        else if (s.vol >= 0) {
+            // A level change, never a retrigger (section 26); inside a note-on it
+            // only changes the running state and the note's own writes carry it.
+            // It takes a shaped envelope over: the segments left stop until the
+            // next plain note-on (section 27).
+            v.shapedTaken = true;
+            if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) v.waveLevel = uint8_t(std::clamp<int>(s.vol / 4, 0, 3));
+            else v.envVol = uint8_t(std::clamp<int>(s.vol, 0, 15));
+            setLevel(ch);
+            // The same rule an E follows (section 59): before 8.8 the new level
+            // only starts on a trigger, and a table's volume column is how LSDj's
+            // old drums stutter. Never on the wave channel, whose level is NR32.
+            if (v.inst.envRetrig && v.inst.type != InstrumentType::Wave && v.inst.type != InstrumentType::Kit && !inNoteOn_) retrigger(ch, true);
+        }
+        wait = s.volTicks ? uint16_t(s.volTicks) : tableRowTicks(ch, row);
+    } else {
+        const Command raw = lane == 2 ? s.cmd2 : s.cmd1;
+        const Command other = lane == 2 ? s.cmd1 : s.cmd2;
+        const Command c = raw.cmd == Cmd::Z ? resolveRandom(ch, raw, other) : raw;
+        if (c.cmd != Cmd::None) applyCommand(ch, c, true, lane);
+        wait = tableRowTicks(ch, row);
+        if (!v.tableOn) return;                       // the command stopped it
+        hopped = raw.cmd == Cmd::H;
     }
-    const Command c1 = s.cmd1.cmd == Cmd::Z ? resolveRandom(ch, s.cmd1, s.cmd2) : s.cmd1;
-    const Command c2 = s.cmd2.cmd == Cmd::Z ? resolveRandom(ch, s.cmd2, s.cmd1) : s.cmd2;
-    if (c1.cmd != Cmd::None) applyCommand(ch, c1, true);
-    if (c2.cmd != Cmd::None) applyCommand(ch, c2, true);
-    v.tableWait = tableRowTicks(ch, v.tableRow);
-    if (!v.tableOn) return;                       // H 0 stopped it
-    if (s.cmd1.cmd == Cmd::H || s.cmd2.cmd == Cmd::H) return;   // hopped: step already set
-    if (v.tableStep + 1 < kTableSteps) { ++v.tableStep; return; }
+    if (hopped) return;                               // the lane's step is already set
+    if (step + 1 < kTableSteps) { ++step; return; }
     switch (t->end) {
-        case TableEnd::Loop: v.tableStep = 0; break;
-        case TableEnd::Hop:  v.tableStep = uint8_t(std::clamp<int>(t->hopStep - 1, 0, 15)); break;
+        case TableEnd::Loop: step = 0; break;
+        case TableEnd::Hop:  step = uint8_t(std::clamp<int>(t->hopStep - 1, 0, 15)); break;
         case TableEnd::Stop: v.tableOn = false; break;
     }
 }
@@ -1829,8 +1898,13 @@ void Driver::tick(int ch)
     // for. A Step-mode table advances at notes instead (section 7).
     if (v.tableJustStarted) v.tableJustStarted = false;      // row 0 fired with the note-on (section 31)
     else if (v.inst.tableMode == TableMode::Tick) {
-        if (v.tableWait > 1) --v.tableWait;
-        else stepTable(ch);
+        // Each lane counts down its own row (section 64).
+        uint16_t* const waits[3] = { &v.tableWaitE, &v.tableWait, &v.tableWait2 };
+        for (int lane = 0; lane < 3; ++lane) {
+            if (*waits[lane] > 1) { --*waits[lane]; continue; }
+            stepTableLane(ch, lane);
+            if (!v.active) return;
+        }
     }
     if (!v.active) return;
     // The shaped envelope's level for this tick, after the table, which may
@@ -1865,14 +1939,19 @@ void Driver::tick(int ch)
             v.frameCount = 0;
             const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr;
             if (w && w->frames.size() > 1) {
-                const int n = int(w->frames.size());
-                int next = v.frameIdx + v.frameDir;
-                switch (v.inst.frameLoop) {
-                    case FrameLoop::Loop:     next = (next + n) % n; break;
-                    case FrameLoop::Once:     if (next >= n) next = n - 1; break;
-                    case FrameLoop::PingPong: if (next >= n) { next = n - 2; v.frameDir = -1; } else if (next < 0) { next = 1; v.frameDir = 1; } break;
+                uint8_t run[16]; const int len = waveRunOf(ch, run);
+                if (len > 1) {
+                    // Loop and PingPong turn at the run's own loop step, not at
+                    // its first frame (section 65).
+                    const int loop = std::clamp<int>(v.inst.frameLoopStep, 0, len - 1);
+                    int next = int(v.frameStep) + v.frameDir;
+                    switch (v.inst.frameLoop) {
+                        case FrameLoop::Loop:     if (next >= len) next = loop; break;   // the run plays through once, then from its loop step
+                        case FrameLoop::Once:     if (next >= len) next = len - 1; break;
+                        case FrameLoop::PingPong: if (next >= len) { next = len - 2 < loop ? loop : len - 2; v.frameDir = -1; } else if (next < loop) { next = loop + 1 < len ? loop + 1 : loop; v.frameDir = 1; } break;
+                    }
+                    if (next != int(v.frameStep)) setFrameStep(ch, next, true);
                 }
-                if (next != v.frameIdx) { v.frameIdx = uint8_t(next); loadFrame(ch, w->frames[size_t(next)], model_ == Console::DMG); }
             }
         }
     }

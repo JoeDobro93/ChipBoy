@@ -224,11 +224,17 @@ private:
         /// "off" -- while the instrument's own vibrato is off at depth 0.
         bool     vibOn = false;
         bank::VibDir vibDir = bank::VibDir::Down; uint8_t vibDelay = 0;
+        /// A table's three lanes keep their own pointers (section 64): lane 1 is
+        /// TSP and CMD 1, lane 2 is CMD 2, lane E is VOL and LEN.
         uint8_t  tableSlot = 0, tableStep = 0, tableRow = 0; bool tableOn = false;
+        uint8_t  tableStep2 = 0, tableRow2 = 0, tableStepE = 0, tableRowE = 0;
+        bool     volLaneOn = false;                   ///< the volume lane ends at its first empty row (section 64)
         uint16_t tableRun = 0;                        ///< counts this channel's table runs (section 32)
-        uint16_t tableWait = 0;                       ///< ticks left of the row in force
+        uint16_t tableWait = 0;                       ///< ticks left of lane 1's row
+        uint16_t tableWait2 = 0, tableWaitE = 0;      ///< and of lanes 2 and E
         uint8_t  tableGroove = 0;                     ///< the groove a G inside the table asked for
         uint8_t  hopLeft = 0, hopFrom = 0xFF;         ///< H's `times` counter and the row it counts for
+        uint8_t  hopLeft2 = 0, hopFrom2 = 0xFF;       ///< lane 2's own
         uint8_t  tableOverride = 0, tableParam = 0;   ///< in force (parameter or cell), and the parameter it came from
         int8_t   cellTranspose = 0;   ///< the chain row's transpose the last cell carried (section 48)
         int8_t   noteTsp = 0;         ///< of it, what this note took: 0 when the instrument's Transpose is off
@@ -268,7 +274,9 @@ private:
         bank::Pan pan = bank::Pan::Both;
         uint16_t lengthCode = 0;
         // wave
-        uint8_t  waveSlot = 1, frameIdx = 0, frameCount = 0; int8_t frameDir = 1;
+        /// `frameStep` walks the run section 65 builds, not the wave's frames:
+        /// `frameIdx` is the frame that step lands on, kept for the writers.
+        uint8_t  waveSlot = 1, frameStep = 0, frameIdx = 0, frameCount = 0; int8_t frameDir = 1;
         std::array<uint8_t, 16> ram{};
         bool     ramValid = false;
         // kit
@@ -370,7 +378,7 @@ private:
     /// changed (measured), which is what `force` is for.
     void writeNr51(bool force = false);
     void writeNr50(uint8_t l, uint8_t r);
-    void applyCommand(int ch, const bank::Command& c, bool fromTable);
+    void applyCommand(int ch, const bank::Command& c, bool fromTable, int lane = 1);
     /// A letter going back to where the instrument left it: what a slot going
     /// to none does, and what a cell's revert form (Command::c = kRevert)
     /// does. One function, so the two can never disagree (section 3).
@@ -402,6 +410,9 @@ private:
     static bank::InstrumentType defaultType(int ch);
     static bool typeFits(int ch, bank::InstrumentType t);
     void stepTable(int ch);
+    void stepTableLane(int ch, int lane);              ///< 1 = TSP and CMD 1, 2 = CMD 2, 0 = VOL (section 64)
+    int  waveRunOf(int ch, uint8_t* out) const;       ///< the run's frames, section 65; returns its length
+    void setFrameStep(int ch, int step, bool live);   ///< put the voice on a run step and load its frame
     /// Start a table run on a channel (section 32): the slot, back to row 0,
     /// and one more on the run counter the view publishes.
     void beginTableRun(int ch, uint8_t slot);

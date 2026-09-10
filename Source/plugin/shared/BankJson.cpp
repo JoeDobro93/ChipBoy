@@ -69,7 +69,9 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     o->setProperty("pan", int(i.pan)); o->setProperty("length", int(i.length)); o->setProperty("table", int(i.table));
     o->setProperty("transpose", i.transpose); o->setProperty("noteOff", int(i.noteOff)); o->setProperty("overlap", int(i.overlap));
     if (i.envRetrig) o->setProperty("envRetrig", true);        // section 59; absent reads as false, so old files are unchanged
-    if (i.waveFrame) o->setProperty("waveFrame", int(i.waveFrame));   // section 60; absent reads as 0
+    // Section 65; both absent read as every frame, looping from the first.
+    if (i.frameLength) o->setProperty("frameLength", int(i.frameLength));
+    if (i.frameLoopStep) o->setProperty("frameLoopStep", int(i.frameLoopStep));
     o->setProperty("pitchSpeed", int(i.pitchSpeed)); o->setProperty("cmdRate", int(i.cmdRate)); o->setProperty("chordRate", int(i.chordRate)); o->setProperty("tableMode", int(i.tableMode));
     if (i.pu2Transpose != 0) o->setProperty("pu2Transpose", int(i.pu2Transpose));   // section 49; absent reads as 0
     o->setProperty("vibShape", int(i.vib.shape)); o->setProperty("vibDir", int(i.vib.dir)); o->setProperty("vibSpeed", int(i.vib.speed)); o->setProperty("vibDepth", int(i.vib.depth)); o->setProperty("vibDelay", int(i.vib.delay));
@@ -106,7 +108,8 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.pan = Pan(std::clamp(getOr(o, "pan", 3), 0, 3)); i.length = uint16_t(std::clamp(getOr(o, "length", 0), 0, 256)); i.table = uint8_t(std::clamp(getOr(o, "table", 0), 0, 64));
     i.transpose = bool(o->getProperty("transpose")); i.noteOff = NoteOff(std::clamp(getOr(o, "noteOff", 0), 0, 2));
     i.envRetrig = bool(o->getProperty("envRetrig"));
-    i.waveFrame = uint8_t(std::clamp(getOr(o, "waveFrame", 0), 0, 63));
+    i.frameLength = uint8_t(std::clamp(getOr(o, "frameLength", 0), 0, 16));
+    i.frameLoopStep = uint8_t(std::clamp(getOr(o, "frameLoopStep", 0), 0, 15));
     // Overlap replaced the legato flag: a file written before it carries only
     // legato, and one with neither takes the type's own default.
     if (o->hasProperty("overlap")) i.overlap = Overlap(std::clamp(getOr(o, "overlap", 0), 0, 1));
@@ -163,6 +166,10 @@ var tableToVarImpl(const Table& t, int slot)
     for (const auto& s : t.steps) {
         auto* so = new DynamicObject();
         so->setProperty("vol", int(s.vol));
+        // Section 64; both absent read as the old behaviour: the volume lane
+        // steps with the table's row and never hops on its own.
+        if (s.volTicks) so->setProperty("volLen", int(s.volTicks));
+        if (s.volHop >= 0) so->setProperty("volHop", int(s.volHop));
         if (s.hasTranspose) so->setProperty("trn", int(s.transpose));
         if (s.cmd1.cmd != Cmd::None) so->setProperty("c1", cmdToVar(s.cmd1));
         if (s.cmd2.cmd != Cmd::None) so->setProperty("c2", cmdToVar(s.cmd2));
@@ -180,6 +187,8 @@ void tableFromVarImpl(const var& v, Table& t)
             auto* so = (*steps)[k].getDynamicObject(); if (!so) continue;
             auto& s = t.steps[size_t(k)];
             s.vol = int8_t(std::clamp(getOr(so, "vol", -1), -1, 15));
+            s.volTicks = uint8_t(std::clamp(getOr(so, "volLen", 0), 0, 15));
+            s.volHop = int8_t(std::clamp(getOr(so, "volHop", -1), -1, 15));
             s.hasTranspose = so->hasProperty("trn"); s.transpose = int8_t(std::clamp(getOr(so, "trn", 0), -128, 127));
             s.cmd1 = cmdFromVar(so->getProperty("c1")); s.cmd2 = cmdFromVar(so->getProperty("c2"));
         }

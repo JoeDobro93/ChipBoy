@@ -59,7 +59,7 @@ std::vector<uint8_t> testSong(int format)
     for (int k = 0; k < 16; ++k) s[kWaves + size_t(k)] = uint8_t((k << 4) | k);
     // table 0: row 0 transposes -12, row 1 +7 with a K, row 2 volume 5
     s[kTableAlloc + 0] = 1;
-    s[kTableTsp + 0] = 0xF4; s[kTableTsp + 1] = 7; s[kTableEnv + 2] = 0x50;
+    s[kTableTsp + 0] = 0xF4; s[kTableTsp + 1] = 7; s[kTableEnv + 2] = 0x54;          // amplitude 5, four ticks (section 64)
     // K is byte 9 in format 22 (B at 2), byte 8 before it
     s[kTableCmd1 + 1] = uint8_t(format >= 20 ? 9 : 8); s[kTableCmd1V + 1] = 2;
     // phrase 0 (PU1): C-4 with the lead and P -3 at step 4, A table 0 at step 8; phrase 1 (NOI): hats; phrase 2 (WAV): a note
@@ -245,7 +245,7 @@ TEST_CASE("a format-22 song imports its instruments, tables, phrases and chains"
     const auto& t = bank->tables[0];
     REQUIRE(t.used);
     CHECK(t.steps[0].hasTranspose); CHECK(t.steps[1].hasTranspose); CHECK(t.steps[1].cmd1.cmd == bank::Cmd::K); CHECK(t.steps[1].cmd1.a == 2);
-    CHECK(t.steps[2].vol == 5); CHECK(t.steps[3].vol == -1);
+    CHECK(t.steps[2].vol == 5); CHECK(int(t.steps[2].volTicks) == 4); CHECK(t.steps[3].vol == -1);
     // Phrases: PU1's copy has C-4 with the lead, D-4 with P FD, E-4 with the table in its TBL column.
     const auto* p1 = out->phrase(1);
     REQUIRE(p1 != nullptr);
@@ -527,7 +527,7 @@ TEST_CASE("the wave instrument's synth and frame come from byte 2 before 9", "[l
     REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(11), *bank, *out, sum, notes));
     const auto& w11 = bank->instruments[0];
     REQUIRE(w11.wave >= 1);
-    CHECK(int(w11.waveFrame) == 5);
+    CHECK(int(w11.frameLoopStep) == 5);          // the nibble is LOOP POS, not a start frame (section 65)
     const auto& wave11 = bank->waves[size_t(w11.wave - 1)];
     REQUIRE(!wave11.frames.empty());
     CHECK(int(wave11.frames[0].s[0]) == 2);                               // synth 2, from byte 2
@@ -535,7 +535,7 @@ TEST_CASE("the wave instrument's synth and frame come from byte 2 before 9", "[l
     song[kFormatVersionAt] = 22;
     REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes));
     const auto& w22 = bank->instruments[0];
-    CHECK(int(w22.waveFrame) == 0);
+    CHECK(int(w22.frameLoopStep) == 0);
     CHECK(int(bank->waves[size_t(w22.wave - 1)].frames[0].s[0]) == 4);      // synth 4, from byte 3
 }
 
@@ -699,10 +699,10 @@ TEST_CASE("a kit instrument takes its samples from the ROM beside the save", "[l
     CHECK(noted);
 }
 
-TEST_CASE("an H in a table's second command column is dropped", "[lsdj]")
+TEST_CASE("a table's second command column keeps its own hop", "[lsdj]")
 {
-    // Section 62: LSDj's two table command columns loop independently, so an H
-    // in the second cannot be carried by ChipBoy's single table pointer.
+    // Section 64: LSDj's two table command columns loop independently and
+    // ChipBoy's do too, so the H in the second column is carried, not dropped.
     for (const int format : { 11, 22 }) {
         const bool withB = format >= 11;
         const auto letter = [withB](char c) { const char* t = withB ? "-ABCDEFGHKLMOPRSTVWZ" : "-ACDEFGHKLMOPRSTVWZ"; return uint8_t(std::strchr(t, c) - t); };
@@ -712,7 +712,7 @@ TEST_CASE("an H in a table's second command column is dropped", "[lsdj]")
         song[kTableAlloc + 0] = 1;
         song[kTableTsp + 1] = 3; song[kTableTsp + 2] = 7;
         song[kTableCmd1 + 3] = letter('H'); song[kTableCmd1V + 3] = 0;      // the hop the transpose column follows
-        song[kTableCmd2 + 1] = letter('H'); song[kTableCmd2V + 1] = 0;      // and the one that loops only its own column
+        song[kTableCmd2 + 1] = letter('H'); song[kTableCmd2V + 1] = 0;      // and the second column's own
         song[kPhraseAlloc] |= 1; song[kNotes] = uint8_t(60 - 35); song[kPhraseInst] = 0;
         song[kChainPhrases] = 0;
         song[kRows + 0] = 0; song[kRows + 1] = 0xFF; song[kRows + 2] = 0xFF; song[kRows + 3] = 0xFF;
@@ -720,12 +720,80 @@ TEST_CASE("an H in a table's second command column is dropped", "[lsdj]")
         ImportSummary sum; ImportNotes notes;
         REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(format), *bank, *out, sum, notes));
         const auto& tb = bank->tables[0];
-        CHECK(tb.steps[3].cmd1.cmd == bank::Cmd::H);            // the first column keeps its hop
-        CHECK(tb.steps[1].cmd2.cmd == bank::Cmd::None);         // the second column's is gone
-        bool told = false;
-        for (const auto& l : notes.lines) if (l.find("second command column") != std::string::npos) told = true;
-        CHECK(told);
+        CHECK(tb.steps[3].cmd1.cmd == bank::Cmd::H);
+        CHECK(tb.steps[1].cmd2.cmd == bank::Cmd::H);
+        for (const auto& l : notes.lines) CHECK(l.find("second command column") == std::string::npos);
     }
+}
+
+TEST_CASE("a table's ENV column carries its duration and its hop", "[lsdj]")
+{
+    // Section 64: the low digit is a duration in ticks, 0 blanks the row and F
+    // hops the volume lane to the row the high digit names.
+    auto song = blankSong(11);
+    song[kInstAlloc + 0] = 1;
+    uint8_t* i0 = song.data() + kInst; i0[0] = 0; i0[1] = 0xA5; i0[4] = 0xFF; i0[6] = 0x20 | 0; i0[7] = 0x80 | 3;
+    song[kTableAlloc + 0] = 1;
+    song[kTableEnv + 0] = 0xA4;      // amplitude 10, four ticks
+    song[kTableEnv + 1] = 0x01;      // amplitude 0 is a level, not a blank
+    song[kTableEnv + 2] = 0xB0;      // duration 0: the row is blank
+    song[kTableEnv + 3] = 0x1F;      // hop the lane to row 1
+    song[kPhraseAlloc] |= 1; song[kNotes] = uint8_t(60 - 35); song[kPhraseInst] = 0;
+    song[kChainPhrases] = 0;
+    song[kRows + 0] = 0; song[kRows + 1] = 0xFF; song[kRows + 2] = 0xFF; song[kRows + 3] = 0xFF;
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(11), *bank, *out, sum, notes));
+    const auto& tb = bank->tables[0];
+    CHECK(int(tb.steps[0].vol) == 10); CHECK(int(tb.steps[0].volTicks) == 4); CHECK(int(tb.steps[0].volHop) == -1);
+    CHECK(int(tb.steps[1].vol) == 0);  CHECK(int(tb.steps[1].volTicks) == 1);
+    CHECK(int(tb.steps[2].vol) == -1); CHECK(int(tb.steps[2].volTicks) == 0);
+    CHECK(int(tb.steps[3].vol) == -1); CHECK(int(tb.steps[3].volHop) == 1);
+}
+
+TEST_CASE("a wave instrument's PLAY, LENGTH, LOOP POS and SPEED are read", "[lsdj]")
+{
+    // Section 65: byte 9's low two bits, byte 10's low nibble, byte 11, and the
+    // low nibble of the synth byte.
+    const auto build = [](int play, int lengthNibble, int speed, int loopPos) {
+        auto song = blankSong(11);
+        song[kInstAlloc + 0] = 1;
+        uint8_t* i0 = song.data() + kInst;
+        i0[0] = 1; i0[1] = 0x20; i0[2] = uint8_t((2 << 4) | loopPos); i0[7] = 3;
+        i0[9] = uint8_t(play); i0[10] = uint8_t(lengthNibble); i0[11] = uint8_t(speed);
+        for (int f = 0; f < 16; ++f)
+            for (int k = 0; k < 16; ++k) song[kWaves + size_t((2 * 16 + f) * 16 + k)] = uint8_t(0x20 | f);
+        song[kPhraseAlloc] |= 1; song[kNotes] = uint8_t(60 - 35); song[kPhraseInst] = 0;
+        song[kChainPhrases] = 0; song[kRows + 0] = 0xFF; song[kRows + 1] = 0xFF; song[kRows + 2] = 0; song[kRows + 3] = 0xFF;
+        return song;
+    };
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+
+    const auto loop = build(2, 8, 3, 9);                  // LOOP, LENGTH 8, SPEED 3, LOOP POS 9
+    REQUIRE(importSong(loop.data(), loop.size(), *lsdjModelForFormat(11), *bank, *out, sum, notes));
+    const auto& a = bank->instruments[0];
+    CHECK(a.frameLoop == bank::FrameLoop::Loop);
+    CHECK(int(a.frameLength) == 8);
+    CHECK(int(a.frameAdvance) == 7);                      // SPEED + 4 ticks a frame
+    CHECK(int(a.frameLoopStep) == 1);                     // 8 - (16 - 9)
+
+    const auto manual = build(0, 0, 0, 0);
+    REQUIRE(importSong(manual.data(), manual.size(), *lsdjModelForFormat(11), *bank, *out, sum, notes));
+    CHECK(int(bank->instruments[0].frameAdvance) == 0);   // MANUAL never advances
+    CHECK(int(bank->instruments[0].frameLength) == 16);
+
+    const auto once = build(1, 12, 0, 5);
+    REQUIRE(importSong(once.data(), once.size(), *lsdjModelForFormat(11), *bank, *out, sum, notes));
+    CHECK(bank->instruments[0].frameLoop == bank::FrameLoop::Once);
+    CHECK(int(bank->instruments[0].frameLength) == 4);
+    CHECK(int(bank->instruments[0].frameLoopStep) == 0);  // 4 - (16 - 5) is negative: the whole run
+
+    const auto ping = build(3, 0, 15, 11);
+    REQUIRE(importSong(ping.data(), ping.size(), *lsdjModelForFormat(11), *bank, *out, sum, notes));
+    CHECK(bank->instruments[0].frameLoop == bank::FrameLoop::PingPong);
+    CHECK(int(bank->instruments[0].frameAdvance) == 19);
+    CHECK(int(bank->instruments[0].frameLoopStep) == 11);
 }
 
 TEST_CASE("before LSDj 9 a table's G holds the groove's first step", "[lsdj]")

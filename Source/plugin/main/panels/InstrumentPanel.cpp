@@ -250,7 +250,7 @@ struct InstrumentPanel::Widgets {
     // sound
     Segmented* duty = nullptr; NameField* dutySeq = nullptr; Stepper* sweepRate = nullptr; Segmented* sweepDir = nullptr; Stepper* sweepShift = nullptr;
     Stepper* pu2Transpose = nullptr;
-    Stepper* wave = nullptr; Stepper* waveFrame = nullptr; Stepper* frameAdv = nullptr; Segmented* frameLoop = nullptr; Segmented* waveLevel = nullptr;
+    Stepper* wave = nullptr; Stepper* frameLength = nullptr; Stepper* frameLoopStep = nullptr; Stepper* frameAdv = nullptr; Segmented* frameLoop = nullptr; Segmented* waveLevel = nullptr;
     Stepper* kit = nullptr; Segmented* kitLoop = nullptr; TextLine* kitRate = nullptr;
     Segmented* lfsr = nullptr; Segmented* pitchMode = nullptr; Stepper* shift = nullptr; Stepper* divisor = nullptr; Stepper* noiseSweep = nullptr;
     Segmented* pan = nullptr;
@@ -683,8 +683,11 @@ void InstrumentPanel::rebuildEditor()
         w_->wave->setSlotNumbering(true);   // section 52
         w_->wave->onList = [this] { showWaveMenu(); };
         w_->wave->onOpen = [this] { if (w_ && w_->wave) { if (w_->wave->value() > 0) openSlot(ui::SlotKind::Wave, w_->wave->value()); else w_->wave->beginTypedEntry(); } };
-        w_->waveFrame = stepper(*sound, "Start frame", "The frame a note begins on, counted from 0; Frame advance animates from there and an F command overrides it (section 60).",
-                                0, 15, 0, {}, [](bank::Instrument& i, int v) { i.waveFrame = uint8_t(v); });
+        w_->frameLength = stepper(*sound, "Frames", "How many of the wave's frames the run visits, spread evenly across them; 0 is every one (section 65).",
+                                  0, 16, 0, [](int v) { return v == 0 ? juce::String("all") : juce::String(v); },
+                                  [](bank::Instrument& i, int v) { i.frameLength = uint8_t(v); });
+        w_->frameLoopStep = stepper(*sound, "Loop from", "The step of that run Loop and Ping-pong come back to; the run always starts at its first (section 65).",
+                                    0, 15, 0, {}, [](bank::Instrument& i, int v) { i.frameLoopStep = uint8_t(v); });
         w_->frameAdv = stepper(*sound, "Frame advance", "Ticks per frame; 0 holds the frame.", 0, 15, 0, {}, [](bank::Instrument& i, int v) { i.frameAdvance = uint8_t(v); });
         w_->frameLoop = seg(*sound, "Frame loop", "How the frames run.", { "Loop", "One-shot", "Ping-pong" }, [](bank::Instrument& i, int v) { i.frameLoop = bank::FrameLoop(std::clamp(v, 0, 2)); });
         w_->waveLevel = seg(*sound, "Level", "NR32 bits 6-5: four levels, and no envelope unit on this channel.", { "mute", "25", "50", "100" }, [](bank::Instrument& i, int v) { i.waveLevel = uint8_t(v); });
@@ -929,7 +932,7 @@ void InstrumentPanel::syncValues()
     S(w.duty, i.duty);
     if (w.dutySeq && w.dutySeq->text() != dutySeqText(i)) w.dutySeq->setText(dutySeqText(i));
     T(w.sweepRate, i.sweepRate); S(w.sweepDir, i.sweepDown ? 1 : 0); T(w.sweepShift, i.sweepShift); T(w.pu2Transpose, i.pu2Transpose);
-    T(w.wave, i.wave); T(w.waveFrame, i.waveFrame); T(w.frameAdv, i.frameAdvance); S(w.frameLoop, int(i.frameLoop)); S(w.waveLevel, i.waveLevel);
+    T(w.wave, i.wave); T(w.frameLength, i.frameLength); T(w.frameLoopStep, i.frameLoopStep); T(w.frameAdv, i.frameAdvance); S(w.frameLoop, int(i.frameLoop)); S(w.waveLevel, i.waveLevel);
     T(w.kit, i.kit); S(w.kitLoop, int(i.kitLoop));
     if (w.kitRate) {
         const bank::Kit* k = b->kit(i.kit);

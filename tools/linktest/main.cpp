@@ -418,6 +418,32 @@ int main()
               "a song written before format 4 still reads, at the file's steps per bar");
         check(readOld && old.recordArm[0] && old.recordArm[3], "and its channels are all armed");
 
+        // Sections 64 and 65: the table's LEN and volume hop, and the wave
+        // instrument's run, survive a round trip; a file without them reads as
+        // the volume column stepping with the table's row.
+        {
+            auto bk = std::make_unique<chipboy::bank::Bank>();
+            auto& tb = bk->tables[3];
+            tb.used = true; tb.name = "Lanes";
+            tb.steps[0].vol = 9; tb.steps[0].volTicks = 6;
+            tb.steps[2].volHop = 1;
+            auto& wi = bk->instruments[4];
+            wi = chipboy::bank::Instrument::defaults(chipboy::bank::InstrumentType::Wave, "Run");
+            wi.used = true; wi.frameLength = 8; wi.frameLoopStep = 3; wi.frameAdvance = 7;
+            auto back = std::make_unique<chipboy::bank::Bank>();
+            const bool bankOk = bankFromJson(bankToJson(*bk), *back);
+            const auto& tb2 = back->tables[3];
+            const auto& wi2 = back->instruments[4];
+            check(bankOk && int(tb2.steps[0].volTicks) == 6 && int(tb2.steps[0].vol) == 9 && int(tb2.steps[2].volHop) == 1,
+                  "a table's LEN and its volume hop survive a round trip");
+            check(bankOk && int(wi2.frameLength) == 8 && int(wi2.frameLoopStep) == 3 && int(wi2.frameAdvance) == 7,
+                  "and a wave instrument's frame run does too");
+            auto older = std::make_unique<chipboy::bank::Bank>();
+            const bool oldOk = bankFromJson("{\"format\":\"chipboy-bank\",\"tables\":[{\"slot\":4,\"name\":\"T\",\"steps\":[{\"vol\":9}]}]}", *older);
+            check(oldOk && int(older->tables[3].steps[0].volTicks) == 0 && int(older->tables[3].steps[0].volHop) == -1,
+                  "a table written before them reads as the volume column stepping with the row");
+        }
+
         // Section 61: the song's own transpose and a chain row's are stored
         // apart, so a round trip does not add the song's to every row.
         const auto tspOwned = song();
