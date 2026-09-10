@@ -66,11 +66,11 @@ private:
     static uint8_t ensurePhrase(tracker::Song& s, int ch, int bar);
 
     ui::Led playLed_;
-    TextLine playText_, pos_, startLabel_, tempoLabel_;
+    TextLine playText_, pos_, startLabel_, tempoLabel_, transposeLabel_;
     juce::TextButton play_, stop_, loop_, follow_, rec_, saveSong_, loadSong_, importSav_, export_;
     // the song's own timeline: its master tempo (section 19) and where its
     // tick 0 sits on the host's. Beats and Steps / bar went with the bars.
-    ui::Stepper tempo_, songStart_;
+    ui::Stepper tempo_, songStart_, transpose_;
     std::unique_ptr<ParamWatch> tempoWatch_;
     /// The songs open in this window (section 18); the active one is live.
     ui::SongTabStrip tabs_;

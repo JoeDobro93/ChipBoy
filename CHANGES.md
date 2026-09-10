@@ -2147,6 +2147,37 @@ at +26 dB on the DMG and drops 24 dB with the display off.
 **Still estimated:** amplifier bandwidth (≥ 39 kHz, interface-limited) and the clip point
 (ladder sources never peak coherently). Neither is audible; both are logged.
 
+### 2026-09-10 — a table's second command column, its groove, and the song transpose (spec §62, §63)
+
+**Changed:** three things the LSDj import got wrong on the user's format-11 save.
+
+1. An `H` in a table's **second command column** is dropped at import. LSDj gives each
+   command column its own row pointer (its changelog says so at v1.3.0B), so such a hop
+   loops that column alone; ChipBoy has one pointer, and honouring the hop truncated every
+   arpeggio built this way.
+2. A table's `G` is pointed at a **one step groove** when the save is older than LSDj 9,
+   because before 9 every row of the run takes the groove's *first* step rather than
+   walking it. The slot comes from the grooves the song never names.
+3. The song's own transpose is no longer written into every chain row. `songToVar` used
+   `transposeAt()`, which already adds it, so a save-and-reload doubled it; the writer and
+   the chain grid now read the row's own value through the new `Song::rowTranspose()`.
+
+**Why:** the user's first saved song imported with its arpeggios stuck on two notes, its
+tables swinging where LSDj held one length, and, once §61 added the song transpose, every
+note a semitone sharp after a round trip.
+
+**Considered:** giving ChipBoy's tables two row pointers, which would match LSDj exactly --
+rejected because it changes the table for every ChipBoy player to serve the import, and the
+rows a second column replays are nearly always ones that only set a value. Rewriting the
+groove in place instead of allocating a slot -- rejected because the same groove is usually
+on the timeline too, where both its steps matter. Keeping §57's walking rule everywhere --
+rejected: it is measurably LSDj 9's rule alone.
+
+**Not measured:** formats 0 to 7 for the groove rule. No save of that era in hand plays
+under the harness, and the generated probe saves proved unreliable for table commands (they
+report a hop from the second column that a real save does not, and drop a table's `G`).
+Those formats take the pre-9 rule, which both formats either side of them follow.
+
 ---
 
 ## Departures from the spec

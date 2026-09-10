@@ -2044,10 +2044,55 @@ TEST_CASE("a noise instrument takes its table's transpose column through the map
     REQUIRE(last(w, 0xFF22) != nullptr);
     CHECK(last(w, 0xFF22)->value == nr43For(72));
     CHECK(r.drv.view(3).tableRow == 2);
-    // With the instrument's Transpose off the column does nothing to noise either.
+    // The instrument's Transpose flag gates the song's and the chain's offsets,
+    // never the table's own column (section 61), so this still moves.
     i.transpose = false;
     w = r.block({ cellOn(3, 72, 21) }, 200);
-    CHECK(last(w, 0xFF22)->value == nr43For(72));
+    CHECK(last(w, 0xFF22)->value == nr43For(48));
+}
+
+TEST_CASE("E re-attacks the note when the instrument asks for it", "[driver][commands]")
+{
+    // Section 59: LSDj's rule before 8.8. Off by default, so nothing that
+    // exists changes; on, an E sets the level and hits the note again.
+    Rig r;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    { ChannelParams p; p.instrument = 21; for (int ch = 0; ch < 4; ++ch) r.drv.setParams(ch, p); }
+    auto& i = r.bank.instruments[20]; i = Instrument::defaults(InstrumentType::Pulse, "lead");
+    r.block({ cellOn(0, 60, 21) }, 200);
+    auto w = r.block({ cellCmd(0, Command{ Cmd::E, 8, 0, 0 }) }, 200);
+    CHECK(has(w, 0xFF12));                                  // the level moved
+    CHECK_FALSE(anyTrigger(w, 0xFF14));                     // and never triggered (section 26)
+    i.envRetrig = true;
+    r.block({ cellOn(0, 60, 21) }, 200);
+    w = r.block({ cellCmd(0, Command{ Cmd::E, 8, 0, 0 }) }, 200);
+    CHECK(has(w, 0xFF12));
+    CHECK(anyTrigger(w, 0xFF14));                           // now it hits the note again
+    // A table's E row does the same, and it is the noise channel's drum stutter.
+    auto& t = r.bank.tables[9]; t = Table{}; t.used = true; t.end = TableEnd::Stop;
+    t.steps[0].cmd1 = Command{ Cmd::E, 5, 0, 0 };
+    t.steps[1].cmd1 = Command{ Cmd::E, 3, 0, 0 };
+    auto& n = r.bank.instruments[21]; n = Instrument::defaults(InstrumentType::Noise, "drum");
+    n.table = 10; n.envRetrig = true;
+    { ChannelParams p; p.instrument = 22; r.drv.setParams(3, p); }
+    r.block({ cellOn(3, 60, 22) }, 200);
+    w = r.block({}, 200);                                   // row 1's E, a tick later
+    CHECK(anyTrigger(w, 0xFF23));
+    // A table's volume column does it too, which is the old drum stutter.
+    t.steps[0].cmd1 = {}; t.steps[1].cmd1 = {};
+    t.steps[0].vol = 10; t.steps[1].vol = 6;
+    r.block({ cellOn(3, 60, 22) }, 200);
+    w = r.block({}, 200);                                   // row 1's volume, a tick later
+    CHECK(has(w, 0xFF21));
+    CHECK(anyTrigger(w, 0xFF23));
+    // Never on the wave channel: its level is NR32 and needs no trigger.
+    auto& wv = r.bank.instruments[22]; wv = Instrument::defaults(InstrumentType::Wave, "wave");
+    wv.envRetrig = true;
+    { ChannelParams p; p.instrument = 23; r.drv.setParams(2, p); }
+    r.block({ cellOn(2, 60, 23) }, 200);
+    w = r.block({ cellCmd(2, Command{ Cmd::E, 2, 0, 0 }) }, 200);
+    CHECK(has(w, 0xFF1C));                                  // NR32 moved
+    CHECK_FALSE(anyTrigger(w, 0xFF1E));
 }
 
 TEST_CASE("S on the noise channel transposes through the map and adds up", "[driver][noise]")

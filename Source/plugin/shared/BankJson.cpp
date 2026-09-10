@@ -68,6 +68,8 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     o->setProperty("type", int(i.type));
     o->setProperty("pan", int(i.pan)); o->setProperty("length", int(i.length)); o->setProperty("table", int(i.table));
     o->setProperty("transpose", i.transpose); o->setProperty("noteOff", int(i.noteOff)); o->setProperty("overlap", int(i.overlap));
+    if (i.envRetrig) o->setProperty("envRetrig", true);        // section 59; absent reads as false, so old files are unchanged
+    if (i.waveFrame) o->setProperty("waveFrame", int(i.waveFrame));   // section 60; absent reads as 0
     o->setProperty("pitchSpeed", int(i.pitchSpeed)); o->setProperty("cmdRate", int(i.cmdRate)); o->setProperty("chordRate", int(i.chordRate)); o->setProperty("tableMode", int(i.tableMode));
     if (i.pu2Transpose != 0) o->setProperty("pu2Transpose", int(i.pu2Transpose));   // section 49; absent reads as 0
     o->setProperty("vibShape", int(i.vib.shape)); o->setProperty("vibDir", int(i.vib.dir)); o->setProperty("vibSpeed", int(i.vib.speed)); o->setProperty("vibDepth", int(i.vib.depth)); o->setProperty("vibDelay", int(i.vib.delay));
@@ -103,6 +105,8 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.type = InstrumentType(std::clamp(getOr(o, "type", 0), 0, 3));
     i.pan = Pan(std::clamp(getOr(o, "pan", 3), 0, 3)); i.length = uint16_t(std::clamp(getOr(o, "length", 0), 0, 256)); i.table = uint8_t(std::clamp(getOr(o, "table", 0), 0, 64));
     i.transpose = bool(o->getProperty("transpose")); i.noteOff = NoteOff(std::clamp(getOr(o, "noteOff", 0), 0, 2));
+    i.envRetrig = bool(o->getProperty("envRetrig"));
+    i.waveFrame = uint8_t(std::clamp(getOr(o, "waveFrame", 0), 0, 63));
     // Overlap replaced the legato flag: a file written before it carries only
     // legato, and one with neither takes the type's own default.
     if (o->hasProperty("overlap")) i.overlap = Overlap(std::clamp(getOr(o, "overlap", 0), 0, 1));
@@ -374,6 +378,7 @@ var songToVar(const tracker::Song& s)
     o->setProperty("format", "chipboy-song"); o->setProperty("version", 7);
     // The song's own timeline (docs/COMMANDS_AND_TEMPO.md section 4).
     o->setProperty("tempoBpm", s.tempoBpm); o->setProperty("songStartSeconds", s.songStartSeconds);
+    if (s.transpose) o->setProperty("transpose", int(s.transpose));    // section 61; absent reads as 0
     Array<var> phrases;
     for (int i = 0; i < tracker::kPhraseSlots; ++i) {
         const auto& p = s.phrases[size_t(i)]; if (!p.used) continue;
@@ -405,7 +410,8 @@ var songToVar(const tracker::Song& s)
         for (const auto& t : s.chainTranspose) for (auto v : t) any = any || v != 0;
         if (any) {
             Array<var> tsp;
-            for (int ch = 0; ch < 4; ++ch) { Array<var> a; const int rows = s.rows(ch); for (int r = 0; r < rows; ++r) a.add(int(s.transposeAt(ch, r))); tsp.add(a); }
+            // Each row's own transpose, never the song's on top of it (section 61).
+            for (int ch = 0; ch < 4; ++ch) { Array<var> a; const int rows = s.rows(ch); for (int r = 0; r < rows; ++r) a.add(int(s.rowTranspose(ch, r))); tsp.add(a); }
             o->setProperty("chainTransposes", tsp);
         }
     }
@@ -482,6 +488,7 @@ bool songFromVar(const var& v, tracker::Song& out)
     // below (section 25).
     const int fileSteps = std::clamp(o->hasProperty("steps") ? getOr(o, "steps", 16) : getOr(o, "stepsPerBar", 16), 1, tracker::kMaxSteps);
     out.tempoBpm = std::clamp(o->hasProperty("tempoBpm") ? double(o->getProperty("tempoBpm")) : 120.0, 40.0, 255.0);
+    out.transpose = int8_t(std::clamp(o->hasProperty("transpose") ? int(o->getProperty("transpose")) : 0, -128, 127));
     out.songStartSeconds = std::max(0.0, o->hasProperty("songStartSeconds") ? double(o->getProperty("songStartSeconds")) : 0.0);
     bool haveLengths = false;
     if (auto* ph = o->getProperty("phrases").getArray())

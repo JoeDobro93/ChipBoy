@@ -2091,7 +2091,7 @@ struct ChainColumn::Impl {
     bool anyPlaying(int bar) const { for (int v : playingRow) if (v == bar) return true; return false; }
     int barCount() const { return juce::jmax(songBars(), juce::jmax(selectedBar, playingMax()) + 1) + 1; }
     int slotAt(int ch, int bar) const { return song != nullptr ? song->phraseAt(ch, bar) : 0; }
-    int tspAt(int ch, int bar) const { return song != nullptr ? int(song->transposeAt(ch, bar)) : 0; }
+    int tspAt(int ch, int bar) const { return song != nullptr ? int(song->rowTranspose(ch, bar)) : 0; }   // the row's own; the song's sits in the head (section 61)
     /// The last column is the row's LEN: a phrase carries its own length now
     /// (section 25), so it reads the first phrase this row holds and typing
     /// there sets the length of every phrase in the row.

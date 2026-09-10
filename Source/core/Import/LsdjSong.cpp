@@ -12,6 +12,7 @@
 #include <memory>
 #include <set>
 #include <tuple>
+#include <vector>
 
 namespace chipboy::lsdj {
 
@@ -30,7 +31,7 @@ namespace {
 constexpr size_t kPhraseNotes = 0x0000, kGrooves = 0x1090, kSongRows = 0x1290, kTableEnv = 0x1690, kInstNames = 0x1E7A;
 constexpr size_t kTableAlloc = 0x2020, kInstAlloc = 0x2040, kChainPhrases = 0x2080, kChainTsp = 0x2880, kInstParams = 0x3080;
 constexpr size_t kTableTsp = 0x3480, kTableCmd1 = 0x3680, kTableCmd1V = 0x3880, kTableCmd2 = 0x3A80, kTableCmd2V = 0x3C80;
-constexpr size_t kPhraseAlloc = 0x3E82, kTempo = 0x3FB4, kPhraseCmd = 0x4000, kPhraseCmdV = 0x4FF0, kWaves = 0x6000, kPhraseInst = 0x7000;
+constexpr size_t kPhraseAlloc = 0x3E82, kTempo = 0x3FB4, kSongTranspose = 0x3FB5, kPhraseCmd = 0x4000, kPhraseCmdV = 0x4FF0, kWaves = 0x6000, kPhraseInst = 0x7000;
 constexpr int kLsdjTables = 32, kLsdjInstruments = 64, kLsdjPhrases = 255, kLsdjChains = 128;
 constexpr double kPitchClockMs = 11712.0 * 1000.0 / 4194304.0;   // 2.7924 ms
 
@@ -383,6 +384,8 @@ struct Reader {
             o.vib.speed = 8; o.vib.depth = 0; o.vib.delay = 0;
             o.table = (b[6] & 0x20) ? uint8_t((b[6] & 0x1F) + 1) : uint8_t(0);
             o.transpose = !(b[5] & 0x20);
+            // Before 8.8 an E writes NRx2 and triggers (section 59).
+            o.envRetrig = m.envelopeLaw != EnvelopeLaw::SoftwareStages;
             instTranspose[size_t(i)] = o.transpose;
             if (t == 0 || t == 3) envelope(b, o, name);
             if (t == 0) {
@@ -394,10 +397,12 @@ struct Reader {
             } else if (t == 1) {
                 static const uint8_t kLevel[4] = { 0, 3, 2, 1 };       // the stored bits are the NR32 code, 1 = 100 %
                 o.waveLevel = kLevel[(b[1] >> 5) & 3];
-                const int synth = b[3] >> 4, w = b[3] & 15;
+                // The synth and frame live in byte 2 before 9.x, byte 3 after (section 60).
+                const uint8_t wb = b[size_t(m.waveByte == 3 ? 3 : 2)];
+                const int synth = wb >> 4, w = wb & 15;
                 o.wave = uint8_t(waveSlotFor(synth)); o.frameAdvance = 0; o.frameLoop = bank::FrameLoop::Loop;
+                o.waveFrame = uint8_t(w);
                 o.pitchSpeed = m.pitchLaw == PitchLaw::Register ? bank::PitchSpeed::Drum : pitchSpeedOf(b[5]);
-                if (w) notes.add("wave instrument " + name + " starts at wave " + hex2(w).substr(1) + " of synth " + hex2(synth).substr(1) + ", not at the first frame");
                 if (b[9] & 3) notes.add("wave instrument " + name + ": PLAY / SPEED / LENGTH frame animation is not mapped");
             } else if (t == 2) {
                 if (!kitInstrument(i, b, o, name)) return false;
@@ -587,7 +592,7 @@ struct Reader {
             auto& tb = bank.tables[size_t(t)];
             tb = bank::Table{};
             tb.used = true; tb.name = "Table " + hex2(t); tb.end = bank::TableEnd::Loop; tb.hopStep = 1;
-            bool fade = false, resolvedS = false;
+            bool fade = false, resolvedS = false, hopInCmd2 = false;
             // Section 56: the noise rows are resolved for the lowest note the
             // table runs with -- the transpose column through the shape rule,
             // an S through the nibble rule into ChipBoy's S (section 55), whose
@@ -617,6 +622,14 @@ struct Reader {
                 for (int k = 0; k < 2; ++k) {
                     const char letter = letterOf(cmds[k].first);
                     if (!letter) continue;
+                    if (letter == 'H' && k == 1) {
+                        // Section 62: LSDj's two table command columns keep their own
+                        // row pointers, so this hop loops the second column alone. With
+                        // one pointer here it would loop the whole table, and the rows
+                        // it replays are set-a-value commands, so it is dropped.
+                        hopInCmd2 = true;
+                        continue;
+                    }
                     Command c;
                     if (letter == 'S' && noiseBase >= 0 && m.noiseS == NoiseS::Nibbles) {
                         const uint8_t nr = nibbleS(runNr, cmds[k].second);
@@ -629,6 +642,7 @@ struct Reader {
                     if (command(letter, cmds[k].second, "table " + hex2(t) + " row " + std::to_string(r), -1, noiseBase >= 0 ? 3 : -1, nullptr, c)) (k == 0 ? st.cmd1 : st.cmd2) = c;
                 }
             }
+            if (hopInCmd2) notes.add("table " + hex2(t) + ": an H in its second command column loops that column alone in LSDj, which ChipBoy's single table pointer cannot do; it is dropped (section 62)");
             if (resolvedS) notes.add("table " + hex2(t) + ": its S rows on noise (the nibble rule) are resolved to ChipBoy's S for the loop's first pass; later passes add the same semitones");
             if (fade) notes.add("table " + hex2(t) + ": the ENV column's low digit (fade speed per row) is not mapped; the amplitude is written at the row");
             ++sum.tables;
@@ -651,6 +665,7 @@ struct Reader {
         auto& ph = song.phrases[size_t(slot - 1)];
         ph = tracker::Phrase{};
         ph.used = true; ph.steps = 16; ph.groove = 0;
+        int hopStep = -1;                    // an H that ends the phrase (section 56)
         for (int st = 0; st < 16; ++st) {
             const size_t i = size_t(p) * 16 + size_t(st);
             const uint8_t n = at(kPhraseNotes + i), ins = at(kPhraseInst + i);
@@ -682,12 +697,24 @@ struct Reader {
                 c.note = uint8_t(std::clamp(midi, kind == 3 ? 12 : 1, 127));
             }
             const char letter = letterOf(at(kPhraseCmd + i));
+            if (letter == 'H' && hopStep < 0) {
+                // H in a phrase is a chain hop, not a table hop (section 56):
+                // `H 0 y` ends the phrase here and starts the next at its row y,
+                // which is ChipBoy's phrase length when y is 0.
+                const uint8_t v = at(kPhraseCmdV + i);
+                if ((v >> 4) == 0) {
+                    hopStep = st;
+                    if (v & 15) notes.add("H" + hex2(v) + " at phrase " + hex2(p) + " step " + std::to_string(st) + " ends the phrase and starts the next at row " + std::to_string(v & 15) + "; ChipBoy's phrases always start at row 0, so it starts there");
+                } else notes.add("H" + hex2(v) + " at phrase " + hex2(p) + " step " + std::to_string(st) + " repeats rows inside the phrase, which ChipBoy has only in a table; dropped");
+                continue;
+            }
             if (letter) {
                 Command cmd;
                 if (command(letter, at(kPhraseCmdV + i), "phrase " + hex2(p) + " step " + std::to_string(st), kind, channel, &c, cmd, &state, lsdjMidi)) c.cmd1 = cmd;
             }
             if (lsdjMidi > 0 && kind != 3) state.lastMidi = lsdjMidi;      // an L on a later row slides from here
         }
+        if (hopStep >= 0) { ph.steps = uint8_t(std::max(1, hopStep)); if (hopStep == 0) ph.cells[0] = tracker::Cell{}; }
         phraseSlot[key] = PhraseOut{ slot, state };
         return slot;
     }
@@ -725,6 +752,60 @@ struct Reader {
             if (widths.size() > 1) notes.add("noise instrument " + o.name + " plays both 15-bit and 7-bit notes in LSDj; ChipBoy's width is per instrument (15-bit chosen)");
             o.lfsr7 = widths.size() == 1 && *widths.begin();
         }
+    }
+    /// Section 63: before LSDj 9 a table's `G` gives every row of the run the
+    /// groove's *first* step, where ChipBoy (and LSDj 9) walk the groove. The
+    /// two agree when the groove has one step, so each `G` in a table is
+    /// pointed at a one step groove holding that count, taken from a slot the
+    /// song never names. Runs after grooves(), which fills the sixteen slots.
+    void flattenTableGrooves()
+    {
+        if (m.tableGrooveWalks) return;
+        std::set<int> named;                       // groove slots the song asks for, 1-16
+        auto noteG = [&named](const bank::Command& c) { if (c.cmd == bank::Cmd::G && c.a >= 1 && c.a <= 16) named.insert(int(c.a)); };
+        for (const auto& ph : song.phrases) {
+            if (!ph.used) continue;
+            if (ph.groove >= 1 && ph.groove <= 16) named.insert(int(ph.groove));
+            for (const auto& c : ph.cells) { noteG(c.cmd1); noteG(c.cmd2); }
+        }
+        for (const auto& tb : bank.tables) { if (!tb.used) continue; for (const auto& st : tb.steps) { noteG(st.cmd1); noteG(st.cmd2); } }
+        // Free slots, the ones LSDj left empty first: those hold the importer's
+        // 6 6 default rather than anything the user wrote.
+        std::vector<int> free;
+        for (int pass = 0; pass < 2; ++pass)
+            for (int g = 0; g < 16; ++g) {
+                if (named.count(g + 1)) continue;
+                bool empty = true;
+                for (int k = 0; k < 16 && empty; ++k) empty = at(kGrooves + size_t(g) * 16 + size_t(k)) == 0;
+                if (empty == (pass == 0)) free.push_back(g + 1);
+            }
+        std::map<int, int> flatOf;                 // ticks -> the slot holding a one step groove of them
+        size_t spare = 0; bool ranOut = false;
+        auto slotFor = [&](int ticks) -> int {
+            if (auto f = flatOf.find(ticks); f != flatOf.end()) return f->second;
+            if (spare >= free.size()) { ranOut = true; return 0; }
+            const int slot = free[spare++];
+            song.grooves[size_t(slot - 1)] = tracker::Groove{};
+            song.grooves[size_t(slot - 1)].ticks.fill(0);
+            song.grooves[size_t(slot - 1)].ticks[0] = uint8_t(ticks);
+            flatOf.emplace(ticks, slot);
+            return slot;
+        };
+        bool moved = false;
+        for (auto& tb : bank.tables) {
+            if (!tb.used) continue;
+            for (auto& st : tb.steps)
+                for (auto* c : { &st.cmd1, &st.cmd2 }) {
+                    if (c->cmd != bank::Cmd::G || c->a < 1 || c->a > 16) continue;
+                    const int ticks = int(song.grooves[size_t(c->a - 1)].ticks[0]);
+                    if (ticks == 0) continue;
+                    const int slot = slotFor(ticks);
+                    if (slot == 0) continue;
+                    if (slot != int(c->a)) { c->a = int16_t(slot); moved = true; }
+                }
+        }
+        if (moved) notes.add("a G in a table holds the groove's first step before LSDj 9 (section 63); those rows point at a one step groove of that length instead");
+        if (ranOut) notes.add("the song leaves no spare groove, so a G in a table keeps its own; its rows will swing where LSDj held one length (section 63)");
     }
     void grooves()
     {
@@ -770,6 +851,8 @@ bool importSong(const uint8_t* bytes, size_t size, const LsdjModel& model,
     const int tempo = std::clamp<int>(bytes[kTempo], 40, 255);
     summary.tempoBpm = tempo;
     out.tempoBpm = tempo;
+    out.transpose = int8_t(signedByte(bytes[kSongTranspose]));      // the PROJECT screen's TRANSPOSE (section 61)
+    if (out.transpose) notes.add("the song's own transpose is " + std::to_string(int(out.transpose)) + " semitones; it moves every note whose instrument admits a transpose");
     r.tickMs = 60000.0 / (double(tempo) * 24.0);
     r.usage();
     r.chooseNoiseOffsets();
@@ -778,6 +861,7 @@ bool importSong(const uint8_t* bytes, size_t size, const LsdjModel& model,
     r.chains(summary);
     r.noiseWidthsToInstruments();
     r.grooves();
+    r.flattenTableGrooves();
     summary.waves = int(r.waveSlotOfSynth.size());
     summary.kits = r.kitSlots;
     for (auto& src : out.noteSource) src = tracker::NoteSource::Tracker;

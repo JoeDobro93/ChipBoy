@@ -624,7 +624,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     v.ticks = 0; v.vibPhase9 = 0; v.pitchCount = 0;
     v.fineOffset = 0; v.fineQueued = 0; v.drumOffset = 0.0; v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0;
     v.chordN = 0; v.chordIdx = 0; v.chordCount = 0;
-    v.dutyIdx = 0; v.kill = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigFast = false; v.envCount = 0; v.lastCmd = {}; v.frameIdx = 0;
+    v.dutyIdx = 0; v.kill = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigFast = false; v.envCount = 0; v.lastCmd = {}; v.frameIdx = core.waveFrame;   // the instrument's start frame (section 60)
     v.rng = v.rng * 1664525u + 1013904223u + note;
     restartPitchClock(ch);
     // volume from velocity: a MIDI note asks the Velocity mode, a cell's VEL is
@@ -867,11 +867,12 @@ double Driver::noteOfVoice(int ch) const
     return note + double(fine) / 256.0;
 }
 
-/// The table row's transpose column, when the table runs and the instrument
-/// admits it (section 7); the noise channel takes it too (section 45).
+/// The table row's transpose column, whenever the table runs: the instrument's
+/// Transpose flag gates the song's and the chain's offsets, never this one
+/// (section 61). The noise channel takes it too (section 45).
 int Driver::tableTransposeOf(const Voice& v) const
 {
-    if (!v.tableOn || !v.inst.transpose || !bank_) return 0;
+    if (!v.tableOn || !bank_) return 0;
     const Table* t = bank_->table(v.tableSlot);
     if (!t) return 0;
     const auto& st = t->steps[v.tableRow];
@@ -1376,6 +1377,10 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
                 v.envDir = (c.b & 8) ? EnvDir::Up : EnvDir::Down;
                 v.envCount = 0;
                 setLevel(ch);
+                // ... unless the instrument asks for LSDj's pre-8.8 rule, where
+                // the new envelope only starts on a trigger (section 59). The
+                // wave channel's level is NR32 and needs none, on any version.
+                if (v.inst.envRetrig && live) retrigger(ch, true);
             }
             break;
         }
@@ -1552,7 +1557,12 @@ void Driver::revertCommand(int ch, Cmd cmd)
             break;
         }
         case Cmd::F:
-            if (i.type == InstrumentType::Wave) { const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr; v.frameIdx = 0; v.frameCount = 0; if (live && w && !w->frames.empty()) loadFrame(ch, w->frames[0], model_ == Console::DMG); }
+            if (i.type == InstrumentType::Wave) {
+                const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr;
+                v.frameIdx = w && !w->frames.empty() ? uint8_t(std::min<int>(i.waveFrame, int(w->frames.size()) - 1)) : uint8_t(0);
+                v.frameCount = 0;
+                if (live && w && !w->frames.empty()) loadFrame(ch, w->frames[v.frameIdx], model_ == Console::DMG);
+            }
             else if (pulse && ch == 1) { v.instTranspose = i.pu2Transpose; if (live) writePeriod(ch, false); }   // the instrument's own PU2 transpose back (section 49)
             break;
         case Cmd::M: writeNr50(global_.masterL, global_.masterR); break;
@@ -1571,7 +1581,13 @@ void Driver::revertCommand(int ch, Cmd cmd)
             v.vibOn = i.vib.depth != 0;
             break;
         case Cmd::W:
-            if (wave) { const Wave* w = bank_ ? bank_->wave(i.wave) : nullptr; v.waveSlot = i.wave; v.frameIdx = 0; v.frameCount = 0; if (live && w && !w->frames.empty()) loadFrame(ch, w->frames[0], model_ == Console::DMG); }
+            if (wave) {
+                const Wave* w = bank_ ? bank_->wave(i.wave) : nullptr;
+                v.waveSlot = i.wave;
+                v.frameIdx = w && !w->frames.empty() ? uint8_t(std::min<int>(i.waveFrame, int(w->frames.size()) - 1)) : uint8_t(0);
+                v.frameCount = 0;
+                if (live && w && !w->frames.empty()) loadFrame(ch, w->frames[v.frameIdx], model_ == Console::DMG);
+            }
             else if (pulse) { v.duty = i.duty; if (live) emit(regAddr(ch, 1), uint8_t((v.duty << 6) | lengthCode6(i.length))); }
             break;
         default: break;                                            // C D H K L R Z leave nothing behind; G and T are the timeline's
@@ -1722,6 +1738,10 @@ void Driver::stepTable(int ch)
         if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) v.waveLevel = uint8_t(std::clamp<int>(s.vol / 4, 0, 3));
         else v.envVol = uint8_t(std::clamp<int>(s.vol, 0, 15));
         setLevel(ch);
+        // The same rule an E follows (section 59): before 8.8 the new level
+        // only starts on a trigger, and a table's volume column is how LSDj's
+        // old drums stutter. Never on the wave channel, whose level is NR32.
+        if (v.inst.envRetrig && v.inst.type != InstrumentType::Wave && v.inst.type != InstrumentType::Kit && !inNoteOn_) retrigger(ch, true);
     }
     const Command c1 = s.cmd1.cmd == Cmd::Z ? resolveRandom(ch, s.cmd1, s.cmd2) : s.cmd1;
     const Command c2 = s.cmd2.cmd == Cmd::Z ? resolveRandom(ch, s.cmd2, s.cmd1) : s.cmd2;

@@ -183,6 +183,34 @@ design-log section the change touches. Update this file at the end of every chan
     pulses carry LSDj's envelope-stage retriggers, which are not notes, so it scores low and
     was checked by hand instead. All nine, and all eight project files, pass `--play-song`
     (ISORHYTM fails only on a PU1 that LSDj leaves silent too).
+- Round 14: **the table columns, the table groove, and the doubled song transpose**
+  (`COMMANDS_AND_TEMPO.md` §62–§63; CHANGES 2026-09-10), all from the user's `S_TN - Мир -
+  MUP 8_4_4.sav`, first song SPACE TI.
+  - §62: LSDj gives a table's **two command columns their own row pointers** — its own
+    changelog says so at v1.3.0B, and the A/Bs confirm it on 8.4.4 and 9.2.L. An `H` in the
+    second column loops that column alone. ChipBoy has one pointer, so honouring it stopped
+    every arpeggio at the hop; the importer drops it now, with a note. PU2's six-note
+    arpeggio in SPACE TI went from `55 58 55 58 …` to LSDj's `54 57 61 66 61 57 54`.
+  - §63: before LSDj 9 a table's `G` gives **every** row the groove's *first* step; 9 walks
+    the groove. Measured on 8.4.4 and 8.8.6 against 9.2.L, both ways round, with the table
+    reached by the instrument's `TBL` and by an `A` so the entry path is ruled out. The
+    model gained `tableGrooveWalks`; for the older ones the importer points a table's `G` at
+    a **one step groove**, taken from a slot the song never names.
+  - The song transpose (§61) was being written into every chain row: `songToVar` used
+    `transposeAt()`, which already adds it, so a round trip doubled it. `Song::rowTranspose()`
+    is the raw accessor now, and the writer and the chain grid use it.
+  - **A real save's working area is the way to measure table behaviour.** `/root/lsdj/work.py
+    SAV FILEIDX OUT.sav [addr=val …]` decompresses one song, patches bytes and writes it into
+    the save's working area (byte `0x8140` = `0xFF`), so a ROM plays the user's own song with
+    one byte changed. `/root/lsdj/dump.py` decompresses and prints a song's tables, grooves,
+    phrases and instruments. **The generated probe saves lie about a table's commands**: they
+    report a hop from the second column that no real save does, and drop a table's `G`
+    entirely — a second artifact of the kind §58 records. 8.8.6 and 9.x will play a
+    format-11 working song (they upgrade it in place); the pre-8 ROMs play none of the saves
+    in hand, which is why formats 0–7 are unmeasured for §63.
+  - The user's copy of LSDj's official **CHANGELOG** is at `/root/lsdj/CHANGELOG.txt`
+    (container only; `littlesounddj.com` is blocked by the egress proxy here). It is the
+    fastest way to date a behaviour: §62 came out of it in one grep.
 - **Adding an LSDj version** when the user supplies its ROM (the steps also head
   `Source/core/Import/LsdjModel.h`): put the ROM beside the others outside the tree
   (`/root/lsdj/` here), copy the 9.3.9 entry in `LsdjModel.cpp`, set the format it writes
@@ -239,10 +267,21 @@ design-log section the change touches. Update this file at the end of every chan
   A probe save that has never been opened in the LSDj editor writes the stage levels of
   instrument 00 whatever plays, while the timing follows the playing instrument: a stale editor
   pointer. Real saves are fine; keep it in mind when probing envelopes.
+- **The table ENV column's low digit is a duration, not a fade speed**, and the column runs
+  on its own pointer like the two command columns (§62). LSDj's changelog: v1.3.0 "implemented
+  carillon-style envelope column in tables … the first digit sets amplitude, the second digit
+  sets duration"; v7.8.1 "table envelope xF now hops to step x"; v8.9.3 made that hop
+  immediate. ChipBoy writes the amplitude at the row and drops the digit, which is why ~20 of
+  SPACE TI's tables carry that note. Mapping it needs an envelope runner in a table with its
+  own step and its own hop — the largest remaining table gap, and the next one to take.
+- **Wave frame animation is still dropped**: `LsdjSong.cpp` hard-codes `frameAdvance = 0` and
+  only notes byte 9's PLAY / SPEED / LENGTH. ChipBoy has `frameAdvance` (ticks a frame) and
+  `frameLoop`, so the mapping is there to be measured — SPACE TI's WAV channel is the worst
+  scoring of the four (a longest common run of 63 of 400 note-ons against LSDj), and nine of
+  its wave instruments set that byte.
 - From the LSDj recreation, open by decision: an **LSDj-shaped noise map** as an
   instrument option (its map runs into 7-bit values above A-6 and retriggers on such a
-  row; ChipBoy's transposed noise rows land near LSDj's pitches, not on them); the table
-  volume column's **per-row fade speed** (LSDj's ENV low digit); **removing `A`** in favour
+  row; ChipBoy's transposed noise rows land near LSDj's pitches, not on them); **removing `A`** in favour
   of the TBL column (needs a say for "stop" and for `A` inside a table); the harness
   `lsdjref_sav.py` writes **version byte 0**, so LSDj reads its songs with the legacy
   command table (no `B`) and the legacy noise map — its measurements stand, but a 9.x

@@ -41,16 +41,17 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
       pos_("1" + String(CharPointer_UTF8("\xc2\xb7")) + "1   0.0 b", Fonts::mono(12.0f), colours::text),
       startLabel_("Start", Fonts::caption(10.0f), colours::textDim),
       tempoLabel_("Tempo", Fonts::caption(10.0f), colours::textDim),
+      transposeLabel_("Transpose", Fonts::caption(10.0f), colours::textDim),
       play_(String(CharPointer_UTF8("\xe2\x96\xb6 Play"))), stop_(String(CharPointer_UTF8("\xe2\x96\xa0 Stop"))), loop_("Loop"), follow_("Follow"),
       rec_(String(CharPointer_UTF8("\xe2\x97\x8f Rec"))),
       saveSong_("Save song" + ellipsis()), loadSong_("Load song" + ellipsis()), importSav_("Import .sav" + ellipsis()),
       export_("Export .gb" + ellipsis())
 {
-    for (auto* l : { &startLabel_, &tempoLabel_ }) l->setUpperCase(true);
+    for (auto* l : { &startLabel_, &tempoLabel_, &transposeLabel_ }) l->setUpperCase(true);
     playLed_.setColour(colours::ok);
     playLed_.setInterceptsMouseClicks(false, false);
     for (auto* c : std::initializer_list<Component*>{ &play_, &stop_, &loop_, &follow_, &playLed_, &playText_, &pos_, &rec_,
-                                                     &tempoLabel_, &tempo_, &startLabel_, &songStart_,
+                                                     &tempoLabel_, &tempo_, &transposeLabel_, &transpose_, &startLabel_, &songStart_,
                                                      &saveSong_, &loadSong_, &importSav_, &export_, &tabs_, &scroll_, &chain_ }) addAndMakeVisible(c);
 
     // The transport (docs/COMMANDS_AND_TEMPO.md section 16). With no host
@@ -110,6 +111,13 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     tempo_.setEntryFormat([](int v) { return String(v); },
                           [](const String& t, int& out) { const String d = t.trim(); if (d.isEmpty() || !d.containsOnly("0123456789")) return false; out = d.getIntValue(); return true; });
     songStart_.onChange = [this](int v) { editSong("Song start", [v](tracker::Song& s) { s.songStartSeconds = double(v) / kStartSteps; }); };
+    // The whole song's transpose (section 61): LSDj's PROJECT TRANSPOSE, and
+    // the same two's-complement byte in Hex that the chain's column shows.
+    transpose_.setRange(-128, 127, 0);
+    transpose_.setTyped(true);
+    transpose_.setTransposeNumbering(true);
+    transpose_.setTooltip("Semitones added to every note of this song whose instrument admits a transpose, on top of the chain's own column. LSDj's PROJECT TRANSPOSE.");
+    transpose_.onChange = [this](int v) { editSong("Song transpose", [v](tracker::Song& s) { s.transpose = int8_t(v); }); };
     tempoWatch_ = std::make_unique<ParamWatch>(param(processor, ids::tempoSource), [this](float v) {
         songMode_ = v > 0.5f || processor.ownsTransport();
         songStart_.setEnabled(songMode_);
@@ -276,6 +284,7 @@ void TrackerPanel::syncSongTime()
     if (!s) return;
     tempo_.setValue(std::clamp(int(std::lround(s->tempoBpm)), 40, 255), dontSendNotification);
     songStart_.setValue(std::clamp(int(std::lround(s->songStartSeconds * kStartSteps)), 0, kStartMax), dontSendNotification);
+    transpose_.setValue(int(s->transpose), dontSendNotification);
 
 }
 
@@ -583,6 +592,10 @@ void TrackerPanel::resized()
     label(row2, tempoLabel_);
     row2.removeFromLeft(kLabelGap);
     place(row2, tempo_, 84, Stepper::kHeight);
+    row2.removeFromLeft(kFieldGap);
+    label(row2, transposeLabel_);
+    row2.removeFromLeft(kLabelGap);
+    place(row2, transpose_, 70, Stepper::kHeight);
     row2.removeFromLeft(kFieldGap);
     label(row2, startLabel_);
     row2.removeFromLeft(kLabelGap);

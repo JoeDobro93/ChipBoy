@@ -250,7 +250,7 @@ struct InstrumentPanel::Widgets {
     // sound
     Segmented* duty = nullptr; NameField* dutySeq = nullptr; Stepper* sweepRate = nullptr; Segmented* sweepDir = nullptr; Stepper* sweepShift = nullptr;
     Stepper* pu2Transpose = nullptr;
-    Stepper* wave = nullptr; Stepper* frameAdv = nullptr; Segmented* frameLoop = nullptr; Segmented* waveLevel = nullptr;
+    Stepper* wave = nullptr; Stepper* waveFrame = nullptr; Stepper* frameAdv = nullptr; Segmented* frameLoop = nullptr; Segmented* waveLevel = nullptr;
     Stepper* kit = nullptr; Segmented* kitLoop = nullptr; TextLine* kitRate = nullptr;
     Segmented* lfsr = nullptr; Segmented* pitchMode = nullptr; Stepper* shift = nullptr; Stepper* divisor = nullptr; Stepper* noiseSweep = nullptr;
     Segmented* pan = nullptr;
@@ -265,7 +265,7 @@ struct InstrumentPanel::Widgets {
     Segmented* vibShape = nullptr; Segmented* vibDir = nullptr; Stepper* vibSpeed = nullptr; Stepper* vibDepth = nullptr; Stepper* vibDelay = nullptr;
     Segmented* pitchSpeed = nullptr; Stepper* cmdRate = nullptr; Stepper* chordRate = nullptr; Segmented* tableMode = nullptr;
     // table and note behaviour
-    Stepper* table = nullptr; Segmented* transpose = nullptr; Segmented* noteOff = nullptr; Segmented* overlap = nullptr; Stepper* length = nullptr;
+    Stepper* table = nullptr; Segmented* transpose = nullptr; Segmented* noteOff = nullptr; Segmented* overlap = nullptr; Segmented* envRetrig = nullptr; Stepper* length = nullptr;
 };
 
 /* ------------------------------------------------------------ panel */
@@ -683,6 +683,8 @@ void InstrumentPanel::rebuildEditor()
         w_->wave->setSlotNumbering(true);   // section 52
         w_->wave->onList = [this] { showWaveMenu(); };
         w_->wave->onOpen = [this] { if (w_ && w_->wave) { if (w_->wave->value() > 0) openSlot(ui::SlotKind::Wave, w_->wave->value()); else w_->wave->beginTypedEntry(); } };
+        w_->waveFrame = stepper(*sound, "Start frame", "The frame a note begins on, counted from 0; Frame advance animates from there and an F command overrides it (section 60).",
+                                0, 15, 0, {}, [](bank::Instrument& i, int v) { i.waveFrame = uint8_t(v); });
         w_->frameAdv = stepper(*sound, "Frame advance", "Ticks per frame; 0 holds the frame.", 0, 15, 0, {}, [](bank::Instrument& i, int v) { i.frameAdvance = uint8_t(v); });
         w_->frameLoop = seg(*sound, "Frame loop", "How the frames run.", { "Loop", "One-shot", "Ping-pong" }, [](bank::Instrument& i, int v) { i.frameLoop = bank::FrameLoop(std::clamp(v, 0, 2)); });
         w_->waveLevel = seg(*sound, "Level", "NR32 bits 6-5: four levels, and no envelope unit on this channel.", { "mute", "25", "50", "100" }, [](bank::Instrument& i, int v) { i.waveLevel = uint8_t(v); });
@@ -810,6 +812,8 @@ void InstrumentPanel::rebuildEditor()
                       { "Kill", "Release", "Ignore" }, [](bank::Instrument& i, int v) { i.noteOff = bank::NoteOff(std::clamp(v, 0, 2)); });
     w_->overlap = seg(*tab, "Overlap", "A note over a held one: legato writes only the period; retrig starts the instrument again.",
                       { "Legato", "Retrig" }, [](bank::Instrument& i, int v) { i.overlap = v == 1 ? bank::Overlap::Retrig : bank::Overlap::Legato; });
+    w_->envRetrig = seg(*tab, "E re-attacks", "Whether an E command hits the note again after setting the level -- LSDj's own rule before 8.8, and what its drum tables are built on (section 59).",
+                        { "No", "Yes" }, [](bank::Instrument& i, int v) { i.envRetrig = v == 1; });
     const bool longLength = type == bank::InstrumentType::Wave || type == bank::InstrumentType::Kit;
     w_->length = stepper(*tab, "Length", longLength ? "NR31: off, or 1-256." : "NRx1 bits 5-0: off, or 1-64.", 0, longLength ? 256 : 64, 0,
                          [](int v) { return v == 0 ? String("off") : ValueFormat::number(v); }, [](bank::Instrument& i, int v) { i.length = uint16_t(v); });
@@ -925,7 +929,7 @@ void InstrumentPanel::syncValues()
     S(w.duty, i.duty);
     if (w.dutySeq && w.dutySeq->text() != dutySeqText(i)) w.dutySeq->setText(dutySeqText(i));
     T(w.sweepRate, i.sweepRate); S(w.sweepDir, i.sweepDown ? 1 : 0); T(w.sweepShift, i.sweepShift); T(w.pu2Transpose, i.pu2Transpose);
-    T(w.wave, i.wave); T(w.frameAdv, i.frameAdvance); S(w.frameLoop, int(i.frameLoop)); S(w.waveLevel, i.waveLevel);
+    T(w.wave, i.wave); T(w.waveFrame, i.waveFrame); T(w.frameAdv, i.frameAdvance); S(w.frameLoop, int(i.frameLoop)); S(w.waveLevel, i.waveLevel);
     T(w.kit, i.kit); S(w.kitLoop, int(i.kitLoop));
     if (w.kitRate) {
         const bank::Kit* k = b->kit(i.kit);
@@ -942,6 +946,7 @@ void InstrumentPanel::syncValues()
     S(w.vibShape, int(i.vib.shape)); S(w.vibDir, int(i.vib.dir)); T(w.vibSpeed, i.vib.speed); T(w.vibDepth, i.vib.depth); T(w.vibDelay, i.vib.delay);
     S(w.pitchSpeed, int(i.pitchSpeed)); T(w.cmdRate, i.cmdRate); T(w.chordRate, i.chordRate); S(w.tableMode, int(i.tableMode));
     T(w.table, i.table); S(w.transpose, i.transpose ? 0 : 1); S(w.noteOff, int(i.noteOff)); S(w.overlap, i.overlap == bank::Overlap::Retrig ? 1 : 0);
+    S(w.envRetrig, i.envRetrig ? 1 : 0);
     T(w.length, i.length); S(w.pan, panIndex(i.pan));
     refreshDerived();
     updateUsedOn();

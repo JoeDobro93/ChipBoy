@@ -23,7 +23,7 @@ namespace {
 // The song layout, as LsdjSong.cpp reads it.
 constexpr size_t kNotes = 0x0000, kGrooves = 0x1090, kRows = 0x1290, kTableEnv = 0x1690, kNames = 0x1E7A, kTableAlloc = 0x2020,
                  kInstAlloc = 0x2040, kChainPhrases = 0x2080, kChainTsp = 0x2880, kInst = 0x3080, kTableTsp = 0x3480,
-                 kTableCmd1 = 0x3680, kTableCmd1V = 0x3880, kPhraseAlloc = 0x3E82, kTempo = 0x3FB4, kCmd = 0x4000, kCmdV = 0x4FF0,
+                 kTableCmd1 = 0x3680, kTableCmd1V = 0x3880, kTableCmd2 = 0x3A80, kTableCmd2V = 0x3C80, kPhraseAlloc = 0x3E82, kTempo = 0x3FB4, kCmd = 0x4000, kCmdV = 0x4FF0,
                  kWaves = 0x6000, kPhraseInst = 0x7000;
 
 /// A blank song image: the tables LSDj fills with FF are FF.
@@ -393,6 +393,8 @@ TEST_CASE("format 11's envelope is three stages the chip ramps between", "[lsdj]
     REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(11), *bank, *out, sum, notes));
     CHECK(bank->instruments[0].env.mode == bank::EnvMode::Chip);
     CHECK(bank->instruments[0].envRate == 7);
+    // Section 59: E re-attacks on every format through 11, and not from 15 up.
+    CHECK(bank->instruments[0].envRetrig);
     // Formats 0 to 7 ignore bytes 9 and 10 altogether.
     auto old7 = blankSong(7); std::memcpy(old7.data(), song.data(), song.size());
     old7[kFormatVersionAt] = 7;
@@ -400,6 +402,12 @@ TEST_CASE("format 11's envelope is three stages the chip ramps between", "[lsdj]
     REQUIRE(importSong(old7.data(), old7.size(), *lsdjModelForFormat(7), *bank, *out, sum, notes));
     CHECK(bank->instruments[0].env.mode == bank::EnvMode::Chip);
     CHECK(bank->instruments[0].envVol == 1); CHECK(bank->instruments[0].envRate == 7);
+    CHECK(bank->instruments[0].envRetrig);
+    // From 8.8.6 on, E is zombie mode and never triggers.
+    auto new15 = blankSong(15); std::memcpy(new15.data(), song.data(), song.size());
+    new15[kFormatVersionAt] = 15;
+    REQUIRE(importSong(new15.data(), new15.size(), *lsdjModelForFormat(15), *bank, *out, sum, notes));
+    CHECK_FALSE(bank->instruments[0].envRetrig);
 }
 
 TEST_CASE("the formats before 9 read the noise SHAPE and resolve S to the note it lands on", "[lsdj]")
@@ -476,6 +484,87 @@ TEST_CASE("the formats before 5.7 convert P, L and V from the period register", 
     REQUIRE(importSong(song7.data(), song7.size(), *lsdjModelForFormat(7), *bank, *out, sum, notes));
     CHECK(bank->instruments[0].pitchSpeed == bank::PitchSpeed::Fast);
     CHECK(int(out->phrase(out->chain[0].at(0))->cells[4].cmd1.a) == 8);
+}
+
+TEST_CASE("the song's own transpose is read and added to every chain row", "[lsdj]")
+{
+    // Section 61: byte 0x3FB5, two's complement, on top of the chain's column;
+    // the instrument's Transpose flag gates the sum, which the Driver does.
+    auto song = blankSong(22);
+    song[0x3FB5] = 0xFB;                                  // -5
+    song[kInstAlloc + 0] = 1;
+    uint8_t* i0 = song.data() + kInst; i0[0] = 0; i0[1] = 0xA5; i0[4] = 0xFF; i0[7] = 0x80 | 3;
+    song[kPhraseAlloc] |= 1; song[kNotes] = 60 - 35; song[kPhraseInst] = 0;
+    song[kChainPhrases] = 0; song[kChainPhrases + 1] = 0; song[kChainTsp + 1] = 7;
+    song[kRows + 0] = 0; song[kRows + 1] = 0xFF; song[kRows + 2] = 0xFF; song[kRows + 3] = 0xFF;
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes));
+    CHECK(int(out->transpose) == -5);
+    CHECK(int(out->transposeAt(0, 0)) == -5);             // the song's alone
+    CHECK(int(out->transposeAt(0, 1)) == 2);              // and the chain's +7 on top
+    bool told = false;
+    for (const auto& l : notes.lines) if (l.find("song's own transpose") != std::string::npos) told = true;
+    CHECK(told);
+}
+
+TEST_CASE("the wave instrument's synth and frame come from byte 2 before 9", "[lsdj]")
+{
+    // Section 60: byte 2 up to format 15, byte 3 from 22.
+    auto song = blankSong(11);
+    song[kInstAlloc + 0] = 1;
+    uint8_t* i0 = song.data() + kInst;
+    i0[0] = 1; i0[1] = 0x20; i0[2] = 0x25; i0[3] = 0x40; i0[7] = 3;      // byte 2 says synth 2 frame 5, byte 3 says synth 4
+    for (int f = 0; f < 16; ++f)
+        for (int k = 0; k < 16; ++k) {
+            song[kWaves + size_t((2 * 16 + f) * 16 + k)] = uint8_t(0x20 | f);   // synth 2
+            song[kWaves + size_t((4 * 16 + f) * 16 + k)] = uint8_t(0x40 | f);   // synth 4
+        }
+    song[kPhraseAlloc] |= 1; song[kNotes] = 60 - 35; song[kPhraseInst] = 0;
+    song[kChainPhrases] = 0; song[kRows + 0] = 0xFF; song[kRows + 1] = 0xFF; song[kRows + 2] = 0; song[kRows + 3] = 0xFF;
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(11), *bank, *out, sum, notes));
+    const auto& w11 = bank->instruments[0];
+    REQUIRE(w11.wave >= 1);
+    CHECK(int(w11.waveFrame) == 5);
+    const auto& wave11 = bank->waves[size_t(w11.wave - 1)];
+    REQUIRE(!wave11.frames.empty());
+    CHECK(int(wave11.frames[0].s[0]) == 2);                               // synth 2, from byte 2
+    // The same bytes under format 22 take byte 3.
+    song[kFormatVersionAt] = 22;
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes));
+    const auto& w22 = bank->instruments[0];
+    CHECK(int(w22.waveFrame) == 0);
+    CHECK(int(bank->waves[size_t(w22.wave - 1)].frames[0].s[0]) == 4);      // synth 4, from byte 3
+}
+
+TEST_CASE("an H that ends a phrase becomes the phrase's length", "[lsdj]")
+{
+    // Section 56: H 0 y ends the phrase there and starts the next at row y.
+    // The row the H sits on does not play.
+    auto song = blankSong(22);
+    song[kInstAlloc + 0] = 1;
+    uint8_t* i0 = song.data() + kInst; i0[0] = 0; i0[1] = 0xA5; i0[4] = 0xFF; i0[7] = 0x80 | 3;
+    song[kPhraseAlloc] |= 1;
+    for (int st = 0; st < 6; ++st) { song[kNotes + size_t(st)] = uint8_t(60 - 35 + st); song[kPhraseInst + size_t(st)] = 0; }
+    song[kCmd + 3] = 8; song[kCmdV + 3] = 0x00;                    // H00 at step 3, byte 8 is H in the table with B
+    song[kChainPhrases] = 0; song[kRows + 0] = 0; song[kRows + 1] = 0xFF; song[kRows + 2] = 0xFF; song[kRows + 3] = 0xFF;
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes));
+    const auto* p0 = out->phrase(out->chain[0].at(0));
+    REQUIRE(p0 != nullptr);
+    CHECK(int(p0->steps) == 3);                                     // rows 0, 1, 2 play; row 3 does not
+    CHECK(p0->cells[0].note == 60); CHECK(p0->cells[2].note == 62);
+    CHECK(p0->cells[3].cmd1.cmd == bank::Cmd::None);
+    // The repeating form is dropped with a note, and the phrase keeps its length.
+    song[kCmdV + 3] = 0x21;
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes));
+    const auto* p1 = out->phrase(out->chain[0].at(0));
+    REQUIRE(p1 != nullptr);
+    CHECK(int(p1->steps) == 16);
+    CHECK(p1->cells[3].cmd1.cmd == bank::Cmd::None);
 }
 
 TEST_CASE("a project file decompresses to the song the save's file holds", "[lsdj]")
@@ -608,4 +697,76 @@ TEST_CASE("a kit instrument takes its samples from the ROM beside the save", "[l
     bool noted = false;
     for (const auto& l : notes2.lines) if (l.find("kit") != std::string::npos) noted = true;
     CHECK(noted);
+}
+
+TEST_CASE("an H in a table's second command column is dropped", "[lsdj]")
+{
+    // Section 62: LSDj's two table command columns loop independently, so an H
+    // in the second cannot be carried by ChipBoy's single table pointer.
+    for (const int format : { 11, 22 }) {
+        const bool withB = format >= 11;
+        const auto letter = [withB](char c) { const char* t = withB ? "-ABCDEFGHKLMOPRSTVWZ" : "-ACDEFGHKLMOPRSTVWZ"; return uint8_t(std::strchr(t, c) - t); };
+        auto song = blankSong(format);
+        song[kInstAlloc + 0] = 1;
+        uint8_t* i0 = song.data() + kInst; i0[0] = 0; i0[1] = 0xA5; i0[4] = 0xFF; i0[6] = 0x20 | 0; i0[7] = 0x80 | 3;
+        song[kTableAlloc + 0] = 1;
+        song[kTableTsp + 1] = 3; song[kTableTsp + 2] = 7;
+        song[kTableCmd1 + 3] = letter('H'); song[kTableCmd1V + 3] = 0;      // the hop the transpose column follows
+        song[kTableCmd2 + 1] = letter('H'); song[kTableCmd2V + 1] = 0;      // and the one that loops only its own column
+        song[kPhraseAlloc] |= 1; song[kNotes] = uint8_t(60 - 35); song[kPhraseInst] = 0;
+        song[kChainPhrases] = 0;
+        song[kRows + 0] = 0; song[kRows + 1] = 0xFF; song[kRows + 2] = 0xFF; song[kRows + 3] = 0xFF;
+        auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+        ImportSummary sum; ImportNotes notes;
+        REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(format), *bank, *out, sum, notes));
+        const auto& tb = bank->tables[0];
+        CHECK(tb.steps[3].cmd1.cmd == bank::Cmd::H);            // the first column keeps its hop
+        CHECK(tb.steps[1].cmd2.cmd == bank::Cmd::None);         // the second column's is gone
+        bool told = false;
+        for (const auto& l : notes.lines) if (l.find("second command column") != std::string::npos) told = true;
+        CHECK(told);
+    }
+}
+
+TEST_CASE("before LSDj 9 a table's G holds the groove's first step", "[lsdj]")
+{
+    // Section 63: the same run under a format-11 and a format-22 model.
+    const auto build = [](int format) {
+        const bool withB = format >= 11;
+        const auto letter = [withB](char c) { const char* t = withB ? "-ABCDEFGHKLMOPRSTVWZ" : "-ACDEFGHKLMOPRSTVWZ"; return uint8_t(std::strchr(t, c) - t); };
+        auto song = blankSong(format);
+        song[kGrooves + 0] = 6; song[kGrooves + 1] = 6;                     // groove 0, named by nothing here
+        song[kGrooves + 16 + 0] = 7; song[kGrooves + 16 + 1] = 4;           // groove 1: the table's
+        song[kInstAlloc + 0] = 1;
+        uint8_t* i0 = song.data() + kInst; i0[0] = 0; i0[1] = 0xA5; i0[4] = 0xFF; i0[6] = 0x20 | 0; i0[7] = 0x80 | 3;
+        song[kTableAlloc + 0] = 1;
+        song[kTableCmd1 + 0] = letter('G'); song[kTableCmd1V + 0] = 1;      // G01
+        song[kTableTsp + 1] = 3;
+        song[kPhraseAlloc] |= 1; song[kNotes] = uint8_t(60 - 35); song[kPhraseInst] = 0;
+        song[kChainPhrases] = 0;
+        song[kRows + 0] = 0; song[kRows + 1] = 0xFF; song[kRows + 2] = 0xFF; song[kRows + 3] = 0xFF;
+        return song;
+    };
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+
+    const auto nine = build(22);
+    REQUIRE(importSong(nine.data(), nine.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes));
+    REQUIRE(bank->tables[0].steps[0].cmd1.cmd == bank::Cmd::G);
+    CHECK(int(bank->tables[0].steps[0].cmd1.a) == 2);            // LSDj's groove 1 is ChipBoy's slot 2
+    CHECK(int(out->grooves[1].ticks[0]) == 7); CHECK(int(out->grooves[1].ticks[1]) == 4);
+
+    const auto old = build(11);
+    ImportNotes oldNotes;
+    REQUIRE(importSong(old.data(), old.size(), *lsdjModelForFormat(11), *bank, *out, sum, oldNotes));
+    REQUIRE(bank->tables[0].steps[0].cmd1.cmd == bank::Cmd::G);
+    const int slot = int(bank->tables[0].steps[0].cmd1.a);
+    CHECK(slot != 2);                                            // moved off the song's own groove
+    REQUIRE(slot >= 1); REQUIRE(slot <= 16);
+    CHECK(int(out->grooves[size_t(slot - 1)].ticks[0]) == 7);    // one step of seven: every row the same
+    CHECK(int(out->grooves[size_t(slot - 1)].ticks[1]) == 0);
+    CHECK(int(out->grooves[1].ticks[1]) == 4);                   // the song's groove 1 is left alone
+    bool told = false;
+    for (const auto& l : oldNotes.lines) if (l.find("one step groove") != std::string::npos) told = true;
+    CHECK(told);
 }

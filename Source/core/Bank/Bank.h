@@ -150,6 +150,7 @@ struct InstrumentCore {
     uint16_t length = 0;             ///< 0 off; 1-64 (PU/NOI), 1-256 (WAV/KIT)
     uint8_t  table = 0;              ///< 0 none, 1-64
     bool     transpose = true;       ///< whether table transpose applies
+    bool     envRetrig = false;      ///< E re-attacks the note (section 59): LSDj's own rule before 8.8
     NoteOff  noteOff = NoteOff::Kill;
     Overlap  overlap = Overlap::Legato;
     PitchSpeed pitchSpeed = PitchSpeed::Fast;
@@ -171,6 +172,7 @@ struct InstrumentCore {
     uint8_t  sweepShift = 0;
     // wave
     uint8_t  wave = 1;               ///< wave slot 1-64
+    uint8_t  waveFrame = 0;          ///< the frame a note starts on, 0 based (section 60)
     uint8_t  frameAdvance = 0;       ///< ticks per frame, 0 holds
     FrameLoop frameLoop = FrameLoop::Loop;
     uint8_t  waveLevel = 3;          ///< 0 mute, 1 25%, 2 50%, 3 100%

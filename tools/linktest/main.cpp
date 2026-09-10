@@ -418,6 +418,22 @@ int main()
               "a song written before format 4 still reads, at the file's steps per bar");
         check(readOld && old.recordArm[0] && old.recordArm[3], "and its channels are all armed");
 
+        // Section 61: the song's own transpose and a chain row's are stored
+        // apart, so a round trip does not add the song's to every row.
+        const auto tspOwned = song();
+        auto& tsp = *tspOwned;
+        tsp.transpose = 3;
+        tsp.phrases[0].used = true;
+        tsp.chain[0] = { 1, 1 };
+        tsp.setTranspose(0, 1, 5);
+        const auto tspBack = song();
+        auto& tspRead = *tspBack;
+        const bool tspOk = songFromJson(songToJson(tsp), tspRead);
+        check(tspOk && tspRead.transpose == 3 && tspRead.rowTranspose(0, 1) == 5 && tspRead.transposeAt(0, 1) == 8,
+              "a song's own transpose survives a round trip without being added to every chain row");
+        check(tspOk && tspRead.rowTranspose(0, 0) == 0 && tspRead.transposeAt(0, 0) == 3,
+              "and a row with no transpose of its own still carries only the song's");
+
         // A format-5 bar override becomes the length of the phrase in that
         // bar; a phrase used under two different overrides is duplicated.
         const auto fiveOwned = song();

@@ -1646,6 +1646,14 @@ each S into ChipBoy's S with the semitones from the row before. Tables are impor
 they hold anything, allocated or not: LSDj 9's allocation bytes miss tables its instruments
 name. A `G` in a table names LSDj's groove 0-based; ChipBoy's slot is one more.
 
+**`H` in a phrase is a chain hop**, not the table hop of §34: `H 0 y` ends the phrase there
+and starts the **next phrase of the chain** at its row *y*, and `H x y` with *x* above zero
+repeats rows inside the phrase *x* times. Traced on 3.6.8 and 9.3.9, which agree. `H 0 0`
+is 296 of the 324 uses across the 43 songs looked at and is exactly ChipBoy's phrase
+**length**, so the importer shortens the phrase to that many rows; the row the `H` sits on
+does not play, as LSDj's does not. A *y* above zero still starts at row 0, and the
+repeating form is dropped; both are noted.
+
 **Left alone, with the reason:**
 
 - **P on noise.** Before 9 it is the S rule every tick (`P01`: `88 87 86 … 80 8F …`); on 9.x it
@@ -1722,3 +1730,159 @@ instrument 00 whatever instrument plays, while the timing still follows the play
 a stale editor pointer, not a rule: real saves write each instrument's own bytes, checked
 against two of them on the user's song.)*
 
+## 59. `E` re-attacks the note before LSDj 8.8, and an instrument can say so
+
+Measured on 3.6.8, 5.0.3, 7.0.2, 8.4.4, 8.8.6 and 9.3.9 with one probe (a note, then an
+`E` two rows later, on a pulse and on noise): every release **through song format 11**
+writes NRx2 and then **triggers the channel**, on both pulse and noise. From 8.8.6 on, `E`
+walks the level in zombie mode (`09 11 18`) and never triggers, which is what §26 measured
+and what ChipBoy does.
+
+The same holds for a **table's volume column**, traced with the same probe: on 3.6.8 and
+8.4.4 each row writes NRx2 and triggers; on 9.3.9 it is zombie mode and silent about it.
+
+It is not a detail. The old drum vocabulary is built on it: a table of `E` rows or volume
+rows on a noise instrument is a stutter of re-attacks, and a phrase that puts an `E` beside
+a note re-hits it. Two of the user's LSDj 3.6 songs use it on nearly every noise cell, and
+a format-11 song's pulse parts trigger eleven times a phrase where ChipBoy sounded once.
+
+ChipBoy gains an instrument property, **E re-attacks** (`Instrument::envRetrig`, off by
+default, in the Behaviour group beside Transpose and Overlap): with it on, a level
+change — an `E` from a cell or a table row, **or a table's volume column**, which is how the
+old drums stutter — sets the level as before and then retriggers the channel, the
+whole note-on sequence as a retrigger already writes it (§28). **On the pulses and on noise
+only**: the wave channel's level is NR32, which needs no trigger, and LSDj triggers none
+there on any version (traced on 3.6.8, 5.0.3, 8.4.4 and 9.3.9). Off, `E` behaves exactly as
+§26 says, so nothing that exists changes. The importer turns it on for every instrument of
+a song whose envelope law is `Chip` or `HardwareStages`, which is formats 0 to 14, and
+leaves it off from format 15 up.
+
+This is the shape every version difference should take: a property of the **instrument**,
+named for what it does to the sound, not a hidden "LSDj 3.6 mode" that forks the meaning of
+several commands at once. A ChipBoy player who never opens an LSDj save can reach for it
+because a re-attacking envelope is a sound they want.
+
+## 60. The wave instrument's synth and frame moved to byte 3 at LSDj 9
+
+Measured with one probe on 3.6.8, 5.0.3, 7.0.2, 8.4.4, 8.8.6 and 9.3.9 — an instrument
+whose byte 2 names one synth and whose byte 3 names another, each synth holding a
+distinctive frame, and the wave RAM read back:
+
+- **Formats 0 to 15** (3.6.8 through 8.8.6): **byte 2** is the wave, `synth << 4 | frame`.
+- **Format 22** (9.x): **byte 3**, the position the importer already knew.
+
+The importer had read byte 3 on every format, so every wave instrument of every song older
+than 9 collapsed onto synth 0 — LSDj's default ramp — and a song's whole wave voice came
+out as one saw. `LsdjModel::waveByte` names the byte now.
+
+The frame within the synth matters as much as the synth: nine of the ten wave instruments
+in one of the user's format-11 songs start on a frame other than the first. ChipBoy's
+instrument gains **Start frame** (`Instrument::waveFrame`, 0 based, default 0, in the Wave
+group): the frame a note begins on, from which `Frame advance` animates and which the `F`
+command still overrides by absolute number. The importer sets it from the low nibble.
+
+## 61. What the instrument's Transpose flag gates, and the song's own transpose
+
+§48 said the flag gates the chain's transpose "as it gates the table's column". Half of that
+is wrong, and it is why an imported kick swept the wrong way. Measured on 8.4.4 and 9.3.9,
+on a pulse and on noise, with the flag on and off in the same song:
+
+| moved by | gated by the instrument's Transpose flag? |
+|---|---|
+| the **table's** transpose column | **no** — it always applies |
+| the **chain** row's transpose (§48) | yes |
+| the **song's** transpose | yes |
+
+So `Driver::tableTransposeOf` no longer asks the instrument, and §45's noise column applies
+whatever the flag says. The kick that reads `TSP C4` in its table with the flag off drops
+sixty semitones, as it always did in LSDj; ChipBoy had been holding it still and letting the
+`L` beside it slide up from the note before.
+
+**The song's transpose** is byte `0x3FB5`, a two's-complement semitone offset LSDj's PROJECT
+screen sets, and it moves every note of the song that an instrument's flag admits (traced
+by setting it to 7 and watching every note rise, except an instrument with the flag off).
+ChipBoy's song gains **`Song::transpose`**, shown as *Transpose* in the Tracker head's
+TRANSPORT group beside the tempo, in the same two's-complement hex as the chain's column
+(§52). The Player adds it to the chain row's transpose, so the instrument's flag gates both
+at once, and the importer reads it from the save.
+
+
+## 62. A table's two command columns run and loop independently
+
+The user's format-11 song plays a six-note arpeggio where ChipBoy played two notes over and
+over. The table behind it is the shape LSDj writes for an arpeggio with a swing:
+
+```
+table 1B   tsp  00 03 07 0c 07 03 00 ...
+           cmd1 O03 O02 O03 O03 O03 O01 H00 ---
+           cmd2 G06 H00 --- --- --- --- --- ---
+```
+
+Both command columns carry an `H00`. ChipBoy honoured both against its one table pointer, so
+the table hopped at row 1 and never reached the rest of the arpeggio.
+
+LSDj's own changelog says what it does, at **v1.3.0B**, 2001:
+
+> the both table command columns now run & loop independently. example: when used in tables,
+> the hop ("H") command will affect transpose + left command column if issued in the left
+> command column. the command will affect the right command column if used in the right
+> command column. both command columns still use the same groove, tho'.
+
+So a table has **two row pointers**: the left column's, which the ENV and TSP columns follow,
+and the right column's. An `H` moves only its own.
+
+Measured to confirm it, by playing the user's song out of a save's *working* area (which lets
+one byte change between two otherwise identical runs) on 8.4.4, and the same way on a 9.2.L
+song whose table 01 has `H01` in both columns:
+
+| what was cleared | 8.4.4 | 9.2.L |
+|---|---|---|
+| the `H` in **cmd1** | the table stops looping and runs on to row 15 | the same |
+| the `H` in **cmd2** | the notes do not move; one `NR11` write a pass goes away | the same |
+
+That leftover `NR11` write is the right column looping over its own two rows, exactly as the
+changelog says. Nothing sounds different because the commands it replays (`G06`, then the hop)
+only set a value that is already set.
+
+**ChipBoy has one table pointer**, and giving it two would change the table for every ChipBoy
+player, not just for imports. So ChipBoy's own columns stay symmetric -- a hop in either is a
+hop, because someone who writes one there means it -- and the **importer drops an `H` found in
+a table's second command column**, saying so in the notes. That is exact whenever the rows the
+right column would replay only set a value (`G`, `O`, `W`, `V`, a `T`), which is what the
+column is nearly always used for; where it would replay something that acts afresh each pass
+(a `P`, an `R`), the replay is lost. The note names the table so it can be looked at.
+
+## 63. Before LSDj 9 a table's `G` holds the groove's first step
+
+§57 said a table's `G` gives row *n* of the run step *n* of the groove, "as §44 measured". That
+holds on LSDj 9 and not before it. The measurement it rested on came from a generated probe
+save, and those lie about a table's commands (see the note at the end of this section), so it
+was made again on the user's own songs, played out of a save's *working* area so that one byte
+could change between two otherwise identical runs:
+
+| ROM (format) | groove `07 04` | groove `04 07` |
+|---|---|---|
+| 8.4.4 (11) | every row **7** ticks | every row **4** |
+| 8.8.6 (15) | every row **7** | every row **4** |
+| 9.2.L (22) | 7, 4, 7, 4 | 4, 7, 4, 7 |
+
+Checked both ways round so a symmetric groove could not hide the difference, and on 8.4.4 with
+the table reached both by the instrument's own `TBL` and by an `A` in the phrase, which rules
+out the entry path. Grooves `03 08`, `09 0D`, `0C 06`, `02 02` and `01 0F` on 8.4.4 all gave
+rows of the first step alone, so it is the first step and not, say, the mean.
+
+ChipBoy keeps §57's rule -- it is LSDj 9's, and 9 is what ChipBoy is. The **importer** carries
+the older one instead: for a model whose `tableGrooveWalks` is false, a table's `G` is pointed
+at a **one step groove** holding that groove's first count, which under ChipBoy's own rule gives
+every row of the table the same length. The slot comes from the groove slots the imported song
+never names; if the song names all sixteen, the `G` is left as it stands and the notes say so.
+
+Formats 0 to 7 (LSDj 3.1.5 to 7.0.2) are **not measured**: no save of that era in hand plays
+under the harness, and the probe saves cannot be trusted here. They take the pre-9 rule, which
+is what both formats either side of them do.
+
+**The probe saves lie about a table's commands.** A save built by `tools/lsdjref/lsdjref_sav.py`
+and never opened in LSDj's editor reports a hop from a table's *second* command column that a
+real save does not (§62), and drops a table's `G` entirely. Rebuilding the same table inside a
+real song's working area gives the real answer. Table work is measured that way from now on;
+this is a second artifact of the same kind as §58's envelope stages.
