@@ -2450,3 +2450,25 @@ Two did not.
 **Also measured for the first time:** `H` in a table (`x` times to row `y`, `x = 0` always),
 `C` on the pulses (note, +`x`, +`y`, one step a tick), `S` on noise (semitones through the map),
 and `O`'s mapping onto ChipBoy's `Pan` enum.
+
+### 2026-09-10 — the probe rig bootstraps its own host save
+
+**Changed:** the rig hard-coded a path to one of the user's saves. It now takes
+`CHIPBOY_LSDJ_DIR`, `CHIPBOY_LSDJ_HOST_SAV`, `CHIPBOY_LSDJ_ROM` and friends from the
+environment, reads the host's chains and phrases off the save rather than assuming them, carries
+its own decompressor instead of importing a script from outside the tree, and refuses a host of
+the wrong format instead of producing quiet nonsense.
+
+**Added:** `Probe(blank=True)` builds on a save the **ROM formatted itself**
+(`lsdjref_trace --init-sav`, given ~3000 frames — at 400 it is still blank and at 1200 it is
+caught mid-format), allocating the phrase, instrument and table slots it uses. So a version can
+be probed with **nothing but its ROM**, which matters for old versions nobody has a save for.
+
+Checked against a real editor-written save on the cases where a synthetic save had gone wrong
+before: `S23`/`S71` in a phrase, `W03` in a phrase and in *both* table command columns, a table
+`H` in column 2 (the §58 failure) and a table `G` (the §63 failure). All agree. The §58 trap is
+specific to saves built from nothing by `lsdjref_sav.py`, not to bootstrapped ones.
+
+**Added:** `docs/plan-lsdj-version-sweep.md` — the plan for the next two stages: validate the
+command matrix on the 9.3.9 ROM, then sweep every older version against it, with the three-way
+same / value / kind decision per command and where each answer lands in the code.

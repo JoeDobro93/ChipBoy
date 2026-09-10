@@ -307,6 +307,11 @@ design-log section the change touches. Update this file at the end of every chan
   - **Method note**: the user has cleared reading the ROM directly rather than only tracing it
     (their project, their call on L3). Register-stream diffing settled this one without it, but
     it is available for constants that resist measurement.
+- **`docs/plan-lsdj-version-sweep.md` is the next two stages**: validate the command matrix on
+  the 9.3.9 ROM, then probe every older version against it. It says what to supply (a ROM is
+  enough -- the rig bootstraps its own host save), how to set up in a fresh container, the three
+  rig checks to run before trusting a measurement, and the three-way same / value / kind
+  decision per command.
 - **Every LSDj command is now measured on 9.3.9** and the results are in
   `docs/LSDJ_COMMAND_MATRIX.md` §9, with the ChipBoy gaps ranked in §10. Four of them are
   ChipBoy bugs found by that campaign: `S` on PU1 negates each nibble into `NR10` and ChipBoy

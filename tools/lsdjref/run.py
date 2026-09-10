@@ -5,18 +5,26 @@ user's own and are never committed.
 """
 import csv, math, subprocess, sys, os
 HZ = 4194304.0
-TRACE = '/home/user/ChipBoy/build-ref/lsdjref/lsdjref_trace'
-BOOT = '/home/user/ChipBoy/build-ref/lsdjref/BootROMs'
-ROM = {'939': '/root/lsdj/lsdj9_3_9.gb', '844': '/root/lsdj/mup/lsdj8_4_4.gb',
-       '886': '/root/lsdj/lsdj8_8_6.gb', '92J': '/root/lsdj/lsdj9_2_J.gb'}
+_ROOT = os.environ.get('CHIPBOY_ROOT', os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+_LSDJ = os.environ.get('CHIPBOY_LSDJ_DIR', '/root/lsdj')
+TRACE = os.environ.get('CHIPBOY_LSDJREF_TRACE', os.path.join(_ROOT, 'build-ref/lsdjref/lsdjref_trace'))
+BOOT = os.environ.get('CHIPBOY_BOOTROMS', os.path.join(_ROOT, 'build-ref/lsdjref/BootROMs'))
+# `rom` may be a key here, a bare filename inside CHIPBOY_LSDJ_DIR, or a path.
+ROM = {'939': os.path.join(_LSDJ, 'lsdj9_3_9.gb'), '844': os.path.join(_LSDJ, 'lsdj8_4_4.gb'),
+       '886': os.path.join(_LSDJ, 'lsdj8_8_6.gb'), '92J': os.path.join(_LSDJ, 'lsdj9_2_J.gb')}
+DEFAULT_ROM = os.environ.get('CHIPBOY_LSDJ_ROM', '939')
 NAMES = {0xFF10:'NR10',0xFF11:'NR11',0xFF12:'NR12',0xFF13:'NR13',0xFF14:'NR14',
          0xFF16:'NR21',0xFF17:'NR22',0xFF18:'NR23',0xFF19:'NR24',
          0xFF1A:'NR30',0xFF1B:'NR31',0xFF1C:'NR32',0xFF1D:'NR33',0xFF1E:'NR34',
          0xFF20:'NR41',0xFF21:'NR42',0xFF22:'NR43',0xFF23:'NR44',
          0xFF24:'NR50',0xFF25:'NR51',0xFF26:'NR52'}
 
-def trace(sav, out, rom='939', frames=420):
-    subprocess.run([TRACE, '--rom', ROM[rom], '--bootrom-dir', BOOT, '--model', 'dmg',
+def romPath(rom):
+    if rom in ROM: return ROM[rom]
+    return rom if os.path.sep in rom else os.path.join(_LSDJ, rom)
+
+def trace(sav, out, rom=None, frames=420):
+    subprocess.run([TRACE, '--rom', romPath(rom or DEFAULT_ROM), '--bootrom-dir', BOOT, '--model', 'dmg',
                     '--sav', sav, '--frames', str(frames), '--keys', '180:start',
                     '--out', out], check=True, capture_output=True)
     return out

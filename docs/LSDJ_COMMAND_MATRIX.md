@@ -134,11 +134,18 @@ Match the durations or the note counts are not comparable. The binary is at
 ### 3.4 The 9.3.9 command rig
 
 `tools/lsdjref/probe_fmt22.py` and `tools/lsdjref/run.py` are the rig every **939** row in this
-document was measured on. The builder starts from a real editor-written format-22 song
-(`/root/lsdj/kits.sav`, CASTSHDW), keeps every structure that song built, and overwrites only
-the song row, chain, phrase, table and instrument being probed -- **and only ever in slots the
-host song already allocates**, which is what keeps it clear of §1's first warning. The result
-goes into the working area, the path LSDj takes for a song being edited.
+document was measured on. It builds a controlled song into a save's **working area**, the path
+LSDj takes for a song being edited, on top of one of two hosts:
+
+- a **real editor-written save** in that format (`Probe()`), overwriting only the song row,
+  chain, phrase, table and instrument being probed, and only in slots the host already
+  allocates; or
+- a save the **ROM formatted itself** (`Probe(host=..., blank=True)`), from
+  `lsdjref_trace --init-sav` given ~3000 frames to finish. This needs no save from anyone.
+
+The two were compared on the cases where a *synthetic* save had gone wrong before -- a table
+`H` in the second command column (§58) and a table `G` (§63) -- and they agree, so the
+bootstrapped host is sound. See `docs/plan-lsdj-version-sweep.md`.
 
 ```python
 import sys; sys.path.insert(0, 'tools/lsdjref')
