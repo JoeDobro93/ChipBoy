@@ -71,8 +71,8 @@ LsdjImportDialog::LsdjImportDialog(ChipBoyProcessor& processor, SavePreview prev
 
     romLine_.setFont(Fonts::sans(11.0f));
     romLine_.setColour(Label::textColourId, colours::textDim);
-    romLine_.setText(preview_.romVersion.isNotEmpty() ? "ROM beside the save: LSDj " + preview_.romVersion + " (" + preview_.romFile.getFileName() + ")"
-                                                      : "No LSDj ROM beside the save; an unknown format takes the newest version.", dontSendNotification);
+    romLine_.setText(preview_.romVersion.isNotEmpty() ? "ROM beside the save: LSDj " + preview_.romVersion + " (" + preview_.romFile.getFileName() + "), " + String(int(preview_.kits.size())) + " kits for the kit instruments"
+                                                      : "No LSDj ROM beside the save: kit instruments cannot be read, and an unknown format takes the newest version.", dontSendNotification);
     addAndMakeVisible(romLine_);
 
     import_.onClick = [this] { runImport(); };
@@ -136,7 +136,7 @@ void LsdjImportDialog::runImport()
         auto bank = std::make_shared<bank::Bank>();
         auto tune = std::make_shared<tracker::Song>();
         lsdj::ImportSummary sum; lsdj::ImportNotes notes;
-        if (!lsdj::importSong(song.data(), song.size(), model, *bank, *tune, sum, notes)) { allNotes.add(r->name.toStdString() + ": the song could not be read"); continue; }
+        if (!lsdj::importSong(song.data(), song.size(), model, *bank, *tune, sum, notes, preview_.kits.empty() ? nullptr : &preview_.kits)) { allNotes.add(r->name.toStdString() + ": the song could not be read"); continue; }
         for (const auto& l : notes.lines) allNotes.add(r->name.toStdString() + ": " + l);
         lastTab = processor_.addTab(std::shared_ptr<const tracker::Song>(std::move(tune)), std::shared_ptr<const bank::Bank>(std::move(bank)),
                                     r->name, "LSDj " + String(CharPointer_UTF8(" \xc2\xb7 ")) + r->name);

@@ -332,3 +332,70 @@ TEST_CASE("a real save, when one is given, imports every song without a fault", 
     }
     CHECK(imported == int(idx.files.size()));
 }
+
+TEST_CASE("a kit instrument takes its samples from the ROM beside the save", "[lsdj]")
+{
+    // A ROM of two kit banks, built here: bank 0 (kit 00) "TESTKT" with two
+    // samples, bank 1 (kit 01) "SECOND" with one.
+    std::vector<uint8_t> rom(2 * 0x4000, 0);
+    auto bankAt = [&](int bank, const char* name, const std::vector<std::vector<uint8_t>>& samples) {
+        uint8_t* b = rom.data() + size_t(bank) * 0x4000;
+        b[0] = 0x60; b[1] = 0x40;
+        std::memcpy(b + 0x52, name, 6);
+        uint16_t at = 0x4060;
+        for (size_t i = 0; i < samples.size(); ++i) {
+            std::memcpy(b + 0x22 + 3 * i, "S01", 3);
+            for (size_t k = 0; k < samples[i].size(); k += 2) b[size_t(at) - 0x4000 + k / 2] = uint8_t((samples[i][k] << 4) | samples[i][k + 1]);
+            at = uint16_t(at + samples[i].size() / 2);
+            b[2 * (i + 1)] = uint8_t(at & 0xFF); b[2 * (i + 1) + 1] = uint8_t(at >> 8);
+        }
+    };
+    std::vector<uint8_t> ramp(128), flat(64, 8), tri(96);
+    for (size_t k = 0; k < ramp.size(); ++k) ramp[k] = uint8_t(k % 16);
+    for (size_t k = 0; k < tri.size(); ++k) tri[k] = uint8_t(k % 32 < 16 ? k % 16 : 15 - k % 16);
+    bankAt(0, "TESTKT", { ramp, flat });
+    bankAt(1, "SECOND", { tri });
+    const auto kits = readKits(rom.data(), rom.size());
+    REQUIRE(kits.size() == 2);
+    CHECK(kits[0].name == "TESTKT"); CHECK(kits[0].samples.size() == 2); CHECK(kits[0].samples[0].nibbles == ramp); CHECK(kits[0].samples[1].nibbles == flat);
+    CHECK(kits[1].samples.size() == 1); CHECK(kits[1].samples[0].nibbles == tri);
+    CHECK(kitPeriodOfSpeed(0x00) == 1865); CHECK(kitPeriodOfSpeed(0xD0) == 1817); CHECK(kitPeriodOfSpeed(0x40) == 1929);
+
+    // A song with one kit instrument: kit A = 00 cut to 2 frames, kit B = 01 whole, speed D0.
+    auto song = blankSong(22);
+    song[kInstAlloc + 0] = 1;
+    uint8_t* i0 = song.data() + kInst; i0[0] = 2; i0[1] = 0xA8; i0[2] = 0x00; i0[3] = 2; i0[7] = 3; i0[8] = 0xD0; i0[9] = 0x01; i0[11] = 0;
+    std::memcpy(song.data() + kNames, "DRUMS", 5);
+    song[kPhraseAlloc] |= 1;
+    song[kNotes + 0] = 0x10; song[kPhraseInst + 0] = 0;     // kit A sample 1: the ramp, two frames of it
+    song[kNotes + 4] = 0x20;                                // kit A sample 2: the flat one
+    song[kNotes + 8] = 0x01;                                // kit B sample 1: the triangle
+    song[kNotes + 12] = 0x10;                               // the ramp again: the same note
+    song[kChainPhrases + 0] = 0;
+    song[kRows + 0] = 0xFF; song[kRows + 1] = 0xFF; song[kRows + 2] = 0; song[kRows + 3] = 0xFF;
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    REQUIRE(importSong(song.data(), song.size(), lsdjLatestModel(), *bank, *out, sum, notes, &kits));
+    CHECK(sum.kits == 1); CHECK(sum.instruments == 1);
+    const auto& inst = bank->instruments[0];
+    CHECK(inst.type == bank::InstrumentType::Kit); CHECK(inst.kit == 1);
+    const auto& kit = bank->kits[0];
+    REQUIRE(kit.used);
+    CHECK(kit.name == "TESTKT+SECOND"); CHECK(kit.period == 1817);
+    REQUIRE(kit.samples.size() == 3);
+    CHECK(kit.samples[0].data.size() == 64);                // two frames of the 128-nibble ramp
+    CHECK(kit.samples[0].data[17] == 1);
+    CHECK(kit.samples[1].data == flat);
+    CHECK(kit.samples[2].data == tri);
+    const auto* p = out->phrase(1);
+    REQUIRE(p != nullptr);
+    CHECK(p->cells[0].note == 36); CHECK(p->cells[4].note == 37); CHECK(p->cells[8].note == 38); CHECK(p->cells[12].note == 36);
+    // Without a ROM the instrument is a note and nothing else.
+    auto bank2 = std::make_unique<bank::Bank>(); auto out2 = std::make_unique<tracker::Song>();
+    ImportSummary sum2; ImportNotes notes2;
+    REQUIRE(importSong(song.data(), song.size(), lsdjLatestModel(), *bank2, *out2, sum2, notes2, nullptr));
+    CHECK(sum2.instruments == 0);
+    bool noted = false;
+    for (const auto& l : notes2.lines) if (l.find("kit") != std::string::npos) noted = true;
+    CHECK(noted);
+}

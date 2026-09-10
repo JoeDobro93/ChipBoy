@@ -37,12 +37,27 @@ std::string hex2(int v) { static const char* d = "0123456789ABCDEF"; std::string
 double noiseClockHz(int shift, int divisor) { return 524288.0 / (divisor == 0 ? 0.5 : double(divisor)) / double(1u << (shift + 1)); }
 
 /// The interpreter's state for one song.
+/// A kit instrument's two kits (plan section 4a, measured on 9.2.L): the
+/// note's high digit picks a sample of the kit in byte 2, its low digit one
+/// of the kit in byte 9; bytes 3 and 11 cut them to that many 32-sample
+/// frames; byte 8 moves the period. One ChipBoy kit per instrument gathers the
+/// samples its notes use, each on its own MIDI note from 36 up.
+struct KitUse {
+    int kitSlot = 0;                 ///< the ChipBoy kit slot, 1-32
+    int kitA = -1, kitB = -1;        ///< LSDj kit numbers
+    int lenA = 0, lenB = 0;          ///< frames of 32 samples, 0 whole
+    std::map<int, uint8_t> noteOf;   ///< LSDj note byte -> the MIDI note its sample sits on
+};
+
 struct Reader {
     const uint8_t* s;
     const LsdjModel& m;
     bank::Bank& bank;
     tracker::Song& song;
     ImportNotes& notes;
+    const std::vector<LsdjKit>* kits = nullptr;
+    std::map<int, KitUse> kitUse;                        // LSDj instrument -> its kit
+    int kitSlots = 0;
     double tickMs = 0.0;
     std::array<int, kLsdjInstruments> instType{};        // -1 none, 0 pulse, 1 wave, 2 kit, 3 noise
     std::array<bool, kLsdjInstruments> instTranspose{};
@@ -160,9 +175,9 @@ struct Reader {
             const int t = b[0];
             std::string name = instName(i);
             if (name.empty()) name = "Inst " + hex2(i);
-            if (t == 2) { notes.add("instrument " + hex2(i) + " " + name + " is a kit: its samples live in the ROM, not the save; skipped"); continue; }
+            if (t == 2 && (kits == nullptr || kits->empty())) { notes.add("instrument " + hex2(i) + " " + name + " is a kit: its samples live in the ROM, and none was found beside the save; skipped"); continue; }
             if (t > 3) { notes.add("instrument " + hex2(i) + " has an unknown type " + std::to_string(t) + "; skipped"); continue; }
-            const auto type = t == 0 ? bank::InstrumentType::Pulse : t == 1 ? bank::InstrumentType::Wave : bank::InstrumentType::Noise;
+            const auto type = t == 0 ? bank::InstrumentType::Pulse : t == 1 ? bank::InstrumentType::Wave : t == 2 ? bank::InstrumentType::Kit : bank::InstrumentType::Noise;
             bank::Instrument o = bank::Instrument::defaults(type, name.c_str());
             o.name = name;
             o.pan = bank::Pan(b[7] & 3); o.length = 0; o.noteOff = bank::NoteOff::Kill;
@@ -188,6 +203,8 @@ struct Reader {
                 o.pitchSpeed = pitchSpeedOf(b[5]);
                 if (w) notes.add("wave instrument " + name + " starts at wave " + hex2(w).substr(1) + " of synth " + hex2(synth).substr(1) + ", not at the first frame");
                 if (b[9] & 3) notes.add("wave instrument " + name + ": PLAY / SPEED / LENGTH frame animation is not mapped");
+            } else if (t == 2) {
+                if (!kitInstrument(i, b, o, name)) continue;
             } else {
                 o.lfsr7 = false; o.noiseManual = false; o.noiseShift = 5; o.noiseDivisor = 1; o.noiseSweep = 0;
             }
@@ -196,6 +213,72 @@ struct Reader {
             bank.instruments[size_t(i)] = o;
             ++sum.instruments;
         }
+    }
+
+    // --- kits (plan section 4a) -------------------------------------------
+    bool kitInstrument(int i, const uint8_t* b, bank::Instrument& o, const std::string& name)
+    {
+        if (kitSlots >= bank::kKitSlots) { notes.add("kit instrument " + name + ": ChipBoy's 32 kit slots are full; skipped"); return false; }
+        KitUse use;
+        use.kitA = b[2] & 0x3F; use.kitB = b[9] & 0x3F; use.lenA = b[3]; use.lenB = b[11];
+        const int count = int(kits->size());
+        if (use.kitA >= count && use.kitB >= count) { notes.add("kit instrument " + name + " names kits " + hex2(use.kitA) + " and " + hex2(use.kitB) + ", which this ROM does not have; skipped"); return false; }
+        use.kitSlot = ++kitSlots;
+        auto& k = bank.kits[size_t(use.kitSlot - 1)];
+        k = bank::Kit{};
+        k.used = true;
+        k.name = (use.kitA < count ? (*kits)[size_t(use.kitA)].name : std::string("?")) + (use.kitB < count && use.kitB != use.kitA ? "+" + (*kits)[size_t(use.kitB)].name : std::string());
+        k.period = kitPeriodOfSpeed(b[8]);
+        k.loop = bank::KitLoop::Once;
+        o.kit = uint8_t(use.kitSlot); o.kitLoop = bank::KitLoop::Once; o.waveLevel = 3;
+        o.env.mode = bank::EnvMode::Chip;
+        kitUse[i] = use;
+        if (b[12] || b[13]) notes.add("kit instrument " + name + ": the sample offsets (" + hex2(b[12]) + ", " + hex2(b[13]) + ") are not mapped; samples play from their start");
+        if (b[5] & 0x40) notes.add("kit instrument " + name + ": a loop or half-speed flag in byte 5 is not mapped");
+        return true;
+    }
+    /// The MIDI note a kit note byte plays on: the sample (or the two,
+    /// summed and clipped) is added to the instrument's ChipBoy kit the first
+    /// time the byte is seen.
+    uint8_t kitNote(int inst, int noteByte, const std::string& where)
+    {
+        auto it = kitUse.find(inst);
+        if (it == kitUse.end()) return 0;
+        KitUse& use = it->second;
+        if (auto found = use.noteOf.find(noteByte); found != use.noteOf.end()) return found->second;
+        const int hi = noteByte >> 4, lo = noteByte & 15;
+        auto sampleOf = [&](int kit, int digit, int len) -> const LsdjKitSample* {
+            if (digit == 0 || kit < 0 || kit >= int(kits->size())) return nullptr;
+            const auto& ks = (*kits)[size_t(kit)].samples;
+            if (digit - 1 >= int(ks.size())) { notes.add("kit note " + hex2(noteByte) + " at " + where + " names sample " + std::to_string(digit) + " of kit " + hex2(kit) + ", which has " + std::to_string(ks.size()) + "; silent"); return nullptr; }
+            (void)len;
+            return &ks[size_t(digit - 1)];
+        };
+        const LsdjKitSample* a = sampleOf(use.kitA, hi, use.lenA);
+        const LsdjKitSample* b = sampleOf(use.kitB, lo, use.lenB);
+        bank::KitSample out;
+        auto cut = [](std::vector<uint8_t> v, int frames) { if (frames > 0 && size_t(frames) * 32 < v.size()) v.resize(size_t(frames) * 32); return v; };
+        if (a && b) {
+            // Both kits at once: LSDj sums them under its DIST setting; the
+            // sum clipped to 15 stands in for every mode (plan section 4a).
+            const auto da = cut(a->nibbles, use.lenA), db = cut(b->nibbles, use.lenB);
+            const size_t n = std::max(da.size(), db.size());
+            out.data.resize(n);
+            for (size_t k = 0; k < n; ++k) out.data[k] = uint8_t(std::min(15, (k < da.size() ? int(da[k]) : 8) + (k < db.size() ? int(db[k]) : 8) - 8));
+            out.name = a->name + "+" + b->name;
+            notes.add("kit note " + hex2(noteByte) + " plays two samples at once: they are summed and clipped, LSDj's DIST modes are not modelled");
+        } else if (a || b) {
+            const auto* one = a ? a : b;
+            out.data = cut(one->nibbles, a ? use.lenA : use.lenB);
+            out.name = one->name;
+        } else return 0;
+        auto& kit = bank.kits[size_t(use.kitSlot - 1)];
+        if (kit.samples.size() >= 32) { notes.add("kit instrument at " + where + " uses more than 32 different sounds; the rest are silent"); return 0; }
+        out.note = uint8_t(36 + int(kit.samples.size()));
+        out.loopPoint = 0;
+        kit.samples.push_back(std::move(out));
+        use.noteOf[noteByte] = kit.samples.back().note;
+        return kit.samples.back().note;
     }
 
     // --- commands (sections 34, 46, 49) -----------------------------------
@@ -331,7 +414,10 @@ struct Reader {
             if (ins != 0xFF && ins < kLsdjInstruments) { last = ins; c.inst = uint8_t(ins + 1); }
             const int cur = last;
             const int kind = cur >= 0 ? instType[size_t(cur)] : -1;
-            if (n) {
+            if (n && kind == 2) {
+                const uint8_t kn = kitNote(cur, int(n), "phrase " + hex2(p) + " step " + std::to_string(st));
+                if (kn) c.note = kn;
+            } else if (n) {
                 int midi = int(n) + 35;
                 if (kind == 1) midi += m.waveOctave;                       // the wave channel's period table (section 45)
                 else if (kind == 3) {
@@ -411,13 +497,15 @@ int chipboyNoteForNr43(uint8_t v, int prefer)
 }
 
 bool importSong(const uint8_t* bytes, size_t size, const LsdjModel& model,
-                bank::Bank& bank, tracker::Song& out, ImportSummary& summary, ImportNotes& notes)
+                bank::Bank& bank, tracker::Song& out, ImportSummary& summary, ImportNotes& notes,
+                const std::vector<LsdjKit>* kits)
 {
     if (bytes == nullptr || size < 0x8000) return false;
     summary = ImportSummary{};
     { auto blank = std::make_unique<bank::Bank>(); bank = std::move(*blank); }
     { auto blank = std::make_unique<tracker::Song>(); out = std::move(*blank); }
     Reader r(bytes, model, bank, out, notes);
+    r.kits = kits;
     const int tempo = std::clamp<int>(bytes[kTempo], 40, 255);
     summary.tempoBpm = tempo;
     out.tempoBpm = tempo;
@@ -428,6 +516,7 @@ bool importSong(const uint8_t* bytes, size_t size, const LsdjModel& model,
     r.noiseWidthsToInstruments();
     r.grooves();
     summary.waves = int(r.waveSlotOfSynth.size());
+    summary.kits = r.kitSlots;
     for (auto& src : out.noteSource) src = tracker::NoteSource::Tracker;
     for (auto& arm : out.recordArm) arm = false;
     tracker::buildRowTables(out);

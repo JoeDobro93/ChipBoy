@@ -40,6 +40,7 @@ add_library(chipboy_core STATIC
     Source/core/Tracker/Song.cpp
     Source/core/Import/LsdjSave.cpp
     Source/core/Import/LsdjModel.cpp
+    Source/core/Import/LsdjKits.cpp
     Source/core/Import/LsdjSong.cpp)
 target_include_directories(chipboy_core PUBLIC Source)
 target_compile_features(chipboy_core PUBLIC cxx_std_20)

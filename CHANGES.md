@@ -26,6 +26,10 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-10 — kit instruments imported from the ROM beside the save
+
+The kit instrument's byte layout was measured on the user's 9.2.L ROM by copying a real kit instrument into probe songs and matching the streamed wave RAM against the ROM's kit banks ([`plan-lsdj-import.md`](docs/plan-lsdj-import.md) §4a): the note's high digit picks a sample of the kit in byte 2, the low digit one of the kit in byte 9, bytes 3 and 11 cut them to 32-sample frames, and byte 8 is a signed offset on the period 1865. The importer reads the `*.gb` beside the `.sav` (the one that reads the song's format, else the newest), turns each kit instrument into a ChipBoy kit of the samples its notes use, and rewrites the cells' notes to those samples. A note that plays both kits is summed and clipped and noted — LSDj's DIST modes did not match any simple combination in the probes. Offsets, loop and half-speed flags are noted. Nothing of the ROM enters the repository; the samples land in the user's song file.
+
 ### 2026-09-10 — the LSDj models keyed by format, three more ROMs measured
 
 Three ROMs the user supplied (8.4.0, 8.8.6, 9.2.J) were booted with `lsdjref_trace --init-sav` and probed with §45–§51's cases in their own formats ([`plan-lsdj-import.md`](docs/plan-lsdj-import.md) §3). The importer's models are keyed by **song format** with the LSDj versions as labels: format 22 (9.2.J, 9.3.9) identical on every table traced; format 15 (8.8.6) with the three-stage envelope and a raw noise column; format 11 (8.4.0) with the hardware envelope and an octave-only noise map; formats 0–10 assumed from the version-0 measurements. The earlier "legacy for 0–19" entry was wrong for 11–19 — every ROM from 8.4.0 carries the letter table with `B` — and is replaced. The noise maps carry a measured note range instead of a sentinel value, since `FF` is a real value on 8.x.

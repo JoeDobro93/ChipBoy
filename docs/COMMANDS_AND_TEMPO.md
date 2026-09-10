@@ -1539,8 +1539,12 @@ and the plan). The rules are the ones the recreation established, §45–§52, n
 - **The song** (`LsdjSong`): instruments by slot with the envelope of §51, wave frames per
   LSDj synth, tables with the noise rows converted through the map (§45), one phrase per
   LSDj phrase and channel with the chain's transposes (§48), `A` into the TBL column (§46),
-  the noise notes by LFSR clock, grooves, the tempo. Kits are noted and skipped: their
-  samples live in the ROM. What could not be carried over exactly is a **note**, one line
-  each; the dialog shows them after the import.
+  the noise notes by LFSR clock, grooves, the tempo. **Kits** come from the ROM found
+  beside the save (`plan-lsdj-import.md` §4a, measured on 9.2.L): its kit banks are read,
+  and a kit instrument becomes a ChipBoy kit holding the samples its notes use, cut to the
+  instrument's lengths, at the period its speed byte sets; a note playing both kits at once
+  is summed and clipped, since LSDj's DIST modes are not decoded. Without a ROM a kit
+  instrument is noted and skipped. What could not be carried over exactly is a **note**,
+  one line each; the dialog shows them after the import.
 
 The song file this produces is a plain `.cbsong` once saved; nothing of LSDj's stays in it.

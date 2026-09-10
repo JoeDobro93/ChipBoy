@@ -87,15 +87,14 @@ design-log section the change touches. Update this file at the end of every chan
   before 8.4 (7.x, 6.x, 5.x, 4.x) to find where `B` and the raw noise column began and
   which version wrote the format-3 songs. The probe saves and traces live in the session's
   scratch (`env/cmp`), not the tree.
-- **Kits** are not imported yet. It is not a rights question — the samples are read from
-  the user's own ROM at import time and land in the user's song file, nothing enters the
-  repository — but a build question: the ROM's kit banks read fine (16 KB each, `60 40`
-  magic, sample end offsets at 0, names at `0x22` and `0x52`, 4-bit data from `0x60` at
-  11468 Hz: 21 kits in 9.3.9), while the **kit instrument's bytes** (kit 1 and 2, speed,
-  loop, distortion, offsets) are unverified because none of the seven songs in the save
-  holds one. A save with a kit song is what the next round needs; the mapping is LSDj kit
-  bank → `bank::Kit` (samples with names, `period` for 11468 Hz), kit instrument → a kit
-  slot per LSDj kit pair, notes → samples.
+- Round 12: **kits import** (`plan-lsdj-import.md` §4a), measured on the user's 9.2.L ROM
+  and a save with kit songs (`/root/lsdj/l/`, outside the tree): the kit bank layout, the
+  kit instrument's two kits (byte 2 for the note's high digit, byte 9 for the low), their
+  lengths (bytes 3, 11), the speed byte as a signed offset on period 1865. `LsdjKits`
+  reads the banks; `importSong` takes them; the file side loads the ROM beside the save,
+  preferring the one whose version reads the song's format. Not decoded: the DIST modes
+  for notes that play both kits (summed and clipped instead, noted), offsets, loop and
+  half-speed flags. All eight songs of the kit save convert and play.
 - **Adding an LSDj version** when the user supplies its ROM (the steps also head
   `Source/core/Import/LsdjModel.h`): put the ROM beside the others outside the tree
   (`/root/lsdj/` here), copy the 9.3.9 entry in `LsdjModel.cpp`, set the format it writes

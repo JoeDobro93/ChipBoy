@@ -134,6 +134,35 @@ P and V (§7's tables). Keep the shared parser; only the table pointers change. 
 `importSong(const uint8_t* song, size_t size, const LsdjModel&, bank::Bank&, tracker::Song&, ImportSummary&, ImportNotes&)`
 fills a blank bank and song; the notes are the converter's FINDINGS.
 
+## 4a. Kits, from the ROM beside the save
+
+A kit instrument's samples are not in the save but in the ROM, so the import reads the
+`*.gb` found next to the `.sav` (the one whose version reads the working song's format when
+several are there, else the newest). Nothing of it enters the repository: the samples land
+in the user's own song file. Measured on 9.2.L with a real kit instrument copied into probe
+songs, and the streamed wave RAM matched against the ROM's banks:
+
+- **A kit bank** is 16 KB opening with `60 40`; sixteen little-endian words at 0 are where
+  each sample ends in the `4000`–`7FFF` window (word 0, `4060`, is also where the first
+  starts), fifteen three-letter sample names at `0x22`, the six-letter kit name at `0x52`,
+  4-bit samples from `0x60`, high nibble first, at 11468 Hz. LSDj numbers kits in ROM
+  order from 00. 9.3.9 carries 21, the user's 9.2.L build 33.
+- **A kit instrument**: byte 2 `& 3F` is the kit the note's **high** digit picks a sample
+  from, byte 9 `& 3F` the kit its **low** digit picks from (LSDj's screen calls them kit 1
+  and 2); bytes 3 and 11 cut those samples to that many 32-sample frames (0 whole); byte 8
+  read two's complement is added to the standard period 1865, so `D0` plays at 1817
+  (9079 Hz) and `40` at 1929 (17623 Hz).
+- **A note byte** `hl`: `h0` plays sample *h* of the first kit, `0l` sample *l* of the
+  second, `hl` both at once, summed under the instrument's DIST setting. The sum is
+  carried as the nibbles' sum, less 8, clipped to 0–15; the DIST modes were not decoded
+  (the probes' mixed frames did not match any simple combination) and are noted.
+- Offsets (bytes 12, 13), loop and half-speed flags are noted, not mapped.
+
+In ChipBoy one kit slot per kit instrument gathers the samples its notes use, each on its
+own MIDI note from 36 up, cut to its length; the kit's `period` is the instrument's; the
+cells' notes become those sample notes. `lsdj::readKits`, `lsdj::kitPeriodOfSpeed`,
+`importSong(..., kits)`.
+
 ## 5. The plugin
 
 - **Import .sav…** in the Tracker head's FILE group opens a chooser for `*.sav`.

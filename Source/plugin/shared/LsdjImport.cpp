@@ -12,14 +12,20 @@ bool readSave(const juce::File& file, SavePreview& out, juce::String& error)
     out.bytes.assign(static_cast<const uint8_t*>(block.getData()), static_cast<const uint8_t*>(block.getData()) + block.getSize());
     std::string err;
     if (!lsdj::indexSave(out.bytes.data(), out.bytes.size(), out.index, err)) { error = juce::String(err); return false; }
-    out.romVersion = romVersionIn(file.getParentDirectory(), out.romFile);
+    out.romVersion = romVersionIn(file.getParentDirectory(), out.index.workingFormat, out.romFile);
+    if (out.romFile != juce::File()) {
+        juce::MemoryBlock rom;
+        if (out.romFile.loadFileAsData(rom)) out.kits = lsdj::readKits(static_cast<const uint8_t*>(rom.getData()), rom.getSize());
+    }
     return true;
 }
 
-juce::String romVersionIn(const juce::File& folder, juce::File& romOut)
+juce::String romVersionIn(const juce::File& folder, int preferFormat, juce::File& romOut)
 {
     romOut = juce::File();
     if (!folder.isDirectory()) return {};
+    juce::String best; juce::File bestFile; bool bestFits = false;
+    const auto* want = lsdj::lsdjModelForFormat(preferFormat);
     for (const auto& f : folder.findChildFiles(juce::File::findFiles, false, "*.gb")) {
         juce::FileInputStream in(f);
         if (!in.openedOk()) continue;
@@ -27,9 +33,13 @@ juce::String romVersionIn(const juce::File& folder, juce::File& romOut)
         const int n = in.read(head.data(), int(head.size()));
         if (n < 0x150) continue;
         const std::string v = lsdj::romVersion(head.data(), head.size());
-        if (!v.empty()) { romOut = f; return juce::String(v); }
+        if (v.empty()) continue;
+        const bool fits = want != nullptr && lsdj::lsdjModelForRomVersion(v.c_str()) == want;
+        // The ROM that reads the song's format wins; among equals, the newer.
+        if (bestFile == juce::File() || (fits && !bestFits) || (fits == bestFits && juce::String(v).compareNatural(best) > 0)) { best = v; bestFile = f; bestFits = fits; }
     }
-    return {};
+    romOut = bestFile;
+    return best;
 }
 
 const lsdj::LsdjModel& autoModel(int formatVersion, const juce::String& romVersion)
