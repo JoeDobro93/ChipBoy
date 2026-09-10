@@ -329,12 +329,30 @@ design-log section the change touches. Update this file at the end of every chan
   - Three new ChipBoy bugs fell out: `E` on WAV takes `c.a` where LSDj takes `y`; `masterFromArg`
     maps `M`'s nibbles 12-15 to 0/−1/−2/−3 where LSDj uses −4/−3/−2/−1; a counted phrase `H`
     cannot be expressed at all.
-  - **Read the ROM early.** Four of the eight corrections were invisible to any sweep of values
+  - **Read the ROM early.** Four of the corrections were invisible to any sweep of values
     (`S` until you run two; `M` until a nibble exceeds 7; `T` until the byte drops below 40; `Z`
-    until the two lanes disagree). The command jump table is bank 02:`$47A2`, dispatched from
-    `$478D`; `B` `D` `G` `H` `Z` are handled at the row reader, not there. A fifty-line SM83
-    disassembler and a copy of `lsdjref_trace` that logs the PC and ROM bank of each write make
-    this cheap -- neither is committed; build them again (`LSDJ_COMMAND_MATRIX.md` §3.7).
+    until the two lanes disagree). **Both tools are now in the tree**:
+    `tools/lsdjref/lsdjref_dis.py` disassembles SM83 at a bank and address, and `lsdjref_pc`
+    is the trace tool plus the PC and ROM bank of every write, with `--watch ADDR` to follow a
+    work-RAM address. `tools/lsdjref/README.md` has the loop that works and a table of where
+    every handler on a 9.x ROM lives -- the command jump table at bank 02:`$47A2`, dispatched
+    from `$478D`, with `B` `D` `G` `H` `Z` handled at the row reader instead.
+  - **Sections 72-82 put the findings into the code.** `S` accumulates onto a running sweep
+    byte; `B` exists in both its forms; `Z` re-runs its own lane; `M`'s down half, `R`'s
+    interval and one-shot, `C` and `V` on noise, `F` on both pulses, `E` on WAV all match the
+    ROM; the importer converts `T`'s low bytes and masks `W` to two bits; and an imported noise
+    instrument plays **LSDj's own note map** off the bank (§81) instead of crossing into
+    ChipBoy's nearest-clock one and back.
+  - **The acceptance test is the user's SUNRISE** (`/root/lsdj/lsdj9_3_9.sav`, song 6, format
+    22). ROM against ChipBoy over 27 s: PU1 63/63 exact, PU2 53/53 exact, WAV 61/61 note-ons
+    with the swept drums a few period units off at the start of the sweep, NOI right in every
+    `NR43` byte but **fifteen hits short** -- the ROM triggers again a tick after certain notes
+    with bytes (`08`, `28`) that are not entries of the measured map. §82's rising 7-bit edge is
+    that trigger's shape and is implemented; what produces those two bytes is not settled. A
+    table transpose of -58 semitones from note 93 lands at note 35, below the map's floor of 36,
+    which is where to look next.
+    Rebuild the comparison with `chipboy_recordtest --import-sav` then `--trace-song`, and
+    `lsdjref_trace` on a save whose working song is the one under test.
 - **`tools/lsdjref/probe_fmt22.py` + `run.py`** build and trace a controlled probe song inside a
   format-22 save -- a real one, or one the ROM formatted itself (`--init-sav`, 3000 frames, then
   `Probe(host=..., blank=True)`), which is what the verification pass used. Start from it for any

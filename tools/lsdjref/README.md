@@ -75,3 +75,56 @@ question that depends on what a screen shows is out of reach.
 `lsdjref_trace --screen FILE.pgm` dumps the framebuffer, which is how the START
 key and its timing were found, but nothing is parsed from it. Kits and the
 speech instrument need sample data the save writer does not author.
+
+## Reading the ROM: `lsdjref_dis.py` and `lsdjref_pc`
+
+Rule L3 allows **deriving behaviour from the ROM** (`docs/CHIPBOY_SPEC.md` §3.3): what ChipBoy
+ships is its own code producing the same result, and the address that answered a question is
+worth recording. Nothing of the ROM is committed; both tools read one the user owns, from
+outside the tree.
+
+Reach for these when a sweep of register values cannot separate two hypotheses — which is more
+often than it sounds. Four of the seven corrections the 9.3.9 verification pass made were
+invisible to any probe: `S` looks absolute until you run two, `M` looks like a plain `NR50`
+write until a nibble goes above 7, `T` looks like BPM until the byte drops below 40, and `Z`
+looks like "the last command" until two lanes disagree.
+
+**`lsdjref_pc`** is the trace tool plus the PC and ROM bank of every write, and `--watch` extends
+it to a work-RAM range:
+
+```
+build-ref/lsdjref/lsdjref_pc --rom /root/lsdj/lsdj9_3_9.gb \
+    --bootrom-dir build-ref/lsdjref/BootROMs --sav probe.sav \
+    --frames 200 --keys 180 --watch C2E4 --out pc.csv
+```
+
+Columns are `cycle,addr,value,pc,bank`. `--keys 180` presses START at frame 180, as `run.py`
+does.
+
+**`lsdjref_dis.py`** disassembles at an address it names:
+
+```
+python3 tools/lsdjref/lsdjref_dis.py /root/lsdj/lsdj9_3_9.gb 2 4828 14
+```
+
+### Where to start on a 9.x ROM
+
+| What | Where |
+|---|---|
+| the command jump table | bank 02:`$47A2`, twenty little-endian words indexed by the letter's code in `-ABCDEFGHKLMOPRSTVWZ` |
+| the dispatcher | bank 02:`$478D` (`cp $13; ret nc`, so `Z` never reaches the table) |
+| the letters with **no** entry | `B` `D` `G` `H` `Z` — handled where the row is read, not where a command is run |
+| `S`, per channel | bank 02:`$4812`; PU1's accumulate at `$4828` |
+| `E`, per channel | bank 02:`$46D8`; the eight-byte rate table at `$698C` |
+| `M` | bank 02:`$6246`, through a 128-entry table in work RAM at `$D400` |
+| `W` | bank 02:`$47C8`; the wave branch at `$47F8` |
+| `Z` | bank 02:`$73F3` (phrase), `$7402` and `$7424` (the two table columns), `$7365` common |
+| the random | bank 02:`$33F4` raw, `$6479` bounded |
+| playback start | bank 02:`$5FDA` — APU off, `DIV` reset, APU on, `NR51` ramped per channel, `NR50` |
+
+### The loop that works
+
+1. Trace the probe and find the register write you care about; note its `pc` and `bank`.
+2. Disassemble there. If it is a refresh routine rather than the handler, it will read a work-RAM
+   address — watch that address instead and trace again.
+3. Disassemble where the watch points. That is the handler.

@@ -28,6 +28,26 @@ if(LSDJREF_BOOTROM_DIR)
     endif()
 endif()
 
+# --- lsdjref-pc: the same trace with the PC and ROM bank of every write ----
+# The tool that turns "which code wrote that register" into one line. It is how
+# sections 72-82 were settled; rule L3 allows deriving behaviour from the ROM
+# and nothing of the ROM is committed. Feed the address it prints to
+# lsdjref_dis.py, the fifty-line SM83 disassembler beside it.
+add_executable(lsdjref_pc
+    "${LSDJREF_DIR}/pc/main.cpp"
+    "${LSDJREF_DIR}/pc/shim.c")
+target_link_libraries(lsdjref_pc PRIVATE lsdjref_sameboy)
+target_include_directories(lsdjref_pc SYSTEM PRIVATE "${sameboy_SOURCE_DIR}/Core")
+target_compile_features(lsdjref_pc PRIVATE cxx_std_20)
+set_source_files_properties("${LSDJREF_DIR}/pc/shim.c" PROPERTIES
+    COMPILE_DEFINITIONS "GB_INTERNAL;_GNU_SOURCE"
+    COMPILE_OPTIONS "-w")
+target_compile_options(lsdjref_pc PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-w>)
+set_target_properties(lsdjref_pc PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${LSDJREF_WORK}")
+if(TARGET lsdjref_bootroms)
+    add_dependencies(lsdjref_pc lsdjref_bootroms)
+endif()
+
 # --- lsdjref-compare: the same songs through ChipBoy's driver -------------
 # chipboy_core only: the Driver is what is being compared and it links nothing.
 add_executable(lsdjref_compare
