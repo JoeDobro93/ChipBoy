@@ -427,10 +427,13 @@ TEST_CASE("the formats before 9 read the noise SHAPE and resolve S to the note i
     const int n2C = noteOf(0x2C, 60), n3B = noteOf(0x3B, n2C), n4A = noteOf(0x4A, n3B);
     CHECK(noi->cells[0].note == n2C);
     CHECK(bank->instruments[size_t(slot - 1)].lfsr7);
+    // Section 66: the byte goes through as it stands and the instrument's Sweep
+    // reads it -- before 9 that is the nibble subtraction on NR43.
+    CHECK(bank->instruments[size_t(slot - 1)].noiseDomain == bank::NoiseSweepDomain::Register);
     REQUIRE(noi->cells[0].cmd1.cmd == bank::Cmd::S);
-    CHECK(semitoneOf(noi->cells[0].cmd1) == n3B - n2C);                       // SF1: 2C -> 3B
+    CHECK(int(noi->cells[0].cmd1.a) == 0xF); CHECK(int(noi->cells[0].cmd1.b) == 0x1);   // SF1, as written
     REQUIRE(noi->cells[1].cmd1.cmd == bank::Cmd::S);
-    CHECK(semitoneOf(noi->cells[1].cmd1) == n4A - n3B);                       // and again, on top: 3B -> 4A
+    CHECK(int(noi->cells[1].cmd1.a) == 0xF); CHECK(int(noi->cells[1].cmd1.b) == 0x1);
     CHECK(noiseClockMatches(*bank, *noi, 8, 0x1C));                          // C-5: 1C + 0
     // The table's S rows are folded into its transpose column for the note it is used with (C-5, 1C).
     const auto& t = bank->tables[0];
@@ -438,11 +441,11 @@ TEST_CASE("the formats before 9 read the noise SHAPE and resolve S to the note i
     const int slot2 = noi->cells[8].inst; REQUIRE(slot2 >= 1);
     const int off2 = int(bank->instruments[size_t(slot2 - 1)].noiseShift) - 5;
     const auto noteOf2 = [off2](uint8_t nr43, int prefer) { return chipboyNoteForClock(noiseClockOf(nr43) * std::pow(2.0, off2), prefer); };
-    // The table's S rows become ChipBoy's S (section 55), each the semitones from where the row before left NR43.
+    // The table's S rows keep their bytes too (section 66).
     CHECK_FALSE(t.steps[0].hasTranspose); CHECK_FALSE(t.steps[1].hasTranspose); CHECK_FALSE(t.steps[2].hasTranspose);
-    const int t0 = noteOf2(0x1C, 72), t1 = noteOf2(0x15, t0), t2 = noteOf2(0x05, t1);   // each row's note is chosen nearest the row before
-    REQUIRE(t.steps[1].cmd1.cmd == bank::Cmd::S); CHECK(semitoneOf(t.steps[1].cmd1) == t1 - t0);   // S07: 1C -> 15
-    REQUIRE(t.steps[2].cmd1.cmd == bank::Cmd::S); CHECK(semitoneOf(t.steps[2].cmd1) == t2 - t1);   // S10 on top: 15 -> 05
+    (void) noteOf2; (void) off2; (void) slot2;
+    REQUIRE(t.steps[1].cmd1.cmd == bank::Cmd::S); CHECK(int(t.steps[1].cmd1.a) == 0); CHECK(int(t.steps[1].cmd1.b) == 7);
+    REQUIRE(t.steps[2].cmd1.cmd == bank::Cmd::S); CHECK(int(t.steps[2].cmd1.a) == 1); CHECK(int(t.steps[2].cmd1.b) == 0);
     // On 9.x the same byte is the transpose itself.
     const auto song9 = oldSong(22);
     REQUIRE(importSong(song9.data(), song9.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes));
@@ -558,13 +561,22 @@ TEST_CASE("an H that ends a phrase becomes the phrase's length", "[lsdj]")
     CHECK(int(p0->steps) == 3);                                     // rows 0, 1, 2 play; row 3 does not
     CHECK(p0->cells[0].note == 60); CHECK(p0->cells[2].note == 62);
     CHECK(p0->cells[3].cmd1.cmd == bank::Cmd::None);
-    // The repeating form is dropped with a note, and the phrase keeps its length.
+    // A counted H ends the phrase too: LSDj ends it that many times and then
+    // lets it play in full, and ending it every time is right in most passes
+    // rather than wrong in all of them (section 56).
     song[kCmdV + 3] = 0x21;
-    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes));
+    ImportNotes counted;
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(22), *bank, *out, sum, counted));
     const auto* p1 = out->phrase(out->chain[0].at(0));
     REQUIRE(p1 != nullptr);
-    CHECK(int(p1->steps) == 16);
+    CHECK(int(p1->steps) == 3);
     CHECK(p1->cells[3].cmd1.cmd == bank::Cmd::None);
+    bool told = false, toldRow = false;
+    for (const auto& l : counted.lines) {
+        if (l.find("times and then lets it play in full") != std::string::npos) told = true;
+        if (l.find("starts the next phrase at row 1") != std::string::npos) toldRow = true;
+    }
+    CHECK(told); CHECK(toldRow);
 }
 
 TEST_CASE("a project file decompresses to the song the save's file holds", "[lsdj]")
@@ -749,6 +761,14 @@ TEST_CASE("a table's ENV column carries its duration and its hop", "[lsdj]")
     CHECK(int(tb.steps[1].vol) == 0);  CHECK(int(tb.steps[1].volTicks) == 1);
     CHECK(int(tb.steps[2].vol) == -1); CHECK(int(tb.steps[2].volTicks) == 0);
     CHECK(int(tb.steps[3].vol) == -1); CHECK(int(tb.steps[3].volHop) == 1);
+    CHECK(int(tb.steps[3].volTicks) == 1);                // format 11 spends a tick on the hop
+
+    // Format 22 hops for free (measured on 9.2.L: the cycle keeps its length).
+    auto song22 = song; song22[kFormatVersionAt] = 22;
+    ImportNotes notes22;
+    REQUIRE(importSong(song22.data(), song22.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes22));
+    CHECK(int(bank->tables[0].steps[3].volHop) == 1);
+    CHECK(int(bank->tables[0].steps[3].volTicks) == 0);
 }
 
 TEST_CASE("a wave instrument's PLAY, LENGTH, LOOP POS and SPEED are read", "[lsdj]")

@@ -2383,3 +2383,69 @@ TEST_CASE("F names a wave frame the run skips", "[driver][wave]")
     for (int k = 0; k < 4; ++k) { r.block({}, 480); seen.push_back(int(r.drv.view(2).frame)); }
     CHECK(std::find(seen.begin(), seen.end(), 6 + 1) != seen.end());   // frame 6, which that run skips
 }
+
+TEST_CASE("S and P on noise work on NR43 in the Register domain", "[driver][noise]")
+{
+    // Section 66, measured on 8.4.4: each nibble less the matching nibble of the
+    // value, modulo sixteen, no borrow. S does it once, P every tick.
+    CHECK(int(bank::noiseNibbleSub(0x10, 0x11)) == 0x0F);
+    CHECK(int(bank::noiseNibbleSub(0x0F, 0x11)) == 0xFE);
+    CHECK(int(bank::noiseNibbleSub(0x10, 0x0F)) == 0x11);
+    CHECK(int(bank::noiseNibbleSub(0x10, 0xFF)) == 0x21);
+
+    const auto nr43 = [](Rig& r) { return int(r.drv.view(3).regs[3]); };
+    {   // S: three rows of a table, each taking 0x11 off
+        Rig r;
+        r.tickHz = 100.0;
+        Table t; t.used = true; t.name = "S";
+        for (int k = 1; k <= 3; ++k) t.steps[size_t(k)].cmd1 = { Cmd::S, 1, 1, 0 };
+        t.end = TableEnd::Stop;
+        r.bank.tables[7] = t;
+        auto& i = r.bank.instruments[0];
+        i = bank::Instrument::defaults(bank::InstrumentType::Noise, "Reg");
+        i.used = true; i.noiseDomain = bank::NoiseSweepDomain::Register; i.table = 8;
+        i.noiseManual = true; i.noiseShift = 1; i.noiseDivisor = 0; i.lfsr7 = false;   // NR43 = 0x10
+        ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(3, p);
+        r.block({ Rig::on(3, 60, 100) }, 480);
+        std::vector<int> seen{ nr43(r) };
+        for (int k = 0; k < 6; ++k) { r.block({}, 480); seen.push_back(nr43(r)); }
+        INFO("NR43: " << std::hex << seen[0] << " " << seen[1] << " " << seen[2] << " " << seen[3] << " " << seen[4] << " " << seen[5] << " " << seen[6]);
+        // The row 0 tick fires with the note-on, so the S rows land next.
+        CHECK(std::find(seen.begin(), seen.end(), 0x0F) != seen.end());
+        CHECK(std::find(seen.begin(), seen.end(), 0xFE) != seen.end());
+        CHECK(std::find(seen.begin(), seen.end(), 0xED) != seen.end());
+    }
+    {   // P: the same subtraction every tick, and it keeps going
+        Rig r;
+        r.tickHz = 100.0;
+        Table t; t.used = true; t.name = "P";
+        t.steps[1].cmd1 = { Cmd::P, 0x01, 0, 0 };
+        t.end = TableEnd::Stop;
+        r.bank.tables[7] = t;
+        auto& i = r.bank.instruments[0];
+        i = bank::Instrument::defaults(bank::InstrumentType::Noise, "Reg");
+        i.used = true; i.noiseDomain = bank::NoiseSweepDomain::Register; i.table = 8;
+        i.noiseManual = true; i.noiseShift = 1; i.noiseDivisor = 0; i.lfsr7 = false;
+        ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(3, p);
+        r.block({ Rig::on(3, 60, 100) }, 480);
+        std::vector<int> seen{ nr43(r) };
+        for (int k = 0; k < 6; ++k) { r.block({}, 480); seen.push_back(nr43(r)); }
+        INFO("NR43: " << std::hex << seen[0] << " " << seen[1] << " " << seen[2] << " " << seen[3] << " " << seen[4] << " " << seen[5] << " " << seen[6]);
+        CHECK(std::find(seen.begin(), seen.end(), 0x1F) != seen.end());
+        CHECK(std::find(seen.begin(), seen.end(), 0x1E) != seen.end());
+        CHECK(std::find(seen.begin(), seen.end(), 0x1D) != seen.end());
+    }
+    {   // Notes is what it always was: S adds semitones, and P bends the note
+        Rig r;
+        r.tickHz = 100.0;
+        auto& i = r.bank.instruments[0];
+        i = bank::Instrument::defaults(bank::InstrumentType::Noise, "Notes");
+        i.used = true;                                     // Notes by default
+        ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(3, p);
+        r.block({ Rig::on(3, 60, 100) }, 480);
+        const int base = nr43(r);
+        std::vector<int> seen;
+        for (int k = 0; k < 4; ++k) { r.block({}, 480); seen.push_back(nr43(r)); }
+        for (int v : seen) CHECK(v == base);               // nothing moves it without a command
+    }
+}

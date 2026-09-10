@@ -1931,10 +1931,18 @@ column still steps with the table's row; the one thing that changes for it is th
 CMD 1 no longer drags the volume column along, which is recorded in `CHANGES.md`.
 
 The `H` a table run reaches on a lane counts its `times` on that lane, and a note-on resets all
-three pointers together. A hop row of the volume lane costs its own length like any other,
-which is one tick unless it carries a LEN. That is LSDj before 8.9.3; from 8.9.3 on the hop is
-free ("table envelope hops ... now happen immediately"), so a 9.x import is a tick slow at each
-ENV hop -- three of them across every save the user has sent.
+three pointers together.
+
+**The volume lane's hop is free**, and the row it lands on plays in the same tick. That is
+LSDj from 8.9.3 ("table envelope hops ... now happen immediately"), confirmed on 9.2.L: two
+rows of four ticks with a hop under them cycle every 27 pitch clocks a row, with no extra tick
+anywhere. Before 8.9.3 the hop row costs a tick -- measured on 8.4.4, where three content rows
+and a hop take four ticks a cycle -- and the import asks for that by giving the hop row a
+**LEN of 1**, which the lane spends before it jumps. So a ChipBoy table hops like LSDj 9, and
+an older save still sounds like itself, with no separate rule in the engine.
+
+Formats 16 to 21 (LSDj 9.0 and 9.1) take the older model's flag because no ROM in hand writes
+them; they are after 8.9.3 and would want the free hop.
 
 ## 65. The wave instrument's frame run: LENGTH, LOOP POS, SPEED and PLAY
 
@@ -1973,3 +1981,47 @@ means one plain thing, and sets `frameAdvance = SPEED + 4`. `F` still names the 
 or not the run visits it -- traced with a run of eight on 8.4.4, `F 06` loaded frame 5, which
 that run skips -- and the run's step goes to the nearest so a later advance carries on from
 about there.
+
+## 66. The noise channel's two sweep domains
+
+§55 measured `S` on noise as semitones through the map, and §56 left `P` on noise dropped and
+an older save's `S` "resolved for the loop's first pass". Both were the same missing piece:
+**before LSDj 9 the noise commands work on the NR43 byte, not on a note**, and ChipBoy only
+had the note. It has both now, chosen per instrument.
+
+### Measured
+
+On 8.4.4, one noise note and the command on a later row, reading `NR43`:
+
+| command | `NR43` |
+|---|---|
+| `S 11` three times | `10` -> `0F` -> `FE` -> `ED` |
+| `S 0F` twice | `10` -> `11` -> `12` |
+| `P 01` | `10` -> `1F` -> `1E` -> `1D` -> ... one step a tick |
+| `P 10` | `10` -> `00` -> `F0` -> `E0` -> ... |
+| `P FF` | `10` -> `21` -> `32` -> `43` -> ... |
+
+So both letters do the same arithmetic: **each nibble of `NR43` less the matching nibble of
+the value, modulo sixteen, with no borrow between them**. `S` does it once; `P` does it every
+tick and keeps going. The low nibble carries the LFSR width bit, so a sweep can flip the
+channel from fifteen bits to seven mid-note, which is where a lot of LSDj's noise character
+comes from.
+
+On 9.2.L the same `P` walks the **map** instead -- `NR43` steps through LSDj's own noise
+entries, `P 04` one entry a tick and `P 01` one every four -- so the speed is **`value / 4`
+entries a tick**, upward in clock for a positive byte. `S` there is §55's semitones.
+
+### What ChipBoy does
+
+The noise instrument gains **Sweep**, one of
+
+* **Notes** (the default, and LSDj 9's): `S` adds its two's-complement byte to the channel's
+  noise transpose (§55) and `P` bends the note through the map at `value / 4` notes a tick.
+* **Register**: `S` subtracts its byte from `NR43` nibble-wise, once, and `P` does it every
+  tick. The delta accumulates -- nibble-wise sums compose, so one running byte holds it --
+  and the note, the transposes and the instrument's Shift still choose the pair it is
+  subtracted from. A note-on clears it, as LSDj's does.
+
+The importer sets **Register** for every format before 22 and passes the bytes straight
+through; the "resolved for the loop's first pass" and "P on noise is dropped" notes both go.
+Nothing about ChipBoy's own noise changes unless an instrument asks for Register.

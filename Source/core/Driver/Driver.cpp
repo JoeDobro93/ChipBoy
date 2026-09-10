@@ -619,7 +619,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // second pulse (section 49). The note itself stays what the cell said.
     v.noteTsp = core.transpose ? v.cellTranspose : int8_t(0);
     v.instTranspose = (ch == 1 && core.type == InstrumentType::Pulse) ? core.pu2Transpose : int8_t(0);
-    v.noiseTsp = 0;                                                                        // S on NOI starts over (section 55)
+    v.noiseTsp = 0; v.noiseReg = 0; v.noiseRegStep = 0; v.noiseBend256 = 0; v.noiseBend9 = 0;   // S and P on NOI start over (sections 55 and 66)
     v.instKey = instrumentKey(ch, vel);
     v.ticks = 0; v.vibPhase9 = 0; v.pitchCount = 0;
     v.fineOffset = 0; v.fineQueued = 0; v.drumOffset = 0.0; v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0;
@@ -1009,10 +1009,15 @@ void Driver::writePeriod(int ch, bool trigger)
             // write left in `v.noiseShift`, or a second write would compound it.
             s = uint8_t(noiseShiftMap_[size_t(n + kNoiseMapBelow)]); d = uint8_t(noiseDivMap_[size_t(n + kNoiseMapBelow)]); s = uint8_t(std::clamp(int(s) + int(v.inst.noiseShift) - 5, 0, 13));
         }
+        // The pair the note chose is what the voice keeps; the section 66 delta
+        // is taken off the byte on its way out, so it never compounds. Its low
+        // nibble carries the width bit, so a sweep can flip the LFSR mid-note.
         v.noiseShift = s; v.noiseDiv = d;
-        emit(regAddr(3, 3), uint8_t((s << 4) | (v.lfsr7 ? 8 : 0) | (d & 7)), true);
+        uint8_t nr = uint8_t((s << 4) | (v.lfsr7 ? 8 : 0) | (d & 7));
+        if (v.inst.noiseDomain == bank::NoiseSweepDomain::Register && v.noiseReg) nr = bank::noiseNibbleSub(nr, v.noiseReg);
+        emit(regAddr(3, 3), nr, true);
         if (trigger) { emit(regAddr(3, 4), uint8_t(0x80 | (v.inst.length ? 0x40 : 0)), true); markTrigger(ch); }
-        v.lastPeriod = int16_t((s << 4) | d);
+        v.lastPeriod = int16_t(nr);
         return;
     }
     int per = computePeriod(ch);
@@ -1482,7 +1487,14 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
             // and no bend, and Drum bends the **period register** and wraps at
             // 2048 (docs/LSDJ_PARITY.md section 5). `P 0` stops a bend and
             // keeps what it reached; a plain note-on puts the offset back.
-            if (noise) break;
+            if (noise) {
+                // Section 66: Register subtracts the byte from NR43 every tick;
+                // Notes walks the map at value / 4 entries a tick.
+                const uint8_t xy = uint8_t(std::clamp<int>(c.a, 0, 255));
+                if (v.inst.noiseDomain == bank::NoiseSweepDomain::Register) v.noiseRegStep = xy;
+                else v.noiseBend256 = int16_t(int(int8_t(xy)) * 256 / 4);
+                break;
+            }
             const int speed = int(int8_t(uint8_t(std::clamp<int>(c.a, 0, 255))));
             if (pitchSpeed(v) == PitchSpeed::Step) {
                 // The offset reaches the pitch at the next update, not in the
@@ -1511,7 +1523,11 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
             // until the next note-on, the byte two's complement (section 55);
             // on PU2 and WAV there is no sweep unit, so S is inert.
             if (noise) {
-                v.noiseTsp = int16_t(std::clamp(int(v.noiseTsp) + int(int8_t(uint8_t(((c.a & 15) << 4) | (c.b & 15)))), -256, 256));
+                const uint8_t xy = uint8_t(((c.a & 15) << 4) | (c.b & 15));
+                // Section 66: Register takes the byte off NR43 nibble by nibble
+                // -- the deltas compose, so one running byte holds them all.
+                if (v.inst.noiseDomain == bank::NoiseSweepDomain::Register) v.noiseReg = bank::noiseNibbleAdd(v.noiseReg, xy);
+                else v.noiseTsp = int16_t(std::clamp(int(v.noiseTsp) + int(int8_t(xy)), -256, 256));
                 if (live) writePeriod(ch, false);                            // NR43 alone: the LFSR keeps running
                 break;
             }
@@ -1588,9 +1604,9 @@ void Driver::revertCommand(int ch, Cmd cmd)
             break;
         case Cmd::M: writeNr50(global_.masterL, global_.masterR); break;
         case Cmd::O: v.pan = v.p.pan != 255 ? Pan(v.p.pan & 3) : i.pan; writeNr51(); break;
-        case Cmd::P: v.fineOffset = 0; v.fineQueued = 0; v.drumOffset = 0.0; v.bendSpeed = 0; if (live) writePeriod(ch, false); break;
+        case Cmd::P: v.fineOffset = 0; v.fineQueued = 0; v.drumOffset = 0.0; v.bendSpeed = 0; v.noiseRegStep = 0; v.noiseBend256 = 0; v.noiseBend9 = 0; if (live) writePeriod(ch, false); break;
         case Cmd::S:
-            if (i.type == InstrumentType::Noise) { v.noiseTsp = 0; if (live) writePeriod(ch, false); }   // the transpose back to zero (section 55)
+            if (i.type == InstrumentType::Noise) { v.noiseTsp = 0; v.noiseReg = 0; if (live) writePeriod(ch, false); }   // the transpose back to zero (sections 55 and 66)
             if (ch == 0 && pulse) {
                 v.sweepRate = i.sweepRate; v.sweepDown = i.sweepDown; v.sweepShift = i.sweepShift;
                 emit(0xFF10, uint8_t((v.sweepRate << 4) | (v.sweepDown ? 8 : 0) | v.sweepShift), true);
@@ -1786,39 +1802,56 @@ void Driver::stepTableLane(int ch, int lane)
     uint8_t& row  = lane == 2 ? v.tableRow2  : lane == 0 ? v.tableRowE  : v.tableRow;
     uint16_t& wait = lane == 2 ? v.tableWait2 : lane == 0 ? v.tableWaitE : v.tableWait;
     if (lane == 0 && !v.volLaneOn) return;
+    if (lane == 0) {
+        // The volume lane runs its own little program: it ends at its first
+        // empty row, and its hop costs nothing unless the row carries a LEN,
+        // which is how an older save's tick is kept (section 64). The guard
+        // stops a ring of hops with no row to play spinning the tick.
+        for (int guard = 0; guard <= kTableSteps; ++guard) {
+            row = step;
+            const TableStep& s = t->steps[row];
+            if (s.vol < 0 && s.volHop < 0 && s.volTicks == 0) { v.volLaneOn = false; return; }
+            if (s.volHop >= 0) {
+                step = uint8_t(std::clamp<int>(s.volHop, 0, kTableSteps - 1));
+                if (s.volTicks == 0) continue;                // free: the row it lands on plays now
+                wait = uint16_t(s.volTicks);
+                return;
+            }
+            if (s.vol >= 0) {
+                // A level change, never a retrigger (section 26); inside a note-on it
+                // only changes the running state and the note's own writes carry it.
+                // It takes a shaped envelope over: the segments left stop until the
+                // next plain note-on (section 27).
+                v.shapedTaken = true;
+                if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) v.waveLevel = uint8_t(std::clamp<int>(s.vol / 4, 0, 3));
+                else v.envVol = uint8_t(std::clamp<int>(s.vol, 0, 15));
+                setLevel(ch);
+                // The same rule an E follows (section 59): before 8.8 the new level
+                // only starts on a trigger, and a table's volume column is how LSDj's
+                // old drums stutter. Never on the wave channel, whose level is NR32.
+                if (v.inst.envRetrig && v.inst.type != InstrumentType::Wave && v.inst.type != InstrumentType::Kit && !inNoteOn_) retrigger(ch, true);
+            }
+            wait = s.volTicks ? uint16_t(s.volTicks) : tableRowTicks(ch, row);
+            if (step + 1 < kTableSteps) { ++step; return; }
+            switch (t->end) {
+                case TableEnd::Loop: step = 0; break;
+                case TableEnd::Hop:  step = uint8_t(std::clamp<int>(t->hopStep - 1, 0, 15)); break;
+                case TableEnd::Stop: v.volLaneOn = false; break;
+            }
+            return;
+        }
+        v.volLaneOn = false;                                   // nothing but hops
+        return;
+    }
     row = step;
     const TableStep& s = t->steps[row];
-    bool hopped = false;
-    if (lane == 0) {
-        // The lane runs its own little program and ends at its first empty row,
-        // as LSDj's does (section 64).
-        if (s.vol < 0 && s.volHop < 0 && s.volTicks == 0) { v.volLaneOn = false; return; }
-        if (s.volHop >= 0) { step = uint8_t(std::clamp<int>(s.volHop, 0, kTableSteps - 1)); hopped = true; }
-        else if (s.vol >= 0) {
-            // A level change, never a retrigger (section 26); inside a note-on it
-            // only changes the running state and the note's own writes carry it.
-            // It takes a shaped envelope over: the segments left stop until the
-            // next plain note-on (section 27).
-            v.shapedTaken = true;
-            if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) v.waveLevel = uint8_t(std::clamp<int>(s.vol / 4, 0, 3));
-            else v.envVol = uint8_t(std::clamp<int>(s.vol, 0, 15));
-            setLevel(ch);
-            // The same rule an E follows (section 59): before 8.8 the new level
-            // only starts on a trigger, and a table's volume column is how LSDj's
-            // old drums stutter. Never on the wave channel, whose level is NR32.
-            if (v.inst.envRetrig && v.inst.type != InstrumentType::Wave && v.inst.type != InstrumentType::Kit && !inNoteOn_) retrigger(ch, true);
-        }
-        wait = s.volTicks ? uint16_t(s.volTicks) : tableRowTicks(ch, row);
-    } else {
-        const Command raw = lane == 2 ? s.cmd2 : s.cmd1;
-        const Command other = lane == 2 ? s.cmd1 : s.cmd2;
-        const Command c = raw.cmd == Cmd::Z ? resolveRandom(ch, raw, other) : raw;
-        if (c.cmd != Cmd::None) applyCommand(ch, c, true, lane);
-        wait = tableRowTicks(ch, row);
-        if (!v.tableOn) return;                       // the command stopped it
-        hopped = raw.cmd == Cmd::H;
-    }
-    if (hopped) return;                               // the lane's step is already set
+    const Command raw = lane == 2 ? s.cmd2 : s.cmd1;
+    const Command other = lane == 2 ? s.cmd1 : s.cmd2;
+    const Command c = raw.cmd == Cmd::Z ? resolveRandom(ch, raw, other) : raw;
+    if (c.cmd != Cmd::None) applyCommand(ch, c, true, lane);
+    wait = tableRowTicks(ch, row);
+    if (!v.tableOn) return;                           // the command stopped it
+    if (raw.cmd == Cmd::H) return;                    // hopped: the lane's step is already set
     if (step + 1 < kTableSteps) { ++step; return; }
     switch (t->end) {
         case TableEnd::Loop: step = 0; break;
@@ -1925,6 +1958,14 @@ void Driver::tick(int ch)
     }
     // noise sweep
     if (v.inst.type == InstrumentType::Noise && v.noiseSweep) { v.noiseShift = uint8_t(std::clamp<int>(int(v.noiseShift) + v.noiseSweep, 0, 13)); v.inst.noiseManual = true; }
+    // Section 66: P on noise. Register takes its byte off NR43 every tick;
+    // Notes walks the map, its speed a fraction of an entry a tick.
+    if (v.inst.type == InstrumentType::Noise && v.noiseRegStep) { v.noiseReg = bank::noiseNibbleAdd(v.noiseReg, v.noiseRegStep); writePeriod(ch, false); }
+    else if (v.inst.type == InstrumentType::Noise && v.noiseBend256) {
+        v.noiseBend9 += v.noiseBend256;
+        const int whole = v.noiseBend9 / 256;
+        if (whole != 0) { v.noiseBend9 -= whole * 256; v.noiseTsp = int16_t(std::clamp(int(v.noiseTsp) + whole, -256, 256)); writePeriod(ch, false); }
+    }
     // R: the interval is **y x (rate + 1) + 1 ticks**, so y = 0 is every tick
     // and not "once" (docs/LSDJ_PARITY.md section 8). x = 8 resyncs instead:
     // the retrigger runs on the pitch clock, and pitchBefore() does it.

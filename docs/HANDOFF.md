@@ -232,6 +232,23 @@ design-log section the change touches. Update this file at the end of every chan
   - Measured with `/root/lsdj/archive/probe/wframe.py`, which decodes each wave RAM load in a
     trace against the song's own frames, and `reg.py` / `wsum.py` beside it. Every one of the
     wave instrument's sixteen bytes was swept; only 9, 10, 11 and the synth byte move anything.
+- Round 16: **the free volume hop, a counted phrase H, and the noise sweep domains**
+  (`COMMANDS_AND_TEMPO.md` §66; CHANGES 2026-09-10 later).
+  - The volume lane's **hop is free** now, LSDj's rule from 8.9.3 (measured on 9.2.L), and an
+    older save's hop row gets a **LEN of 1** at import to buy back the tick 8.4.4 spends. The
+    engine carries no version, and a 9.x import is exact.
+  - A **counted `H` in a phrase** ends it, where it used to be dropped: `H x y` ends the phrase
+    x times and then plays it whole (traced on 8.4.4), and ending every time is right in four
+    passes of five. 255 of the 283 phrase `H`s in the user's saves are the plain `H00`.
+  - §66: **the noise channel's two sweep domains.** Before LSDj 9 both `S` and `P` do the same
+    arithmetic on `NR43` -- each nibble less the matching nibble of the value, modulo sixteen,
+    no borrow -- `S` once, `P` every tick (all three measured on 8.4.4). On 9.2.L `P` walks the
+    map at **value / 4** entries a tick instead. `Instrument::noiseDomain` picks **Notes** or
+    **Register**, shown as *Sweep* in the Instrument tab; the importer sets Register for every
+    format before 22 and passes the bytes through, so the old "resolved for the loop's first
+    pass" and "P on noise is dropped" notes are both gone. The running delta is one byte,
+    because nibble-wise sums compose, and it comes off the byte on its way out so it never
+    compounds against the pair the note chose.
 - **Adding an LSDj version** when the user supplies its ROM (the steps also head
   `Source/core/Import/LsdjModel.h`): put the ROM beside the others outside the tree
   (`/root/lsdj/` here), copy the 9.3.9 entry in `LsdjModel.cpp`, set the format it writes
@@ -272,12 +289,9 @@ design-log section the change touches. Update this file at the end of every chan
 - §7's envelope-speed numbers (6, 11, 15, 20, 27 for speeds 1–5) were the hardware
   envelope's, measured on version-0 saves; §51 has the 9.x software table. `LSDJ_PARITY.md`
   should be re-read against it when the harness writes format 22 (below).
-- From round 13, measured and left, with the reason: **P on noise** (nibble sweep
-  every tick before 9, a map walk of `v/4` entries a tick on 9.x whose table past the keyboard is
-  unmeasured) — dropped with a note; **drum mode's own note table on 5.7–6.0** (C-4 is period 458);
-  the **nibble wrap** in long S sweeps (`7F`→`80`) that ChipBoy's semitone steps cannot follow; a
-  **table that wraps naturally** resets LSDj's S accumulation where ChipBoy's S keeps adding (a hop
-  does not reset: measured on ASTEROID's `H02`); the harness's tables loop after six rows for a
+- From round 13, measured and left, with the reason: **drum mode's own note table on 5.7–6.0**
+  (C-4 is period 458);
+  the **nibble wrap** in long S sweeps (`7F`→`80`) that ChipBoy's semitone steps cannot follow; the harness's tables loop after six rows for a
   reason still unknown (`LSDJ_PARITY.md`); noise **chain transposes before 9** are folded into the
   note's octave, unmeasured whether LSDj subtracts them from NR43 like a table's column; wave
   instruments' PLAY/SPEED/LENGTH and the old formats' vibrato-shape bits; the **instrument LENGTH**
@@ -288,8 +302,9 @@ design-log section the change touches. Update this file at the end of every chan
   A probe save that has never been opened in the LSDj editor writes the stage levels of
   instrument 00 whatever plays, while the timing follows the playing instrument: a stale editor
   pointer. Real saves are fine; keep it in mind when probing envelopes.
-- A table **ENV hop** row costs a tick in ChipBoy, which is LSDj before 8.9.3; from 8.9.3 the
-  hop is free, so a 9.x import runs a tick slow at each one (three across the user's saves).
+- A table **ENV hop** is free in ChipBoy, as in LSDj from 8.9.3 (measured on 9.2.L); an older
+  save's hop row gets a LEN of 1 at import to buy back the tick it used to cost (8.4.4).
+  Formats 16-21 (LSDj 9.0-9.1) take the older flag, unmeasured -- no ROM in hand writes them.
 - From the LSDj recreation, open by decision: an **LSDj-shaped noise map** as an
   instrument option (its map runs into 7-bit values above A-6 and retriggers on such a
   row; ChipBoy's transposed noise rows land near LSDj's pitches, not on them); **removing `A`** in favour
@@ -297,6 +312,13 @@ design-log section the change touches. Update this file at the end of every chan
   `lsdjref_sav.py` writes **version byte 0**, so LSDj reads its songs with the legacy
   command table (no `B`) and the legacy noise map — its measurements stand, but a 9.x
   song needs 0x16 and the B-shifted letter table.
+- **The kit `DIST` modes** are the one gap left of the four. Narrowed to **byte 13's bit 6** of
+  the kit instrument, which changes the mixed stream with its length unchanged, while bytes 4,
+  5, 6, 7, 10, 12, 14, 15 and the top bits of 2 and 9 do not (5 and 6 are length, 10 an offset
+  into the sample -- a high nibble of `b` starts past the end and plays silence). Reading the
+  modes off wants a kit-stream decoder in `/root/lsdj/` that can line the mix up against each
+  sample nibble by nibble; two samples at once are summed and clipped until then. 61 of the 69
+  kit instruments in the user's saves play two kits at once, so it is worth a round.
 - The chord rate defaults to LSDj's one step a tick; the demo songs' arpeggios still run
   at that speed. Slowing them is a content decision (`make_songs.py` would need a
   `chordRate` field).

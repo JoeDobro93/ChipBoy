@@ -38,6 +38,21 @@ enum class TableMode : uint8_t { Tick = 0, Step = 1 };
 /// note), Retrig starts the instrument again (section 8).
 enum class Overlap : uint8_t { Legato = 0, Retrig = 1 };
 enum class FrameLoop : uint8_t { Loop = 0, Once = 1, PingPong = 2 };
+/// How S and P move the noise channel (docs/COMMANDS_AND_TEMPO.md section 66):
+/// Notes walks the map by note, Register subtracts from NR43 nibble by nibble.
+enum class NoiseSweepDomain : uint8_t { Notes = 0, Register = 1 };
+/// Section 66: each nibble less the matching nibble of `xy`, modulo sixteen,
+/// with no borrow between them -- LSDj's arithmetic for S and P on noise.
+inline uint8_t noiseNibbleSub(uint8_t nr43, uint8_t xy)
+{
+    return uint8_t(((((nr43 >> 4) - (xy >> 4)) & 15) << 4) | (((nr43 & 15) - (xy & 15)) & 15));
+}
+/// The same nibbles added: the deltas compose, so one running byte holds every
+/// S and P a note has taken, and `noiseNibbleSub` applies the lot at once.
+inline uint8_t noiseNibbleAdd(uint8_t a, uint8_t b)
+{
+    return uint8_t(((((a >> 4) + (b >> 4)) & 15) << 4) | (((a & 15) + (b & 15)) & 15));
+}
 /// How the instrument's level is made (docs/COMMANDS_AND_TEMPO.md section 27):
 /// Chip is the chip's own NRx2 envelope -- an initial volume, a direction and
 /// one of its seven rates -- and Shaped is an ADSR the driver renders one
@@ -184,6 +199,9 @@ struct InstrumentCore {
     uint8_t  kit = 1;                ///< kit slot 1-32
     KitLoop  kitLoop = KitLoop::Once;
     // noise
+    /// Which domain the noise sweep commands work in (section 66): Notes moves
+    /// the note through the map, Register the NR43 byte nibble-wise.
+    NoiseSweepDomain noiseDomain = NoiseSweepDomain::Notes;
     bool     lfsr7 = false;
     bool     noiseManual = false;
     uint8_t  noiseShift = 5;

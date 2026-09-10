@@ -420,6 +420,8 @@ struct Reader {
                 if (!kitInstrument(i, b, o, name)) return false;
             } else {
                 o.lfsr7 = false; o.noiseManual = false; o.noiseShift = 5; o.noiseDivisor = 1; o.noiseSweep = 0;
+                // Section 66: before 9 the noise commands work on the NR43 byte.
+                o.noiseDomain = m.noiseS == NoiseS::Semitones ? bank::NoiseSweepDomain::Notes : bank::NoiseSweepDomain::Register;
             }
             o.used = true;
             return true;
@@ -531,17 +533,12 @@ struct Reader {
                 return true;
             case 'S':
                 if (channel == 3) {
-                    // Section 55 on 9.x: the byte is the transpose. Before, the
-                    // nibble rule of section 56, resolved to the note it lands on.
-                    if (m.noiseS == NoiseS::Semitones) { out = { Cmd::S, int16_t(x), int16_t(y), 0 }; if (st) st->chipNote += signedByte(v); return true; }
-                    if (st == nullptr) return false;                                       // a table's row: folded by tables()
-                    if (st->nr43 < 0) { notes.add("S" + hex2(v) + " at " + where + " on noise before any note in the chain: dropped"); return false; }
-                    const uint8_t nr = nibbleS(uint8_t(st->nr43), v);
-                    const int n = noteForNr43(nr, st->chipNote, st->noiseSlot);
-                    const int delta = std::clamp(n - st->chipNote, -128, 127);
-                    st->nr43 = nr; st->chipNote = n;
-                    if (delta == 0) { notes.add("S" + hex2(v) + " at " + where + " moves NR43 to " + hex2(nr) + ", the same ChipBoy note as before (a 7-bit or divisor change); dropped"); return false; }
-                    out = { Cmd::S, int16_t((delta >> 4) & 15), int16_t(delta & 15), 0 }; return true;
+                    // The byte goes through as it stands (section 66): on 9.x the
+                    // instrument reads it as semitones, before that as the nibble
+                    // subtraction on NR43. Either way it is the same two digits.
+                    if (m.noiseS == NoiseS::Semitones && st) st->chipNote += signedByte(v);
+                    else if (st && st->nr43 >= 0) { const uint8_t nr = nibbleS(uint8_t(st->nr43), v); st->chipNote = noteForNr43(nr, st->chipNote, st->noiseSlot); st->nr43 = nr; }
+                    out = { Cmd::S, int16_t(x), int16_t(y), 0 }; return true;
                 }
                 out = { Cmd::S, int16_t(x & 7), int16_t(y), 0 }; return true;
             case 'D': out = { Cmd::D, int16_t(v), 0, 0 }; return true;
@@ -559,7 +556,9 @@ struct Reader {
                 }
                 out = { Cmd::L, int16_t(v), 0, 0 }; return true;
             case 'P':
-                if (channel == 3) { notes.add("P" + hex2(v) + " at " + where + " on noise: LSDj sweeps the noise shape every tick and ChipBoy has no noise bend; dropped"); return false; }
+                // Section 66: P on noise goes through too -- the instrument's
+                // Sweep says whether it walks the map or the NR43 nibbles.
+                if (channel == 3) { out = { Cmd::P, int16_t(v), 0, 0 }; return true; }
                 if (m.pitchLaw == PitchLaw::Register && v != 0) {
                     // Section 56: xx register units a clock, into the Drum speed with the nearest step.
                     const int units = signedByte(v);
@@ -604,15 +603,12 @@ struct Reader {
             auto& tb = bank.tables[size_t(t)];
             tb = bank::Table{};
             tb.used = true; tb.name = "Table " + hex2(t); tb.end = bank::TableEnd::Loop; tb.hopStep = 1;
-            bool resolvedS = false;
-            // Section 56: the noise rows are resolved for the lowest note the
-            // table runs with -- the transpose column through the shape rule,
-            // an S through the nibble rule into ChipBoy's S (section 55), whose
-            // semitones add up across the loop as LSDj's nibbles do.
+            // Section 56: the transpose column is resolved for the lowest note
+            // the table runs with, through the shape rule. An S row goes through
+            // as the byte it is: the instrument's Sweep reads it (section 66).
             const int noiseSlot = noiseInst >= 0 ? slotFor(noiseInst, 3) : 0;
             const uint8_t baseNr = noiseBase >= 0 ? lsdjNr43(noiseBase, noiseInst) : uint8_t(0);
             const int baseNote = noiseBase >= 0 ? std::max(12, noteForNr43(baseNr, noiseBase, noiseSlot)) : 0;   // what the cell plays: 12 at least
-            uint8_t runNr = baseNr; int runNote = baseNote;  // where the first pass has taken NR43 so far
             for (int r = 0; r < 16; ++r) {
                 const size_t i = size_t(t) * 16 + size_t(r);
                 const uint8_t env = at(kTableEnv + i), tsp = at(kTableTsp + i);
@@ -622,7 +618,9 @@ struct Reader {
                 // high digit names.
                 const int amp = env >> 4, dur = env & 15;
                 if (dur == 0) st.vol = -1;
-                else if (dur == 15) { st.vol = -1; st.volHop = int8_t(amp); }
+                // A hop row costs a tick before 8.9.3 and nothing after; ChipBoy's
+                // is free, so the older ones ask for the tick with a LEN of 1.
+                else if (dur == 15) { st.vol = -1; st.volHop = int8_t(amp); st.volTicks = m.envHopCostsTick ? uint8_t(1) : uint8_t(0); }
                 else { st.vol = int8_t(amp); st.volTicks = uint8_t(dur); }
                 const std::pair<uint8_t, uint8_t> cmds[2] = { { at(kTableCmd1 + i), at(kTableCmd1V + i) }, { at(kTableCmd2 + i), at(kTableCmd2V + i) } };
                 if (tsp) {
@@ -640,18 +638,9 @@ struct Reader {
                     const char letter = letterOf(cmds[k].first);
                     if (!letter) continue;
                     Command c;
-                    if (letter == 'S' && noiseBase >= 0 && m.noiseS == NoiseS::Nibbles) {
-                        const uint8_t nr = nibbleS(runNr, cmds[k].second);
-                        const int n = noteForNr43(nr, runNote, noiseSlot);
-                        const int delta = std::clamp(n - runNote, -128, 127);
-                        runNr = nr; runNote = n; resolvedS = true;
-                        if (delta) (k == 0 ? st.cmd1 : st.cmd2) = Command{ Cmd::S, int16_t((delta >> 4) & 15), int16_t(delta & 15), 0 };
-                        continue;
-                    }
                     if (command(letter, cmds[k].second, "table " + hex2(t) + " row " + std::to_string(r), -1, noiseBase >= 0 ? 3 : -1, nullptr, c)) (k == 0 ? st.cmd1 : st.cmd2) = c;
                 }
             }
-            if (resolvedS) notes.add("table " + hex2(t) + ": its S rows on noise (the nibble rule) are resolved to ChipBoy's S for the loop's first pass; later passes add the same semitones");
             ++sum.tables;
         }
     }
@@ -709,10 +698,15 @@ struct Reader {
                 // `H 0 y` ends the phrase here and starts the next at its row y,
                 // which is ChipBoy's phrase length when y is 0.
                 const uint8_t v = at(kPhraseCmdV + i);
-                if ((v >> 4) == 0) {
-                    hopStep = st;
-                    if (v & 15) notes.add("H" + hex2(v) + " at phrase " + hex2(p) + " step " + std::to_string(st) + " ends the phrase and starts the next at row " + std::to_string(v & 15) + "; ChipBoy's phrases always start at row 0, so it starts there");
-                } else notes.add("H" + hex2(v) + " at phrase " + hex2(p) + " step " + std::to_string(st) + " repeats rows inside the phrase, which ChipBoy has only in a table; dropped");
+                hopStep = st;
+                const std::string where = " at phrase " + hex2(p) + " step " + std::to_string(st);
+                // The high digit is how many times, 0 meaning every time: `H 4 0`
+                // ends the phrase four times and then lets it play in full, which
+                // measures as four short passes and one long one on 8.4.4. ChipBoy
+                // has no count on a phrase, so it ends every time -- right four
+                // passes in five rather than wrong in all of them.
+                if (v >> 4) notes.add("H" + hex2(v) + where + " ends the phrase " + std::to_string(v >> 4) + " times and then lets it play in full; ChipBoy ends it every time (section 56)");
+                if (v & 15) notes.add("H" + hex2(v) + where + " starts the next phrase at row " + std::to_string(v & 15) + "; ChipBoy's phrases always start at row 0, so it starts there");
                 continue;
             }
             if (letter) {

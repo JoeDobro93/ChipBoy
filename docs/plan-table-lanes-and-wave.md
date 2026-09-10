@@ -47,8 +47,9 @@ High digit = the amplitude 0-F, low digit = the duration. Measured on 8.4.4, one
 | `1`-`E` | the amplitude holds that many **ticks** (`1` = 6.5 pitch clocks, `E` = 89.7, exactly n x one tick) |
 | `F` | **hop**: the lane jumps to the row the *high* digit names |
 
-A hop row costs one tick before 8.9.3 ("table envelope hops done by setting second digit to H
-now happen immediately", v8.9.3), which is not modelled: ChipBoy hops at the row.
+A hop row costs one tick before 8.9.3 and nothing from 8.9.3 on ("table envelope hops done by
+setting second digit to H now happen immediately"), both measured. ChipBoy hops for free, the
+newer rule, and the importer gives an older save's hop row a LEN of 1 to buy the tick back.
 
 Amplitude `0` is a real amplitude (silence), not a blank -- `01` writes `NR22 = 00`.
 

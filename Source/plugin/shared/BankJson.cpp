@@ -70,6 +70,7 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     o->setProperty("transpose", i.transpose); o->setProperty("noteOff", int(i.noteOff)); o->setProperty("overlap", int(i.overlap));
     if (i.envRetrig) o->setProperty("envRetrig", true);        // section 59; absent reads as false, so old files are unchanged
     // Section 65; both absent read as every frame, looping from the first.
+    if (i.noiseDomain != bank::NoiseSweepDomain::Notes) o->setProperty("noiseSweep", int(i.noiseDomain));   // section 66; absent reads as Notes
     if (i.frameLength) o->setProperty("frameLength", int(i.frameLength));
     if (i.frameLoopStep) o->setProperty("frameLoopStep", int(i.frameLoopStep));
     o->setProperty("pitchSpeed", int(i.pitchSpeed)); o->setProperty("cmdRate", int(i.cmdRate)); o->setProperty("chordRate", int(i.chordRate)); o->setProperty("tableMode", int(i.tableMode));
@@ -108,6 +109,7 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.pan = Pan(std::clamp(getOr(o, "pan", 3), 0, 3)); i.length = uint16_t(std::clamp(getOr(o, "length", 0), 0, 256)); i.table = uint8_t(std::clamp(getOr(o, "table", 0), 0, 64));
     i.transpose = bool(o->getProperty("transpose")); i.noteOff = NoteOff(std::clamp(getOr(o, "noteOff", 0), 0, 2));
     i.envRetrig = bool(o->getProperty("envRetrig"));
+    i.noiseDomain = bank::NoiseSweepDomain(std::clamp(getOr(o, "noiseSweep", 0), 0, 1));
     i.frameLength = uint8_t(std::clamp(getOr(o, "frameLength", 0), 0, 16));
     i.frameLoopStep = uint8_t(std::clamp(getOr(o, "frameLoopStep", 0), 0, 15));
     // Overlap replaced the legato flag: a file written before it carries only

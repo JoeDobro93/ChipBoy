@@ -2215,9 +2215,46 @@ row"). The second is what stops an imported drum re-applying its whole envelope 
 rows; a ChipBoy table whose VOL column has a gap in it loses what came after the gap, and
 wants the levels moved up or a hop put in.
 
-**Not modelled:** a volume-lane hop row costs a tick in ChipBoy, which is LSDj before 8.9.3;
-from 8.9.3 the hop is free, so a 9.x import is a tick slow at each one. There are three across
-every save the user has sent.
+**The volume lane's hop is free**, which is LSDj from 8.9.3 and so what a 9.x import wants.
+An older save's hop row is given a LEN of 1 at import, which the lane spends before it jumps,
+so it keeps the tick it had. Confirmed on 9.2.L (a two row cycle keeps its length with a hop
+under it) and on 8.4.4 (three rows and a hop take four ticks).
+
+### 2026-09-10 (later) — the volume lane's hop, a counted phrase H, and the noise domains (spec §56, §64, §66)
+
+**Changed:** four things, all measured on the user's saves through a save's working area.
+
+1. **A table's volume-lane hop is free**, which is LSDj from 8.9.3 and so what a 9.x import
+   wants. Confirmed on 9.2.L: two rows of four ticks with a hop under them cycle every 27
+   pitch clocks a row, no extra tick anywhere. An older save's hop row is given a **LEN of 1**
+   at import, which the lane spends before it jumps, so it keeps the tick it had on 8.4.4.
+   No second rule in the engine, and a 9.x import is exact.
+2. **A counted `H` in a phrase ends it too.** `H x y` ends the phrase x times and then lets it
+   play in full (four short passes and one long, traced on 8.4.4 with `H 4 0`); ChipBoy has no
+   count on a phrase, so it ends every time -- right in four passes of five rather than wrong
+   in all of them, which is what dropping it did. 28 of the 283 phrase `H`s in the user's
+   saves carry a count.
+3. **The noise channel gets a Register sweep domain** (§66). `S` and `P` on noise before LSDj
+   9 do the same arithmetic on `NR43` -- each nibble less the matching nibble of the value,
+   modulo sixteen, no borrow -- `S` once and `P` every tick. The instrument picks **Notes**
+   (§55, LSDj 9's) or **Register**, the importer sets Register for every format before 22, and
+   the bytes go through as written.
+4. **`P` on noise is mapped**, where it was dropped. In Notes it bends the note through the
+   map at **value / 4** entries a tick, which is what 9.2.L does; in Register it is the nibble
+   subtraction every tick.
+
+**Why:** the user asked for 9.x imports to be exact and for the four listed gaps to be closed.
+
+**Considered:** keeping the engine's hop at a tick and shifting the target row for 9.x --
+rejected, it makes the engine carry a version; resolving an older save's `S` to semitones for
+the first pass of a table loop (what §56 did) -- rejected now that the register domain exists,
+since the loop's later passes went their own way.
+
+**Still open: the kit `DIST` modes.** Narrowed this round to **byte 13's bit 6** of the kit
+instrument, which changes the mixed stream with its length unchanged; bytes 4, 5, 6, 7, 10,
+12, 14, 15 and the top bits of 2 and 9 do not (5, 6 and 10 are length and offset). Reading the
+modes off needs a kit-stream decoder to compare the mix against each sample nibble by nibble,
+which is a round of its own. Two samples at once are still summed and clipped, with the note.
 
 ---
 

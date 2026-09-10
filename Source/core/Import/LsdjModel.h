@@ -93,6 +93,7 @@ struct LsdjModel {
     int            waveOctave;       ///< semitones added to a wave note (section 45)
     bool           pu2Transpose;     ///< instrument byte 2 applies on PU2 (section 49)
     bool           tableGrooveWalks; ///< a table's G walks the groove (9.x) or holds its first step (section 63)
+    bool           envHopCostsTick;  ///< a table ENV hop spends a tick before 8.9.3, none after (section 64)
     bool           measured;         ///< traced on that ROM, or assumed from another model
 };
 

@@ -238,6 +238,11 @@ private:
         uint8_t  tableOverride = 0, tableParam = 0;   ///< in force (parameter or cell), and the parameter it came from
         int8_t   cellTranspose = 0;   ///< the chain row's transpose the last cell carried (section 48)
         int8_t   noteTsp = 0;         ///< of it, what this note took: 0 when the instrument's Transpose is off
+        /// Section 66's Register domain: the nibble-wise delta S and P have
+        /// taken off NR43 so far, and the P that keeps taking it every tick.
+        uint8_t  noiseReg = 0, noiseRegStep = 0;
+        int16_t  noiseBend256 = 0;    ///< Notes domain: P's map entries a tick, in 1/256
+        int32_t  noiseBend9 = 0;      ///< and what it has accumulated between whole entries
         int8_t   instTranspose = 0;   ///< the instrument's PU2 transpose, or what an F on PU2 set (section 49)
         uint8_t  chord[3] = { 0, 0, 0 }; uint8_t chordN = 0, chordIdx = 0, chordCount = 0;
         uint8_t  dutyIdx = 0, duty = 2;

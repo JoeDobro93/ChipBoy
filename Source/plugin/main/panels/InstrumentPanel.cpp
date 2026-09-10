@@ -252,7 +252,7 @@ struct InstrumentPanel::Widgets {
     Stepper* pu2Transpose = nullptr;
     Stepper* wave = nullptr; Stepper* frameLength = nullptr; Stepper* frameLoopStep = nullptr; Stepper* frameAdv = nullptr; Segmented* frameLoop = nullptr; Segmented* waveLevel = nullptr;
     Stepper* kit = nullptr; Segmented* kitLoop = nullptr; TextLine* kitRate = nullptr;
-    Segmented* lfsr = nullptr; Segmented* pitchMode = nullptr; Stepper* shift = nullptr; Stepper* divisor = nullptr; Stepper* noiseSweep = nullptr;
+    Segmented* noiseDomain = nullptr; Segmented* lfsr = nullptr; Segmented* pitchMode = nullptr; Stepper* shift = nullptr; Stepper* divisor = nullptr; Stepper* noiseSweep = nullptr;
     Segmented* pan = nullptr;
     // envelope (section 27)
     EnvPreview* graph = nullptr;
@@ -708,6 +708,8 @@ void InstrumentPanel::rebuildEditor()
         w_->divisor = stepper(*sound, "Divisor", "NR43 bits 2-0, in Manual.", 0, 7, 1, {}, [](bank::Instrument& i, int v) { i.noiseDivisor = uint8_t(v); });
         w_->noiseSweep = stepper(*sound, "Noise sweep", "Shift steps per tick: repeated NR43 writes.", -7, 7, 0,
                                  [](int v) { return ValueFormat::signedNumber(v); }, [](bank::Instrument& i, int v) { i.noiseSweep = int8_t(v); });
+        w_->noiseDomain = seg(*sound, "Sweep", "What S and P do here (section 66). Notes moves the note through the map; Register takes the command's byte off NR43 nibble by nibble, which can flip the LFSR width mid-note.",
+                              { "Notes", "Register" }, [](bank::Instrument& i, int v) { i.noiseDomain = bank::NoiseSweepDomain(std::clamp(v, 0, 1)); });
     }
     // Pan is NR51, so it belongs with the other registers.
     w_->pan = seg(*sound, "Pan", "The NR51 default for this instrument. There is no pan law.", { utf8("\xe2\x80\x93"), "L", "LR", "R" }, [](bank::Instrument& i, int v) { i.pan = panFromIndex(v); });
@@ -940,7 +942,7 @@ void InstrumentPanel::syncValues()
         w.kitRate->setText(withThousands(int(std::lround(bank::sampleRateForPeriod(period)))) + " Hz");
     }
     S(w.lfsr, i.lfsr7 ? 1 : 0); S(w.pitchMode, i.noiseManual ? 1 : 0);
-    T(w.shift, i.noiseShift); T(w.divisor, i.noiseDivisor); T(w.noiseSweep, i.noiseSweep);
+    T(w.shift, i.noiseShift); T(w.divisor, i.noiseDivisor); T(w.noiseSweep, i.noiseSweep); S(w.noiseDomain, int(i.noiseDomain));
     S(w.envMode, int(i.env.mode));
     T(w.envVol, i.envVol); S(w.envDir, int(i.envDir)); T(w.envRate, i.envRate);
     T(w.attack, i.env.attackTicks); T(w.peak, i.env.peak); T(w.decay, i.env.decayTicks); T(w.sustain, i.env.sustain); T(w.release, i.env.releaseTicks);
