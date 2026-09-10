@@ -62,3 +62,6 @@ chipboy_linktest.stages.txt
 *.gbc
 *.sav
 !tools/capture/chipboy_probe.gb
+
+# the record test writes its cell log and song dump here (tools/gate.sh)
+/recordtest/
