@@ -2089,9 +2089,9 @@ has no byte, which is right: it is the absence of a `G`.
 Section 7 of `docs/LSDJ_PARITY.md` measured that LSDj steps a level itself, off the
 11712-cycle pitch clock, on the table 6, 11, 15, 20, 27, 36, 36 for rates 1-7, and that
 "every NRx2 goes out with the low nibble 8". That is true, and it is true only from
-**8.8.0** on. The changelog dates it: *2020-08-01, v8.8.0 -- "soft amplitude envelopes for
-pulse and noise channels. ADSR now has a wider range of speeds and volume changes are less
-clicky."*
+**8.8.0** on. The changelog dates it: **v8.8.0, 2020-08-01**, whose first entry is that the pulse and
+noise channels moved to software amplitude envelopes, giving ADSR a wider range of speeds
+and less clicky volume changes.
 
 Before that release LSDj writes the envelope byte straight into `NRx2` and lets the chip's
 own envelope generator run it. Traced on the user's own songs rather than on a generated
@@ -2183,3 +2183,7 @@ fixed-point step rounds the other way.
 > The hold lasts the slide, not the note. Nothing measured says what a table row that sets a
 > *new* transpose under a running slide should do -- the kick's rows are empty -- so the
 > simple rule stands until a song shows otherwise.
+
+> The command-by-command comparison against LSDj 9.3.9 -- what each letter does there, what
+> ChipBoy does now, whether the importer can bridge the two, and how to probe another ROM
+> version -- lives in `docs/LSDJ_COMMAND_MATRIX.md`.

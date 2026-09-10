@@ -2305,7 +2305,8 @@ Recorded above under the milestone entries (2026-09-07, M3–M8).
 **Changed:** `docs/LSDJ_PARITY.md` §7 measured that LSDj steps the level itself off the pitch
 clock, on the table 6, 11, 15, 20, 27, 36, 36, and that "every NRx2 goes out with the low
 nibble 8". That is right, and it is right only from **8.8.0** on -- the changelog dates it:
-*v8.8.0, "soft amplitude envelopes for pulse and noise channels."* Traced on the user's own
+**v8.8.0**, the release that moved the pulse and noise channels to software amplitude
+envelopes. Traced on the user's own
 songs, 8.4.4 playing SPACE TI writes `NR12` **108 times with not one low nibble 8** and rate
 7 fifty-five times; the same save under 9.3.9 writes it 848 times with rates 0 and 1 only.
 5.0.3 playing BIRDS agrees with 8.4.4. Before 8.8.0 LSDj hands the envelope to the chip.
@@ -2363,3 +2364,26 @@ comes to rest on 44 exactly as LSDj does.
 **Left open:** the hold lasts the slide, not the note. Nothing measured says what a table row
 setting a *new* transpose under a running slide should do -- the kick's rows are empty -- so
 the simple rule stands until a song shows otherwise.
+
+### 2026-09-10 — the table grid follows each lane, and the LSDj command matrix
+
+**Changed:** §64 gave a table three pointers -- the volume column, the transpose-and-first-
+command column, and the second command column -- and the Tables tab still drew one playhead
+across the whole row, so the columns looked locked together when the point is that they are
+not. `VoiceView` now carries all three rows, `packTableLanes()` publishes the two new ones,
+and the grid fills each lane's own columns at that lane's row. A lane that has ended -- the
+volume column stops at its first empty row -- reports -1 and draws nothing.
+
+**Added:** `docs/LSDJ_COMMAND_MATRIX.md`, the working reference for LSDj parity. Every command
+as LSDj 9.3.9 handles it (with the formula where there is one), what differs per channel and
+between a phrase and a table, what ChipBoy does today, and a mappable flag saying whether the
+importer can bridge the gap and how. Plus the measurement method, the version boundaries found
+so far, a recipe for probing another ROM against 9.3.9 and deciding whether it shares the
+implementation, and the rules for flagging what will not map on import. Every row carries a
+provenance mark, because the two ways this work has gone wrong are trusting a generated probe
+save (§58, §63) and trusting a measurement made on one version as though it held for all of
+them (§70).
+
+**Note:** the verbatim changelog line quoted in the §70 entries has been paraphrased. L3 keeps
+LSDj's own text out of the repository; behaviour may be checked and described, which is what
+these entries do.

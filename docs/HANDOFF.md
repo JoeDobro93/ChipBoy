@@ -273,8 +273,8 @@ design-log section the change touches. Update this file at the end of every chan
 - Round 18: **the chip ran the envelope before LSDj 8.8.0** (`COMMANDS_AND_TEMPO.md` §70;
   CHANGES 2026-09-10 SPACE TI). Chasing the rest of the user's item 1 -- the `E` on PU1
   phrase 82 -- turned up that `LSDJ_PARITY.md` §7's "LSDj never lets the chip's envelope run"
-  holds only from 8.8.0 on. The changelog dates it (*"soft amplitude envelopes for pulse and
-  noise channels"*) and three traces of real songs prove it: 8.4.4 writes `NR12` 108 times
+  holds only from 8.8.0 on. The changelog dates it (**v8.8.0**, the release that moved the pulse and
+  noise channels to software amplitude envelopes) and three traces of real songs prove it: 8.4.4 writes `NR12` 108 times
   with **no** low nibble 8 and rate 7 fifty-five times; the same save under 9.3.9 writes it
   848 times with rates 0 and 1 only; 5.0.3 agrees with 8.4.4.
   - The instrument carries `envChipTiming`, set by the importer from the model's existing
@@ -307,6 +307,10 @@ design-log section the change touches. Update this file at the end of every chan
   - **Method note**: the user has cleared reading the ROM directly rather than only tracing it
     (their project, their call on L3). Register-stream diffing settled this one without it, but
     it is available for constants that resist measurement.
+- **`docs/LSDJ_COMMAND_MATRIX.md`** is the working reference for LSDj parity: every command
+  as LSDj 9.3.9 handles it, what differs per channel and between a phrase and a table, what
+  ChipBoy does now, whether the importer can bridge the gap, how to probe another ROM version
+  against 9.3.9, and how to flag what will not map. Start there before touching a command.
 - **Adding an LSDj version** when the user supplies its ROM (the steps also head
   `Source/core/Import/LsdjModel.h`): put the ROM beside the others outside the tree
   (`/root/lsdj/` here), copy the 9.3.9 entry in `LsdjModel.cpp`, set the format it writes

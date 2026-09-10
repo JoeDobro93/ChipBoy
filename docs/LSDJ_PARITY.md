@@ -31,6 +31,12 @@ CHIPBOY_LSDJ_ROM=/path/to/lsdj.gb ./build-ref/lsdjref/lsdjref-run --model cgb
 python3 tools/lsdjref/lsdjref_measure.py --traces build-ref/lsdjref/trace
 ```
 
+> **Version.** Every number below was measured on **9.2.J** unless it says otherwise, and a
+> measurement is only true of the version it was made on -- §7 and §10 turned out to describe
+> LSDj 8.8.0 and after, not LSDj in general (`COMMANDS_AND_TEMPO.md` §70). Treat the rest as
+> 9.x behaviour until re-checked. `docs/LSDJ_COMMAND_MATRIX.md` tracks which commands have been
+> measured on which version, and how to probe another one.
+
 ---
 
 ## Summary of verdicts
@@ -335,8 +341,9 @@ while a channel runs does not load the amplitude.
 ## 7. The instrument's own envelope rate
 
 > **From 8.8.0 only** (`COMMANDS_AND_TEMPO.md` §70). This section was measured on a 9.x ROM.
-> LSDj moved the envelope into software in **8.8.0** -- *"soft amplitude envelopes for pulse
-> and noise channels"* -- and before that release it wrote the rate into `NRx2` and let the
+> LSDj moved the envelope into software in **8.8.0**, the release whose changelog leads with
+> the pulse and noise channels gaining software amplitude envelopes. Before it, LSDj wrote
+> the rate into `NRx2` and let the
 > chip's own envelope generator run it, one level every `rate / 64` s. Traced on real songs:
 > 8.4.4 and 5.0.3 write `NR12` with rate nibbles and **no** low nibble 8; the same save under
 > 9.3.9 writes eight times as many `NR12` bytes, all holds. An instrument imported from
