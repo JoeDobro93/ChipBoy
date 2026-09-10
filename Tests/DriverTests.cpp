@@ -1384,8 +1384,9 @@ TEST_CASE("a table's G asks the Player for its row lengths", "[driver][commands]
     r.bank.tables[7] = t;
     r.bank.instruments[0].table = 8; r.bank.instruments[0].vib.depth = 0;
     ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    r.song.grooves[1].ticks = { 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };   // slot 2, which the G names
     const uint8_t ticks[16] = { 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-    r.drv.setTableGroove(0, ticks);                      // what the Player hands over
+    r.drv.setTableGroove(0, ticks);                      // the Player hands the same ticks back (section 57)
     r.block({ Rig::on(0, 60, 100) }, 480);               // the first tick runs row 0
     CHECK(r.drv.tableGrooveSlot(0) == 2);                // the slot the table asked for
     const auto series = periodSeries(r, 0, 8, 480);
@@ -1395,6 +1396,29 @@ TEST_CASE("a table's G asks the Player for its row lengths", "[driver][commands]
     CHECK(series[5] == note(70));
     // Without a groove the table is back to a row a tick.
     r.drv.setTableGroove(0, nullptr);
+    r.bank.instruments[0].table = 0;
+}
+
+TEST_CASE("the row that carries a table's G takes the groove's first step", "[driver][commands]")
+{
+    // Section 57: the G lands at its own row, so the groove's step 0 is that
+    // row's length -- the Driver reads the song's groove where it used to wait
+    // for the Player's next hand-off and give the row one tick.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.grooves[1].ticks = { 3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };   // slot 2: three ticks, then one
+    Table t; t.used = true; t.name = "Grooved";
+    t.steps[0].cmd1 = { Cmd::G, 2, 0, 0 };
+    for (int i = 0; i < 4; ++i) { t.steps[size_t(i)].hasTranspose = true; t.steps[size_t(i)].transpose = int8_t(i * 5); }
+    t.end = TableEnd::Stop;
+    r.bank.tables[7] = t;
+    r.bank.instruments[0].table = 8; r.bank.instruments[0].vib.depth = 0;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    r.block({ Rig::on(0, 60, 100) }, 480);               // the first tick runs row 0, with no groove handed over
+    const auto series = periodSeries(r, 0, 6, 480);
+    CHECK(series[0] == note(60)); CHECK(series[1] == note(60));   // row 0 holds for its three ticks
+    CHECK(series[2] == note(65));                                  // row 1 takes step 1: one tick
+    CHECK(series[3] == note(70)); CHECK(series[4] == note(70));
     r.bank.instruments[0].table = 0;
 }
 

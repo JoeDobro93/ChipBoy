@@ -268,33 +268,55 @@ struct Reader {
         }
     }
 
-    // --- envelope (section 51) ------------------------------------------
+    // --- envelope (sections 51 and 58) ------------------------------------
+    /// The ticks a stage costs to walk `delta` levels at `speed`: the measured
+    /// period table on the software stages, the chip's own (period / 64) of a
+    /// second a level on the hardware ones (section 58).
     int envTicks(int delta, int speed) const
     {
         if (speed == 0 || delta == 0) return 0;
-        const double ms = std::abs(delta) * double(m.envPeriods[size_t(speed & 15)]) * kPitchClockMs;
+        const double perLevelMs = m.envPeriods != nullptr ? double(m.envPeriods[size_t(speed & 15)]) * kPitchClockMs
+                                                          : double(speed & 7) * 1000.0 / 64.0;
+        const double ms = std::abs(delta) * perLevelMs;
         return std::clamp(int(std::lround(ms / tickMs)), 1, 255);
     }
     void envelope(const uint8_t* b, bank::Instrument& o, const std::string& name)
     {
-        if (!m.stagedEnvelope) {
+        if (m.envelopeLaw == EnvelopeLaw::Chip) {
             // The byte is NRx2: the chip's own envelope, exactly.
             o.env.mode = bank::EnvMode::Chip;
             o.envVol = uint8_t(b[1] >> 4); o.envDir = (b[1] & 8) ? bank::EnvDir::Up : bank::EnvDir::Down; o.envRate = uint8_t(b[1] & 7);
             return;
         }
-        const int a1 = b[1] >> 4, s1 = b[1] & 15, a2 = b[9] >> 4, s2 = b[9] & 15, a3 = b[10] >> 4, s3 = b[10] & 15;
+        const bool hw = m.envelopeLaw == EnvelopeLaw::HardwareStages;
+        const int mask = hw ? 7 : 15;                                     // NRx2 keeps the period in three bits
+        const int a1 = b[1] >> 4, s1 = b[1] & mask, a2 = b[9] >> 4, s2 = b[9] & mask, a3 = b[10] >> 4, s3 = b[10] & mask;
+        // On the chip a stage hands over only when its ramp can reach the next
+        // amplitude; a direction that points away from it never arrives, and
+        // the note holds where it is (section 58).
+        const auto reaches = [hw](uint8_t from, int to, int speed) {
+            if (speed == 0) return false;
+            if (!hw) return true;
+            return (from & 8) ? to > (from >> 4) : to < (from >> 4);
+        };
         o.envVol = uint8_t(a1);
-        if (s1 == 0) { o.env.mode = bank::EnvMode::Chip; o.envDir = bank::EnvDir::Down; o.envRate = 0; return; }   // a held level
+        if (!reaches(b[1], a2, s1)) {   // a held level: the chip's own envelope says it best
+            o.env.mode = bank::EnvMode::Chip;
+            o.envDir = (b[1] & 8) ? bank::EnvDir::Up : bank::EnvDir::Down;
+            o.envRate = uint8_t(hw ? s1 : 0);
+            return;
+        }
         o.env.mode = bank::EnvMode::Shaped;
         o.env.start = uint8_t(a1); o.env.attackTicks = uint8_t(envTicks(a1 - a2, s1)); o.env.peak = uint8_t(a2); o.env.releaseTicks = 0;
-        if (s2 == 0) { o.env.decayTicks = 0; o.env.sustain = uint8_t(a2); o.env.fadeTicks = 0; }
+        if (!reaches(b[9], a3, s2)) { o.env.decayTicks = 0; o.env.sustain = uint8_t(a2); o.env.fadeTicks = 0; }
         else {
             o.env.decayTicks = uint8_t(envTicks(a2 - a3, s2)); o.env.sustain = uint8_t(a3);
-            if (s3) { o.env.fadeTicks = uint8_t(envTicks(a3, s3)); o.env.fadeTo = 0; }
+            if (s3 && !hw) { o.env.fadeTicks = uint8_t(envTicks(a3, s3)); o.env.fadeTo = 0; }
         }
-        for (int sp : { s1, s2, s3 })
-            if (sp && double(m.envPeriods[size_t(sp)]) * kPitchClockMs < tickMs) { notes.add("instrument " + name + ": an envelope stage faster than a tick a level is quantised to the tick"); break; }
+        for (int sp : { s1, s2, s3 }) {
+            const double perLevelMs = m.envPeriods != nullptr ? double(m.envPeriods[size_t(sp & 15)]) * kPitchClockMs : double(sp & 7) * 1000.0 / 64.0;
+            if (sp && perLevelMs < tickMs) { notes.add("instrument " + name + ": an envelope stage faster than a tick a level is quantised to the tick"); break; }
+        }
     }
 
     // --- instruments ------------------------------------------------------

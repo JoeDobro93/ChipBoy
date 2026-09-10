@@ -1591,7 +1591,7 @@ the tree). The **format a version writes** and what changed, measured:
 | 4 | 5.7.8 – 6.0.1 | shape | nibbles | NRx2 | 9.x's, pitch modes | 9.x's | no B |
 | 5 | 6.4.5 | shape | nibbles | NRx2 | 9.x's | 9.x's | no B |
 | 7 | 6.8.2 – 7.0.2 | shape | nibbles | NRx2 | 9.x's | 9.x's | no B |
-| 11 | 8.4.0, 8.4.4, 8.5.1 | shape | nibbles | NRx2 | 9.x's | 9.x's | B |
+| 11 | 8.4.0, 8.4.4, 8.5.1 | shape | nibbles | three stages, chip-ramped (§58) | 9.x's | 9.x's | B |
 | 15 | 8.8.6 | raw `FF − n` | nibbles | three stages | 9.x's | 9.x's | B |
 | 22 | 9.2.J, 9.2.L, 9.3.9, 9.4.2 | the musical map | semitones (§55) | three stages | 9.x's | 9.x's | B |
 
@@ -1671,3 +1671,54 @@ saves, several at once, and lists them in the same dialog; `--import-sav` on the
 line takes one too. Confirmed on the user's eight projects against the save they were
 loaded into: byte-identical songs but for the kit numbers in the kit instruments, which
 LSDj renumbers to its ROM's kit list on loading a project.
+
+## 57. A `G` in a table row sets that row's own length
+
+Measured on every archived release from 3.5.1 to 9.3.9 (round 13's `x_ttime` probe, and
+GOAL ACH's arpeggio on 8.4.4): a `G` in a table row takes effect **at that row**, and the
+groove's first step is the row's own length. LSDj's `G 0A` in row 0 of a table whose groove
+is 7 4 gives rows of 7, 4, 7, 4 ticks from the note on.
+
+ChipBoy applied it a row late. The Driver kept the slot for the Player, which handed the
+groove's ticks back on the next block, so the row that carried the `G` had already taken the
+default one tick — an arpeggio one tick short in its first step and then a step out of phase
+against LSDj for as long as the note lasted. The Driver reads the song's groove itself now,
+at the moment the command runs (`Driver::applyCommand`, `Cmd::G` with `fromTable`), and the
+Player's hand-off, which carries the same ticks, is left as it was for the rows after it.
+Row *n* of the run still takes step *n* of the groove, as §44 measured.
+
+Nothing else moved: `G` outside a table still belongs to the timeline, and a `G 0` still
+clears the run's groove back to one tick a row.
+
+## 58. Format 11's envelope is three stages too, ramped by the chip
+
+Measured on 8.4.4 and 8.5.1 (round 13's `x_env11` probes): a pulse or noise instrument of
+song format 11 carries **three envelope stages in bytes 1, 9 and 10**, the same three §51
+found in 8.8.6 and 9.x — but the ramp between them is the **chip's own envelope**, not the
+software table.
+
+- Byte 1 goes to NRx2 at the note on: amplitude `b >> 4`, direction bit 3, period `b & 7`.
+  The hardware envelope then walks one level every `period / 64` of a second.
+- When it reaches **byte 9's amplitude**, LSDj writes byte 9 to NRx2 and retriggers. When
+  that ramp reaches **byte 10's amplitude**, it writes byte 10 and retriggers.
+- A stage whose period is 0 holds; a stage whose direction cannot reach the next
+  amplitude never hands over, and the note holds where it is. Confirmed over stage-2
+  amplitudes 2, 4, 8, 9 and 12 and periods 1, 2, 3 and 7: the hand-over lands at
+  `|a2 − a1| × period / 64` seconds after the note, within half a step of the free-running
+  64 Hz envelope clock.
+
+Formats 0 to 7 (3.1.5 to 7.0.2) ignore bytes 9 and 10 altogether: NRx2 is written once and
+the chip is left to it. Traced on 5.0.3 and 7.0.2 with the same probe.
+
+The importer reads all three laws through `LsdjModel::envelope` — `Chip`, `HardwareStages`,
+`SoftwareStages` — and the two staged ones land on the same Shaped envelope (§51); only the
+milliseconds a level costs differ: `period / 64` of a second on the chip, the measured
+period table on the software stages. It matters: 28 of the 61 instruments in one of the
+user's format-11 songs and 31 of 42 in another set bytes 9 or 10, and every one of them was
+playing a flat hardware ramp to the rail before this.
+
+*(A probe whose save has never been opened in the LSDj editor writes the stage levels of
+instrument 00 whatever instrument plays, while the timing still follows the playing one —
+a stale editor pointer, not a rule: real saves write each instrument's own bytes, checked
+against two of them on the user's song.)*
+

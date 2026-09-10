@@ -1390,7 +1390,14 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
             // Inside a table G sets that run's row lengths: the driver keeps
             // the slot for the Player, which hands back the groove's ticks
             // through setTableGroove(). On the timeline the Player owns it.
-            if (fromTable) { v.tableGroove = uint8_t(std::clamp<int>(c.a, 0, 16)); if (!v.tableGroove) tableGroove_[size_t(ch)].fill(0); }
+            if (fromTable) {
+                v.tableGroove = uint8_t(std::clamp<int>(c.a, 0, 16));
+                // The row that carries the G takes the groove's first step as
+                // its own length (section 57), so the ticks are read here and
+                // not waited for from the Player's next hand-off.
+                if (!v.tableGroove) tableGroove_[size_t(ch)].fill(0);
+                else if (song_ != nullptr) setTableGroove(ch, song_->grooves[size_t(v.tableGroove - 1)].ticks.data());
+            }
             break;
         case Cmd::T: break;                           // timeline: the Player and the Clock own this
         case Cmd::H:

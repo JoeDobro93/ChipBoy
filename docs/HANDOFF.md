@@ -151,6 +151,38 @@ design-log section the change touches. Update this file at the end of every chan
   5. Put the rule in `LsdjModel` (a field the converter switches on), the conversion in
      `LsdjSong.cpp`, a case in `Tests/LsdjImportTests.cpp` on a synthetic song, the finding in
      §56 and `plan-lsdj-import.md` §3; then import a real song, `--trace-song` it and compare.
+- Round 13 (continued): **a table's `G` times its own row, and format 11's envelope is three
+  stages** (`COMMANDS_AND_TEMPO.md` §57–§58).
+  - §57: a `G` in a table row takes effect at that row on every release traced (3.5.1 to
+    9.3.9). ChipBoy applied it a row late, because the Driver kept only the slot and waited
+    for the Player's next block to hand the ticks over. It reads `song_->grooves` itself now.
+    GOAL ACH's arpeggio matches LSDj step for step and tick for tick after it.
+  - §58: song format 11 (8.4.0 – 8.5.1) carries **three envelope stages in bytes 1, 9 and
+    10**, like 8.8.6 and 9.x, but the ramp between them is the **chip's** envelope: a level
+    every `period / 64` of a second, and each stage hands over when the ramp reaches the
+    next stage's amplitude (confirmed over amplitudes 2, 4, 8, 9, 12 and periods 1, 2, 3, 7).
+    A stage whose direction points away from the next amplitude never hands over. Formats 0
+    to 7 ignore bytes 9 and 10 (traced on 5.0.3 and 7.0.2). `LsdjModel::stagedEnvelope`
+    became `EnvelopeLaw` (Chip / HardwareStages / SoftwareStages) and both staged laws land
+    on the Shaped envelope; only the milliseconds a level costs differ. This was the largest
+    remaining timbre gap: 28 of GOAL ACH's 61 instruments and 31 of SPACE TI's 42 set those
+    bytes and every one of them had been playing a flat ramp to the rail.
+  - **Two earlier open issues were wrong and are closed**: the note-on carrying a table's
+    row 0 is not a version difference (every release writes the plain note and lets row 0
+    land 0.4 pitch clocks later, which is what ChipBoy's merge sounds like); and the extra
+    noise triggers on the 4.x songs were two analysis scripts using different time origins,
+    not a rule. A noise instrument's byte 3 is loaded into NR41 with the length bit clear
+    in NR44, so it is inaudible and ignoring it is right.
+  - **Verification tools** (container only): `/root/lsdj/notes.py LSDJ.csv CHIPBOY.csv
+    [detail]` scores the note-on sequence per channel by semitone (pulse and wave) or LFSR
+    clock (noise), in-step and as a longest common run — the honest measure, since vibrato
+    and slides move the period between triggers and swamp a raw register diff.
+    `/root/lsdj/cmp.py` is the raw-register one. Current state on the nine old songs:
+    ASDFIOJA, ISORHYTM and AITU2 exact on all three pitched channels; ASTEROID, GUUDE and
+    BIRDS exact within the shorter run; SPACE TI and STARWAY 100/102 and 99/102; GOAL ACH's
+    pulses carry LSDj's envelope-stage retriggers, which are not notes, so it scores low and
+    was checked by hand instead. All nine, and all eight project files, pass `--play-song`
+    (ISORHYTM fails only on a PU1 that LSDj leaves silent too).
 - **Adding an LSDj version** when the user supplies its ROM (the steps also head
   `Source/core/Import/LsdjModel.h`): put the ROM beside the others outside the tree
   (`/root/lsdj/` here), copy the 9.3.9 entry in `LsdjModel.cpp`, set the format it writes
@@ -191,9 +223,7 @@ design-log section the change touches. Update this file at the end of every chan
 - §7's envelope-speed numbers (6, 11, 15, 20, 27 for speeds 1–5) were the hardware
   envelope's, measured on version-0 saves; §51 has the 9.x software table. `LSDJ_PARITY.md`
   should be re-read against it when the harness writes format 22 (below).
-- From round 13, measured and left for a later switch: **8.4.x's table timing on pulse** (the
-  note-on does not carry row 0's transpose; a `G` in row 0 sets row 0's own length; GOAL ACH's
-  arpeggio and SPACE TI's PU2 show it) — ChipBoy keeps the 9.x rule; **P on noise** (nibble sweep
+- From round 13, measured and left, with the reason: **P on noise** (nibble sweep
   every tick before 9, a map walk of `v/4` entries a tick on 9.x whose table past the keyboard is
   unmeasured) — dropped with a note; **drum mode's own note table on 5.7–6.0** (C-4 is period 458);
   the **nibble wrap** in long S sweeps (`7F`→`80`) that ChipBoy's semitone steps cannot follow; a
@@ -201,9 +231,14 @@ design-log section the change touches. Update this file at the end of every chan
   does not reset: measured on ASTEROID's `H02`); the harness's tables loop after six rows for a
   reason still unknown (`LSDJ_PARITY.md`); noise **chain transposes before 9** are folded into the
   note's octave, unmeasured whether LSDj subtracts them from NR43 like a table's column; wave
-  instruments' PLAY/SPEED/LENGTH and the old formats' vibrato-shape bits; the comparator's pitch
-  sequences drift on vibrato phase, so pulse/wave parity on the old songs is judged by ear and
-  spot checks, not by the match count.
+  instruments' PLAY/SPEED/LENGTH and the old formats' vibrato-shape bits; the **instrument LENGTH**
+  (byte 3), which LSDj loads into NR41 but leaves disabled in every song looked at, so it is
+  inaudible until one is found that enables it; and format 11's **third envelope stage's own
+  ramp** (its level is byte 10 and its timing follows §58, but no song was found that uses a
+  non-zero period there, so the fade is left holding at the third amplitude).
+  A probe save that has never been opened in the LSDj editor writes the stage levels of
+  instrument 00 whatever plays, while the timing follows the playing instrument: a stale editor
+  pointer. Real saves are fine; keep it in mind when probing envelopes.
 - From the LSDj recreation, open by decision: an **LSDj-shaped noise map** as an
   instrument option (its map runs into 7-bit values above A-6 and retriggers on such a
   row; ChipBoy's transposed noise rows land near LSDj's pitches, not on them); the table

@@ -80,8 +80,8 @@ struct LsdjModel {
     int            formatVersion;    // the format this version writes
     int            formatMin, formatMax;   // the formats it is used to read
     const char*    commandLetters;   // command byte -> letter, index 0 none
-    bool           stagedEnvelope;   // 9.x three-stage software envelope, else the NRx2 byte
-    const uint8_t* envPeriods;       // 16: pitch-clock periods per level (§51)
+    EnvelopeLaw    envelopeLaw;      // Chip / HardwareStages / SoftwareStages (§51, §58)
+    const uint8_t* envPeriods;       // 16: pitch-clock periods per level (§51), null on the chip's own
     const uint8_t* noiseMap;         // 128: MIDI note -> NR43 byte, 0xFF unmeasured
     int            waveOctave;       // semitones added to a wave note (§45: -12)
     bool           pu2Transpose;     // instrument byte 2 is PU2 TSP (§49)
@@ -98,7 +98,7 @@ Measured on every stable release in the LSDj archive (each ROM booted with `lsdj
 |---|---|---|---|---|---|---|
 | 22 | 9.2.J, 9.2.L, 9.3.9, 9.4.2 | the musical map | semitones, adding up (§55) | three stages, §51's periods | 9.x's | with `B` |
 | 15 | 8.8.6 | raw: note byte *n* writes `FF − n` | nibbles | three stages, the same periods | 9.x's | with `B` |
-| 11 | 8.4.0, 8.4.4, 8.5.1 | `~SHAPE + 16 × (5 − octave)` | nibbles | the NRx2 byte | 9.x's | with `B` |
+| 11 | 8.4.0, 8.4.4, 8.5.1 | `~SHAPE + 16 × (5 − octave)` | nibbles | three stages the chip ramps between (§58) | 9.x's | with `B` |
 | 4, 5, 7 | 5.7.8 – 7.0.2 | shape | nibbles | NRx2 | 9.x's (drum's note table differs, not modelled) | without `B` |
 | 2, 3 | 3.6.8 – 5.0.3 | shape | nibbles | NRx2 | P, L in register units a pitch clock; V 9.x's | without `B` |
 | 0 | 3.1.5 – 3.5.1 | shape | nibbles | NRx2 | P, L, V in register units | without `B`, 3.1 without `Z` |

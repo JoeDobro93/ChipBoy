@@ -26,6 +26,22 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-10 — a table's G times its own row; format 11's envelope is three stages
+
+[`COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md) §57–§58, from the same archive of releases:
+
+- **§57**: a `G` in a table row sets that row's own length, on every release traced from 3.5.1 to
+  9.3.9. ChipBoy applied it a row late — the Driver kept the slot and waited for the Player's next
+  block to hand the groove's ticks over — so an arpeggio's first step was a tick short and then a
+  step out of phase for the whole note. The Driver reads the song's groove at the command now.
+- **§58**: song format 11 carries three envelope stages in bytes 1, 9 and 10, the same three §51
+  found in 8.8.6, but the chip ramps between them: a level every `period / 64` of a second, each
+  stage handing over when the ramp reaches the next amplitude. Spec §51 had said only 8.8+ was
+  staged and format 11 was the bare NRx2 byte; it is not. `LsdjModel::stagedEnvelope` became
+  `EnvelopeLaw` (Chip / HardwareStages / SoftwareStages). Formats 0–7 really do ignore bytes 9
+  and 10. Considered and rejected: leaving format 11 on the plain chip envelope, which had 28 of
+  61 instruments in one of the user's own songs ramping to the rail instead of shaping.
+
 ### 2026-09-10 — every stable LSDj release measured; the older formats import; S on noise; project files
 
 [`COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md) §55–§56, [`plan-lsdj-import.md`](docs/plan-lsdj-import.md) §1a, §3, §4b:

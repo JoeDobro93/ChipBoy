@@ -301,12 +301,17 @@ TEST_CASE("the same bytes under the older models take their own envelope, letter
         CHECK(p1->cells[4].cmd1.cmd == bank::Cmd::P);           // byte 12 is P without B in the table
         CHECK(bank->tables[0].steps[1].cmd1.cmd == bank::Cmd::K);   // byte 8 is K
     }
-    SECTION("8.4.0, format 11: the hardware envelope, B in the table, an octave-only noise map") {
+    SECTION("8.4.0, format 11: three stages the chip ramps between, B in the table, the SHAPE noise rule") {
         const auto song = testSong(22);                              // the same bytes: byte 9 kills, byte 13 bends
         auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
         ImportSummary sum; ImportNotes notes;
         REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(11), *bank, *out, sum, notes));
-        CHECK(bank->instruments[0].env.mode == bank::EnvMode::Chip); CHECK(bank->instruments[0].envRate == 5);
+        // Section 58: byte 1 = A5 is amplitude 10 falling at period 5 and byte 9 = 00
+        // is amplitude 0, so the chip's ramp decays it to silence over ten levels.
+        const auto& env11 = bank->instruments[0].env;
+        CHECK(env11.mode == bank::EnvMode::Shaped);
+        CHECK(int(env11.start) == 10); CHECK(int(env11.peak) == 0); CHECK(int(env11.sustain) == 0);
+        CHECK(int(env11.attackTicks) == int(std::lround(10 * 5 * 1000.0 / 64.0 / (60000.0 / (165.0 * 24.0)))));
         CHECK(out->phrase(1)->cells[4].cmd1.cmd == bank::Cmd::P);
         bool found = false;
         for (uint8_t slot : out->chain[3]) if (const auto* p = out->phrase(slot)) { found = true; CHECK(noiseClockMatches(*bank, *p, 0, 0xEF)); }   // A-6 writes EF on 8.4.0: a 2.3 Hz click, the deepest the Shift reaches
@@ -361,6 +366,41 @@ std::vector<uint8_t> oldSong(int format)
 }
 int semitoneOf(const bank::Command& c) { return int(int8_t(uint8_t((c.a << 4) | c.b))); }
 } // namespace
+
+TEST_CASE("format 11's envelope is three stages the chip ramps between", "[lsdj]")
+{
+    // Section 58: byte 1 goes to NRx2, and each stage hands over when the chip's
+    // ramp reaches the next amplitude, one level every (period / 64) of a second.
+    auto song = blankSong(11);
+    song[kInstAlloc + 0] = 1;
+    uint8_t* i0 = song.data() + kInst;
+    i0[0] = 0; i0[1] = 0x1F; i0[9] = 0x47; i0[10] = 0x20; i0[4] = 0xFF; i0[7] = 0x80 | 3;   // 1 up at 7, 4 down at 7, hold at 2
+    song[kPhraseAlloc] |= 1; song[kNotes] = 60 - 35; song[kPhraseInst] = 0;
+    song[kChainPhrases] = 0; song[kRows + 0] = 0; song[kRows + 1] = 0xFF; song[kRows + 2] = 0xFF; song[kRows + 3] = 0xFF;
+    song[kTempo] = 120;
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(11), *bank, *out, sum, notes));
+    const auto& e = bank->instruments[0].env;
+    REQUIRE(e.mode == bank::EnvMode::Shaped);
+    const double tickMs = 60000.0 / (120.0 * 24.0);
+    CHECK(int(e.start) == 1); CHECK(int(e.peak) == 4); CHECK(int(e.sustain) == 2);
+    CHECK(int(e.attackTicks) == int(std::lround(3 * 7 * 1000.0 / 64.0 / tickMs)));   // 1 -> 4 at period 7
+    CHECK(int(e.decayTicks) == int(std::lround(2 * 7 * 1000.0 / 64.0 / tickMs)));    // 4 -> 2 at period 7
+    CHECK(int(e.fadeTicks) == 0);
+    // A direction that cannot reach the next amplitude never hands over.
+    i0[1] = 0x1F; i0[9] = 0x00;                                                       // rising from 1, target 0
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(11), *bank, *out, sum, notes));
+    CHECK(bank->instruments[0].env.mode == bank::EnvMode::Chip);
+    CHECK(bank->instruments[0].envRate == 7);
+    // Formats 0 to 7 ignore bytes 9 and 10 altogether.
+    auto old7 = blankSong(7); std::memcpy(old7.data(), song.data(), song.size());
+    old7[kFormatVersionAt] = 7;
+    old7[kInst + 1] = 0x1F; old7[kInst + 9] = 0x47; old7[kInst + 10] = 0x20;
+    REQUIRE(importSong(old7.data(), old7.size(), *lsdjModelForFormat(7), *bank, *out, sum, notes));
+    CHECK(bank->instruments[0].env.mode == bank::EnvMode::Chip);
+    CHECK(bank->instruments[0].envVol == 1); CHECK(bank->instruments[0].envRate == 7);
+}
 
 TEST_CASE("the formats before 9 read the noise SHAPE and resolve S to the note it lands on", "[lsdj]")
 {

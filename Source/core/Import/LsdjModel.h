@@ -13,7 +13,8 @@
 //                              P/L/V in period-register units a pitch clock
 //   format 2-3 3.6.8 - 5.0.3   the same, V already 9.x's
 //   format 4-7 5.7.8 - 7.0.2   the same, P/L/V 9.x's, pitch modes
-//   format 11  8.4.0 - 8.5.1   the same, the letter table with B
+//   format 11  8.4.0 - 8.5.1   the same noise, the letter table with B, and three
+//                              envelope stages the chip ramps between (section 58)
 //   format 15  8.8.6           raw noise (FF - n), three-stage envelope
 //   format 22  9.2.J - 9.4.2   the musical noise map, S in semitones
 // Formats 1, 6, 8-10, 12-14 and 16-21 were never written by a stable release
@@ -32,8 +33,8 @@
 //      table is the one without B, patch the bytes for a ROM with B); the noise
 //      rule (every note on a noise instrument with a known SHAPE byte, read
 //      NR43); S on noise (one note, S values on later rows); the envelope (one
-//      note, the speed patched 1..F, section 51) and whether it is the NRx2
-//      byte or the three stages; P, V and L (section 56's probe: P01/P08,
+//      note, the speed patched 1..F, sections 51 and 58) and which of the three
+//      envelope laws it follows; P, V and L (section 56's probe: P01/P08,
 //      V24/V48/V83, two notes with L); the wave octave (section 45); PU2 TSP
 //      (section 49). Probe saves are built by copying the probe's 32 KB over
 //      the ROM's own --init-sav save and keeping that save's byte 0x7FFF.
@@ -52,6 +53,12 @@ enum class NoiseRule : uint8_t {
     Shape,      ///< ~SHAPE (instrument byte 4) + 16 x (5 - octave), saturating; formats 0-11
     Raw,        ///< FF - note byte; format 15
     Map         ///< the measured musical map, `noiseMap`; format 22
+};
+/// How an instrument's envelope bytes are read (sections 51 and 58).
+enum class EnvelopeLaw : uint8_t {
+    Chip,            ///< byte 1 is NRx2 and nothing else; formats 0-7
+    HardwareStages,  ///< bytes 1, 9, 10 are three stages the chip ramps between, a level every (period / 64) s; format 11
+    SoftwareStages   ///< the same three stages, ramped by the measured period table; formats 15 and 22
 };
 /// What S does on the noise channel.
 enum class NoiseS : uint8_t {
@@ -74,8 +81,8 @@ struct LsdjModel {
     int            formatVersion;    ///< the song format this version writes
     int            formatMin, formatMax;   ///< the formats this model reads, inclusive
     const char*    commandLetters;   ///< command byte -> letter; index 0 is none; '\0' ends it
-    bool           stagedEnvelope;   ///< the three-stage software envelope (section 51); else byte 1 is NRx2
-    const uint8_t* envPeriods;       ///< [16] pitch-clock periods per level, speeds 0-F (staged only)
+    EnvelopeLaw    envelopeLaw;      ///< sections 51 and 58
+    const uint8_t* envPeriods;       ///< [16] pitch-clock periods per level, speeds 0-F (SoftwareStages only)
     NoiseRule      noiseRule;
     const uint8_t* noiseMap;         ///< [128] MIDI note -> NR43 byte, valid for noiseLo..noiseHi (Map only)
     int            noiseLo, noiseHi; ///< the MIDI notes the map was measured for; outside, the interpreter folds by octaves

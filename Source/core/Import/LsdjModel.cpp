@@ -68,12 +68,12 @@ constexpr uint8_t kNoise886[128] = {
 // no Z either). Before 5.7.8 P and L work in period-register units a pitch
 // clock and there are no pitch modes; before 3.6.8 V does too.
 
-constexpr LsdjModel kLsdj9   { "LSDj 9.2.J - 9.4.2 (format 22)",   22, 22, 31, kLetters9,      true,  kEnvPeriods9, NoiseRule::Map,   kNoise9,   36, 115, NoiseS::Semitones, PitchLaw::Semitone, VibratoLaw::Semitone,         -12, true, true };
-constexpr LsdjModel kLsdj886 { "LSDj 8.8.6 (format 15)",           15, 15, 21, kLetters9,      true,  kEnvPeriods9, NoiseRule::Raw,   kNoise886, 36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         -12, true, true };
-constexpr LsdjModel kLsdj84  { "LSDj 8.4.0 - 8.5.1 (format 11)",   11, 11, 14, kLetters9,      false, nullptr,      NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         -12, true, true };
-constexpr LsdjModel kLsdj57  { "LSDj 5.7.8 - 7.0.2 (formats 4-7)",  4,  4, 10, kLettersLegacy, false, nullptr,      NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         -12, true, true };
-constexpr LsdjModel kLsdj36  { "LSDj 3.6.8 - 5.0.3 (formats 2-3)",  3,  2,  3, kLettersLegacy, false, nullptr,      NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Register, VibratoLaw::Semitone,         -12, true, true };
-constexpr LsdjModel kLsdj31  { "LSDj 3.1.5 - 3.5.1 (format 0)",     0,  0,  1, kLettersLegacy, false, nullptr,      NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Register, VibratoLaw::RegisterOneSided, -12, true, true };
+constexpr LsdjModel kLsdj9   { "LSDj 9.2.J - 9.4.2 (format 22)",   22, 22, 31, kLetters9,      EnvelopeLaw::SoftwareStages, kEnvPeriods9, NoiseRule::Map,   kNoise9,   36, 115, NoiseS::Semitones, PitchLaw::Semitone, VibratoLaw::Semitone,         -12, true, true };
+constexpr LsdjModel kLsdj886 { "LSDj 8.8.6 (format 15)",           15, 15, 21, kLetters9,      EnvelopeLaw::SoftwareStages, kEnvPeriods9, NoiseRule::Raw,   kNoise886, 36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         -12, true, true };
+constexpr LsdjModel kLsdj84  { "LSDj 8.4.0 - 8.5.1 (format 11)",   11, 11, 14, kLetters9,      EnvelopeLaw::HardwareStages, nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         -12, true, true };
+constexpr LsdjModel kLsdj57  { "LSDj 5.7.8 - 7.0.2 (formats 4-7)",  4,  4, 10, kLettersLegacy, EnvelopeLaw::Chip,           nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         -12, true, true };
+constexpr LsdjModel kLsdj36  { "LSDj 3.6.8 - 5.0.3 (formats 2-3)",  3,  2,  3, kLettersLegacy, EnvelopeLaw::Chip,           nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Register, VibratoLaw::Semitone,         -12, true, true };
+constexpr LsdjModel kLsdj31  { "LSDj 3.1.5 - 3.5.1 (format 0)",     0,  0,  1, kLettersLegacy, EnvelopeLaw::Chip,           nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Register, VibratoLaw::RegisterOneSided, -12, true, true };
 
 constexpr const LsdjModel* kModels[] = { &kLsdj9, &kLsdj886, &kLsdj84, &kLsdj57, &kLsdj36, &kLsdj31 };   // newest first
 
