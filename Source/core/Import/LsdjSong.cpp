@@ -384,8 +384,11 @@ struct Reader {
             o.vib.speed = 8; o.vib.depth = 0; o.vib.delay = 0;
             o.table = (b[6] & 0x20) ? uint8_t((b[6] & 0x1F) + 1) : uint8_t(0);
             o.transpose = !(b[5] & 0x20);
-            // Before 8.8 an E writes NRx2 and triggers (section 59).
+            // Before 8.8 an E writes NRx2 and triggers (section 59), and the
+            // chip's own envelope generator runs the levels, so they come at
+            // the chip's rate rather than 8.8's software table (section 70).
             o.envRetrig = m.envelopeLaw != EnvelopeLaw::SoftwareStages;
+            o.envChipTiming = m.envelopeLaw != EnvelopeLaw::SoftwareStages;
             instTranspose[size_t(i)] = o.transpose;
             if (t == 0 || t == 3) envelope(b, o, name);
             if (t == 0) {

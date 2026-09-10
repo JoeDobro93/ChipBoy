@@ -46,7 +46,7 @@ python3 tools/lsdjref/lsdjref_measure.py --traces build-ref/lsdjref/trace
 | 7 | L slide duration and domain | **differed** | **done** — x + 1 updates, linear in semitones, the trigger at the pitch it came from |
 | 8 | P bend rate and domain | **differed by 10–40×** | **done — table, not law**: the measured step table (all 127 values), Fast/Tick/Step on the note and Drum on the period register, wrapping at 2048. The closed form in §5 is a fit to that table, good to a part in a hundred; the table is the fact |
 | 9 | E and a table's volume: zombie vs retrigger | **differed** | **done** — `09 11 18` down and `08` up, byte for byte, and E never triggers |
-| 10 | The envelope's own rate | **differed** | **done — table, not law**: the measured pitch-clock periods 6, 11, 15, 20, 27, 36, 36 for rates 1–7, stepped in software. They are within 11 % of what the chip's own envelope would have given, and no tidier expression fits |
+| 10 | The envelope's own rate | **differed** | **done — table, not law, and 8.8.0 and after only**: the measured pitch-clock periods 6, 11, 15, 20, 27, 36, 36 for rates 1–7, stepped in software. Before 8.8.0 the chip ran the envelope at its own rate, and an instrument imported from there says so (§7, `COMMANDS_AND_TEMPO.md` §70) |
 | 11 | R retrigger interval | **differed** | **done** — y × (rate + 1) + 1 ticks, y = 0 every tick, x = 8 the pitch-clock resync, the whole note-on written again |
 | 12 | K kill | **differed** | **done** — a zombie ramp to zero at the killing tick, the DAC left on |
 | 13 | C chord and its rate | **agreed** | the root now plays on the note's own tick and the chord steps from the one after (measured) |
@@ -124,7 +124,8 @@ them. Two differences:
   period 0. Both mean "the hardware envelope does not run", but the direction
   bit is not cosmetic: it is the state every later zombie write starts from
   (§9). Measured across every envelope tested: ENV `A3` → `NR12 = A8`, ENV `8B`
-  → `88`, ENV `09` → `08`. **LSDj never lets the hardware envelope run at all.**
+  → `88`, ENV `09` → `08`. **From 8.8.0 LSDj never lets the hardware envelope run at all**
+  — before that release it always did (§7).
 - **LSDj writes the period again 2532 cycles after the trigger**, without the
   trigger bit (`NR13 = 0B`, `NR14 = 06`), on every note, even with no vibrato,
   slide or bend. That is the first pitch update after the note-on landing
@@ -332,6 +333,14 @@ while a channel runs does not load the amplitude.
 > way, and so does K, which is a zombie ramp to zero with the DAC left on.
 
 ## 7. The instrument's own envelope rate
+
+> **From 8.8.0 only** (`COMMANDS_AND_TEMPO.md` §70). This section was measured on a 9.x ROM.
+> LSDj moved the envelope into software in **8.8.0** -- *"soft amplitude envelopes for pulse
+> and noise channels"* -- and before that release it wrote the rate into `NRx2` and let the
+> chip's own envelope generator run it, one level every `rate / 64` s. Traced on real songs:
+> 8.4.4 and 5.0.3 write `NR12` with rate nibbles and **no** low nibble 8; the same save under
+> 9.3.9 writes eight times as many `NR12` bytes, all holds. An instrument imported from
+> before 8.8 carries `envChipTiming` and steps at the chip's rate instead of this table's.
 
 LSDj runs the envelope in software off the same 11712-cycle timer. Measured
 step intervals, one note held for sixteen steps per instrument:

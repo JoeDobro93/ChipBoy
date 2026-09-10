@@ -2299,3 +2299,36 @@ Recorded above under the milestone entries (2026-09-07, M3–M8).
 **Why:** the reason.
 **Considered:** the alternatives, and why they lost.
 ```
+
+### 2026-09-10 (SPACE TI) — the chip ran the envelope before LSDj 8.8.0 (spec §70)
+
+**Changed:** `docs/LSDJ_PARITY.md` §7 measured that LSDj steps the level itself off the pitch
+clock, on the table 6, 11, 15, 20, 27, 36, 36, and that "every NRx2 goes out with the low
+nibble 8". That is right, and it is right only from **8.8.0** on -- the changelog dates it:
+*v8.8.0, "soft amplitude envelopes for pulse and noise channels."* Traced on the user's own
+songs, 8.4.4 playing SPACE TI writes `NR12` **108 times with not one low nibble 8** and rate
+7 fifty-five times; the same save under 9.3.9 writes it 848 times with rates 0 and 1 only.
+5.0.3 playing BIRDS agrees with 8.4.4. Before 8.8.0 LSDj hands the envelope to the chip.
+
+The model already carried the distinction -- `EnvelopeLaw::HardwareStages` for format 11 says
+"a level every (period / 64) s" -- but the driver ran §7's table for every instrument
+whatever the song came from, so an import from before 8.8 ramped up to 11 % fast, and could
+not tell rate 6 from rate 7 at all (§7's table gives both 36 clocks; the chip separates them
+by a sixth). SPACE TI's PU1 is rate 7 fifty-five times and rate 4 twenty-nine times.
+
+ChipBoy still steps the level itself either way -- §27's list of levels is what lets a
+playback ROM replay a part. What is new is `envChipTiming` on the instrument: the levels come
+at the chip's own rate, `rate x 65536` cycles. The step counter now counts in 256ths of a
+pitch clock and subtracts the period rather than clearing, so a rate whose interval is not a
+whole number of clocks keeps its average and the error does not accumulate; the software
+table's entries are whole clocks, so its timing is unchanged to the cycle. The importer sets
+the flag from the model's existing `EnvelopeLaw`, and the instrument panel has **Env rate**
+(Soft / Chip), because the chip's rates are a real thing for a ChipBoy instrument to want.
+
+**Measured after:** SPACE TI's PU1 ramp steps every 108.9 ms against the chip's 109.375 --
+0.4 % out, where the software table had it at 100.5 ms, 8 % fast.
+
+**Considered and not done:** emitting the real `NRx2` rate and letting ChipBoy's own APU run
+the envelope. It would be exact rather than 0.4 % out, but it breaks §26's invariant that
+every `NRx2` the driver writes is a hold, which the zombie-step model and its tests rest on,
+and it would take away the level list §27 exists for.

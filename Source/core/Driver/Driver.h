@@ -267,11 +267,13 @@ private:
         uint16_t shapedTick = 0;           ///< ticks into the envelope, or into the release
         uint8_t  shapedFrom = 0;           ///< the level the release started from
         bool     tableJustStarted = false; ///< row 0 fired with the note-on (section 31)
-        // The instrument's own envelope, run in software (section 26): LSDj
-        // never lets the chip's envelope run -- NRx2 always goes out with the
-        // period nibble at 8, a hold -- and steps the level itself on the
-        // measured table of pitch-clock periods.
-        uint32_t envCount = 0;             ///< pitch-clock periods since the level last stepped
+        // The instrument's own envelope, run in software (section 26): from
+        // LSDj 8.8.0 the program never lets the chip's envelope run -- NRx2
+        // always goes out with the period nibble at 8, a hold -- and steps the
+        // level itself on the measured table. ChipBoy steps it either way; an
+        // instrument from before 8.8.0 just steps at the chip's own rate
+        // instead of that table's (section 70).
+        uint32_t envCount = 0;             ///< 256ths of a pitch clock since the level last stepped (section 70)
         bool     retrigFast = false;       ///< R x = 8: the retrigger runs on the pitch clock
         uint8_t  sweepRate = 0, sweepShift = 0; bool sweepDown = false;
         uint8_t  noiseShift = 5, noiseDiv = 1; bool lfsr7 = false; int8_t noiseSweep = 0;

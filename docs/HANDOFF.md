@@ -270,6 +270,26 @@ design-log section the change touches. Update this file at the end of every chan
   - **Still open on SPACE TI**: the table grid draws one playhead where the engine now runs
     three lanes (§64), so the columns look locked together even though they are not. That is
     the next thing the user will see.
+- Round 18: **the chip ran the envelope before LSDj 8.8.0** (`COMMANDS_AND_TEMPO.md` §70;
+  CHANGES 2026-09-10 SPACE TI). Chasing the rest of the user's item 1 -- the `E` on PU1
+  phrase 82 -- turned up that `LSDJ_PARITY.md` §7's "LSDj never lets the chip's envelope run"
+  holds only from 8.8.0 on. The changelog dates it (*"soft amplitude envelopes for pulse and
+  noise channels"*) and three traces of real songs prove it: 8.4.4 writes `NR12` 108 times
+  with **no** low nibble 8 and rate 7 fifty-five times; the same save under 9.3.9 writes it
+  848 times with rates 0 and 1 only; 5.0.3 agrees with 8.4.4.
+  - The instrument carries `envChipTiming`, set by the importer from the model's existing
+    `EnvelopeLaw`, and the panel shows it as **Env rate** (Soft / Chip). ChipBoy still steps
+    the level itself; only the interval changes.
+  - The step counter counts 256ths of a pitch clock and **subtracts** the period, so a rate
+    whose interval is not a whole number of clocks keeps its average. The software table is
+    whole clocks, so it is unchanged to the cycle.
+  - Measured after: SPACE TI's PU1 ramps a level every 108.9 ms against the chip's 109.375
+    (0.4 % out); §7's table had it at 100.5 ms, 8 % fast, and could not tell rate 6 from 7.
+  - **`docs/LSDJ_PARITY.md` §7 and §10 now describe 8.8.0-and-after only.** Anything else in
+    that file measured on a 9.x ROM may be version-specific in the same way -- worth
+    re-reading before it is trusted for an older import.
+  - **Where SPACE TI stands** (note-ons against LSDj 8.4.4, 23.8 s): PU1 67/103, PU2 104/153,
+    WAV 198/219, NOI 32/32. PU1 and PU2 are the weak ones.
 - **Adding an LSDj version** when the user supplies its ROM (the steps also head
   `Source/core/Import/LsdjModel.h`): put the ROM beside the others outside the tree
   (`/root/lsdj/` here), copy the 9.3.9 entry in `LsdjModel.cpp`, set the format it writes

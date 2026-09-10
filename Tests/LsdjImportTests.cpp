@@ -395,6 +395,9 @@ TEST_CASE("format 11's envelope is three stages the chip ramps between", "[lsdj]
     CHECK(bank->instruments[0].envRate == 7);
     // Section 59: E re-attacks on every format through 11, and not from 15 up.
     CHECK(bank->instruments[0].envRetrig);
+    // Section 70: and the chip runs the envelope, so its levels come at the
+    // chip's rate rather than 8.8's software table.
+    CHECK(bank->instruments[0].envChipTiming);
     // Formats 0 to 7 ignore bytes 9 and 10 altogether.
     auto old7 = blankSong(7); std::memcpy(old7.data(), song.data(), song.size());
     old7[kFormatVersionAt] = 7;
@@ -403,11 +406,13 @@ TEST_CASE("format 11's envelope is three stages the chip ramps between", "[lsdj]
     CHECK(bank->instruments[0].env.mode == bank::EnvMode::Chip);
     CHECK(bank->instruments[0].envVol == 1); CHECK(bank->instruments[0].envRate == 7);
     CHECK(bank->instruments[0].envRetrig);
+    CHECK(bank->instruments[0].envChipTiming);
     // From 8.8.6 on, E is zombie mode and never triggers.
     auto new15 = blankSong(15); std::memcpy(new15.data(), song.data(), song.size());
     new15[kFormatVersionAt] = 15;
     REQUIRE(importSong(new15.data(), new15.size(), *lsdjModelForFormat(15), *bank, *out, sum, notes));
     CHECK_FALSE(bank->instruments[0].envRetrig);
+    CHECK_FALSE(bank->instruments[0].envChipTiming);          // 8.8.0's soft envelope (section 70)
 }
 
 TEST_CASE("the formats before 9 read the noise SHAPE and resolve S to the note it lands on", "[lsdj]")
