@@ -26,6 +26,10 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-10 — the LSDj models keyed by format, three more ROMs measured
+
+Three ROMs the user supplied (8.4.0, 8.8.6, 9.2.J) were booted with `lsdjref_trace --init-sav` and probed with §45–§51's cases in their own formats ([`plan-lsdj-import.md`](docs/plan-lsdj-import.md) §3). The importer's models are keyed by **song format** with the LSDj versions as labels: format 22 (9.2.J, 9.3.9) identical on every table traced; format 15 (8.8.6) with the three-stage envelope and a raw noise column; format 11 (8.4.0) with the hardware envelope and an octave-only noise map; formats 0–10 assumed from the version-0 measurements. The earlier "legacy for 0–19" entry was wrong for 11–19 — every ROM from 8.4.0 carries the letter table with `B` — and is replaced. The noise maps carry a measured note range instead of a sentinel value, since `FF` is a real value on 8.x.
+
 ### 2026-09-10 — the LSDj importer, and a scope that lets go of a dead waveform
 
 - **Import .sav…** ([`COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md) §54, [`UI_DESIGN.md`](docs/UI_DESIGN.md) D-UI-22, [`plan-lsdj-import.md`](docs/plan-lsdj-import.md)): the converter that recreated a 9.3.9 song is in the plugin. `Source/core/Import/` reads the save (the file table, LSDj's block code with its two escapes and two default codes, the working song), chooses a **model** by each song's format version — 9.3.9 measured, a legacy model for the formats before it, the folder's ROM or the newest model for an unknown format, a dropdown to override — and reads the song into a bank and a song by §45–§52's rules. The spec had no import; nothing of LSDj's stays in the file. Kits are skipped with a note (their samples are in the ROM). The model is the seam for the ROMs to come: each version's tables in one entry, the parser shared.

@@ -175,16 +175,21 @@ TEST_CASE("the default codes expand to the default wave and instrument", "[lsdj]
 TEST_CASE("a model is chosen by format, by ROM title, by name, or the newest", "[lsdj]")
 {
     int n = 0; const auto* const* models = lsdjModels(n);
-    REQUIRE(n >= 2);
-    CHECK(std::string(lsdjLatestModel().name) == "LSDj 9.3.9");
+    REQUIRE(n >= 4);
+    CHECK(std::string(lsdjLatestModel().name).find("9.3.9") != std::string::npos);
     CHECK(lsdjModelForFormat(22) == models[0]);
-    CHECK(lsdjModelForFormat(3) != nullptr); CHECK(std::string(lsdjModelForFormat(3)->name).find("legacy") != std::string::npos);
+    CHECK(lsdjModelForFormat(15)->formatVersion == 15);          // 8.8.6, measured
+    CHECK(lsdjModelForFormat(18)->formatVersion == 15);          // no ROM yet: the nearest below
+    CHECK(lsdjModelForFormat(11)->formatVersion == 11);          // 8.4.0, measured
+    CHECK(lsdjModelForFormat(3) != nullptr); CHECK(std::string(lsdjModelForFormat(3)->name).find("assumed") != std::string::npos);
     CHECK(lsdjModelForFormat(99) == nullptr);
     CHECK(lsdjModelForRomVersion("9.3.9") == models[0]);
-    CHECK(lsdjModelForRomVersion("9.2.6") == models[0]);          // near enough: the newest 9.x model
-    CHECK(lsdjModelForRomVersion("4.7.3") != models[0]);
+    CHECK(lsdjModelForRomVersion("9.2.J") == models[0]);
+    CHECK(lsdjModelForRomVersion("8.8.6")->formatVersion == 15);
+    CHECK(lsdjModelForRomVersion("8.4.0")->formatVersion == 11);
+    CHECK(lsdjModelForRomVersion("4.7.3")->formatVersion == 3);
     CHECK(lsdjModelForRomVersion("") == nullptr);
-    CHECK(lsdjModelNamed("LSDj 9.3.9") == models[0]);
+    CHECK(lsdjModelNamed(models[0]->name) == models[0]);
     CHECK(lsdjModelNamed("nothing") == nullptr);
     // The ROM's cartridge title names the version.
     std::vector<uint8_t> rom(0x150, 0);
@@ -250,20 +255,41 @@ TEST_CASE("a format-22 song imports its instruments, tables, phrases and chains"
     CHECK(noted);
 }
 
-TEST_CASE("the same bytes under the legacy model take the old letters and the hardware envelope", "[lsdj]")
+TEST_CASE("the same bytes under the older models take their own envelope, letters and noise", "[lsdj]")
 {
-    const auto song = testSong(3);
-    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
-    ImportSummary sum; ImportNotes notes;
-    const auto* legacy = lsdjModelForFormat(3);
-    REQUIRE(legacy != nullptr);
-    REQUIRE(importSong(song.data(), song.size(), *legacy, *bank, *out, sum, notes));
-    const auto& lead = bank->instruments[0];
-    CHECK(lead.env.mode == bank::EnvMode::Chip); CHECK(lead.envVol == 10); CHECK(lead.envRate == 5); CHECK(lead.envDir == bank::EnvDir::Down);
-    const auto* p1 = out->phrase(1);
-    REQUIRE(p1 != nullptr);
-    CHECK(p1->cells[4].cmd1.cmd == bank::Cmd::P);           // byte 12 is P without B in the table
-    CHECK(bank->tables[0].steps[1].cmd1.cmd == bank::Cmd::K);   // byte 8 is K
+    SECTION("before 8.4: the letters without B and the hardware envelope") {
+        const auto song = testSong(3);
+        auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+        ImportSummary sum; ImportNotes notes;
+        REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(3), *bank, *out, sum, notes));
+        const auto& lead = bank->instruments[0];
+        CHECK(lead.env.mode == bank::EnvMode::Chip); CHECK(lead.envVol == 10); CHECK(lead.envRate == 5); CHECK(lead.envDir == bank::EnvDir::Down);
+        const auto* p1 = out->phrase(1);
+        REQUIRE(p1 != nullptr);
+        CHECK(p1->cells[4].cmd1.cmd == bank::Cmd::P);           // byte 12 is P without B in the table
+        CHECK(bank->tables[0].steps[1].cmd1.cmd == bank::Cmd::K);   // byte 8 is K
+    }
+    SECTION("8.4.0, format 11: the hardware envelope, B in the table, an octave-only noise map") {
+        const auto song = testSong(22);                              // the same bytes: byte 9 kills, byte 13 bends
+        auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+        ImportSummary sum; ImportNotes notes;
+        REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(11), *bank, *out, sum, notes));
+        CHECK(bank->instruments[0].env.mode == bank::EnvMode::Chip); CHECK(bank->instruments[0].envRate == 5);
+        CHECK(out->phrase(1)->cells[4].cmd1.cmd == bank::Cmd::P);
+        bool found = false;
+        for (uint8_t slot : out->chain[3]) if (const auto* p = out->phrase(slot)) { found = true; CHECK(p->cells[0].note == chipboyNoteForNr43(0xEF, 93)); }   // A-6 writes EF on 8.4.0
+        CHECK(found);
+    }
+    SECTION("8.8.6, format 15: the three stages and the raw noise column") {
+        const auto song = testSong(22);
+        auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+        ImportSummary sum; ImportNotes notes;
+        REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(15), *bank, *out, sum, notes));
+        CHECK(bank->instruments[0].env.mode == bank::EnvMode::Shaped); CHECK(bank->instruments[0].env.attackTicks == 11);
+        bool found = false;
+        for (uint8_t slot : out->chain[3]) if (const auto* p = out->phrase(slot)) { found = true; CHECK(p->cells[0].note == chipboyNoteForNr43(uint8_t(0xFF - (93 - 35)), 93)); }   // A-6 is note byte 58: FF - 58
+        CHECK(found);
+    }
 }
 
 TEST_CASE("a noise byte maps to the ChipBoy note with the same LFSR clock", "[lsdj]")

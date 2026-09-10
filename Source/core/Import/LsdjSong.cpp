@@ -80,17 +80,16 @@ struct Reader {
     // --- noise (section 45) ---------------------------------------------
     uint8_t lsdjNr43(int midi)
     {
-        const int n = std::clamp(midi, 0, 127);
-        if (m.noiseMap[size_t(n)] != 0xFF) return m.noiseMap[size_t(n)];
-        // Outside the measured range: the octave neighbour inside it.
-        int lo = 0, hi = 127;
-        while (lo < 128 && m.noiseMap[size_t(lo)] == 0xFF) ++lo;
-        while (hi > lo && m.noiseMap[size_t(hi)] == 0xFF) --hi;
-        notes.add("noise note " + std::to_string(midi) + " is outside the measured map; mapped as its octave's neighbour");
-        int k = n;
-        while (k < lo) k += 12;
-        while (k > hi) k -= 12;
-        return m.noiseMap[size_t(std::clamp(k, lo, hi))];
+        const int lo = std::clamp(m.noiseLo, 0, 127), hi = std::clamp(m.noiseHi, lo, 127);
+        int k = std::clamp(midi, 0, 127);
+        if (k < lo || k > hi) {
+            // Outside the measured range: the octave neighbour inside it.
+            notes.add("noise note " + std::to_string(midi) + " is outside the measured map; mapped as its octave's neighbour");
+            while (k < lo) k += 12;
+            while (k > hi) k -= 12;
+            k = std::clamp(k, lo, hi);
+        }
+        return m.noiseMap[size_t(k)];
     }
     int noteForNr43(uint8_t v, int prefer)
     {

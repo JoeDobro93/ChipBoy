@@ -79,12 +79,23 @@ struct LsdjModel {
 };
 ```
 
-Two models ship: **LSDj 9.3.9** (format 22, everything measured on the user's ROM) and
-**legacy** (formats 0–19: the command table without `B`, the hardware envelope, the noise
-map traced from the harness's version-0 saves, assumed for the rest). A song picks the
-model whose range holds its format; a format no model knows takes the ROM found beside the
-save, if its title names a version a model has, else the newest model. The dialog's
-dropdown overrides all of that.
+The key is the **format version**, with the LSDj versions known to write it as the label.
+Measured (each ROM booted with `lsdjref_trace --init-sav`, the probes of §45–§51 patched
+into its own formatted save with its own format byte):
+
+| format | writes it | envelope | noise column | letters |
+|---|---|---|---|---|
+| 22 | 9.2.J, 9.3.9 (identical on every table traced) | three stages, §51's periods | the 9.x musical map | with `B` |
+| 15 | 8.8.6 | three stages, the same periods | raw: note byte *n* writes NR43 `FF − n` | with `B` (in the ROM; behaviour not traced) |
+| 11 | 8.4.0 | the NRx2 byte (the chip's) | by octave only: `FF` to B-5, `EF`, `DF`, `CF` above | with `B` (in the ROM) |
+| 0–10 | unknown | the NRx2 byte | the map the 9.3.9 ROM applied to version-0 saves | without `B` (as applied to version-0 saves) |
+
+Formats 12–14 and 16–21 take the nearest measured model below them until a ROM arrives.
+A song picks the model whose range holds its format; a format no model knows takes the ROM
+found beside the save, if its title names a version, else the newest model. The dialog's
+dropdown overrides all of that. Still to learn: which versions wrote 12–14 (8.5–8.7?) and
+16–21 (9.0–9.1?), where `B` and the raw noise column began, and which version wrote the
+format-3 songs in the user's save (LSDj 4.x–5.x?).
 
 **Adding a version** (the user will supply ROMs): copy `lsdj_9_3_9` in `LsdjModel.cpp`,
 give it the format range the ROM writes and reads, and re-measure with the harness what

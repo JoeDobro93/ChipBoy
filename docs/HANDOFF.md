@@ -77,6 +77,25 @@ design-log section the change touches. Update this file at the end of every chan
   runs the same importer from the command line, so a conversion can be checked with
   `--play-song`; all seven convert and play. The scopes repaint while a silenced channel's last waveform
   slides out of the window, so the visualizer no longer holds a dead shape.
+- Round 11: three more ROMs measured (8.4.0, 8.8.6, 9.2.J; all at `/root/lsdj/`, outside
+  the tree). Each booted with `lsdjref_trace --init-sav` gives the format it writes:
+  **11**, **15**, **22** (9.3.9 also 22). The models are keyed by format now with the LSDj
+  versions as labels (`plan-lsdj-import.md` §3): 22 measured on both 9.x ROMs, 15 has the
+  three-stage envelope and a raw noise column (`FF − n`), 11 the hardware envelope and an
+  octave-only noise map, 0–10 assumed. Formats 12–14 and 16–21 take the nearest model
+  below. ROMs that would settle the rest: 8.5–8.7 (12–14), 9.0–9.1 (16–21), and something
+  before 8.4 (7.x, 6.x, 5.x, 4.x) to find where `B` and the raw noise column began and
+  which version wrote the format-3 songs. The probe saves and traces live in the session's
+  scratch (`env/cmp`), not the tree.
+- **Kits** are not imported yet. It is not a rights question — the samples are read from
+  the user's own ROM at import time and land in the user's song file, nothing enters the
+  repository — but a build question: the ROM's kit banks read fine (16 KB each, `60 40`
+  magic, sample end offsets at 0, names at `0x22` and `0x52`, 4-bit data from `0x60` at
+  11468 Hz: 21 kits in 9.3.9), while the **kit instrument's bytes** (kit 1 and 2, speed,
+  loop, distortion, offsets) are unverified because none of the seven songs in the save
+  holds one. A save with a kit song is what the next round needs; the mapping is LSDj kit
+  bank → `bank::Kit` (samples with names, `period` for 11468 Hz), kit instrument → a kit
+  slot per LSDj kit pair, notes → samples.
 - **Adding an LSDj version** when the user supplies its ROM (the steps also head
   `Source/core/Import/LsdjModel.h`): put the ROM beside the others outside the tree
   (`/root/lsdj/` here), copy the 9.3.9 entry in `LsdjModel.cpp`, set the format it writes
@@ -89,8 +108,9 @@ design-log section the change touches. Update this file at the end of every chan
   wave octave (§45), PU2 TSP (§49), and P's and V's tick tables (§7) if a version differs
   there — those still use the driver's tables for every model. Set `measured` when the ROM
   traced it. The harness's `lsdjref_sav.py` writes version byte 0: give it the version
-  under test, or LSDj reads the probe with the legacy rules. Add a `[lsdj]` case that reads
-  a synthetic song under the new model.
+  under test, or LSDj reads the probe with the legacy rules — the quickest way is to copy
+  the probe's 32 KB over the ROM's own `--init-sav` save and keep that save's byte `0x7FFF`.
+  Add a `[lsdj]` case that reads a synthetic song under the new model.
 - The parity harness runs here now: RGBDS was built from source into `/usr/local`, the
   ROM sits at `/root/lsdj/lsdj9_3_9.gb` (container only), `build-ref/` holds the build.
   `f_table_speed` is a new case; only it and `i_kill_delay_chord` were traced on 9.3.9.

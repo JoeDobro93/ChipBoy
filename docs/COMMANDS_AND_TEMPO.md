@@ -1524,13 +1524,18 @@ and the plan). The rules are the ones the recreation established, §45–§52, n
   escapes and two default codes (`E0 F0` the default wave, `E0 F1` the default instrument).
   Confirmed on the user's save: the SUNRISE file decompresses to the working song, byte for
   byte but for the edit state at `0x3FC1`; six older files read as **format 3**.
-- **The model** (`LsdjModel`): a song's format version (byte `0x7FFF`) picks how its bytes
-  are read — the command letter table, the envelope (three stages or the NRx2 byte), the
-  noise map, the wave octave, PU2 TSP. Two ship: **LSDj 9.3.9** (format 20–31, every table
-  measured on the user's ROM) and **legacy** (0–19: the tables the 9.3.9 ROM applied to the
-  harness's version-0 saves, assumed for the rest and marked so). A format no model knows
-  takes the ROM found beside the save when its title names a version; else the newest.
-  `LsdjModel.h` says how to add a version when a ROM arrives; `HANDOFF.md` repeats it.
+- **The model** (`LsdjModel`): a song's **format version** (byte `0x7FFF`) picks how its
+  bytes are read — the command letter table, the envelope (three stages or the NRx2 byte),
+  the noise map, the wave octave, PU2 TSP; the LSDj versions known to write a format are
+  its label. Measured on the user's ROMs (`plan-lsdj-import.md` §3): format **22** is
+  9.2.J and 9.3.9, identical on every table traced; **15** (8.8.6) already has the three-
+  stage envelope and reads the noise column as a raw NR43, `FF − n`; **11** (8.4.0) has the
+  hardware envelope and an octave-only noise map. Every ROM from 8.4.0 up carries the
+  letter table with `B`; a model for formats 0–10 keeps the tables the 9.3.9 ROM applied to
+  version-0 saves and is marked assumed. A format no model knows takes the nearest below;
+  an unknown one takes the ROM found beside the save when its title names a version, else
+  the newest. `LsdjModel.h` says how to add a version when a ROM arrives; `HANDOFF.md`
+  repeats it.
 - **The song** (`LsdjSong`): instruments by slot with the envelope of §51, wave frames per
   LSDj synth, tables with the noise rows converted through the map (§45), one phrase per
   LSDj phrase and channel with the chain's transposes (§48), `A` into the TBL column (§46),
