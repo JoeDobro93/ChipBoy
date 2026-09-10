@@ -2256,6 +2256,34 @@ instrument, which changes the mixed stream with its length unchanged; bytes 4, 5
 modes off needs a kit-stream decoder to compare the mix against each sample nibble by nibble,
 which is a round of its own. Two samples at once are still summed and clipped, with the note.
 
+### 2026-09-10 (SPACE TI, first pass) — E, a table's L, and a G's number (spec §67, §68, §69)
+
+**Changed:** three things the user found reading SPACE TI beside LSDj 8.4.4.
+
+1. **An `E` now runs the envelope it names.** LSDj writes the command's byte straight into
+   `NR12` -- traced on PU1 phrase 82, `1F`, then `67`, then `1F` -- so the rate and direction
+   are the register's. ChipBoy read the byte right and then dropped the rate: an imported
+   instrument runs a **Shaped** envelope, and `stepSoftEnvelope` refused to run whenever
+   `shapedOn` was set, even after an `E` had taken the level over. The level jumped to `x` and
+   froze. The gate is now `shapedOn && !shapedTaken`. **Engine fix, every version**, and it
+   frees a table's volume column and a velocity change the same way.
+2. **A table's `L` beside a transpose slides to it, from the plain note.** The wave kick
+   (instrument 10, table 01) is `TSP C4` with `L20`: LSDj sounds the note and slides down a
+   semitone a pitch clock. ChipBoy jumped to the transposed note and then slid from whatever
+   the last note had left behind -- a laser rather than a kick. A table's `L` fired inside a
+   note-on now starts from the note without the table's transpose column. Only a table's: a
+   cell's `L` is still a portamento from the note before it.
+3. **A `G`'s byte is its slot as the Grooves tab counts them.** Following table 1B's `G 0A` led
+   to the wrong groove, because a slot counts from `00` in Hex (§52) while the command cell
+   showed the stored 1-based slot. `commandByte` and `setCommandByte` take a `G` as a slot now,
+   so the cell and the tab read the same number -- and it is LSDj's number too.
+
+**Also:** §63's groove flattening no longer overwrites a groove the song can still see. It
+ranks the free slots -- LSDj-empty first, then the `6 6` default, then a groove the user wrote
+but never names -- and takes the high slots before the low ones. On SPACE TI it had been
+clobbering LSDj grooves 02, 03 and 05. The slots it does take are named `held 12` and so on,
+so a song read beside LSDj says where the number went.
+
 ---
 
 ## Departures from the spec

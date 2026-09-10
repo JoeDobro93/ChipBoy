@@ -1134,7 +1134,11 @@ void Driver::stepSoftEnvelope(int ch)
 {
     Voice& v = v_[size_t(ch)];
     if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) return;
-    if (v.shapedOn) return;                     // a shaped envelope owns the level, per tick
+    // A shaped envelope owns the level per tick -- until something takes it
+    // over (section 27). An E, a table's volume column or a velocity change
+    // hands the level back, and the envelope the E named has to run from
+    // there, or its rate is silently dropped (section 67).
+    if (v.shapedOn && !v.shapedTaken) return;
     const int rate = v.envRate & 7;
     if (rate == 0 || !v.dacOn || !v.hwOn) return;
     if (++v.envCount < uint32_t(kEnvStepPeriods[rate])) return;
@@ -1457,8 +1461,14 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
             // x = 0 is instant. It is the pitch update in Fast/Step/Drum and
             // the tracker tick in Tick.
             if (noise) break;
-            const int32_t fromFine = v.pitchNowFine;
-            const bool have = v.pitchValid;
+            int32_t fromFine = v.pitchNowFine;
+            bool have = v.pitchValid;
+            // Section 68: a table row that carries a transpose *and* an L means
+            // the note sounds plain and slides to the transposed one -- LSDj's
+            // wave kick is exactly that, `TSP C4` beside `L20`. Inside the
+            // note-on the channel has no pitch yet, so the slide starts from
+            // the note without the table's column rather than from stale state.
+            if (fromTable && inNoteOn_) { fromFine = int32_t(std::lround((noteOfVoice(ch) - tableTransposeOf(v)) * 256.0)); have = true; }
             v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0; v.slideStep256 = 0;
             const int dur = std::clamp<int>(c.a, 0, 255) + 1;
             if (!have) { if (live) writePeriod(ch, false); break; }

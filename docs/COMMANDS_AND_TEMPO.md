@@ -2025,3 +2025,61 @@ The noise instrument gains **Sweep**, one of
 The importer sets **Register** for every format before 22 and passes the bytes straight
 through; the "resolved for the loop's first pass" and "P on noise is dropped" notes both go.
 Nothing about ChipBoy's own noise changes unless an instrument asks for Register.
+
+## 67. An `E` hands the level back, and the envelope it names has to run
+
+The user's PU1 phrase 82 carries `E1f`, `E67`, `E1f`. Traced on 8.4.4, LSDj writes each one
+straight into `NR12`: `1F` at the note, `67` six steps later, `1F` six after that, and nothing
+in between. So `E xy` **is** the register byte -- volume `x`, then `y` as direction and rate --
+and it takes the instrument's own envelope over for the rest of the note.
+
+ChipBoy read the byte correctly and then dropped the rate. Its imported instrument runs a
+**Shaped** envelope (§51, §58), so `Voice::shapedOn` is set; an `E` sets `shapedTaken`, which
+stops the shaped envelope rendering, and sets `envVol`, `envRate` and `envDir` for the software
+envelope to run (§26). But `stepSoftEnvelope` refused to run **whenever `shapedOn` was set**,
+taken or not. Between the two the level jumped to `x` and then froze: over sixty writes of the
+song's `NR12` and not one with a rate nibble in it.
+
+The gate is now "a shaped envelope owns the level **until something takes it over**":
+
+```cpp
+if (v.shapedOn && !v.shapedTaken) return;      // was: if (v.shapedOn) return;
+```
+
+It is an engine fix, not an import one, and it applies to every version: `E` means the same
+thing on all of them, and the same freeze hit a table's volume column and a velocity change,
+which set `shapedTaken` the same way.
+
+## 68. A table's `L` beside a transpose slides *to* it, from the plain note
+
+The user's wave kick (instrument 10, table 01) is one row: `TSP C4` and `L20`. On 8.4.4 it
+sounds the note and slides down from there -- traced, `60, 59, 58, 57 ...` a semitone a pitch
+clock. ChipBoy started at 38 and went its own way: a laser, not a kick.
+
+§31 has the table's first row fire *inside* the note-on, where its transpose is running state
+and "the note's own writes carry it". That is right for a row that only transposes. With an
+`L` on the same row the transpose is the slide's **destination**, so the note has to sound
+plain and move to it -- and inside the note-on the channel has no pitch of its own yet, so
+`Cmd::L` was sliding from whatever the last note left in `pitchNowFine`.
+
+A table's `L` fired inside a note-on now starts from the note **without** the table's transpose
+column:
+
+```cpp
+if (fromTable && inNoteOn_) fromFine = lround((noteOfVoice(ch) - tableTransposeOf(v)) * 256.0);
+```
+
+Only a table's: an `L` in the note's own cell is still a portamento from the note before it
+(§20), which is a different thing with the same letter.
+
+## 69. A `G`'s number is the groove's, as the Grooves tab counts them
+
+Reading the imported song beside LSDj, the user followed table 1B's `G 0A` to groove `0A` and
+found the wrong groove. Both numbers were right and they meant different things: a slot counts
+from `00` in Hex (§52), so ChipBoy's tenth groove is the tab's `09`, while the command cell
+showed the stored slot -- `10`, which is `0A`.
+
+`commandByte` and `setCommandByte` treat a `G` as a slot now: the byte is the slot less one,
+so the cell reads `09` for the tab's `09`, and typing `06` selects the seventh slot -- which is
+LSDj's groove `06`, the same number in both programs. ChipBoy's extra "straight" state (slot 0)
+has no byte, which is right: it is the absence of a `G`.

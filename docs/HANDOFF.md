@@ -249,6 +249,27 @@ design-log section the change touches. Update this file at the end of every chan
     pass" and "P on noise is dropped" notes are both gone. The running delta is one byte,
     because nibble-wise sums compose, and it comes off the byte on its way out so it never
     compounds against the pair the note chose.
+- Round 17: **SPACE TI, first pass against the real song** (`COMMANDS_AND_TEMPO.md` §67–§69;
+  CHANGES 2026-09-10 SPACE TI). The user is reading one song beside LSDj 8.4.4 and reporting a
+  few things at a time; this is the first three.
+  - §67: **an `E` runs the envelope it names.** LSDj writes the command's byte into `NR12`
+    (traced on PU1 phrase 82: `1F`, `67`, `1F`). ChipBoy set `envRate`/`envDir` and then never
+    ran them, because `stepSoftEnvelope` returned whenever `shapedOn` was set -- and every
+    imported format-11/15/22 instrument has a Shaped envelope. One gate changed to
+    `shapedOn && !shapedTaken`. It was visible in the trace as sixty-odd `NR12` writes without
+    a rate nibble among them.
+  - §68: **a table's `L` beside a transpose slides to it.** The wave kick's `TSP C4` + `L20`
+    was jumping to the transposed note and sliding from stale state. A table's `L` inside a
+    note-on now starts from the note without the table's column.
+  - §69: **a `G`'s byte is its slot** as the Grooves tab counts them (§52), so the numbers in
+    the command cell, the tab and LSDj all agree.
+  - §63's flattening no longer overwrites a groove the song can still see: free slots are
+    ranked (LSDj-empty, then the `6 6` default, then a groove never named) and taken from the
+    top. It had been clobbering SPACE TI's grooves 02, 03 and 05. The slots it takes are named
+    `held 12` and so on.
+  - **Still open on SPACE TI**: the table grid draws one playhead where the engine now runs
+    three lanes (§64), so the columns look locked together even though they are not. That is
+    the next thing the user will see.
 - **Adding an LSDj version** when the user supplies its ROM (the steps also head
   `Source/core/Import/LsdjModel.h`): put the ROM beside the others outside the tree
   (`/root/lsdj/` here), copy the 9.3.9 entry in `LsdjModel.cpp`, set the format it writes

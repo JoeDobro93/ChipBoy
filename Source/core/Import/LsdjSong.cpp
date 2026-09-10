@@ -770,25 +770,41 @@ struct Reader {
             for (const auto& c : ph.cells) { noteG(c.cmd1); noteG(c.cmd2); }
         }
         for (const auto& tb : bank.tables) { if (!tb.used) continue; for (const auto& st : tb.steps) { noteG(st.cmd1); noteG(st.cmd2); } }
-        // Free slots, the ones LSDj left empty first: those hold the importer's
-        // 6 6 default rather than anything the user wrote.
-        std::vector<int> free;
-        for (int pass = 0; pass < 2; ++pass)
-            for (int g = 0; g < 16; ++g) {
-                if (named.count(g + 1)) continue;
-                bool empty = true;
-                for (int k = 0; k < 16 && empty; ++k) empty = at(kGrooves + size_t(g) * 16 + size_t(k)) == 0;
-                if (empty == (pass == 0)) free.push_back(g + 1);
+        // Free slots, least precious first: a slot LSDj left empty, then one
+        // holding its 6 6 default, and only then a groove the user wrote but
+        // never names -- and the high slots before the low ones, since LSDj
+        // fills its grooves from the bottom. Taking a groove the song can
+        // still see in the Grooves tab is the last resort, not the first.
+        std::vector<std::pair<int, int>> ranked;      // (how precious, slot)
+        for (int g = 15; g >= 0; --g) {
+            if (named.count(g + 1)) continue;
+            bool empty = true, dflt = true;
+            for (int k = 0; k < 16 && (empty || dflt); ++k) {
+                const uint8_t b = at(kGrooves + size_t(g) * 16 + size_t(k));
+                if (b != 0) empty = false;
+                if (b != (k < 2 ? 6 : 0)) dflt = false;
             }
+            ranked.push_back({ empty ? 0 : dflt ? 1 : 2, g + 1 });
+        }
+        std::stable_sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        std::vector<int> free;
+        for (const auto& [rank, slot] : ranked) free.push_back(slot);
+        bool tookAGroove = false;
         std::map<int, int> flatOf;                 // ticks -> the slot holding a one step groove of them
         size_t spare = 0; bool ranOut = false;
         auto slotFor = [&](int ticks) -> int {
             if (auto f = flatOf.find(ticks); f != flatOf.end()) return f->second;
             if (spare >= free.size()) { ranOut = true; return 0; }
             const int slot = free[spare++];
-            song.grooves[size_t(slot - 1)] = tracker::Groove{};
-            song.grooves[size_t(slot - 1)].ticks.fill(0);
-            song.grooves[size_t(slot - 1)].ticks[0] = uint8_t(ticks);
+            if (ranked[spare - 1].first == 2) tookAGroove = true;
+            auto& g = song.grooves[size_t(slot - 1)];
+            g = tracker::Groove{};
+            g.ticks.fill(0);
+            g.ticks[0] = uint8_t(ticks);
+            // Name it for the G it stands in for, so a song read beside LSDj
+            // says where the number went (section 63).
+            const std::string label = "held " + std::to_string(ticks);
+            for (size_t k = 0; k < g.name.size() - 1 && k < label.size(); ++k) g.name[k] = label[k];
             flatOf.emplace(ticks, slot);
             return slot;
         };
@@ -806,6 +822,7 @@ struct Reader {
                 }
         }
         if (moved) notes.add("a G in a table holds the groove's first step before LSDj 9 (section 63); those rows point at a one step groove of that length instead");
+        if (tookAGroove) notes.add("the song leaves no spare groove slot, so a groove it never names was overwritten to make room for one of those (section 63)");
         if (ranOut) notes.add("the song leaves no spare groove, so a G in a table keeps its own; its rows will swing where LSDj held one length (section 63)");
     }
     void grooves()

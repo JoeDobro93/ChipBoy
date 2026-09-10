@@ -190,6 +190,11 @@ int commandByte(const bank::Command& c)
             // runs on through 0x00-0x27. Everything else is already a byte.
             return c.cmd == bank::Cmd::T ? (int(c.a) & 255) : (int(c.a) & 255);
         case CmdShape::Small:
+            // A groove is a *slot*, and a slot counts from 00 in Hex (section
+            // 52), so the byte is one less than the slot ChipBoy stores -- the
+            // number then reads the same as the Grooves tab's, and the same as
+            // LSDj's own G (section 69). "Straight" has no byte and no command.
+            if (c.cmd == bank::Cmd::G) return std::max(0, int(c.a) - 1) & 255;
             return int(c.a) & 255;
     }
     return 0;
@@ -214,10 +219,14 @@ bool setCommandByte(bank::Command& c, int byte)
             c.a = int16_t(v); c.b = 0; c.c = 0;
             return true;
         }
-        case CmdShape::Small:
-            if (byte < info->lo[0] || byte > info->hi[0]) return false;
-            c.a = int16_t(byte); c.b = 0; c.c = 0;
+        case CmdShape::Small: {
+            // A G's byte is its slot counted from 00, so 06 is the sixth groove
+            // the tab shows and LSDj's G06 types as itself (section 69).
+            const int v = c.cmd == bank::Cmd::G ? byte + 1 : byte;
+            if (v < info->lo[0] || v > info->hi[0]) return false;
+            c.a = int16_t(v); c.b = 0; c.c = 0;
             return true;
+        }
     }
     return false;
 }
