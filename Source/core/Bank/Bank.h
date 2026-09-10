@@ -73,8 +73,11 @@ enum class TableEnd : uint8_t { Loop = 0, Hop = 1, Stop = 2 };
 ///   P bend speed x - 128                    R x volume step, y ticks
 ///   S rate 0-7, shift 0-7 (x >= 128 down)   T BPM 40-255            V speed 1-15, depth 0-15
 ///   W duty 0-3 (pulse) / wave slot (WAV)    Z random 0..x, 0..y added to the last command
-enum class Cmd : uint8_t { None = 0, A, C, D, E, F, G, H, K, L, M, O, P, R, S, T, V, W, Z };
-constexpr int kCmdCount = 18;                ///< letters, not counting None
+/// `B` is appended rather than inserted after `A`: every other letter keeps the
+/// value it has had, so a song file, a preset and the host's command parameter
+/// all read unchanged (section 73).
+enum class Cmd : uint8_t { None = 0, A, C, D, E, F, G, H, K, L, M, O, P, R, S, T, V, W, Z, B };
+constexpr int kCmdCount = 19;                ///< letters, not counting None
 /// `c` = kRevert makes the command the *revert form* of its letter: "put this
 /// letter back where the instrument left it", which is exactly what a command
 /// slot going to none does (docs/COMMANDS_AND_TEMPO.md section 3). `a` and `b`
@@ -98,7 +101,7 @@ inline bool cmdPersists(Cmd c)
         case Cmd::A: case Cmd::E: case Cmd::F: case Cmd::G: case Cmd::M:
         case Cmd::O: case Cmd::P: case Cmd::S: case Cmd::T: case Cmd::V: case Cmd::W:
             return true;
-        case Cmd::None: case Cmd::C: case Cmd::D: case Cmd::H: case Cmd::K:
+        case Cmd::None: case Cmd::B: case Cmd::C: case Cmd::D: case Cmd::H: case Cmd::K:
         case Cmd::L: case Cmd::R: case Cmd::Z:
             return false;
     }

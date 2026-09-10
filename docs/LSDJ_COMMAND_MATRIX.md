@@ -72,7 +72,7 @@ Two warnings, both learned the hard way and both recorded in `COMMANDS_AND_TEMPO
 | `E` | Level `x`, reached by zombie steps. `y` is **bit 3 = direction, bits 0-2 = rate** into an 8-entry ROM table; rate 0 holds. **WAV reads `y`, not `x`** | PU1 PU2 NOI (WAV: level only) | same | `Cmd::E`; `y` right on the pulses, **`x` wrong on WAV** | Yes on PU/NOI; **Engine** on WAV | **939✗** |
 | `F` | **PU1**: `y`/32 semitone **down**, `x` ignored. **PU2**: `x` semitones + `y`/32 **up**. **WAV**: the frame | PU1 PU2 WAV | same | frame on WAV, whole byte as transpose on PU2, **dropped on PU1** | **Value** -- §6.6; PU1 maps onto `fineOffset` | **939** |
 | `G` | Groove `xy`, walked | all | see §5 | `Cmd::G`, slot `xy + 1` | Yes (slot + 1); pre-9 differs (§63) | **939** |
-| `H` | Hop to row/step `y`, `x` times (`x = 0` always) -- **the same rule in a phrase and in a table** | all | destination only | `Cmd::H` both forms | Yes, except phrase `HFF` (§56) | **939✓** |
+| `H` | Table: hop to row `y`, `x` times (`x = 0` always). Phrase: **`x = 0` ends it** and the next phrase starts at step `y`; `x > 0` hops *within* it, `x` times | all | **different** | `Cmd::H` is the table form; a cell's is the phrase length | Yes for the table form; **Engine** for a counted phrase hop | **939✗** |
 | `K` | Kill the note after exactly `xy` ticks | all | same | `Cmd::K`, same | Yes | **939** |
 | `L` | Slide to the note over exactly `xy + 1` pitch updates, linear in semitones | all | same | `Cmd::L`; §68, §71 | Yes | **939** |
 | `M` | Per side, through a lookup: **0-7 sets** that side's volume, **8-15 shifts** it by 0 +1 +2 +3 −4 −3 −2 −1, clamped | global | same | `Cmd::M` already relative, but its **down half is wrong** (0 −1 −2 −3) | **Engine** -- §6.11 | **939✗** |
@@ -492,24 +492,39 @@ still shows is never overwritten. The slots it takes are named for the length th
   +0/+4/+8/+12 and the `H` on row 3: `H00` cycles three rows for ever (it always hops), `H10`
   hops once and then lets row 3 through, `H20` hops twice, and `H01` settles into a two-row
   cycle on rows 1 and 2. So `x = 0` is "always" and otherwise `x` is a count.
-- *In a phrase* — **hop to step `y`, `x` times: the same rule.** Re-measured with a rising note
-  on all sixteen steps and the `H` on step 4, over eight seconds so the count can be seen
-  repeating. Writing `>` for a hop taken and `.` for one let through:
+- *In a phrase* — **`x` decides which of two different things it is.** Measured with a chain of
+  **two** phrases, A then B, A's steps transposing 0-15 and B's 24-39, and the `H` on A's step 4.
+  A single-phrase chain cannot tell these apart, because "end the phrase" and "hop to step 0"
+  produce the same notes when the phrase that follows is the same one.
 
-  | | `H0A` | `H1A` | `H2A` | `H3A` |
-  |---|---|---|---|---|
-  | passes | `>>>>>>` | `>.>.>.` | `>>.>>.` | `>>>.>>>` |
+  | `H` | what plays | reading |
+  |---|---|---|
+  | `H00` | A 0-3, **B 0-15**, A 0-3, B … | end the phrase; the next starts at step 0 |
+  | `H04` | A 0-3, **B 4-15**, A 0-3, B 4-15 … | … at step 4 |
+  | `H0A` | A 0-3, **B 10-15**, A 0-3, B 10-15 … | … at step 10 |
+  | `H0F` | A 0-3, **B 15**, A 0-3, B 15 … | … at step 15 |
+  | `H10` | A 0-3, **A 0-15**, B 0-15 … | hop *inside* A to step 0, once, then let it run |
+  | `H1A` | A 0-3, **A 10-15**, B 0-15 … | … to step 10, once |
+  | `H2A` | A 0-3, **A 10-15**, B 0-15, A 0-3, A 10-15 … | … twice, one hop a pass |
+  | `H14` | A 0-15, B 0-15 … | a hop to the `H`'s own step is a no-op |
+  | `HF0` | A 0-3, A 0-3, A 0-3 … | `x = 15`: it hops every pass |
+  | `HF1` | A 0-3, A 1-3, A 1-3 … | … to step 1 |
+  | `HFF` | A 0-3, then **silence** | special-cased; see below |
 
-  `H0A` always hops; `H1A` hops once then lets the phrase run on from step 5; `H2A` hops twice;
-  `H3A` three times. Destinations behave as before: `H00` gives a four-step cycle, `H02` a
-  two-step cycle on steps 2 and 3, `H0A` runs 0-3 then 10-15. `HFF` silences the channel
-  outright — after steps 0-3 nothing more is ever triggered.
-- Only the **low** nibble is the destination, so a phrase `H` can only reach steps 0-15 and the
-  "jump to step `xy`" of the old entry was really "jump to step `y`".
+  So **`H 0 y` ends the phrase and the next phrase in the chain starts at step `y`** -- a chain
+  hop, which is what §56 called it on 8.4.4 -- while **`H x y` with `x > 0` hops within the
+  phrase to step `y`, `x` times**, one hop a pass, then lets the phrase run through. The two
+  forms are not the same command, and only the second resembles a table's `H`.
 
-> **Superseded.** This entry used to end "**Still open:** whether the high nibble counts repeats
-> in a *phrase* as it does in a table was not tested -- every phrase probe here used `x = 0`."
-> It does. §9's open-question list loses one item.
+  `HFF` remains the exception: `x = 15, y = 15` should hop to step 15 fifteen times, and `H1F`
+  does exactly that once, but `HFF` triggers nothing at all after the hop.
+
+> **Superseded twice.** This entry originally read the phrase form as "jump to step `xy`" with
+> the high nibble untested. The stage-1 pass then claimed the high nibble was a plain repeat
+> count, "the same rule" as a table's -- measured on a **one-phrase chain**, which cannot
+> separate "end the phrase" from "hop to step 0". With two phrases in the chain the two forms
+> come apart at once. The lesson is the same one §3.7 draws: a probe that cannot distinguish two
+> hypotheses will happily confirm whichever you had in mind.
 
 **ChipBoy:** `Cmd::H` handles the counted table form on the lane it fired in (§64: it moves
 that lane's pointer only). The phrase form sets `hopStep` and **ignores `x`**.
@@ -942,7 +957,7 @@ question.
 | `E` | **corrected** | Rate table **confirmed from the ROM itself** (bank 02:`$698C` = 0, 6, 11, 17, 22, 28, 34, 39) — `LSDJ_PARITY.md` §7 stays superseded. But `y` is **bit 3 = direction, bits 0-2 = rate**, not a 4-bit rate; the unit is a fixed 2.788 ms, not `y/64` s, and does not scale with tempo; and **WAV reads `y`, not `x`**. |
 | `F` | **confirmed** | Both nibble sweeps and the whole six-note `F0F` table reproduced exactly. |
 | `G` | **confirmed** | 0.93759 s and 0.46881 s under grooves `6 6` and `3 3`. |
-| `H` | **confirmed** + | Table form reproduced. **Open question closed**: the high nibble counts repeats in a *phrase* too, on the same rule (`H1A`/`H2A`/`H3A` hop 1/2/3 times before letting one through). |
+| `H` | **corrected** | Table form reproduced. The **phrase** form is two commands, not one: `H 0 y` ends the phrase and the next in the chain starts at step `y`; `H x y` with `x > 0` hops *within* the phrase to step `y`, `x` times. Measured with two phrases in the chain -- a one-phrase chain, which is what the stage-1 pass used, cannot separate them. |
 | `K` | **confirmed** + | 1, 2, 3, 6, 12 ticks. Added: `K00` kills on the note's own tick. |
 | `L` | **confirmed** | `xy + 1` pitch updates at four durations, exact. |
 | `M` | **corrected** | **Not the byte into `NR50`.** Each nibble: 0-7 sets that side, 8-15 shifts it by 0 +1 +2 +3 −4 −3 −2 −1, clamped. The old entry's three probe values all had nibbles ≤ 7. ChipBoy's `masterFromArg` is already relative but its down half is wrong. |
@@ -955,16 +970,15 @@ question.
 | `W` | **corrected** | Duty is the low **two bits**, not the low nibble (`W04` = `W00`, `W07` = `W03`). On WAV it is **not** a no-op: the ROM sets two synth variables from `x - 1` and `y`, each skipped when its nibble is zero — which is why three probes that all had `x = 0` saw nothing. |
 | `Z` | **corrected** | The arithmetic is right. The **source** is not "the last command executed" but the last command **in the same lane** — per channel for phrase commands, per (table, column) for table ones. A command that ran a row earlier in the other column is not re-run. |
 
-**Still open**, down from three to two, and both are named where they belong:
+**Still open**, and both are named where they belong:
 
 1. **What `W`'s two variables do on a wave instrument** (§6.18). The ROM says `W` writes
    `x - 1` and `y` to two synth parameters; nothing was made to move by them, because the
    bootstrapped host has no synth data worth animating. It needs a real save.
-2. **`HFF`'s exact semantics** (§6.8). It silences the channel here — measured again, and again
-   nothing is triggered after the hop — where 8.4.4 was measured as ending the phrase fifteen
-   times and then letting it play in full (§56). Now that a phrase `H`'s high nibble is known to
-   be a repeat count, `HFF` is "hop to step 15, fifteen times", and the two readings may be the
-   same fact seen from different phrase lengths. Not settled.
+2. **`HFF`'s exact semantics** (§6.8). By the rule the rest of the range follows it should hop
+   to step 15 fifteen times, and `H1F` does exactly that once — but `HFF` triggers nothing at
+   all after the hop, on a two-phrase chain as on a one-phrase one. 8.4.4 was measured as ending
+   the phrase fifteen times and then letting it play in full (§56). Not settled.
 
 ### What the verification pass changed about the rig
 

@@ -561,9 +561,9 @@ TEST_CASE("an H that ends a phrase becomes the phrase's length", "[lsdj]")
     CHECK(int(p0->steps) == 3);                                     // rows 0, 1, 2 play; row 3 does not
     CHECK(p0->cells[0].note == 60); CHECK(p0->cells[2].note == 62);
     CHECK(p0->cells[3].cmd1.cmd == bank::Cmd::None);
-    // A counted H ends the phrase too: LSDj ends it that many times and then
-    // lets it play in full, and ending it every time is right in most passes
-    // rather than wrong in all of them (section 56).
+    // Section 80, measured on 9.3.9 with two phrases in the chain: a **counted**
+    // H is a different command -- it hops back inside the phrase rather than
+    // ending it -- so the importer still ends the phrase there, and says so.
     song[kCmdV + 3] = 0x21;
     ImportNotes counted;
     REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(22), *bank, *out, sum, counted));
@@ -571,12 +571,19 @@ TEST_CASE("an H that ends a phrase becomes the phrase's length", "[lsdj]")
     REQUIRE(p1 != nullptr);
     CHECK(int(p1->steps) == 3);
     CHECK(p1->cells[3].cmd1.cmd == bank::Cmd::None);
-    bool told = false, toldRow = false;
-    for (const auto& l : counted.lines) {
-        if (l.find("times and then lets it play in full") != std::string::npos) told = true;
-        if (l.find("starts the next phrase at row 1") != std::string::npos) toldRow = true;
-    }
-    CHECK(told); CHECK(toldRow);
+    bool told = false;
+    for (const auto& l : counted.lines)
+        if (l.find("hops back to step 1 inside the phrase") != std::string::npos) told = true;
+    CHECK(told);
+    // And `H 0 y`, which really does end the phrase, says where the next one
+    // would have started.
+    song[kCmdV + 3] = 0x01;
+    ImportNotes chained;
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(22), *bank, *out, sum, chained));
+    bool toldRow = false;
+    for (const auto& l : chained.lines)
+        if (l.find("starts the next one at step 1") != std::string::npos) toldRow = true;
+    CHECK(toldRow);
 }
 
 TEST_CASE("a project file decompresses to the song the save's file holds", "[lsdj]")

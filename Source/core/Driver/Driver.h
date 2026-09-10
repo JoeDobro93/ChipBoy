@@ -279,6 +279,7 @@ private:
         uint16_t shapedTick = 0;           ///< ticks into the envelope, or into the release
         uint8_t  shapedFrom = 0;           ///< the level the release started from
         bool     tableJustStarted = false; ///< row 0 fired with the note-on (section 31)
+        bool     tableHopped = false;      ///< a `B` in this lane took its hop (section 73)
         // The instrument's own envelope, run in software (section 26): from
         // LSDj 8.8.0 the program never lets the chip's envelope run -- NRx2
         // always goes out with the period nibble at 8, a hold -- and steps the
@@ -287,7 +288,17 @@ private:
         // instead of that table's (section 70).
         uint32_t envCount = 0;             ///< 256ths of a pitch clock since the level last stepped (section 70)
         bool     retrigFast = false;       ///< R x = 8: the retrigger runs on the pitch clock
-        uint8_t  sweepRate = 0, sweepShift = 0; bool sweepDown = false;
+        /// PU1's sweep, **held inverted, as LSDj holds it** (section 72): a note-on
+        /// seeds it from the instrument and `S` adds each nibble into it, so two
+        /// `S`s compound. `NR10` is always `~sweepByte`. It cannot be kept as a
+        /// rate/shift/direction triple, because a carry crosses the nibbles.
+        uint8_t  sweepByte = 0xFF;
+        /// `F`'s finetune, in 1/256 semitones (section 78): PU1's downward
+        /// `y`/32 and PU2's upward one. It is **absolute** -- three `F0F`s leave
+        /// the note exactly half a semitone off, not one and a half -- and a
+        /// note-on clears it. It is its own field so a `P` bend, which walks
+        /// `fineOffset`, and an `F` do not overwrite each other.
+        int16_t  fineTune = 0;
         uint8_t  noiseShift = 5, noiseDiv = 1; bool lfsr7 = false; int8_t noiseSweep = 0;
         int16_t  noiseTsp = 0;             ///< S on NOI: semitones added to the note, adding up until the next note-on (section 55)
         bank::Pan pan = bank::Pan::Both;
@@ -303,7 +314,9 @@ private:
         uint32_t kitLoopsStreamed = 0;
         // counters
         int16_t  delay = -1, kill = -1;
-        uint8_t  retrigEvery = 0; uint16_t retrigCount = 0; bool retrigOn = false;
+        /// `R`: the interval in **ticks** (section 76), and the one shot a `y = 0`
+        /// still owes -- LSDj retriggers once and stops there, it does not run on.
+        uint8_t  retrigEvery = 0; uint16_t retrigCount = 0; bool retrigOn = false, retrigOnce = false;
         bool     releasing = false;                   ///< Release note-off: WAV/KIT steps the level down
         bool     pulseReleasing = false;              ///< ... and PU/NOI let the software envelope finish
         bool     pendingOn = false, pendingPlain = true; uint8_t pendingNote = 0, pendingVel = 0;
@@ -317,7 +330,10 @@ private:
         int16_t  instParam = -1;                      ///< the Instrument parameter last seen (-1 = none yet)
         uint32_t instKey = 0;                         ///< what resolveInstrument() picked, to compare against
         bool     notePlain = true; uint8_t noteInst = 0;       ///< what the last note-on did, stamped on its event
-        bank::Command lastCmd;                        ///< the last command fired, for Z to re-run
+        /// The last command this channel's **cell / slot lane** fired, for a `Z`
+        /// in that lane to re-run (section 74). A table's two columns keep their
+        /// own records, per table, in `Driver::zRec_`.
+        bank::Command lastCellCmd;
         bank::Command slot[2], slotParam[2];          ///< the automation lane's, in force and as the parameter left it
         bank::Command noteCmd[2];                     ///< the cell's two columns, applied once when the note starts
         bank::Command pendingCmd[2];                  ///< and where they wait while a D holds the note back
@@ -414,7 +430,22 @@ private:
     /// Z re-runs a command with a random 0..x added to its x and 0..y to its
     /// y: the other slot or column when that is set, else the last command
     /// fired on the channel. Cmd::None when there is nothing to re-run.
-    bank::Command resolveRandom(int ch, const bank::Command& z, const bank::Command& other);
+    /// `Z`'s target: the last command in **its own lane** (section 74), with a
+    /// random 0..x added to the target byte's high nibble and 0..y to its low.
+    /// `lane` is 0 for the channel's cell and slot lane, 1 and 2 for a running
+    /// table's two command columns.
+    bank::Command resolveRandom(int ch, const bank::Command& z, int lane);
+    /// Where a lane's last command is kept, so `applyCommand` and `resolveRandom`
+    /// agree on which one a `Z` sees.
+    bank::Command* zSlot(int ch, bool fromTable, int lane);
+    /// Section 73: a cell's `B`. Each nibble is an independent roll that passes
+    /// `n` times in **15**, and the note sounds if either passes -- so `B00`
+    /// never sounds and any nibble of 15 always does.
+    bool chanceGate(int ch, const bank::Command& c);
+    /// Section 74: LSDj's last-command record for a table's two columns is per
+    /// **table**, not per channel, so two channels running the same table share
+    /// it and one channel running two tables does not.
+    std::array<std::array<bank::Command, 2>, bank::kTableSlots> zRec_{};
     void updateSlots(int ch);                 ///< a slot whose value changed fires at this tick
     void adoptInstrumentParam(int ch);        ///< the Instrument parameter moving clears a keyswitch
     void syncSlots(int ch);                   ///< adopt the parameters' slots without firing them

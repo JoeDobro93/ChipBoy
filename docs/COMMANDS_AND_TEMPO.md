@@ -2164,3 +2164,131 @@ fixed-point step rounds the other way.
 > The command-by-command comparison against LSDj 9.3.9 -- what each letter does there, what
 > ChipBoy does now, whether the importer can bridge the two, and how to probe another ROM
 > version -- lives in `docs/LSDJ_COMMAND_MATRIX.md`.
+
+## 72. `S` on PU1 is a running sweep byte, not an assignment
+
+`docs/LSDJ_COMMAND_MATRIX.md` §6.15. LSDj does not write `NR10` from the command. The channel
+keeps a **sweep byte, held inverted**, seeded at every note-on from the instrument's own sweep
+field; `S xy` **adds** `x` to that byte's high nibble and `y` to its low, the low nibble masked
+to four bits so it never borrows into the high one; and `NR10 = ~byte` goes out with the note's
+other writes. A sweep of `00` seeds the byte at `FF`, which is why a single `S` on a fresh note
+comes out as `NR10 = ((-x) & 15) << 4 | ((-y) & 15)` — the published formula, and only that case.
+
+Measured: `S23` on four consecutive rows of one note gives `ED CA A7 84`; the same `S23` on an
+instrument whose sweep is `11` gives `FE`, not `ED`.
+
+**Carried by** `Voice::sweepByte`, one byte, inverted as LSDj holds it. `Instrument`'s
+`sweepRate` / `sweepShift` / `sweepDown` stay as they are — they are what the *instrument*
+carries and what the UI edits; the voice no longer keeps its own copy of the three, because a
+running byte cannot be split back into them once a carry has crossed a nibble.
+
+- **note-on / instrument load**: `sweepByte = ~((rate << 4) | (down ? 8 : 0) | shift)`.
+- **`S x y`**: `sweepByte += x << 4` (a plain byte add, so a carry out of bit 7 is dropped);
+  then `sweepByte = (sweepByte & 0xF0) | ((sweepByte + y) & 0x0F)`.
+- **every `NR10` write**: `~sweepByte`.
+- **the revert form** puts the instrument's byte back, as every other letter's does.
+
+`S` on PU2 and WAV stays inert, and on noise stays the accumulating semitone/nibble transpose of
+§55 and §66 — which was already right.
+
+## 73. `B`: the chance command, and its two different laws
+
+`docs/LSDJ_COMMAND_MATRIX.md` §6.2. `B` is new to `bank::Cmd`, appended after `Z` so no
+existing enum value moves and no song file changes meaning. Two forms:
+
+- **In a phrase or a cell** — the byte gates whether the note sounds. Each nibble is an
+  independent roll that passes `n` times in 15, and the note sounds if **either** passes. `B00`
+  never sounds; any nibble of 15 always does.
+- **In a table** — a hop to row `y` taken with probability `x`/**16**. A *different* law: `BF0`
+  hops fifteen times in sixteen, not always. Zero `x` never hops.
+
+Both are confirmed against the ROM: the phrase roll reduces a random byte by 15, the table hop
+compares an unreduced random byte against `x << 4`.
+
+**Carried by** `Driver::chanceRoll(int ch, int n)` for the phrase form and a plain
+`randomArg(ch, 15) < x` compare for the table one, both on the voice's own `rng` so a render is
+reproducible from a seed. A phrase `B` that fails **suppresses the note-on entirely** — the
+instrument is not loaded, the table does not start, and the channel keeps what it had — which is
+what LSDj does. It does not suppress the row's *other* command.
+
+## 74. `Z` re-runs its own lane
+
+`docs/LSDJ_COMMAND_MATRIX.md` §6.19. Not "the last command executed": LSDj keeps a last-command
+record per **lane** and `Z` re-runs its own lane's. The lanes are the four channels' phrase
+commands, and every table's column 1 and column 2 separately. A command that ran a row earlier
+in the *other* column of the same table is not what a `Z` re-runs.
+
+**Carried by** `Voice::lastCellCmd` (the channel's phrase/cell lane) and
+`Driver::zRec_[slot][column]`, one `bank::Command` per table slot and column. `H` and `Z` are
+never recorded, as before. The randomisation is unchanged and was already right: `0..x` on the
+target's high nibble and `0..y` on its low.
+
+## 75. `M`'s two halves
+
+`docs/LSDJ_COMMAND_MATRIX.md` §6.11. Each nibble independently: **0-7 sets** that side's volume,
+**8-15 shifts** it by `0 +1 +2 +3 −4 −3 −2 −1`, clamped to 0-7. `masterFromArg` already had the
+shape and the up half; its down half mapped 12-15 to `0 −1 −2 −3`. The offset is the low three
+bits read as a signed 3-bit number: `off = ((n - 8) ^ 4) - 4`.
+
+## 76. `R`'s interval is `y` ticks, and `y = 0` fires once
+
+`docs/LSDJ_COMMAND_MATRIX.md` §6.14. Measured: `R01` retriggers once a tick, `R02` every two,
+`R04` every four — the interval is `y` ticks flat, not `y × (rate + 1) + 1`. `y = 0` retriggers
+**once** and stops rather than every tick. `x = 8` keeps the fast clock (about 0.29 ticks) and
+any other `x` is the signed volume step, both unchanged.
+
+`Voice::retrigEvery` keeps its meaning but is read as ticks directly; `Voice::retrigOnce` is new
+and says the `y = 0` shot is still owed.
+
+## 77. `C` and `V` reach the noise channel
+
+`docs/LSDJ_COMMAND_MATRIX.md` §6.3 and §6.17. Both work on the ROM and both were dropped. The
+noise channel already takes the note, the transposes and the table's column through the map in
+`writePeriod`; the chord step and the vibrato are two more semitone offsets on the same note, so
+the fix is to read them there rather than to branch. The vibrato is rounded to the nearest whole
+semitone before the map lookup, because the map has no room between entries.
+
+The `if (noise) break;` at the top of `Cmd::C` and `Cmd::V` goes; `Cmd::L` keeps its own, because
+a slide walks fractional semitones a map cannot follow.
+
+## 78. `F` on the pulses: PU1's fine offset, PU2's two nibbles
+
+`docs/LSDJ_COMMAND_MATRIX.md` §6.6. Three different things by channel, and two of them were
+wrong.
+
+- **PU1** — a downward finetune of `y`/32 of a semitone; `x` does nothing. **Absolute, not
+  cumulative**: three `F0F` in a row leave the note exactly half a semitone down, and a note-on
+  puts it back. ChipBoy's `fineOffset` is in 1/256 semitones, so it is `fineOffset =
+  instrument's finetune − 8 × y`.
+- **PU2** — an upward transpose of `x` semitones **plus** `y`/32 of a semitone, also absolute and
+  also cleared by a note-on. ChipBoy read the whole byte as a signed semitone count.
+- **WAV** — the frame, unchanged (§65).
+- **NOI** — inert.
+
+## 79. `E` on the wave channel reads `y`
+
+`docs/LSDJ_COMMAND_MATRIX.md` §6.5. On WAV/KIT the level is `NR32`'s two bits and LSDj takes
+them from the command's **low** nibble: `y & 3` of 0/1/2/3 gives mute / 25% / 50% / 100%. ChipBoy
+took `x`. One nibble, in the `wave` branch of `Cmd::E`.
+
+## 80. A phrase `H` is two commands, and ChipBoy expresses one of them
+
+`docs/LSDJ_COMMAND_MATRIX.md` §6.8, measured with **two** phrases in the chain -- a one-phrase
+chain cannot separate "end the phrase" from "hop to step 0", and reading it on one is what made
+the first two attempts at this entry wrong.
+
+- **`H 0 y`** ends the phrase at that step, and the **next phrase in the chain starts at step
+  `y`**. This is the chain hop §56 recorded on 8.4.4.
+- **`H x y`, `x > 0`** hops **inside** the phrase to step `y`, one hop a pass, `x` passes, and
+  then lets the phrase run through. A hop to the `H`'s own step is a no-op that still spends a
+  pass. `HFF` triggers nothing at all afterwards and stays unexplained.
+
+ChipBoy expresses the first form and only with `y = 0`: the importer sets the phrase's **length**
+to the `H`'s step, so the phrase ends there and the chain moves on. `y > 0` and the counted form
+are **engine work** and are noted at import instead, because the Player lays a chain row's steps
+out ahead of the row rather than interpreting them one at a time -- a hop whose count survives
+across passes has no place in a schedule that is built once.
+
+Until that changes the importer's job is to be accurate about what was lost, which means saying
+the right thing: a `H x y` with `x > 0` is a hop **within** the phrase, not "ends the phrase `x`
+times".

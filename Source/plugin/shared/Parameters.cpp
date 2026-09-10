@@ -27,10 +27,12 @@ String instText(int v, int top) { return v == top ? "inst" : String(v); }
 
 namespace {
 /// The lane's letters, in the enum's order minus H (tables only).
+/// `B` is last so every other letter keeps the choice index it has always had
+/// and a saved automation value still means what it did (section 73).
 constexpr bank::Cmd kLaneCmds[] = {
     bank::Cmd::A, bank::Cmd::C, bank::Cmd::D, bank::Cmd::E, bank::Cmd::F, bank::Cmd::G,
     bank::Cmd::K, bank::Cmd::L, bank::Cmd::M, bank::Cmd::O, bank::Cmd::P, bank::Cmd::R,
-    bank::Cmd::S, bank::Cmd::T, bank::Cmd::V, bank::Cmd::W, bank::Cmd::Z,
+    bank::Cmd::S, bank::Cmd::T, bank::Cmd::V, bank::Cmd::W, bank::Cmd::Z, bank::Cmd::B,
 };
 }
 
@@ -125,6 +127,12 @@ String commandArgText(const bank::Command& c)
         case bank::Cmd::V:    return x == 0 ? String("off") : "speed " + String(x) + dot + vibDepthText(y);
         case bank::Cmd::W:    return "duty/wave " + String(x);
         case bank::Cmd::Z:    return "add 0-" + String(x) + (y ? dot + "0-" + String(y) : String());
+        // Section 73: in a cell the two nibbles are independent x/15 rolls and the
+        // note sounds if either passes; in a table it is a hop to row y taken
+        // x/16 of the time. The readout gives the cell's odds, which is where
+        // the letter is usually written.
+        case bank::Cmd::B:    { const double q = 1.0 - (1.0 - x / 15.0) * (1.0 - y / 15.0);
+                                return String(int(std::lround(q * 100.0))) + "% " + dot + "hop row " + String(y); }
     }
     return {};
 }
@@ -151,6 +159,7 @@ constexpr CommandInfo kCmdInfo[bank::kCmdCount] = {
     { 'V', "Vibrato",       "speed 1-15, depth in semitones", 2, { 0, 0 }, { 15, 15 }, { 8, 4 }, CmdShape::Nibbles },
     { 'W', "Wave",          "duty 0-3, or wave 1-64",    1, { 0, 0 }, { 64, 0 },   { 1, 0 },   CmdShape::Small },
     { 'Z', "Random add",    "0..x on x, 0..y on y",      2, { 0, 0 }, { 15, 15 },  { 15, 0 },  CmdShape::Nibbles },
+    { 'B', "Chance",        "cell: two x/15 rolls; table: hop row y, x/16 of the time", 2, { 0, 0 }, { 15, 15 }, { 15, 0 }, CmdShape::Nibbles },
 };
 } // namespace
 

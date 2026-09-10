@@ -416,11 +416,18 @@ TEST_CASE("E, W, P, S and A write what the letter says", "[driver][commands]")
         CHECK(r.drv.view(0).envRate == 3);
         CHECK(r.drv.view(0).envDir == 1);
     }
-    SECTION("E on the wave channel is its two-bit level") {
+    SECTION("E on the wave channel is its two-bit level, from y") {
+        // Section 79: LSDj reads NR32's two bits from the command's **low**
+        // nibble, and x does nothing. Measured on 9.3.9: E01 is 25 %, E02 50 %,
+        // E03 100 %, and E10 / EF0 are all mute.
         Rig r;
-        ChannelParams p; p.instrument = 7; p.cmd[0] = { Cmd::E, 1, 0, 0 }; r.drv.setParams(2, p);
+        ChannelParams p; p.instrument = 7; p.cmd[0] = { Cmd::E, 0, 1, 0 }; r.drv.setParams(2, p);
         auto w = r.block({ Rig::on(2, 48, 100) }, 512);
         CHECK(last(w, 0xFF1C)->value == 0x60);          // NR32 code for 25 %
+        Rig r2;
+        ChannelParams q; q.instrument = 7; q.cmd[0] = { Cmd::E, 15, 0, 0 }; r2.drv.setParams(2, q);
+        w = r2.block({ Rig::on(2, 48, 100) }, 512);
+        CHECK(last(w, 0xFF1C)->value == 0x00);          // x alone says nothing: mute
     }
     SECTION("W is duty on a pulse and a wave slot on WAV") {
         Rig r;
@@ -451,16 +458,36 @@ TEST_CASE("E, W, P, S and A write what the letter says", "[driver][commands]")
         r.block({}, 2048);
         CHECK(r.drv.view(0).period == Driver::periodForNote(69, false));
     }
-    SECTION("S is PU1's sweep, down when x asks for it") {
+    SECTION("S adds each nibble into PU1's running sweep byte") {
+        // Section 72. The channel keeps the byte inverted, seeded from the
+        // instrument; S adds x to its high nibble and y to its low, and NR10 is
+        // the complement. From a sweep-00 instrument the first S is the
+        // published formula, ((-x) & 15) << 4 | ((-y) & 15).
         Rig r;
-        // `y` is NR10's low nibble: 0-7 up at that shift, 8-15 down (34).
-        ChannelParams p; p.instrument = 1; p.cmd[0] = { Cmd::S, 3, 2, 0 }; r.drv.setParams(0, p);
+        ChannelParams p; p.instrument = 1; p.cmd[0] = { Cmd::S, 2, 3, 0 }; r.drv.setParams(0, p);
         auto w = r.block({ Rig::on(0, 69, 100) }, 512);
-        CHECK(last(w, 0xFF10)->value == 0x32);          // rate 3, up, shift 2
-        p.cmd[0] = { Cmd::S, 3, 10, 0 };
-        r.drv.setParams(0, p);
-        w = r.block({}, 512);
-        CHECK(last(w, 0xFF10)->value == 0x3A);          // the same, downward
+        REQUIRE(last(w, 0xFF10) != nullptr);
+        CHECK(last(w, 0xFF10)->value == 0xED);          // S23 -> ED, measured on 9.3.9
+        // A table stepping S23 on four rows compounds: ED CA A7 84.
+        Rig r2;
+        auto& t = r2.bank.tables[0];
+        t.used = true; t.end = TableEnd::Stop;
+        for (int i = 0; i < 4; ++i) t.steps[i].cmd1 = { Cmd::S, 2, 3, 0 };
+        ChannelParams q; q.instrument = 1; q.table = 1; r2.drv.setParams(0, q);
+        w = r2.block({ Rig::on(0, 69, 100) }, 4096);
+        std::vector<uint8_t> nr10;
+        for (const auto& x : w) if (x.addr == 0xFF10) nr10.push_back(x.value);
+        INFO("NR10: " << [&]{ std::string o; for (auto x : nr10) { char b[8]; std::snprintf(b, sizeof b, "%02X ", x); o += b; } return o; }());
+        REQUIRE(nr10.size() >= 4);
+        CHECK(nr10[0] == 0xED); CHECK(nr10[1] == 0xCA);
+        CHECK(nr10[2] == 0xA7); CHECK(nr10[3] == 0x84);
+        // The y = 0 cases separate the per-nibble law from a whole-byte
+        // negation: S20 is E0, not F0.
+        Rig r3;
+        ChannelParams u; u.instrument = 1; u.cmd[0] = { Cmd::S, 2, 0, 0 }; r3.drv.setParams(0, u);
+        w = r3.block({ Rig::on(0, 69, 100) }, 512);
+        REQUIRE(last(w, 0xFF10) != nullptr);
+        CHECK(last(w, 0xFF10)->value == 0xE0);
     }
     SECTION("A selects a table and 0 stops it") {
         Rig r;
@@ -1343,15 +1370,19 @@ TEST_CASE("M sets a side or moves it", "[driver][commands]")
     auto w = r.block({}, 512);
     REQUIRE(last(w, 0xFF24) != nullptr);
     CHECK(last(w, 0xFF24)->value == 0x55);
-    p.cmd[0] = { Cmd::M, 9, 13, 0 }; r.drv.setParams(0, p);   // left up 1, right down 1
+    // Section 75: 0-7 sets, 8-15 shifts by 0 +1 +2 +3 -4 -3 -2 -1, clamped.
+    p.cmd[0] = { Cmd::M, 9, 13, 0 }; r.drv.setParams(0, p);   // left up 1, right down 3
     w = r.block({}, 512);
-    CHECK(last(w, 0xFF24)->value == 0x64);
+    CHECK(last(w, 0xFF24)->value == 0x62);
     p.cmd[0] = { Cmd::M, 3, 8, 0 }; r.drv.setParams(0, p);    // left to 3, right untouched
     w = r.block({}, 512);
-    CHECK(last(w, 0xFF24)->value == 0x34);
-    p.cmd[0] = { Cmd::M, 11, 15, 0 }; r.drv.setParams(0, p);  // up 3, down 3
+    CHECK(last(w, 0xFF24)->value == 0x32);
+    p.cmd[0] = { Cmd::M, 11, 15, 0 }; r.drv.setParams(0, p);  // up 3, down 1
     w = r.block({}, 512);
     CHECK(last(w, 0xFF24)->value == 0x61);
+    p.cmd[0] = { Cmd::M, 12, 12, 0 }; r.drv.setParams(0, p);  // both down 4, clamping at 0
+    w = r.block({}, 512);
+    CHECK(last(w, 0xFF24)->value == 0x20);
 }
 
 TEST_CASE("a Step-mode table advances a row per trigger", "[driver][commands]")
@@ -2270,18 +2301,178 @@ TEST_CASE("an instrument's PU2 transpose applies on the second pulse only, and F
     CHECK(r.drv.view(1).period == plain72);
     r.block({ cellOn(0, 60, 21) }, 200);
     CHECK(r.drv.view(0).period == plain60);               // PU1: the instrument's own pitch
-    // F on PU2 *is* the offset for the note in progress, two's complement: it
-    // replaces the instrument's, as LSDj's TSP does.
-    auto e = cellOn(1, 60, 21); e.cmd1 = { Cmd::F, 0xF4, 0, 0 };   // -12
+    // Section 78, measured on 9.3.9: on PU2 F is **x semitones up plus y/32**,
+    // replacing the instrument's own transpose as LSDj's TSP does.
+    auto e = cellOn(1, 60, 21); e.cmd1 = { Cmd::F, 1, 0, 0 };
     r.block({ e }, 200);
-    CHECK(r.drv.view(1).period == Driver::periodForNote(48.0, false));
+    CHECK(r.drv.view(1).period == Driver::periodForNote(61.0, false));
+    e = cellOn(1, 60, 21); e.cmd1 = { Cmd::F, 15, 0, 0 };
+    r.block({ e }, 200);
+    CHECK(r.drv.view(1).period == Driver::periodForNote(75.0, false));
+    e = cellOn(1, 60, 21); e.cmd1 = { Cmd::F, 0, 15, 0 };          // y/32 of a semitone up
+    r.block({ e }, 200);
+    CHECK(r.drv.view(1).period == Driver::periodForNote(60.0 + 15.0 / 32.0, false));
     // A plain note-on puts the instrument's own back.
     r.block({ cellOn(1, 60, 21) }, 200);
     CHECK(r.drv.view(1).period == plain72);
-    // F on PU1 stays inert.
-    e = cellOn(0, 60, 21); e.cmd1 = { Cmd::F, 12, 0, 0 };
+    // On PU1 it is a **downward** finetune of y/32, and x does nothing.
+    e = cellOn(0, 60, 21); e.cmd1 = { Cmd::F, 0, 15, 0 };
+    r.block({ e }, 200);
+    CHECK(r.drv.view(0).period == Driver::periodForNote(60.0 - 15.0 / 32.0, false));
+    e = cellOn(0, 60, 21); e.cmd1 = { Cmd::F, 15, 0, 0 };          // y = 0: nothing moves
     r.block({ e }, 200);
     CHECK(r.drv.view(0).period == plain60);
+    // Absolute, not cumulative: three in a row leave the same offset as one.
+    for (int k = 0; k < 3; ++k) { auto f = cellCmd(0, { Cmd::F, 0, 15, 0 }); r.block({ f }, 200); }
+    CHECK(r.drv.view(0).period == Driver::periodForNote(60.0 - 15.0 / 32.0, false));
+}
+
+TEST_CASE("B gates a cell's note and hops a table's lane", "[driver][commands]")
+{
+    // Section 73, measured on 9.3.9. In a cell each nibble is an independent
+    // roll that passes n times in **15** and the note sounds if either passes:
+    // B00 never sounds, and any nibble of 15 always does. In a table it is a
+    // hop to row y taken **x/16** of the time -- a different law, which is why
+    // BF0 misses one hop in sixteen rather than always hopping.
+    SECTION("B00 in a cell never sounds and B0F always does") {
+        for (auto [val, want] : { std::pair<Command, bool>{ { Cmd::B, 0, 0, 0 }, false },
+                                  { { Cmd::B, 0, 15, 0 }, true },
+                                  { { Cmd::B, 15, 0, 0 }, true } }) {
+            Rig r;
+            for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+            ChannelParams p; p.instrument = 1; r.drv.setParams(0, p);
+            int triggers = 0;
+            for (int n = 0; n < 24; ++n) {
+                auto e = cellOn(0, 69, 1); e.cmd1 = val;
+                auto w = r.block({ e }, 512);
+                for (const auto& x : w) if (x.addr == 0xFF14 && (x.value & 0x80)) ++triggers;
+            }
+            CHECK(bool(triggers > 0) == want);
+            if (want) CHECK(triggers == 24);
+        }
+    }
+    SECTION("a middling B sounds some of the time and not all of it") {
+        Rig r;
+        for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+        ChannelParams p; p.instrument = 1; r.drv.setParams(0, p);
+        int triggers = 0;
+        for (int n = 0; n < 200; ++n) {
+            auto e = cellOn(0, 69, 1); e.cmd1 = { Cmd::B, 0, 8, 0 };
+            auto w = r.block({ e }, 256);
+            for (const auto& x : w) if (x.addr == 0xFF14 && (x.value & 0x80)) ++triggers;
+        }
+        CHECK(triggers > 60);                        // 8/15 is about 107 of 200
+        CHECK(triggers < 150);
+    }
+    SECTION("a table B hops to row y") {
+        // x = 15 is fifteen hops in sixteen, so over a long run the rows above
+        // the hop are reached far more often than the ones below it.
+        Rig r;
+        auto& t = r.bank.tables[0];
+        t.used = true; t.end = TableEnd::Loop;
+        t.steps[0].hasTranspose = true; t.steps[0].transpose = 0;
+        t.steps[1].hasTranspose = true; t.steps[1].transpose = 4;
+        t.steps[2].hasTranspose = true; t.steps[2].transpose = 8;
+        t.steps[2].cmd1 = { Cmd::B, 15, 0, 0 };
+        for (int i = 3; i < 16; ++i) { t.steps[i].hasTranspose = true; t.steps[i].transpose = 20; }
+        ChannelParams p; p.instrument = 1; p.table = 1; r.drv.setParams(0, p);
+        auto w = r.block({ Rig::on(0, 60, 100) }, 32768);
+        int low = 0, high = 0;
+        for (const auto& x : w) {
+            if (x.addr != 0xFF14) continue;
+            (void) x;
+        }
+        // Count how often the lane is inside rows 0-2 against the +20 block,
+        // by the period the transposes produce.
+        const int p20 = Driver::periodForNote(80.0, false);
+        int lastLo = 0;
+        for (const auto& x : w) {
+            if (x.addr == 0xFF13) lastLo = x.value;
+            else if (x.addr == 0xFF14) { const int per = ((x.value & 7) << 8) | lastLo; if (per == p20) ++high; else ++low; }
+        }
+        CHECK(low > 0);
+        CHECK(high > 0);                              // it does not hop *every* time
+        CHECK(low > high * 3);                        // but it hops far more often than not
+    }
+}
+
+TEST_CASE("Z re-runs its own lane, not the other column", "[driver][commands]")
+{
+    // Section 74, measured on 9.3.9: a command that ran a row earlier in the
+    // *other* table column is not what a Z re-runs.
+    Rig r;
+    auto& t = r.bank.tables[0];
+    t.used = true; t.end = TableEnd::Stop;
+    // A Z that adds 0..15 to the target's low nibble, so a re-run shows up as
+    // NR50 values other than the M's own.
+    t.steps[0].cmd2 = { Cmd::M, 4, 0, 0 };            // column 2 sets NR50
+    t.steps[1].cmd1 = { Cmd::Z, 0, 15, 0 };           // column 1's Z has nothing of its own
+    ChannelParams p; p.instrument = 1; p.table = 1; r.drv.setParams(0, p);
+    GlobalParams g; g.masterL = 7; g.masterR = 7; r.drv.setGlobal(g);
+    auto w = r.block({ Rig::on(0, 60, 100) }, 4096);
+    std::vector<uint8_t> nr50;
+    for (const auto& x : w) if (x.addr == 0xFF24) nr50.push_back(x.value);
+    REQUIRE(!nr50.empty());
+    CHECK(nr50.back() == 0x40);                       // column 2's M ran; the Z re-ran nothing
+    // The same M in column 1 *is* what column 1's Z re-runs.
+    Rig r2;
+    auto& t2 = r2.bank.tables[0];
+    t2.used = true; t2.end = TableEnd::Loop;
+    t2.steps[0].cmd1 = { Cmd::M, 4, 0, 0 };
+    t2.steps[1].cmd1 = { Cmd::Z, 0, 15, 0 };
+    ChannelParams q; q.instrument = 1; q.table = 1; r2.drv.setParams(0, q);
+    r2.drv.setGlobal(g);
+    w = r2.block({ Rig::on(0, 60, 100) }, 16384);
+    std::vector<uint8_t> seen;
+    for (const auto& x : w) if (x.addr == 0xFF24 && std::find(seen.begin(), seen.end(), x.value) == seen.end()) seen.push_back(x.value);
+    CHECK(seen.size() > 2);                           // the M's own value and the Z's re-runs
+}
+
+TEST_CASE("R retriggers every y ticks, and y = 0 fires once", "[driver][commands]")
+{
+    // Section 76, measured on 9.3.9: R01 is one trigger a tick, R04 one every
+    // four, and R00 retriggers once and stops rather than every tick.
+    // The rig ticks at 240 Hz over 48 kHz, so 4000 frames is twenty ticks; the
+    // count includes the note-on's own trigger.
+    auto count = [](int y) {
+        Rig r;
+        ChannelParams p; p.instrument = 1; p.cmd[0] = { Cmd::R, 0, int16_t(y), 0 }; r.drv.setParams(0, p);
+        const auto w = r.block({ Rig::on(0, 69, 100) }, 4000);
+        int n = 0;
+        for (const auto& x : w) if (x.addr == 0xFF14 && (x.value & 0x80)) ++n;
+        return n;
+    };
+    const int one = count(1), two = count(2), four = count(4);
+    CHECK(one >= 20);                                 // one a tick
+    CHECK(std::abs(two * 2 - one) <= 3);
+    CHECK(std::abs(four * 4 - one) <= 5);
+    CHECK(count(0) == 2);                             // the note-on, one retrigger, and stop
+}
+
+TEST_CASE("C and V reach the noise channel", "[driver][commands][noise]")
+{
+    // Section 77: both work on the ROM and both were dropped. The chord's
+    // semitones and the vibrato's swing walk the noise map exactly as a
+    // table's transpose column does.
+    SECTION("a chord walks NR43") {
+        Rig r;
+        ChannelParams p; p.instrument = 25; p.cmd[0] = { Cmd::C, 3, 7, 0 }; r.drv.setParams(3, p);
+        auto w = r.block({ Rig::on(3, 60, 100) }, 8192);
+        std::vector<uint8_t> seen;
+        for (const auto& x : w) if (x.addr == 0xFF22 && std::find(seen.begin(), seen.end(), x.value) == seen.end()) seen.push_back(x.value);
+        CHECK(seen.size() >= 3);                      // note, note + 3, note + 7
+    }
+    SECTION("a vibrato keeps NR43 moving") {
+        Rig r;
+        ChannelParams p; p.instrument = 25; r.drv.setParams(3, p);
+        auto w = r.block({ Rig::on(3, 60, 100) }, 8192);
+        const size_t still = std::count_if(w.begin(), w.end(), [](const RegWrite& x) { return x.addr == 0xFF22; });
+        Rig r2;
+        ChannelParams q; q.instrument = 25; q.cmd[0] = { Cmd::V, 4, 8, 0 }; r2.drv.setParams(3, q);
+        w = r2.block({ Rig::on(3, 60, 100) }, 8192);
+        const size_t moving = std::count_if(w.begin(), w.end(), [](const RegWrite& x) { return x.addr == 0xFF22; });
+        CHECK(moving > still + 4);
+    }
 }
 
 TEST_CASE("a shaped envelope can start above silence and fade past its sustain", "[driver][shaped]")

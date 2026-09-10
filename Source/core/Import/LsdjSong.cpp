@@ -530,8 +530,10 @@ struct Reader {
             case 'R': out = { Cmd::R, int16_t(x), int16_t(y), 0 }; return true;
             case 'H': out = { Cmd::H, int16_t(x), int16_t(y), 0 }; return true;            // times, row: 0-based in both
             case 'E':
-                if (instKind == 1) out = { Cmd::E, int16_t(std::min(3, y)), 0, 0 };
-                else out = { Cmd::E, int16_t(x), int16_t(y), 0 };
+                // Section 79: on a wave instrument LSDj reads NR32's two bits from
+                // the **low** nibble and ignores x, so the byte goes through whole
+                // and the driver takes y & 3.
+                out = { Cmd::E, int16_t(x), int16_t(y), 0 };
                 return true;
             case 'S':
                 if (channel == 3) {
@@ -542,7 +544,9 @@ struct Reader {
                     else if (st && st->nr43 >= 0) { const uint8_t nr = nibbleS(uint8_t(st->nr43), v); st->chipNote = noteForNr43(nr, st->chipNote, st->noiseSlot); st->nr43 = nr; }
                     out = { Cmd::S, int16_t(x), int16_t(y), 0 }; return true;
                 }
-                out = { Cmd::S, int16_t(x & 7), int16_t(y), 0 }; return true;
+                // Section 72: the driver keeps the running sweep byte and adds
+                // each nibble into it, so both go through as they stand.
+                out = { Cmd::S, int16_t(x), int16_t(y), 0 }; return true;
             case 'D': out = { Cmd::D, int16_t(v), 0, 0 }; return true;
             case 'K': out = { Cmd::K, int16_t(v), 0, 0 }; return true;
             case 'L':
@@ -570,16 +574,29 @@ struct Reader {
                 out = { Cmd::P, int16_t(v), 0, 0 }; return true;                     // the two's-complement byte
             case 'G': out = { Cmd::G, int16_t(std::min(v + 1, 16)), 0, 0 }; return true;           // LSDj's groove 00 is ChipBoy's slot 1
             case 'O': out = { Cmd::O, int16_t(v & 3), 0, 0 }; return true;
-            case 'T': out = { Cmd::T, int16_t(v), 0, 0 }; return true;                     // the byte, as the driver reads it
+            case 'T':
+                // The byte is BPM for 40-255; **bytes 0-39 mean 256-295 BPM**
+                // (LSDJ_COMMAND_MATRIX section 6.16, measured on 9.3.9). ChipBoy's
+                // own range reaches 295, so it converts exactly.
+                out = { Cmd::T, int16_t(v < 40 ? 256 + v : v), 0, 0 }; return true;
             case 'W':
                 if (instKind == 1) { notes.add("W" + hex2(v) + " at " + where + " on a wave instrument (synth speed / length): not mapped"); return false; }
-                if (x) notes.add("W" + hex2(v) + " at " + where + ": the high digit has no register effect on the ROM; only the duty (low digit) is kept");
-                out = { Cmd::W, int16_t(y & 3), 0, 0 }; return true;
+                // Section 6.18: the ROM masks the byte to its low **two bits**,
+                // so W04 is W00 and W07 is W03; the rest of the byte is ignored.
+                if (v & 0xFC) notes.add("W" + hex2(v) + " at " + where + ": the ROM keeps only the low two bits of the byte, so this is duty " + std::to_string(v & 3));
+                out = { Cmd::W, int16_t(v & 3), 0, 0 }; return true;
             case 'F':
+                // Section 78. WAV: the frame. PU1: a downward finetune of y/32 of a
+                // semitone, x ignored. PU2: x semitones up plus y/32. NOI: inert.
                 if (instKind == 1) { out = { Cmd::F, int16_t(std::min(16, y + 1)), 0, 0 }; return true; }
-                if (channel == 1) { out = { Cmd::F, int16_t(v), 0, 0 }; return true; }    // PU2: the transpose for the note (section 49)
-                notes.add("F" + hex2(v) + " at " + where + ": finetune has no ChipBoy equivalent on this channel; dropped"); return false;
-            case 'B': notes.add("B" + hex2(v) + " (MayBe) at " + where + ": no ChipBoy equivalent; dropped"); return false;
+                if (channel == 0 || channel == 1) { out = { Cmd::F, int16_t(x), int16_t(y), 0 }; return true; }
+                notes.add("F" + hex2(v) + " at " + where + " on the noise channel does nothing on the ROM either; dropped"); return false;
+            case 'B':
+                // Section 73: in a cell the two nibbles are independent x/15 rolls
+                // and the note sounds if either passes; in a table it is a hop to
+                // row y taken x/16 of the time. ChipBoy's `B` is both, chosen the
+                // same way LSDj chooses -- by where the letter sits.
+                out = { Cmd::B, int16_t(x), int16_t(y), 0 }; return true;
             default: notes.add(std::string(1, letter ? letter : '?') + hex2(v) + " at " + where + ": not mapped"); return false;
         }
     }
@@ -702,13 +719,13 @@ struct Reader {
                 const uint8_t v = at(kPhraseCmdV + i);
                 hopStep = st;
                 const std::string where = " at phrase " + hex2(p) + " step " + std::to_string(st);
-                // The high digit is how many times, 0 meaning every time: `H 4 0`
-                // ends the phrase four times and then lets it play in full, which
-                // measures as four short passes and one long one on 8.4.4. ChipBoy
-                // has no count on a phrase, so it ends every time -- right four
-                // passes in five rather than wrong in all of them.
-                if (v >> 4) notes.add("H" + hex2(v) + where + " ends the phrase " + std::to_string(v >> 4) + " times and then lets it play in full; ChipBoy ends it every time (section 56)");
-                if (v & 15) notes.add("H" + hex2(v) + where + " starts the next phrase at row " + std::to_string(v & 15) + "; ChipBoy's phrases always start at row 0, so it starts there");
+                // Section 80, measured on 9.3.9 with two phrases in the chain:
+                // `H 0 y` ends the phrase and the **next** one starts at step y,
+                // while `H x y` with x > 0 hops *inside* this phrase to step y,
+                // one hop a pass, x passes, and then lets it run through. ChipBoy
+                // expresses the first form with y = 0 and nothing else.
+                if (v >> 4) notes.add("H" + hex2(v) + where + " hops back to step " + std::to_string(v & 15) + " inside the phrase, " + std::to_string(v >> 4) + " passes running, and then lets it play in full; ChipBoy ends the phrase here every time (section 80)");
+                else if (v & 15) notes.add("H" + hex2(v) + where + " ends the phrase and starts the next one at step " + std::to_string(v & 15) + "; ChipBoy's phrases always start at step 0, so it starts there");
                 continue;
             }
             if (letter) {

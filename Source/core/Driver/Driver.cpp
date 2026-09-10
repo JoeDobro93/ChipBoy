@@ -9,6 +9,12 @@ using namespace chipboy::bank;
 
 namespace {
 
+/// The instrument's own `NR10` byte, before section 72's inversion.
+uint8_t sweepFromInst(const bank::InstrumentCore& i)
+{
+    return uint8_t(((i.sweepRate & 7) << 4) | (i.sweepDown ? 8 : 0) | (i.sweepShift & 7));
+}
+
 constexpr uint32_t kBurstSpacing = 20;     ///< cycles between consecutive writes from one tick: ld a,n / ldh (n),a
 constexpr uint32_t kCpuHz = 4194304u;
 constexpr int      kMaxTicksPerBlock = 512;
@@ -349,7 +355,7 @@ void Driver::latch(int ch)
     const auto& i = v.inst;
     v.envVol = i.envVol; v.envRate = i.envRate; v.envDir = i.envDir;
     v.duty = i.duty;
-    v.sweepRate = i.sweepRate; v.sweepShift = i.sweepShift; v.sweepDown = i.sweepDown;
+    v.sweepByte = uint8_t(~sweepFromInst(i));
     v.lfsr7 = i.lfsr7;
     v.noiseShift = i.noiseShift; v.noiseDiv = i.noiseDivisor; v.noiseSweep = i.noiseSweep;
     v.pan = p.pan != 255 ? Pan(p.pan & 3) : i.pan;
@@ -414,7 +420,7 @@ void Driver::reloadInstrument(int ch)
 namespace {
 /// The letters a bare note fires again (section 8): the per-note ones. The
 /// rest -- E, F, O, P, S, V, W, A -- are already in force and are left alone.
-bool perNoteCmd(Cmd c) { return c == Cmd::C || c == Cmd::D || c == Cmd::K || c == Cmd::L || c == Cmd::R; }
+bool perNoteCmd(Cmd c) { return c == Cmd::B || c == Cmd::C || c == Cmd::D || c == Cmd::K || c == Cmd::L || c == Cmd::R; }
 } // namespace
 
 void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
@@ -422,6 +428,15 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
     Voice& v = v_[size_t(ch)];
     const ChannelParams p = effective(ch);
     const bool hy = hybrid(ch);
+    // Section 73: a cell's `B` decides whether this note sounds at all. It is
+    // read before anything else, so a note it turns down loads no instrument,
+    // starts no table and leaves the channel exactly as it was -- which is what
+    // the ROM does. The row still happens: the cell's other columns apply, so a
+    // `B` beside another letter does not swallow it.
+    if (cell != nullptr && (cell->cmd1.cmd == Cmd::B || cell->cmd2.cmd == Cmd::B)) {
+        const Command& b = cell->cmd1.cmd == Cmd::B ? cell->cmd1 : cell->cmd2;
+        if (!isRevert(b) && !chanceGate(ch, b)) { applyCellColumns(ch, *cell); return; }
+    }
     // The command octave (section 13): notes 0-11 never sound and never join
     // the held stack. They fire the channel's slots on whatever it is playing,
     // without a trigger, so a held note can be shaped after its attack; with
@@ -551,7 +566,7 @@ void Driver::beginRelease(int ch)
 {
     Voice& v = v_[size_t(ch)];
     v.active = false; v.tableOn = false; v.sliding = false; v.slideTspFine = 0; v.slideTspHeld = false; v.chordN = 0;
-    v.pitchClockOn = false; v.retrigEvery = 0; v.retrigOn = false; v.retrigFast = false; v.bendSpeed = 0;
+    v.pitchClockOn = false; v.retrigEvery = 0; v.retrigOn = false; v.retrigOnce = false; v.retrigFast = false; v.bendSpeed = 0;
     // A shaped envelope has its own release: from the level the note-off found
     // to silence, one level per tick, over its own curve (section 27). A level
     // change that took the envelope over leaves the chip's release instead.
@@ -643,10 +658,10 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     v.noiseTsp = 0; v.noiseReg = 0; v.noiseRegStep = 0; v.noiseBend256 = 0; v.noiseBend9 = 0;   // S and P on NOI start over (sections 55 and 66)
     v.instKey = instrumentKey(ch, vel);
     v.ticks = 0; v.vibPhase9 = 0; v.pitchCount = 0;
-    v.fineOffset = 0; v.fineQueued = 0; v.drumOffset = 0.0; v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0;
+    v.fineOffset = 0; v.fineTune = 0; v.fineQueued = 0; v.drumOffset = 0.0; v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0;
     v.slideTspFine = 0; v.slideTspHeld = false;      // a note starts on its own pitch (section 71)
     v.chordN = 0; v.chordIdx = 0; v.chordCount = 0;
-    v.dutyIdx = 0; v.kill = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigFast = false; v.envCount = 0; v.lastCmd = {}; v.frameStep = 0; v.frameIdx = 0;   // the run starts at its first step (section 65)
+    v.dutyIdx = 0; v.kill = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigOnce = false; v.retrigFast = false; v.envCount = 0; v.lastCellCmd = {}; v.frameStep = 0; v.frameIdx = 0;   // the run starts at its first step (section 65)
     v.rng = v.rng * 1664525u + 1013904223u + note;
     restartPitchClock(ch);
     // volume from velocity: a MIDI note asks the Velocity mode, a cell's VEL is
@@ -717,7 +732,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
 
     switch (core.type) {
         case InstrumentType::Pulse: {
-            if (ch == 0) emit(regAddr(0, 0), uint8_t((v.sweepRate << 4) | (v.sweepDown ? 8 : 0) | v.sweepShift), true);
+            if (ch == 0) emit(regAddr(0, 0), uint8_t(~v.sweepByte), true);
             const uint8_t len = core.length ? uint8_t(64 - std::min<int>(64, core.length)) : 0;
             emit(regAddr(ch, 1), uint8_t((v.duty << 6) | (len & 0x3F)), true);
             writeEnvelope(ch, false);   // the whole register; the trigger follows with the period
@@ -833,7 +848,7 @@ void Driver::allNotesOff(int ch)
     v.delay = -1; v.kill = -1;
     v.heldCmdOn = false; v.heldDelay = 0; v.heldCmd[0] = {}; v.heldCmd[1] = {};
     v.hybridSlide = {};
-    v.retrigEvery = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigFast = false;
+    v.retrigEvery = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigOnce = false; v.retrigFast = false;
     v.bendSpeed = 0; v.slideLeft = 0; v.chordIdx = 0; v.chordCount = 0;
     stopVoice(ch, true);
 }
@@ -902,7 +917,7 @@ double Driver::noteOfVoice(int ch) const
     // it reached and the column applies on top of that again.
     note += double(v.slideTspFine) / 256.0;
     if (!(v.sliding && v.slideTspHeld)) note += double(tableTransposeOf(v));
-    const int32_t fine = v.fineOffset + slideResidual(v);
+    const int32_t fine = v.fineOffset + v.fineTune + slideResidual(v);
     return note + double(fine) / 256.0;
 }
 
@@ -1020,9 +1035,11 @@ void Driver::restartPitchClock(int ch)
     // and 3).
     Voice& v = v_[size_t(ch)];
     v.pitchWrite = true;
-    // Noise has no pitch effects, and a kit's period is its sample rate, read
-    // by the streaming timer: neither is bent between ticks.
-    v.pitchClockOn = (v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Wave)
+    // A kit's period is its sample rate, read by the streaming timer, so it is
+    // never bent between ticks. Noise is bent only by a vibrato (section 77);
+    // without one its NR43 moves on the tick and nowhere else.
+    v.pitchClockOn = (v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Wave
+                      || (v.inst.type == InstrumentType::Noise && v.vibOn && v.vibDepth))
                      && pitchSpeed(v) != PitchSpeed::Tick;
 }
 
@@ -1033,9 +1050,14 @@ void Driver::writePeriod(int ch, bool trigger)
         uint8_t s, d;
         if (v.inst.noiseManual) { s = v.noiseShift; d = v.noiseDiv; }
         else {
-            // The note, the chain row's and the channel's transposes, and the
-            // table row's column (section 45), through the map (section 9.4).
-            const int n = std::clamp(int(v.note) + v.noteTsp + v.p.transpose + tableTransposeOf(v) + v.noiseTsp, -kNoiseMapBelow, 127);
+            // The note, the chain row's and the channel's transposes, the table
+            // row's column (section 45) and -- section 77 -- the chord step and the
+            // vibrato, all through the map (section 9.4). The map has no room
+            // between entries, so the vibrato is rounded to a whole semitone.
+            int raw = int(v.note) + v.noteTsp + v.p.transpose + tableTransposeOf(v) + v.noiseTsp;
+            if (v.chordN) raw += v.chord[v.chordIdx % v.chordN];
+            if (v.vibOn && v.vibDepth) raw += int(std::lround(double(vibratoFine(v)) / 256.0));
+            const int n = std::clamp(raw, -kNoiseMapBelow, 127);
             // The instrument's Shift is an offset from the map's pair (5 is
             // none); it is read from the instrument, not from the pair the last
             // write left in `v.noiseShift`, or a second write would compound it.
@@ -1367,15 +1389,15 @@ int16_t retrigVolStep(int x)
     return int16_t(n == 8 ? 0 : n < 8 ? n : n - 16);
 }
 
-/// One side of M: 0-7 sets it, 8 leaves it, 9-11 raise it by 1-3 and 13-15
-/// lower it by 1-3. 12 is a value LSDj does not document; it changes nothing.
+/// One side of M (section 75, measured on 9.3.9 from two starting volumes):
+/// 0-7 **sets** that side, 8-15 **shifts** it by 0 +1 +2 +3 -4 -3 -2 -1 --
+/// the low three bits read as a signed 3-bit number -- clamped to 0-7.
 int masterFromArg(int x, int cur)
 {
     const int n = std::clamp(x, 0, 15);
     if (n < 8) return n;
-    if (n >= 9 && n <= 11) return std::min(7, cur + (n - 8));
-    if (n >= 13) return std::max(0, cur - (n - 12));
-    return cur;
+    const int off = (((n - 8) ^ 4) - 4);          // 0 1 2 3 -4 -3 -2 -1
+    return std::clamp(cur + off, 0, 7);
 }
 
 } // namespace
@@ -1392,7 +1414,11 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
     // cell and a slot revert through exactly the same code (section 3). It is
     // not what a later Z re-runs: un-setting a letter is not a value.
     if (isRevert(c)) { revertCommand(ch, c.cmd); return; }
-    if (c.cmd != Cmd::H) v.lastCmd = c;            // what a later Z re-runs
+    // Section 74: the record is per **lane** -- this channel's cell/slot lane,
+    // or the running table's column 1 or 2, each table keeping its own. `H` and
+    // `Z` are never recorded, as on the ROM.
+    if (c.cmd != Cmd::H)
+        if (bank::Command* rec = zSlot(ch, fromTable, lane)) *rec = c;
     const bool pulse = v.inst.type == InstrumentType::Pulse;
     const bool wave = v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit;
     const bool noise = v.inst.type == InstrumentType::Noise;
@@ -1405,10 +1431,23 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
             else beginTableRun(ch, uint8_t(std::clamp<int>(c.a, 1, kTableSlots)));
             break;
         case Cmd::C:                                  // 0, x, y one step per chordRate + 1 ticks
-            if (noise) break;
+            // Section 77: the noise channel takes it too -- the chord's semitones
+            // walk the note map exactly as a table's transpose column does.
             v.chord[0] = 0; v.chord[1] = uint8_t(std::clamp<int>(c.a, 0, 60)); v.chord[2] = uint8_t(std::clamp<int>(c.b, 0, 60));
             v.chordN = c.b ? 3 : (c.a ? 2 : 0);
             v.chordIdx = 0; v.chordCount = 0;
+            break;
+        case Cmd::B:
+            // Section 73. Inside a **table** it is a hop to row `y` taken with
+            // probability `x`/**16** -- a flat compare against an unreduced random
+            // byte, a different law from the phrase form's `n`/15. In a cell the
+            // letter is the note's gate and was read at the note-on, so there is
+            // nothing left to do here.
+            if (fromTable && randomArg(ch, 255) < int16_t((c.a & 15) * 16)) {
+                uint8_t& step = lane == 2 ? v.tableStep2 : v.tableStep;
+                step = uint8_t(c.b & 15);
+                v.tableHopped = true;
+            }
             break;
         case Cmd::D: if (fromTable) v.delay = int16_t(std::clamp<int>(c.a, 0, 255)); break;   // a slot's D is read at the note-on
         case Cmd::E: {
@@ -1417,7 +1456,10 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
             // E takes a shaped envelope over, as a table's volume column does
             // (section 27).
             v.shapedTaken = true;
-            if (wave) { v.waveLevel = uint8_t(std::clamp<int>(c.a, 0, 3)); setLevel(ch); }
+            // Section 79: on WAV/KIT the level is NR32's two bits and LSDj takes
+            // them from the **low** nibble -- E01 is 25%, E03 100%, and x does
+            // nothing. ChipBoy took x.
+            if (wave) { v.waveLevel = uint8_t(c.b & 3); setLevel(ch); }
             else {
                 // **E never triggers.** It walks the level to x by zombie steps
                 // at its own tick and sets the direction and rate of what
@@ -1452,10 +1494,17 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
                     if (live) loadFrame(ch, w->frames[size_t(want)], model_ == Console::DMG);
                 }
             }
-            // On the second pulse F is the instrument's PU2 transpose for the
-            // note in progress and the notes after it, two's complement like
-            // P's argument (section 49); inert on PU1 and NOI.
-            else if (pulse && ch == 1) { v.instTranspose = int8_t(uint8_t(std::clamp<int>(c.a, 0, 255))); if (live) writePeriod(ch, false); }
+            // Section 78, measured on 9.3.9. On **PU1** it is a downward finetune
+            // of `y`/32 of a semitone and `x` does nothing; on **PU2** an upward
+            // transpose of `x` semitones plus `y`/32. Both are absolute -- three
+            // in a row leave the same offset as one -- and a note-on clears them.
+            // Inert on noise.
+            else if (pulse && ch == 0) { v.fineTune = int16_t(-8 * (c.b & 15)); if (live) writePeriod(ch, false); }
+            else if (pulse && ch == 1) {
+                v.instTranspose = int8_t(c.a & 15);
+                v.fineTune = int16_t(8 * (c.b & 15));
+                if (live) writePeriod(ch, false);
+            }
             break;
         case Cmd::G:
             // Inside a table G sets that run's row lengths: the driver keeps
@@ -1579,10 +1628,12 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
             break;
         }
         case Cmd::R:
-            // `y` is the interval: y x (rate + 1) + 1 ticks, so y = 0 is every
-            // tick. `x` = 8 is LSDj's resync -- the retrigger runs on the pitch
-            // clock instead. `x` otherwise is a signed nibble of volume change.
+            // Section 76: `y` is the interval in **ticks** -- R01 is one trigger a
+            // tick, R04 one every four -- and `y = 0` retriggers **once** and stops.
+            // `x` = 8 is LSDj's resync, the retrigger on the pitch clock instead;
+            // `x` otherwise is a signed nibble of volume change.
             v.retrigEvery = uint8_t(std::clamp<int>(c.b, 0, 15));
+            v.retrigOnce = v.retrigEvery == 0;
             v.retrigOn = true;
             v.retrigFast = (c.a & 15) == 8;
             v.retrigStep = retrigVolStep(c.a);
@@ -1602,13 +1653,15 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
                 break;
             }
             if (ch == 0 && pulse) {
-                // `x` is the sweep rate and `y` is **NR10's low nibble**
-                // (section 34): 0-7 sweep up at that shift, 8-15 sweep down.
-                v.sweepRate = uint8_t(c.a & 7);
-                v.sweepDown = (c.b & 8) != 0;
-                v.sweepShift = uint8_t(c.b & 7);
+                // Section 72: each nibble is **added** to the running sweep byte, the
+                // low one masked to four bits so it never borrows into the high one,
+                // and NR10 is the complement. A single S on a fresh note with a
+                // sweep-00 instrument comes out as ((-x) & 15) << 4 | ((-y) & 15),
+                // which is the formula the matrix publishes -- but only that case.
+                v.sweepByte = uint8_t(v.sweepByte + uint8_t((c.a & 15) << 4));
+                v.sweepByte = uint8_t((v.sweepByte & 0xF0) | ((v.sweepByte + uint8_t(c.b & 15)) & 0x0F));
                 if (live) {
-                    emit(0xFF10, uint8_t((v.sweepRate << 4) | (v.sweepDown ? 8 : 0) | v.sweepShift), true);
+                    emit(0xFF10, uint8_t(~v.sweepByte), true);
                     writePeriod(ch, true);             // the sweep unit reloads on the trigger
                 }
             }
@@ -1619,10 +1672,13 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
             // Drum -- so x = 0 is the slowest, not "off" -- and the measured
             // table of tick counts in Tick. `y` is the depth, a symmetric
             // swing of that many semitones either side of the note.
-            if (noise) break;
+            // Section 77: on noise it drives the LFSR clock through the map, so it
+            // is the same swing rounded to whole semitones -- and the pitch clock
+            // has to run for the channel, which a noise note-on does not start.
             v.vibSpeed = uint8_t(std::clamp<int>(c.a, 0, 15));
             v.vibDepth = uint8_t(std::clamp<int>(c.b, 0, 15));
             v.vibDelay = 0; v.vibOn = true;
+            if (noise && v.vibDepth && pitchSpeed(v) != PitchSpeed::Tick) v.pitchClockOn = true;
             if (live) writePeriod(ch, false);
             break;
         case Cmd::W: {
@@ -1670,7 +1726,11 @@ void Driver::revertCommand(int ch, Cmd cmd)
         }
         case Cmd::F:
             if (i.type == InstrumentType::Wave) setFrameStep(ch, 0, live);
-            else if (pulse && ch == 1) { v.instTranspose = i.pu2Transpose; if (live) writePeriod(ch, false); }   // the instrument's own PU2 transpose back (section 49)
+            else if (pulse) {                                           // section 78
+                v.fineTune = 0;
+                if (ch == 1) v.instTranspose = i.pu2Transpose;          // the instrument's own PU2 transpose back (section 49)
+                if (live) writePeriod(ch, false);
+            }
             break;
         case Cmd::M: writeNr50(global_.masterL, global_.masterR); break;
         case Cmd::O: v.pan = v.p.pan != 255 ? Pan(v.p.pan & 3) : i.pan; writeNr51(); break;
@@ -1678,8 +1738,8 @@ void Driver::revertCommand(int ch, Cmd cmd)
         case Cmd::S:
             if (i.type == InstrumentType::Noise) { v.noiseTsp = 0; v.noiseReg = 0; if (live) writePeriod(ch, false); }   // the transpose back to zero (sections 55 and 66)
             if (ch == 0 && pulse) {
-                v.sweepRate = i.sweepRate; v.sweepDown = i.sweepDown; v.sweepShift = i.sweepShift;
-                emit(0xFF10, uint8_t((v.sweepRate << 4) | (v.sweepDown ? 8 : 0) | v.sweepShift), true);
+                v.sweepByte = uint8_t(~sweepFromInst(i));               // section 72
+                emit(0xFF10, uint8_t(~v.sweepByte), true);
             }
             break;
         case Cmd::V:
@@ -1710,10 +1770,19 @@ void Driver::applyCellCommands(int ch, const Command& c1, const Command& c2)
     for (int i = 0; i < 2; ++i) {
         Command c = *in[i];
         if (c.cmd == Cmd::None || c.cmd == Cmd::D) continue;
-        // Z re-runs the other column, as a slot's Z re-runs the other slot.
-        if (c.cmd == Cmd::Z) c = resolveRandom(ch, c, *in[i ^ 1]);
+        if (c.cmd == Cmd::Z) c = resolveRandom(ch, c, 0);       // the cell lane (section 74)
         applyCommand(ch, c, false);
     }
+}
+
+bool Driver::chanceGate(int ch, const Command& c)
+{
+    const int x = c.a & 15, y = c.b & 15;
+    // Both rolls are taken, so the random stream does not depend on the first
+    // one passing -- a render stays reproducible from its seed either way.
+    const bool a = randomArg(ch, 14) < int16_t(x);
+    const bool b = randomArg(ch, 14) < int16_t(y);
+    return a || b;
 }
 
 int16_t Driver::randomArg(int ch, int max)
@@ -1724,13 +1793,23 @@ int16_t Driver::randomArg(int ch, int max)
     return int16_t((v.rng >> 16) % uint32_t(max + 1));
 }
 
-/// Z re-runs the last command that is not Z or H -- the other slot or column
-/// when that is set, else the last one the channel fired -- with a random
-/// 0..x added to its x and 0..y to its y (section 7).
-Command Driver::resolveRandom(int ch, const Command& z, const Command& other)
+/// Where a lane's last command is kept (section 74).
+Command* Driver::zSlot(int ch, bool fromTable, int lane)
 {
     Voice& v = v_[size_t(ch)];
-    Command c = (other.cmd != Cmd::None && other.cmd != Cmd::Z && other.cmd != Cmd::H) ? other : v.lastCmd;
+    if (!fromTable) return &v.lastCellCmd;
+    if (v.tableSlot == 0 || v.tableSlot > kTableSlots) return nullptr;
+    return &zRec_[size_t(v.tableSlot - 1)][lane == 2 ? 1 : 0];
+}
+
+/// Z re-runs the last command **in its own lane** (section 74): a cell's Z the
+/// channel's last cell or slot command, a table column's Z that column's last
+/// in that table. A command the *other* column ran, however recently, is not
+/// it. The random is 0..x on the target byte's high nibble and 0..y on its low.
+Command Driver::resolveRandom(int ch, const Command& z, int lane)
+{
+    const Command* rec = zSlot(ch, lane != 0, lane);
+    Command c = rec ? *rec : Command{};
     if (c.cmd == Cmd::None || c.cmd == Cmd::Z || c.cmd == Cmd::H) return {};
     // Z's own arguments are nibbles (section 34).
     c.a = int16_t(c.a + randomArg(ch, z.a & 15));
@@ -1744,7 +1823,7 @@ Command Driver::slotForNoteOn(int ch, int i)
     Voice& v = v_[size_t(ch)];
     const Command& c = v.slot[size_t(i)];
     if (c.cmd != Cmd::Z) return c;
-    return resolveRandom(ch, c, v.slot[size_t(i ^ 1)]);
+    return resolveRandom(ch, c, 0);                             // the cell lane (section 74)
 }
 
 void Driver::fireSlots(int ch, bool live)
@@ -1916,12 +1995,12 @@ void Driver::stepTableLane(int ch, int lane)
     row = step;
     const TableStep& s = t->steps[row];
     const Command raw = lane == 2 ? s.cmd2 : s.cmd1;
-    const Command other = lane == 2 ? s.cmd1 : s.cmd2;
-    const Command c = raw.cmd == Cmd::Z ? resolveRandom(ch, raw, other) : raw;
+    const Command c = raw.cmd == Cmd::Z ? resolveRandom(ch, raw, lane) : raw;
     if (c.cmd != Cmd::None) applyCommand(ch, c, true, lane);
     wait = tableRowTicks(ch, row);
     if (!v.tableOn) return;                           // the command stopped it
     if (raw.cmd == Cmd::H) return;                    // hopped: the lane's step is already set
+    if (v.tableHopped) { v.tableHopped = false; return; }   // a B took its hop (section 73)
     if (step + 1 < kTableSteps) { ++step; return; }
     switch (t->end) {
         case TableEnd::Loop: step = 0; break;
@@ -2036,13 +2115,13 @@ void Driver::tick(int ch)
         const int whole = v.noiseBend9 / 256;
         if (whole != 0) { v.noiseBend9 -= whole * 256; v.noiseTsp = int16_t(std::clamp(int(v.noiseTsp) + whole, -256, 256)); writePeriod(ch, false); }
     }
-    // R: the interval is **y x (rate + 1) + 1 ticks**, so y = 0 is every tick
-    // and not "once" (docs/LSDJ_PARITY.md section 8). x = 8 resyncs instead:
-    // the retrigger runs on the pitch clock, and pitchBefore() does it.
+    // R: the interval is **y ticks** and `y = 0` retriggers **once** (section 76,
+    // measured on 9.3.9). x = 8 resyncs instead: the retrigger runs on the pitch
+    // clock, and pitchBefore() does it.
     bool retrig = false;
     if (v.retrigOn && !v.retrigFast) {
-        const uint16_t every = uint16_t(uint16_t(v.retrigEvery) * uint16_t(v.inst.cmdRate + 1) + 1u);
-        if (++v.retrigCount >= every) { v.retrigCount = 0; retrig = true; }
+        if (v.retrigOnce) { v.retrigOnce = false; v.retrigOn = false; retrig = true; }
+        else if (++v.retrigCount >= uint16_t(v.retrigEvery)) { v.retrigCount = 0; retrig = true; }
     }
     // wave frames
     if (v.inst.type == InstrumentType::Wave && v.inst.frameAdvance) {
@@ -2068,7 +2147,8 @@ void Driver::tick(int ch)
     }
     // With the pitch speed at Tick this tick is the pitch update: the vibrato
     // phase, a slide and a P bend move here rather than on the pitch clock.
-    if (!v.pitchClockOn && (v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Wave)
+    if (!v.pitchClockOn && (v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Wave
+                            || (v.inst.type == InstrumentType::Noise && v.vibOn && v.vibDepth))
         && pitchSpeed(v) == PitchSpeed::Tick) pitchStep(ch, true);
     // pitch for this tick. The pitch clock writes the period whenever a pitch
     // effect is moving it; what the *tick* moves -- a chord step, a table's
@@ -2101,7 +2181,7 @@ void Driver::retrigger(int ch, bool full)
     // by sixteen minus it (measured: R A steps the level down by six).
     if (v.retrigStep && !noise) v.envVol = uint8_t(std::clamp<int>(int(v.envVol) + v.retrigStep, 0, 15));
     if (pulse) {
-        if (ch == 0) emit(0xFF10, uint8_t((v.sweepRate << 4) | (v.sweepDown ? 8 : 0) | v.sweepShift), true);
+        if (ch == 0) emit(0xFF10, uint8_t(~v.sweepByte), true);
         emit(regAddr(ch, 1), uint8_t((v.duty << 6) | lengthCode6(v.inst.length)), true);
     } else if (noise) {
         emit(regAddr(3, 1), lengthCode6(v.inst.length), true);
