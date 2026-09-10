@@ -26,6 +26,35 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-10 — L3 allows deriving behaviour from the LSDj ROM
+
+**Spec §3.3, rule L3** said "**No LSDj-derived content** in the repository or in any binary.
+Formats may be implemented; content may not be bundled." Read strictly, "derived" barred
+recording what the ROM's code does, which is the only way some commands can be settled at all.
+
+**Now**: no LSDj *content* is bundled — no ROM, sample, wave or kit data, manual text or save —
+and **behaviour may be derived from the ROM**. Disassembling it to settle exactly what a command
+does is expected, and the address that answered a question is worth recording. What ChipBoy
+ships is its own code producing the **same result**, not a transcription: no instruction listing
+and no table of bytes lifted whole.
+
+**Why.** The stage-1 verification of `docs/LSDJ_COMMAND_MATRIX.md` turned up eight wrong entries
+on 9.3.9, and **four of them were invisible to any sweep of register values**: `S` looks like an
+assignment until you run two of them (it accumulates); `M` looks like a plain `NR50` write until
+a nibble goes above 7 (nibbles 8-15 are relative); `T` looks like BPM until the byte drops below
+40 (0-39 mean 256-295); `Z` looks like "the last command executed" until two lanes disagree. Each
+was settled in minutes by reading the handler, and each had survived a full measurement campaign
+without it. The same reading also confirmed `E`'s disputed rate table outright — it is eight
+bytes in the ROM — and closed the "is there a START blip" question by showing there is no
+trigger between the key press and the song's first note.
+
+**Considered**: keeping the strict reading and inferring everything from register sweeps. Rejected
+— it is what produced the eight wrong entries, and two of them (`E`'s `y` nibble, `W`'s duty mask)
+had the document telling a future session to "fix" driver code that was already correct.
+
+**The owner's decision**, recorded here because it is theirs to make: this is a personal project
+and any release is to be cleared with LSDj's author first.
+
 ### 2026-09-10 — a table's G times its own row; format 11's envelope is three stages
 
 [`COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md) §57–§58, from the same archive of releases:

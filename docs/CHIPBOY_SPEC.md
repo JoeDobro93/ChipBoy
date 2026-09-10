@@ -178,8 +178,12 @@ standard library. CI enforces it.
 **L2** — **No code is copied** from any GPL/LGPL/MPL emulator. Read them to understand
 the hardware; implement from documentation and measurement. Cite the reference that
 resolved a question in a comment.
-**L3** — **No LSDj-derived content** in the repository or in any binary. Formats may be
-implemented; content may not be bundled.
+**L3** — **No LSDj content is bundled**: no ROM, no sample, no wave or kit data, no manual
+text, no save. Formats may be implemented and **behaviour may be derived from the ROM** —
+disassembling it to settle exactly what a command does is expected, and the address that
+answered a question is worth recording. What ChipBoy ships is its own code producing the
+**same result**, not a transcription: no instruction listing, no table of bytes lifted whole.
+The project owner has cleared this and will clear it with LSDj's author before any release.
 **L4** — Every dependency is recorded in `LICENSING.md` §1 *before* it is added.
 **L5** — Outside contributions require a CLA, or are not accepted.
 **L6** — The repository stays private until `[DECIDE] D1` is resolved.

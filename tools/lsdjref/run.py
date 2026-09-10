@@ -33,15 +33,46 @@ def rows(path):
     for r in csv.DictReader((l for l in open(path) if not l.startswith('#'))):
         yield int(r['cycle']), int(r['addr'], 16), int(r['value'], 16)
 
-def events(path, ch, skip_key=180*70224):
-    """Writes for one channel after the start key, with t=0 at its first trigger."""
+def playStart(path):
+    """The cycle at which LSDj starts the song.
+
+    Pressing START makes LSDj power-cycle the APU -- `NR52 = 00` then
+    `NR52 = 80` -- reset DIV, build NR51 up one channel at a time (11 33 77 FF)
+    and set NR50; the song's first note follows on the next tick.  That
+    `NR52 = 80` is the only one after the boot ROM's chime, so it is an exact
+    anchor.  Counting frames is not: a frame is not 70224 cycles here (the LCD
+    is off through LSDj's boot), so `180 * 70224` lands ~36 ms LATE and skips
+    the song's own first note, anchoring on the second pass of a looping
+    phrase instead -- which is what made a note one phrase earlier look like a
+    "START blip".  There is no blip: nothing is triggered between the key and
+    the first note.
+    """
+    last00 = None; cands = []
+    for c, a, v in rows(path):
+        if a != 0xFF26: continue
+        if v == 0x00: last00 = c
+        elif v & 0x80 and last00 is not None: cands.append(c)
+    if not cands: raise SystemExit('%s: no playback reset (NR52 00 -> 80) found' % path)
+    return cands[-1]
+
+def events(path, ch, skip_key=None):
+    """Writes for one channel from playback start, with t=0 at its first trigger."""
     base = {0: 0xFF10, 1: 0xFF15, 2: 0xFF1A, 3: 0xFF1F}[ch]
     regs = set(range(base, base + 5)) | ({0xFF24, 0xFF25} if ch < 0 else set())
-    ev = [(c, a, v) for c, a, v in rows(path) if c > skip_key and a in regs]
+    start = playStart(path) if skip_key is None else skip_key
+    ev = [(c, a, v) for c, a, v in rows(path) if c >= start and a in regs]
     trg = base + 4
     t0 = next((c for c, a, v in ev if a == trg and v & 0x80), None)
     if t0 is None: return []
     return [((c - t0) / HZ, a, v) for c, a, v in ev]
+
+def at_start(path, ch):
+    """The same writes, but with t = 0 at **playback start** rather than at the
+    channel's first trigger -- what a delay (`D`) or a table's first row needs."""
+    base = {0: 0xFF10, 1: 0xFF15, 2: 0xFF1A, 3: 0xFF1F}[ch]
+    regs = set(range(base, base + 5))
+    z = playStart(path)
+    return [((c - z) / HZ, a, v) for c, a, v in rows(path) if c >= z and a in regs]
 
 def midi(per, wave=False):
     if per >= 2048 or per < 0: return None

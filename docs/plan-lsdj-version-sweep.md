@@ -34,7 +34,9 @@ So the trap §58 recorded is specific to saves built from nothing by
 when one exists** — it is one less assumption — but it is not required, and stage 2 can probe a
 version for which no save exists at all.
 
-Nothing of LSDj is ever committed (rule L3): ROMs, saves and the traces stay outside the tree.
+No LSDj content is ever committed (rule L3): ROMs, saves and the traces stay outside the tree.
+Disassembling the ROM to settle what a command does is cleared, and the findings belong in the
+matrix -- it is the fastest way through the cases a sweep of values cannot separate.
 
 ### Formats and the versions that write them
 
@@ -71,12 +73,19 @@ the wrong format rather than producing quiet nonsense.
 3. `S23` on PU1 writes `NR10 = ED`. (This is the sharpest check: it is a value nobody would
    guess, and it exercises a phrase command end to end.)
 
-If any of those fails, the host save or the ROM is wrong. Stop and say so.
+If any of those fails, the host save or the ROM is wrong. Stop and say so. All three passed on
+9.3.9 in the stage-1 pass, on a host bootstrapped from the ROM alone.
 
-**The `START` blip.** LSDj plays a short note when `START` is pressed, about 1.8 s before the
-song's own first note. Anchoring on "the first trigger after the key press" catches the blip and
-every timing after it is wrong — it briefly made `D` look like it moved notes *earlier*.
-`run.py` anchors past it; any new analysis must too.
+**There is no `START` blip** — this plan used to say LSDj plays a short note about 1.8 s before
+the song's own first note. It does not. Traced with the PC of every write, the only triggers
+before the song are the boot ROM's own power-on chime, and between the key press and the first
+note LSDj only power-cycles the APU, resets `DIV`, ramps `NR51` and sets `NR50`
+(`LSDJ_COMMAND_MATRIX.md` §9). The 1.8 s was an anchoring bug: `events()` skipped `180 * 70224`
+cycles, but a frame is not 70224 cycles while the LCD is off through LSDj's boot, so the skip
+landed past the song's real first note and anchored on the second pass of a looping phrase —
+and 1.875 s is exactly one 16-row phrase at 128 BPM. **Anchor on `run.playStart()`**, the
+`NR52 = 00` → `NR52 = 80` reset LSDj does when playback starts; it is the only `NR52 = 80` after
+the boot chime. Never count frames.
 
 ---
 
@@ -103,9 +112,20 @@ because they are the ones most worth re-confirming:
 
 Three things are already known to be unsettled; settling any of them is a bonus, not a blocker:
 `W` on a wave instrument, whether a phrase `H` counts repeats, and `HFF`'s exact semantics.
+(Of these the phrase `H` is now settled — it counts, exactly as a table `H` does — and `W`'s two
+wave-side variables are named from the ROM but still not seen doing anything.)
 
 **Done when**: every §6 entry has been re-measured on 9.3.9 and either confirmed or corrected,
 and §9's status table says so.
+
+**Stage 1 is done.** Of nineteen entries, twelve confirmed and **seven corrected** --
+`B` `E` `M` `S` `T` `W` `Z` -- and one open question closed (a phrase `H`'s high nibble counts
+repeats, as a table's does). What each correction was is in `LSDJ_COMMAND_MATRIX.md` §9, and
+§10 lists what they cost ChipBoy. Of the four entries this plan singled out, three held up —
+`S`'s per-nibble formula, `B00` never playing, and `E`'s rate table, now read straight out of the
+ROM at bank 02:`$698C` — and `Z`'s source rule did not. Two things to carry into stage 2: **read
+the ROM early** (four of the eight corrections were invisible to a sweep of values), and **there
+is no `START` blip**.
 
 ---
 

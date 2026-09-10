@@ -312,16 +312,43 @@ design-log section the change touches. Update this file at the end of every chan
   enough -- the rig bootstraps its own host save), how to set up in a fresh container, the three
   rig checks to run before trusting a measurement, and the three-way same / value / kind
   decision per command.
-- **Every LSDj command is now measured on 9.3.9** and the results are in
-  `docs/LSDJ_COMMAND_MATRIX.md` §9, with the ChipBoy gaps ranked in §10. Four of them are
-  ChipBoy bugs found by that campaign: `S` on PU1 negates each nibble into `NR10` and ChipBoy
-  does not; `R`'s interval is a tick too long and its `y = 0` should retrigger once; `Z` re-runs
-  the wrong command and randomises the wrong digits; `F` is dropped on PU1 and misread on PU2.
-  None is fixed yet.
+- **Every LSDj command is now measured on 9.3.9 twice** -- the first campaign, then an
+  independent **stage-1 verification pass** that rebuilt the rig from the ROM alone, re-derived
+  each number, and read the ROM's own code wherever the two disagreed. Results in
+  `docs/LSDJ_COMMAND_MATRIX.md` §9, ChipBoy's gaps ranked in §10. Of nineteen entries, **twelve
+  confirmed and seven corrected**: `B` (the phrase roll is `n/15`, the *table* hop `x/16` -- different laws, so
+  `BF0` is not "always"), `E` (`y` is direction + 3-bit rate, the unit is a fixed 2.788 ms, and
+  **WAV reads `y` not `x`**), `M` (not the byte into `NR50`: nibbles 8-15 are relative), `S` (the
+  per-nibble formula is right but `S` **accumulates** onto the instrument's sweep byte), `T`
+  (bytes 0-39 mean 256-295 BPM), `W` (duty is the low **two bits**; on WAV it sets two synth
+  variables), and `Z` (the source is the last command **in the same lane**, not the last
+  executed). `H` held up and closed a standing open question with it: a phrase `H`'s high nibble
+  counts repeats, exactly as a table `H`'s does. Nothing in ChipBoy is fixed yet.
+  - **Two entries were wrong about ChipBoy, not about LSDj**: `E`'s `y` split and `W`'s `xy & 3`
+    duty mask are already right in the driver. Do not "fix" them.
+  - Three new ChipBoy bugs fell out: `E` on WAV takes `c.a` where LSDj takes `y`; `masterFromArg`
+    maps `M`'s nibbles 12-15 to 0/−1/−2/−3 where LSDj uses −4/−3/−2/−1; a counted phrase `H`
+    cannot be expressed at all.
+  - **Read the ROM early.** Four of the eight corrections were invisible to any sweep of values
+    (`S` until you run two; `M` until a nibble exceeds 7; `T` until the byte drops below 40; `Z`
+    until the two lanes disagree). The command jump table is bank 02:`$47A2`, dispatched from
+    `$478D`; `B` `D` `G` `H` `Z` are handled at the row reader, not there. A fifty-line SM83
+    disassembler and a copy of `lsdjref_trace` that logs the PC and ROM bank of each write make
+    this cheap -- neither is committed; build them again (`LSDJ_COMMAND_MATRIX.md` §3.7).
 - **`tools/lsdjref/probe_fmt22.py` + `run.py`** build and trace a controlled probe song inside a
-  real format-22 save, which is how every 9.3.9 row in the command matrix was measured. Start
-  from it for any new LSDj question; validate it (a plain note is one `NR12 = F8`, and two notes
-  eight rows apart at 128 BPM are 0.9375 s apart) before trusting a result.
+  format-22 save -- a real one, or one the ROM formatted itself (`--init-sav`, 3000 frames, then
+  `Probe(host=..., blank=True)`), which is what the verification pass used. Start from it for any
+  new LSDj question; run all three rig checks (a plain note is one `NR12 = F8`; two notes eight
+  rows apart at 128 BPM are 0.9375 s apart; `S23` on PU1 writes `NR10 = ED`) before trusting a
+  result.
+  - **`run.py` had a real bug and it is fixed.** `events()` skipped `180 * 70224` cycles to get
+    past the `START` key, but a frame is not 70224 cycles while the LCD is off through LSDj's
+    boot: the skip landed 36 ms late, past the song's own first note, anchoring on the second
+    pass of a looping phrase. `run.playStart()` now anchors on LSDj's playback reset (the one
+    `NR52 = 00` → `NR52 = 80` after the boot chime) and `run.at_start()` gives times from it.
+    **There is no "START blip"** -- that warning was this bug seen from the other end, the note
+    one phrase-length (1.875 s at 128 BPM) earlier looking spurious. Between the key and the
+    first note LSDj only power-cycles the APU, resets `DIV`, ramps `NR51` and sets `NR50`.
 - **`docs/LSDJ_COMMAND_MATRIX.md`** is the working reference for LSDj parity: every command
   as LSDj 9.3.9 handles it, what differs per channel and between a phrase and a table, what
   ChipBoy does now, whether the importer can bridge the gap, how to probe another ROM version
@@ -341,8 +368,11 @@ design-log section the change touches. Update this file at the end of every chan
   under test, or LSDj reads the probe with the legacy rules — the quickest way is to copy
   the probe's 32 KB over the ROM's own `--init-sav` save and keep that save's byte `0x7FFF`.
   Add a `[lsdj]` case that reads a synthetic song under the new model.
-- The parity harness runs here now: RGBDS was built from source into `/usr/local`, the
-  ROM sits at `/root/lsdj/lsdj9_3_9.gb` (container only), `build-ref/` holds the build.
+- The parity harness runs here now: the ROM sits at `/root/lsdj/lsdj9_3_9.gb` (container only),
+  `build-ref/` holds the build. **RGBDS is not packaged for this image and building it from
+  source is unnecessary** -- the prebuilt Linux tarball from `gbdev/rgbds`' releases works, and
+  SameBoy's boot ROMs assemble cleanly under 0.8.0. Put it on `PATH` before `cmake` configures,
+  or the harness silently reports "no boot ROMs" and every test skips.
   `f_table_speed` is a new case; only it and `i_kill_delay_chord` were traced on 9.3.9.
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
@@ -353,8 +383,9 @@ design-log section the change touches. Update this file at the end of every chan
   ROM with a transpose column, a row is **one tick** in LSDj too; the two ticks were the
   envelope nibble. Nothing to change.
 - Not at parity (`LSDJ_PARITY.md` §17): P's last ~1 %, V in Drum rounding, V in Tick at
-  speeds not multiples of three, R's resync after 38, envelope rates 6 and 7, bare notes
-  ended by a dead envelope; saw/square vibrato, kits and speech unmeasured.
+  speeds not multiples of three, R's resync after 38, bare notes ended by a dead envelope;
+  saw/square vibrato, kits and speech unmeasured. (Envelope rates 6 and 7 are off this list:
+  the ROM's table settles them, `LSDJ_COMMAND_MATRIX.md` §6.5.)
 - The hybrid Reaper project's state decodes correctly but was never opened in Reaper.
 - Visualizer scopes lack the kit fixed-window hint; the STOCK badge is global;
   `Z 255,255` clips in a lane's command column.
@@ -365,7 +396,9 @@ design-log section the change touches. Update this file at the end of every chan
   Player fires the step a jump lands in; the user confirms in the DAW.
 - §7's envelope-speed numbers (6, 11, 15, 20, 27 for speeds 1–5) were the hardware
   envelope's, measured on version-0 saves; §51 has the 9.x software table. `LSDJ_PARITY.md`
-  should be re-read against it when the harness writes format 22 (below).
+  should be re-read against it when the harness writes format 22 (below). **Settled for 9.3.9**:
+  the table is the ROM's own eight bytes at bank 02:`$698C` -- 0, 6, 11, 17, 22, 28, 34, 39
+  indexed by `y & 7` -- so rates 6 and 7 are distinct and §7 is superseded outright.
 - From round 13, measured and left, with the reason: **drum mode's own note table on 5.7–6.0**
   (C-4 is period 458);
   the **nibble wrap** in long S sweeps (`7F`→`80`) that ChipBoy's semitone steps cannot follow; the harness's tables loop after six rows for a

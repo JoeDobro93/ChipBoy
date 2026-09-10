@@ -64,9 +64,12 @@ user builds Windows and macOS locally and reports errors.
 # Licensing and layout rules
 
 L1 `Source/core` links nothing and includes only `<std>` and `"core/..."`; L2 no
-GPL/MPL code copied; L3 no LSDj content (ROMs, samples, manual text; behaviour may be
-checked and paraphrased); L4 every dependency in `docs/LICENSING.md`; L5 fonts under the
-OFL with their texts; L6 the repository stays private until D1. Design lives in
+GPL/MPL code copied; L3 no LSDj content bundled (ROMs, samples, kits, saves, manual text) --
+but behaviour **may be derived from the ROM**: disassemble it to settle what a command does,
+record the address that answered it, and reimplement so the result is identical, without
+committing an instruction listing or a table lifted whole; L4 every dependency in
+`docs/LICENSING.md`; L5 fonts under the OFL with their texts; L6 the repository stays private
+until D1. Design lives in
 `docs/CHIPBOY_SPEC.md`, `docs/COMMANDS_AND_TEMPO.md`, `docs/UI_DESIGN.md`.
 
 # Compact instructions
