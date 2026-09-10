@@ -34,9 +34,21 @@ constexpr uint8_t kNoise9[128] = {
     0x47, 0x53, 0x45, 0x70, 0x37, 0x43, 0x35, 0x60, 0x27, 0x33, 0x25, 0x50,   // 72-83
     0x17, 0x23, 0x15, 0x40, 0x07, 0x13, 0x05, 0x30, 0x03, 0x20, 0x10, 0x00,   // 84-95
     0xDF, 0xDE, 0xDD, 0xDC, 0xCF, 0xDB, 0xCD, 0xDA, 0xBF, 0xCB, 0xBD, 0xD9,   // 96-107 (7-bit)
-    0xAF, 0xBB, 0xAD, 0xD8, 0x9F, 0xAB, 0x9D, 0xC8, 0, 0, 0, 0,               // 108-115, then unmeasured
-    0, 0, 0, 0, 0, 0, 0, 0
+    0xAF, 0xBB, 0xAD, 0xD8, 0x9F, 0xAB, 0x9D, 0xC8, 0x8F, 0x9B, 0x8D, 0xB8,   // 108-119
+    0x7F, 0x8B, 0x7D, 0xA8, 0x6F, 0x7B, 0x6D, 0x98                            // 120-127
 };
+// The whole table swept on 9.3.9, note byte 1 to 120 (docs/LSDJ_COMMAND_MATRIX
+// section 6.15): the 15-bit half is bytes 1-60 and the 7-bit half bytes 61-120,
+// and byte 121 upward is off the end and reads as junk. Byte n is MIDI n + 35,
+// so the table runs to **MIDI 155** and this array, indexed by MIDI note,
+// cannot hold the last twenty-eight entries:
+//
+//   MIDI 128-155  4F 5B 4D 78 3F 4B 3D 68 2F 3B 2D 58
+//                 1F 2B 1D 48 0F 1B 0D 38 0B 28 18 08
+//
+// They are why a save can ask for an NR43 the importer has no note for; the
+// note would have to be carried as LSDj's own byte rather than as a MIDI note
+// to reach them.
 
 // --- LSDj 8.8.6, song format 15: traced on the user's ROM --------------------
 // The envelope is already the three stages of 9.x (A -> 5 at speed 5, up to D
@@ -68,7 +80,7 @@ constexpr uint8_t kNoise886[128] = {
 // no Z either). Before 5.7.8 P and L work in period-register units a pitch
 // clock and there are no pitch modes; before 3.6.8 V does too.
 
-constexpr LsdjModel kLsdj9   { "LSDj 9.2.J - 9.4.2 (format 22)",   22, 22, 31, kLetters9,      EnvelopeLaw::SoftwareStages, kEnvPeriods9, NoiseRule::Map,   kNoise9,   36, 115, NoiseS::Semitones, PitchLaw::Semitone, VibratoLaw::Semitone,         3, -12, true, true, false, true };
+constexpr LsdjModel kLsdj9   { "LSDj 9.2.J - 9.4.2 (format 22)",   22, 22, 31, kLetters9,      EnvelopeLaw::SoftwareStages, kEnvPeriods9, NoiseRule::Map,   kNoise9,   36, 127, NoiseS::Semitones, PitchLaw::Semitone, VibratoLaw::Semitone,         3, -12, true, true, false, true };
 constexpr LsdjModel kLsdj886 { "LSDj 8.8.6 (format 15)",           15, 15, 21, kLetters9,      EnvelopeLaw::SoftwareStages, kEnvPeriods9, NoiseRule::Raw,   kNoise886, 36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         2, -12, true, false, true, true };
 constexpr LsdjModel kLsdj84  { "LSDj 8.4.0 - 8.5.1 (format 11)",   11, 11, 14, kLetters9,      EnvelopeLaw::HardwareStages, nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         2, -12, true, false, true, true };
 constexpr LsdjModel kLsdj57  { "LSDj 5.7.8 - 7.0.2 (formats 4-7)",  4,  4, 10, kLettersLegacy, EnvelopeLaw::Chip,           nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         2, -12, true, false, true, true };

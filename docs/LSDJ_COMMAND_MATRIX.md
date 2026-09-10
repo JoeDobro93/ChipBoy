@@ -1067,8 +1067,14 @@ what the importer made of it, note-on for note-on over twenty-seven seconds.
   writing `NR43` values (`08`, `28`) that are **not entries of the measured map**. §82's rising
   7-bit edge is the shape of that trigger and is implemented, but nothing ChipBoy produces
   reaches a value that fires it, so the note is missing rather than mistimed. Where those two
-  bytes come from is the open question: a table transpose of −58 semitones from note 93 lands at
-  note 35, which is below the map's measured floor of 36.
+  bytes come from is now half-answered: **the noise map was truncated.** Swept whole on 9.3.9,
+  LSDj's table runs note byte 1 to 120 -- the 15-bit half is bytes 1-60 and the 7-bit half bytes
+  61-120, and byte 121 upward reads as junk off the end. Byte `n` is MIDI `n + 35`, so the table
+  reaches **MIDI 155**, and `08` and `28` are its bytes 120 and 118. `LsdjModel::noiseMap` is
+  indexed by MIDI note in a 128-entry array: it now carries the measured values up to 127
+  (`noiseHi` was 115) and *cannot* carry the last twenty-eight, which are written out in
+  `LsdjModel.cpp` beside the table. Reaching them means carrying a noise note as LSDj's own byte
+  rather than as a MIDI note.
 
 ### Where SPACE TI stands (the working song, LSDj 8.4.4)
 
