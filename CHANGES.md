@@ -2419,3 +2419,34 @@ which is what keeps it clear of the section 58 trap.
 **Not done:** twelve letters still carry a 9.2.J measurement rather than a 9.3.9 one. They are
 the same format-22 model and the same ROM code path, so they are expected to hold, and the
 document says plainly which ones they are.
+
+### 2026-09-10 — the whole command table measured on 9.3.9, and the envelope rate corrected
+
+**Changed:** every remaining row of the command matrix was traced on 9.3.9 rather than carried
+over from 9.2.J or from 8.4.4. Most confirmed what was already there -- `D` delays by exactly
+`xy` ticks, `K` kills after exactly `xy`, `L` slides over exactly `xy + 1` pitch updates, `V`
+cycles in exactly `64 / (x + 1)` updates, `T` is the byte in BPM, `G` selects the groove and
+walks it, `H` in a table hops to row `y` exactly `x` times, `M` is `NR50` directly, `O` is
+off/left/right/both, `S` is inert on PU2 and WAV and walks the map on noise, `E`'s level walks
+to `x` with the right count of zombie steps, and `P` matches ChipBoy's own `bendStep256`
+formula to within 1-2 per cent at every value tested.
+
+Two did not.
+
+1. **The envelope rate table was wrong** (spec §70, rewritten). `LSDJ_PARITY.md` §7 gives 6,
+   11, 15, 20, 27, 36, 36 pitch clocks for rates 1-7, with 6 and 7 equal -- and flagged that
+   equality as "worth one more run before that is taken as certain". 9.3.9 measures 6, 11,
+   **17**, **22**, 28, **34**, **39**, which is the chip's own rate, `rate * 65536` cycles, and
+   rates 6 and 7 are a sixth apart. §7 was measured on 9.2.J with generated probe saves, the
+   trap §58 and §63 already recorded. There is one law and not two: what 8.8.0 changed is who
+   steps the level, not how fast. The `envChipTiming` flag added in the previous round is
+   removed -- it selected between two tables that turn out to be one -- and `envRetrig` stays,
+   because that difference across 8.8.0 is real.
+2. **`S` on PU1 negates each nibble.** `S x y` writes `NR10 = ((-x) & 15) << 4 | ((-y) & 15)`,
+   confirmed on eight values: `S23` gives `ED`, `S71` gives `9F`, `S11` gives `FF`, `S88` gives
+   `88`, `SFF` gives `11`. ChipBoy writes `(x & 7) << 4 | (y & 15)` — `23` for `S23` — so every
+   imported sweep is wrong. Recorded in the matrix; not yet fixed.
+
+**Also measured for the first time:** `H` in a table (`x` times to row `y`, `x = 0` always),
+`C` on the pulses (note, +`x`, +`y`, one step a tick), `S` on noise (semitones through the map),
+and `O`'s mapping onto ChipBoy's `Pan` enum.

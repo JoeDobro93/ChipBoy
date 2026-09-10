@@ -2084,64 +2084,41 @@ so the cell reads `09` for the tab's `09`, and typing `06` selects the seventh s
 LSDj's groove `06`, the same number in both programs. ChipBoy's extra "straight" state (slot 0)
 has no byte, which is right: it is the absence of a `G`.
 
-## 70. Before LSDj 8.8.0 the chip runs the envelope, and it runs at the chip's rate
+## 70. The envelope steps at the chip's rate, in every version
 
-Section 7 of `docs/LSDJ_PARITY.md` measured that LSDj steps a level itself, off the
-11712-cycle pitch clock, on the table 6, 11, 15, 20, 27, 36, 36 for rates 1-7, and that
-"every NRx2 goes out with the low nibble 8". That is true, and it is true only from
-**8.8.0** on. The changelog dates it: **v8.8.0, 2020-08-01**, whose first entry is that the pulse and
-noise channels moved to software amplitude envelopes, giving ADSR a wider range of speeds
-and less clicky volume changes.
+`docs/LSDJ_PARITY.md` §7 measured LSDj stepping a level itself off the 11712-cycle pitch
+clock, on the table 6, 11, 15, 20, 27, 36, 36 for rates 1-7, and noted that rates 6 and 7 came
+out equal -- "worth one more run before that is taken as certain". They are not equal, and the
+table is not right.
 
-Before that release LSDj writes the envelope byte straight into `NRx2` and lets the chip's
-own envelope generator run it. Traced on the user's own songs rather than on a generated
-probe -- the distinction §63 taught us to keep:
+**Measured on 9.3.9**, on the rig in `docs/LSDJ_COMMAND_MATRIX.md` §3.4, by holding a note and
+reading the interval between the zombie steps of `E F y`:
 
-| ROM | song | `NR12` writes | with low nibble 8 | rate nibbles seen |
-|---|---|---:|---:|---|
-| 5.0.3 | BIRDS | 86 | 15 | 0, 3, 6, **7** (66 of them) |
-| 8.4.4 | SPACE TI | 108 | **0** | 0, 2, 3, 4, 6, **7** (55 of them) |
-| 9.3.9 | SPACE TI, the same save | 848 | 355 | 0 and 1 only |
-
-The same save, read by two ROMs: 8.4.4 writes `1F`, `67`, `5F` -- volume, direction and
-*rate* -- and leaves the chip to ramp; 9.3.9 writes a hold and then walks the level with
-§26's zombie steps, which is why its write count is eight times larger. The model already
-knows the difference and says so in `EnvelopeLaw`: `HardwareStages` for format 11 ramps "a
-level every (period / 64) s", `SoftwareStages` for formats 15 and 22 uses the measured
-table. The driver did not: it ran §7's table for every instrument whatever the song came
-from.
-
-**ChipBoy keeps stepping the level itself either way** -- §27's list of levels is what lets
-a playback ROM replay a part, and a chip envelope left running would take that away. What an
-instrument chooses is the *rate the steps come at*:
-
-- **Soft** (the default, LSDj 8.8.0 and after): §7's measured table.
-- **Chip** (imported from 8.7.7 and before): the chip's own, one level every `rate / 64`
-  seconds -- `rate x 65536` cycles, `rate x 5.5956` pitch clocks.
-
-Rounding that to whole pitch clocks would cost up to 7 % at rate 1, so the step counter
-counts in 256ths of a pitch clock and *subtracts* the period rather than clearing, which
-leaves the average exact and stops the error accumulating across a long ramp. Both tables
-are held in the same units, and the soft one's entries are whole clocks, so its timing is
-unchanged to the cycle.
-
-The two tables are far apart where LSDj songs live: §7's has rates 6 and 7 at the same 36
-clocks, and the chip's separates them by 16 %.
-
-| rate | chip (ms) | §7's soft table (ms) | soft is |
+| rate | 9.3.9, pitch clocks | §7's table (9.2.J) | the chip's own rate |
 |---:|---:|---:|---:|
-| 1 | 15.6 | 16.8 | 7 % slow |
-| 2 | 31.3 | 30.7 | 2 % fast |
-| 3 | 46.9 | 41.9 | 11 % fast |
-| 4 | 62.5 | 55.8 | 11 % fast |
-| 5 | 78.1 | 75.4 | 3 % fast |
-| 6 | 93.8 | 100.5 | 7 % slow |
-| 7 | 109.4 | 100.5 | 8 % fast |
+| 1 | 6 | 6 | 5.60 |
+| 2 | 11 | 11 | 11.19 |
+| 3 | **17** | 15 | 16.79 |
+| 4 | **22** | 20 | 22.38 |
+| 5 | 28 | 27 | 27.98 |
+| 6 | **34** | 36 | 33.57 |
+| 7 | **39** | 36 | 39.17 |
 
-SPACE TI's PU1 is rate 7 fifty-five times and rate 4 twenty-nine times, so under the soft
-table every swell on it finished about a tenth of a second early. The instrument carries the
-choice, not the song, so a bank may hold both -- and a ChipBoy instrument written from
-scratch may pick either, because the chip's rates are a real thing to want.
+9.3.9's intervals are the **chip's own**, `rate * 65536` cycles, to within the rounding to a
+whole clock. §7's numbers came off generated probe saves -- the §58 and §63 trap -- and its
+rates 6 and 7 are a sixth apart in reality.
+
+So there is one law, not two. **What changed in 8.8.0 is who does the stepping, not how fast**:
+before it the chip's envelope generator runs, after it LSDj walks the level itself with §26's
+zombie writes, and both give a level every `rate / 64` seconds. ChipBoy keeps walking the level
+itself either way -- §27's list of levels is what lets a playback ROM replay a part -- and now
+does it on the one measured table. The step counter counts in 256ths of a pitch clock and
+subtracts the period rather than clearing, so a rate whose interval is not a whole number of
+clocks keeps its average and the error never accumulates.
+
+The `envChipTiming` flag this section first introduced is gone: it selected between two tables
+that turn out to be one. `envRetrig` stays, because *that* difference across 8.8.0 is real -- an
+`E` re-attacks the note before it and never triggers after (§59).
 
 ## 71. A slide holds its own aim: the table's column, and the bottom of the range
 

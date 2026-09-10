@@ -307,6 +307,12 @@ design-log section the change touches. Update this file at the end of every chan
   - **Method note**: the user has cleared reading the ROM directly rather than only tracing it
     (their project, their call on L3). Register-stream diffing settled this one without it, but
     it is available for constants that resist measurement.
+- **Every LSDj command is now measured on 9.3.9** and the results are in
+  `docs/LSDJ_COMMAND_MATRIX.md` §9, with the ChipBoy gaps ranked in §10. Four of them are
+  ChipBoy bugs found by that campaign: `S` on PU1 negates each nibble into `NR10` and ChipBoy
+  does not; `R`'s interval is a tick too long and its `y = 0` should retrigger once; `Z` re-runs
+  the wrong command and randomises the wrong digits; `F` is dropped on PU1 and misread on PU2.
+  None is fixed yet.
 - **`tools/lsdjref/probe_fmt22.py` + `run.py`** build and trace a controlled probe song inside a
   real format-22 save, which is how every 9.3.9 row in the command matrix was measured. Start
   from it for any new LSDj question; validate it (a plain note is one `NR12 = F8`, and two notes

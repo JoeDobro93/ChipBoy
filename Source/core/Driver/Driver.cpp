@@ -59,18 +59,18 @@ constexpr double kDrumUnitsPerSemitone = 19.11;
 
 /// The instrument envelope's own step interval for the ENV nibble's rates 1-7,
 /// in 256ths of a pitch-clock period so that a rate whose interval is not a
-/// whole number of clocks keeps its average (section 70).
+/// whole number of clocks keeps its average.
 ///
-/// From LSDj 8.8.0 the program steps the level itself: it writes NRx2 with the
-/// period nibble at 8, a hold, and walks the level on this measured table
-/// (6, 11, 15, 20, 27, 36, 36 clocks; 6 and 7 measured the same interval).
-constexpr int kEnvStepPeriods[8] = { 0, 6 * 256, 11 * 256, 15 * 256, 20 * 256, 27 * 256, 36 * 256, 36 * 256 };
-/// Before 8.8.0 LSDj wrote the rate into NRx2 and let the chip's own envelope
-/// run it, one level every `rate / 64` seconds -- `rate * 65536` cycles, or
-/// `rate * 65536 * 256 / 11712` of these units. ChipBoy still steps the level
-/// itself (section 27's list of levels); only the interval is the chip's.
-constexpr int kEnvChipPeriods[8] = { 0, 1432, 2865, 4297, 5730, 7162, 8595, 10027 };
-/// One pitch clock, in the units both tables are held in.
+/// **Measured on 9.3.9** (docs/LSDJ_COMMAND_MATRIX.md section 6.5): 6, 11, 17,
+/// 22, 28, 34 and 39 pitch clocks, which is the chip's own rate -- one level
+/// every `rate / 64` s, or `rate * 65536` cycles -- to within the rounding.
+/// From 8.8.0 LSDj steps the level itself rather than letting the chip do it,
+/// but it steps it at the same interval, so there is one law and not two.
+/// LSDJ_PARITY section 7's table (15, 20, 27, 36, 36 for rates 3-7, with 6 and
+/// 7 equal) came off generated probe saves on 9.2.J and does not survive a
+/// measurement on a real save: rates 6 and 7 are 16 per cent apart.
+constexpr int kEnvStepPeriods[8] = { 0, 1432, 2865, 4297, 5730, 7162, 8595, 10027 };
+/// One pitch clock, in the units the table is held in.
 constexpr int kEnvClock = 256;
 
 /// The spacing of the NRx2 writes a level change is made of (measured): the
@@ -1173,12 +1173,9 @@ void Driver::stepSoftEnvelope(int ch)
     if (v.shapedOn && !v.shapedTaken) return;
     const int rate = v.envRate & 7;
     if (rate == 0 || !v.dacOn || !v.hwOn) return;
-    // Section 70: an instrument imported from before LSDj 8.8.0 steps at the
-    // chip's rate, the one its song was written against. Subtracting the
-    // period rather than clearing keeps the average exact when it is not a
-    // whole number of clocks; on the software table, which is whole clocks,
-    // nothing is left over and the timing is unchanged.
-    const int period = v.inst.envChipTiming ? kEnvChipPeriods[rate] : kEnvStepPeriods[rate];
+    // Subtracting the period rather than clearing keeps the average exact
+    // where it is not a whole number of pitch clocks (section 70).
+    const int period = kEnvStepPeriods[rate];
     v.envCount += uint32_t(kEnvClock);
     if (v.envCount < uint32_t(period)) return;
     v.envCount -= uint32_t(period);

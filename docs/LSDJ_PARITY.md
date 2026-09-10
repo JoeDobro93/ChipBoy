@@ -340,14 +340,14 @@ while a channel runs does not load the amplitude.
 
 ## 7. The instrument's own envelope rate
 
-> **From 8.8.0 only** (`COMMANDS_AND_TEMPO.md` §70). This section was measured on a 9.x ROM.
-> LSDj moved the envelope into software in **8.8.0**, the release whose changelog leads with
-> the pulse and noise channels gaining software amplitude envelopes. Before it, LSDj wrote
-> the rate into `NRx2` and let the
-> chip's own envelope generator run it, one level every `rate / 64` s. Traced on real songs:
-> 8.4.4 and 5.0.3 write `NR12` with rate nibbles and **no** low nibble 8; the same save under
-> 9.3.9 writes eight times as many `NR12` bytes, all holds. An instrument imported from
-> before 8.8 carries `envChipTiming` and steps at the chip's rate instead of this table's.
+> **Superseded.** This section's table is wrong, and it was measured on 9.2.J with generated
+> probe saves. A measurement on 9.3.9 with a real save (`docs/LSDJ_COMMAND_MATRIX.md` §6.5,
+> `COMMANDS_AND_TEMPO.md` §70) gives 6, 11, **17**, **22**, 28, **34**, **39** pitch clocks for
+> rates 1-7 -- the chip's own rate, `rate * 65536` cycles -- and rates 6 and 7 are a sixth
+> apart, not equal. The doubt this section itself raised ("worth one more run") is now
+> resolved against it. What 8.8.0 changed is *who steps the level*, not how fast: before it the
+> chip's envelope generator runs, after it LSDj walks the level with zombie writes, and both
+> give a level every `rate / 64` s.
 
 LSDj runs the envelope in software off the same 11712-cycle timer. Measured
 step intervals, one note held for sixteen steps per instrument:

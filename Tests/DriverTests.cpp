@@ -1787,46 +1787,37 @@ TEST_CASE("a slide holds its aim through the table and stops at the bottom of th
     CHECK(Driver::lowestNote(false) == 36);          // pulse counts twice as fast, so an octave higher
 }
 
-TEST_CASE("an envelope's levels come at the chip's rate or at LSDj 8.8's table", "[driver][zombie]")
+TEST_CASE("an envelope's levels come at the rate LSDj gives them", "[driver][zombie]")
 {
-    // Section 70: before 8.8.0 LSDj let the chip's envelope generator run, so
-    // a level came every `rate / 64` seconds. From 8.8.0 it steps the level
-    // itself on section 7's measured table, where rates 6 and 7 are the same
-    // interval. ChipBoy steps the level either way; the instrument picks the
-    // interval, and an import from before 8.8 picks the chip's.
+    // Measured on 9.3.9 (docs/LSDJ_COMMAND_MATRIX.md 6.5) by holding a note and
+    // reading the interval between the zombie steps: 6, 11, 17, 22, 28, 34 and
+    // 39 pitch clocks for rates 1-7. That is the chip's own rate, one level
+    // every `rate / 64` s, and rates 6 and 7 are a sixth apart -- not the equal
+    // 36 that LSDJ_PARITY section 7 read off a generated probe save.
     constexpr uint64_t kPitchClock = 11712;
-    // The mean cycles between level steps, over a long enough run that the
-    // rounding to whole pitch clocks averages out.
-    auto meanStep = [](bool chipTiming, int rate) {
+    auto meanStep = [](int rate) {
         Rig r;
         auto& in = r.bank.instruments[0];
         in = Instrument::defaults(InstrumentType::Pulse, "Env");
         in.used = true;
         in.env.mode = EnvMode::Chip;
-        in.envChipTiming = chipTiming;
         r.song.noteSource[0] = tracker::NoteSource::Tracker;
         ChannelParams p; p.instrument = 1; r.drv.setParams(0, p);
-        // Start at 15 and fall: fifteen steps, each one NRx2 down-triple.
         NoteEvent e = cellOn(0, 60, 1); e.velSet = false;
         r.block({ e, levelCell(0, 15, rate) }, 512);
         std::vector<uint64_t> at;
         for (int b = 0; b < 400 && at.size() < 12; ++b)
             for (const auto& x : r.block({}, 512))
-                if (x.addr == 0xFF12 && x.value == 0x09) at.push_back(x.cycle);   // the first byte of a step down
+                if (x.addr == 0xFF12 && x.value == 0x09) at.push_back(x.cycle);
         REQUIRE(at.size() >= 12);
         return double(at[11] - at[1]) / 10.0;
     };
-    // The chip: one level every rate * 65536 cycles, to within a pitch clock.
+    // One level every rate * 65536 cycles, to within the rounding to a clock.
     for (int rate = 1; rate <= 7; ++rate)
-        CHECK(std::abs(meanStep(true, rate) - double(rate) * 65536.0) < double(kPitchClock));
-    // Section 7's table, in whole pitch clocks: 6, 11, 15, 20, 27, 36, 36.
-    const int soft[8] = { 0, 6, 11, 15, 20, 27, 36, 36 };
-    for (int rate = 1; rate <= 7; ++rate)
-        CHECK(std::abs(meanStep(false, rate) - double(soft[rate]) * double(kPitchClock)) < 1.0);
-    // Where the two part company: the software table cannot tell 6 from 7 and
-    // the chip separates them by a sixth.
-    CHECK(meanStep(false, 6) == meanStep(false, 7));
-    CHECK(meanStep(true, 7) > meanStep(true, 6) * 1.15);
+        CHECK(std::abs(meanStep(rate) - double(rate) * 65536.0) < double(kPitchClock));
+    // And the two fastest rates are distinct, which is the thing section 7 had
+    // wrong and the thing a song using both can hear.
+    CHECK(meanStep(7) > meanStep(6) * 1.1);
 }
 
 TEST_CASE("the zombie sequence is LSDj's own bytes", "[driver][zombie]")

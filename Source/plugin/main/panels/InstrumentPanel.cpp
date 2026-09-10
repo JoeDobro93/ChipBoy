@@ -265,7 +265,7 @@ struct InstrumentPanel::Widgets {
     Segmented* vibShape = nullptr; Segmented* vibDir = nullptr; Stepper* vibSpeed = nullptr; Stepper* vibDepth = nullptr; Stepper* vibDelay = nullptr;
     Segmented* pitchSpeed = nullptr; Stepper* cmdRate = nullptr; Stepper* chordRate = nullptr; Segmented* tableMode = nullptr;
     // table and note behaviour
-    Stepper* table = nullptr; Segmented* transpose = nullptr; Segmented* noteOff = nullptr; Segmented* overlap = nullptr; Segmented* envRetrig = nullptr; Segmented* envTiming = nullptr; Stepper* length = nullptr;
+    Stepper* table = nullptr; Segmented* transpose = nullptr; Segmented* noteOff = nullptr; Segmented* overlap = nullptr; Segmented* envRetrig = nullptr; Stepper* length = nullptr;
 };
 
 /* ------------------------------------------------------------ panel */
@@ -819,8 +819,6 @@ void InstrumentPanel::rebuildEditor()
                       { "Legato", "Retrig" }, [](bank::Instrument& i, int v) { i.overlap = v == 1 ? bank::Overlap::Retrig : bank::Overlap::Legato; });
     w_->envRetrig = seg(*tab, "E re-attacks", "Whether an E command hits the note again after setting the level -- LSDj's own rule before 8.8, and what its drum tables are built on (section 59).",
                         { "No", "Yes" }, [](bank::Instrument& i, int v) { i.envRetrig = v == 1; });
-    w_->envTiming = seg(*tab, "Env rate", "How fast the envelope's levels come: Soft is LSDj 8.8's measured table, Chip the hardware's own rate -- what a song written before 8.8 was made against (section 70).",
-                        { "Soft", "Chip" }, [](bank::Instrument& i, int v) { i.envChipTiming = v == 1; });
     const bool longLength = type == bank::InstrumentType::Wave || type == bank::InstrumentType::Kit;
     w_->length = stepper(*tab, "Length", longLength ? "NR31: off, or 1-256." : "NRx1 bits 5-0: off, or 1-64.", 0, longLength ? 256 : 64, 0,
                          [](int v) { return v == 0 ? String("off") : ValueFormat::number(v); }, [](bank::Instrument& i, int v) { i.length = uint16_t(v); });
@@ -954,7 +952,6 @@ void InstrumentPanel::syncValues()
     S(w.pitchSpeed, int(i.pitchSpeed)); T(w.cmdRate, i.cmdRate); T(w.chordRate, i.chordRate); S(w.tableMode, int(i.tableMode));
     T(w.table, i.table); S(w.transpose, i.transpose ? 0 : 1); S(w.noteOff, int(i.noteOff)); S(w.overlap, i.overlap == bank::Overlap::Retrig ? 1 : 0);
     S(w.envRetrig, i.envRetrig ? 1 : 0);
-    S(w.envTiming, i.envChipTiming ? 1 : 0);
     T(w.length, i.length); S(w.pan, panIndex(i.pan));
     refreshDerived();
     updateUsedOn();

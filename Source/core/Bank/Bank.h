@@ -166,7 +166,6 @@ struct InstrumentCore {
     uint8_t  table = 0;              ///< 0 none, 1-64
     bool     transpose = true;       ///< whether table transpose applies
     bool     envRetrig = false;      ///< E re-attacks the note (section 59): LSDj's own rule before 8.8
-    bool     envChipTiming = false;  ///< the envelope's levels come at the chip's rate, not LSDj 8.8's table (section 70)
     NoteOff  noteOff = NoteOff::Kill;
     Overlap  overlap = Overlap::Legato;
     PitchSpeed pitchSpeed = PitchSpeed::Fast;

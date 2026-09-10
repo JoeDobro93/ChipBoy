@@ -430,8 +430,6 @@ int main()
             auto& wi = bk->instruments[4];
             wi = chipboy::bank::Instrument::defaults(chipboy::bank::InstrumentType::Wave, "Run");
             wi.used = true; wi.frameLength = 8; wi.frameLoopStep = 3; wi.frameAdvance = 7;
-            bk->instruments[5] = chipboy::bank::Instrument::defaults(chipboy::bank::InstrumentType::Pulse, "Chip");
-            bk->instruments[5].used = true; bk->instruments[5].envChipTiming = true;
             auto back = std::make_unique<chipboy::bank::Bank>();
             const bool bankOk = bankFromJson(bankToJson(*bk), *back);
             const auto& tb2 = back->tables[3];
@@ -440,8 +438,6 @@ int main()
                   "a table's LEN and its volume hop survive a round trip");
             check(bankOk && int(wi2.frameLength) == 8 && int(wi2.frameLoopStep) == 3 && int(wi2.frameAdvance) == 7,
                   "and a wave instrument's frame run does too");
-            check(bankOk && back->instruments[5].envChipTiming && !back->instruments[4].envChipTiming,
-                  "and so does an instrument whose envelope steps at the chip's rate (section 70)");
             auto older = std::make_unique<chipboy::bank::Bank>();
             const bool oldOk = bankFromJson("{\"format\":\"chipboy-bank\",\"tables\":[{\"slot\":4,\"name\":\"T\",\"steps\":[{\"vol\":9}]}]}", *older);
             check(oldOk && int(older->tables[3].steps[0].volTicks) == 0 && int(older->tables[3].steps[0].volHop) == -1,
