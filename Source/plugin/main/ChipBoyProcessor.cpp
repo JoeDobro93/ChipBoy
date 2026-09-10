@@ -773,6 +773,7 @@ void ChipBoyProcessor::tapScopes(int n, const float* L, const float* R)
         scopes_.state[size_t(ch)].store(st, std::memory_order_release);
         scopes_.state2[size_t(ch)].store(st2, std::memory_order_release);
         scopes_.tableRun[size_t(ch)].store(packTableRun(driver_.view(ch)), std::memory_order_release);
+        scopes_.tableLanes[size_t(ch)].store(packTableLanes(driver_.view(ch)), std::memory_order_release);
         if (owned & (1u << ch)) { r->slots[ch].state.store(st, std::memory_order_release); r->slots[ch].state2.store(st2, std::memory_order_release); }
     }
     scopes_.mix.store(uint32_t(driver_.nr50()) | (uint32_t(driver_.nr51()) << 8) | (1u << 16), std::memory_order_release);

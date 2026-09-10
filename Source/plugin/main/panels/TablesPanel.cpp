@@ -216,19 +216,27 @@ void TablesPanel::hexChanged()
 void TablesPanel::tick()
 {
     stepRate_.setText(stepRateText());
-    int row = -1, from = -1;
+    int row = -1, from = -1, rowE = -1, row2 = -1;
     uint32_t newest = 0;
     for (int ch = 0; ch < 4; ++ch) {
         int slot = 0, r = -1;
         uint32_t run = 0;
         unpackTableRun(processor.scopes().tableRun[size_t(ch)].load(std::memory_order_relaxed), slot, r, run);
         if (r < 0 || slot != slot_) continue;
-        if (from < 0 || int16_t(uint16_t(run) - uint16_t(newest)) > 0) { newest = run; row = r; from = ch; }
+        if (from < 0 || int16_t(uint16_t(run) - uint16_t(newest)) > 0) {
+            newest = run; row = r; from = ch;
+            // The winning run's other two lanes, which sit at rows of their
+            // own (section 64).
+            unpackTableLanes(processor.scopes().tableLanes[size_t(ch)].load(std::memory_order_relaxed), rowE, row2);
+        }
     }
-    if (row == playingRow_ && from == playingChannel_) return;
+    if (row < 0) { rowE = -1; row2 = -1; }
+    if (row == playingRow_ && from == playingChannel_ && rowE == playingRowE_ && row2 == playingRow2_) return;
     playingRow_ = row;
+    playingRowE_ = rowE;
+    playingRow2_ = row2;
     playingChannel_ = from;
-    grid_.setPlayingStep(row);
+    grid_.setPlayingSteps(rowE, row, row2);
     syncFromBank(false);
 }
 

@@ -49,6 +49,9 @@ private:
     /// The run the panel is following: the row, and the channel it belongs
     /// to (-1 for none).
     int playingRow_ = -1, playingChannel_ = -1;
+    /// The volume lane's row and the second command lane's: they run on their
+    /// own pointers (docs/COMMANDS_AND_TEMPO.md section 64).
+    int playingRowE_ = -1, playingRow2_ = -1;
     const bank::Bank* selfBank_ = nullptr;
     std::vector<ui::SlotRow> lastRows_;
 

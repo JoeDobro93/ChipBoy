@@ -711,7 +711,17 @@ struct TableGrid::Impl {
     bank::Table table;
     GridCore core;
     TypedEntry box;
-    int playing = -1;
+    /// One running row per lane (section 64), in column order: the volume
+    /// lane, the transpose-and-command lane, the second command lane.
+    int playing = -1, playingE = -1, playing2 = -1;
+    /// Which lane owns a column, so each lights only its own cells.
+    static int laneOfColumn(Kind k)
+    {
+        if (k == Kind::Vol || k == Kind::VolLen) return 0;
+        if (k == Kind::Transpose) return 1;
+        return -1;              // Step and Info follow no lane; Cmd uses its own ch
+    }
+    int rowOfLane(int lane) const { return lane == 0 ? playingE : lane == 2 ? playing2 : playing; }
     /// The column's most recent values, what a blank cell fills with
     /// (section 38): refreshed from every step the grid writes.
     struct Recent { int vol = -1; int volTicks = 0; bool hasTranspose = false; int8_t transpose = 0; bank::Command cmd[2]; } recent;
@@ -983,10 +993,11 @@ juce::String TableGrid::getTooltip() { return impl_->tooltip(); }
 
 void TableGrid::setTable(const bank::Table& t) { impl_->table = t; repaint(); }
 const bank::Table& TableGrid::table() const { return impl_->table; }
-void TableGrid::setPlayingStep(int step)
+void TableGrid::setPlayingSteps(int volLane, int cmdLane, int cmd2Lane)
 {
-    if (step == impl_->playing) return;
-    impl_->playing = step;
+    auto& im = *impl_;
+    if (volLane == im.playingE && cmdLane == im.playing && cmd2Lane == im.playing2) return;
+    im.playingE = volLane; im.playing = cmdLane; im.playing2 = cmd2Lane;
     repaint();
 }
 void TableGrid::resized() { impl_->buildColumns(getWidth()); impl_->core.ensureEditableCursor(); }
@@ -998,10 +1009,22 @@ void TableGrid::paint(juce::Graphics& g)
     if (core.cols.empty()) im.buildColumns(getWidth());
     const bool focused = hasKeyboardFocus(false);
     core.paintHeader(g, getWidth(), 0, core.headerH);
-    if (im.playing >= 0 && im.playing < core.rows) { g.setColour(colours::playRow); g.fillRect(0, core.rowY(im.playing), getWidth(), core.rowH); }
+    // Each lane lights the columns it drives, at its own row (section 64):
+    // the three pointers drift apart, and a table whose columns loop at
+    // different lengths is unreadable if they are drawn as one.
+    for (int c = 1; c < int(core.cols.size()); ++c) {
+        const auto& col = core.cols[size_t(c)];
+        const int lane = col.kind == Kind::Cmd ? (col.ch == 0 ? 1 : 2) : Impl::laneOfColumn(col.kind);
+        if (lane < 0) continue;
+        const int row = im.rowOfLane(lane);
+        if (row < 0 || row >= core.rows) continue;
+        g.setColour(colours::playRow);
+        g.fillRect(col.x, core.rowY(row), col.w, core.rowH);
+    }
     core.paintRowLines(g, getWidth());
     for (int r = 0; r < core.rows; ++r) {
-        core.paintStep(g, r, r == im.playing);
+        // The step number lights for any lane on that row.
+        core.paintStep(g, r, r == im.playing || r == im.playingE || r == im.playing2);
         for (int c = 1; c < int(core.cols.size()); ++c) {
             const auto kind = core.cols[size_t(c)].kind;
             if (kind == Kind::Cmd) {

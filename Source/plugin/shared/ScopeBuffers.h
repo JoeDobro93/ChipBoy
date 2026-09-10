@@ -52,6 +52,10 @@ struct ScopeBuffers {
     /// a serial that counts the runs, so a window showing one table can
     /// highlight the row of the run that started last.
     std::array<std::atomic<uint32_t>, 4> tableRun{};
+    /// The volume lane's row and the second command column's, packed by
+    /// packTableLanes(): they run on their own pointers (section 64), so the
+    /// table on view marks three rows, not one.
+    std::array<std::atomic<uint32_t>, 4> tableLanes{};
 };
 
 /// row + 1 (0 = no table running) | slot << 7 | run << 14.
@@ -67,6 +71,20 @@ inline void unpackTableRun(uint32_t packed, int& slot, int& row, uint32_t& run)
     slot = int((packed >> 7) & 127u);
     run = packed >> 14;
     if (row < 0) slot = 0;
+}
+
+/// (rowE + 1) | (row2 + 1) << 7, each -1 when that lane is not running.
+inline uint32_t packTableLanes(const driver::VoiceView& v)
+{
+    const uint32_t e = v.tableRowE < 0 ? 0u : uint32_t(v.tableRowE + 1) & 127u;
+    const uint32_t two = v.tableRow2 < 0 ? 0u : uint32_t(v.tableRow2 + 1) & 127u;
+    return e | (two << 7);
+}
+/// What packTableLanes() packed; each row is -1 when that lane is not running.
+inline void unpackTableLanes(uint32_t packed, int& rowE, int& row2)
+{
+    rowE = int(packed & 127u) - 1;
+    row2 = int((packed >> 7) & 127u) - 1;
 }
 
 } // namespace chipboy::plugin

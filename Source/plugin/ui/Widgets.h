@@ -243,7 +243,12 @@ public:
     ~TableGrid() override;
     void setTable(const bank::Table& t);
     const bank::Table& table() const;
-    void setPlayingStep(int step);     ///< -1 none
+    /// The three lanes' running rows (section 64): the volume column, the
+    /// transpose-and-first-command column and the second command column each
+    /// run on their own pointer, so each lights its own row. -1 for a lane
+    /// that is not running.
+    void setPlayingSteps(int volLane, int cmdLane, int cmd2Lane);
+    void setPlayingStep(int step) { setPlayingSteps(step, step, step); }   ///< -1 none
     std::function<void(const bank::Table&)> onChange;
     juce::String getTooltip() override;   ///< the hovered cell: what the column is, and what the command says
     static constexpr int kRowHeight = 22, kHeaderHeight = 22;

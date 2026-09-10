@@ -88,6 +88,10 @@ struct VoiceView {
     /// plain note-on with a table, an A, a table override -- so a window
     /// showing one table can tell which channel's run started last.
     int8_t   tableRow = -1;
+    /// The other two lanes' rows (section 64): the volume column runs on its
+    /// own pointer and so does the second command column, so a table on view
+    /// has three places to mark, not one. -1 each when no table is running.
+    int8_t   tableRowE = -1, tableRow2 = -1;
     uint16_t tableRun = 0;
     uint8_t  regs[5] = { 0, 0, 0, 0, 0 };
     // running state

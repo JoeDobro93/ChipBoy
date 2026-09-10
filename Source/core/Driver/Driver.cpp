@@ -2339,6 +2339,8 @@ void Driver::refreshView(int ch)
     w.duty = v.duty; w.frame = uint8_t(v.frameIdx + 1);
     w.tableSlot = v.tableOn ? v.tableSlot : 0; w.tableStep = v.tableStep;
     w.tableRow = v.tableOn ? int8_t(v.tableRow) : int8_t(-1);
+    w.tableRowE = (v.tableOn && v.volLaneOn) ? int8_t(v.tableRowE) : int8_t(-1);   // it ends at its first empty row
+    w.tableRow2 = v.tableOn ? int8_t(v.tableRow2) : int8_t(-1);
     w.tableRun = v.tableRun;
     // The running state the strip prints under the two slots (section 3).
     w.envVol = v.envVol; w.envRate = v.envRate; w.envDir = v.envDir == EnvDir::Up ? 1 : 0;
