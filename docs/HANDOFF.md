@@ -65,6 +65,32 @@ design-log section the change touches. Update this file at the end of every chan
   typed transposes as bytes); scopes take the NR51 mix word and draw a silenced channel as
   off, the analog trace clamped; the chain has an 8 px gap after each TSP (264 px) and the
   window is 1280 wide. Demo state, parameter table and screenshots regenerated.
+- Round 10: **the LSDj importer** (`docs/plan-lsdj-import.md`, §54, D-UI-22).
+  `Source/core/Import/`: `LsdjSave` (the file table, the block code, the working song, the
+  ROM title), `LsdjModel` (what a version of LSDj means by the bytes: two models, 9.3.9
+  measured and a legacy one assumed), `LsdjSong` (the interpreter, from the converter).
+  `plugin/shared/LsdjImport` reads the file and sniffs the folder's ROM;
+  `LsdjImportDialog` is the popup; *Import .sav…* sits in the Tracker head. Tests build
+  their saves in memory (`[lsdj]`); `CHIPBOY_LSDJ_SAV=/path/to/a.sav` makes one case import
+  every song of a real save (the user's, outside the tree, holds seven: SUNRISE in format
+  22 and six in format 3). `chipboy_recordtest --import-sav SAV NAME|working OUT.cbsong`
+  runs the same importer from the command line, so a conversion can be checked with
+  `--play-song`; all seven convert and play. The scopes repaint while a silenced channel's last waveform
+  slides out of the window, so the visualizer no longer holds a dead shape.
+- **Adding an LSDj version** when the user supplies its ROM (the steps also head
+  `Source/core/Import/LsdjModel.h`): put the ROM beside the others outside the tree
+  (`/root/lsdj/` here), copy the 9.3.9 entry in `LsdjModel.cpp`, set the format it writes
+  (load a song on it, read byte `0x7FFF` of the working song) and the range it reads, then
+  trace with the harness (`tools/lsdjref`, `--rom` naming that ROM) the tables that may
+  differ and point the entry at them: the command byte table (a phrase with every letter,
+  which register each byte moves — 9.x inserted `B` at 2), the noise map (every note on a
+  noise instrument, read NR43), the envelope (§51's probe: one note, the speed patched
+  1–F, the NR42 step periods; and whether byte 1 is NRx2 or the first of three stages), the
+  wave octave (§45), PU2 TSP (§49), and P's and V's tick tables (§7) if a version differs
+  there — those still use the driver's tables for every model. Set `measured` when the ROM
+  traced it. The harness's `lsdjref_sav.py` writes version byte 0: give it the version
+  under test, or LSDj reads the probe with the legacy rules. Add a `[lsdj]` case that reads
+  a synthetic song under the new model.
 - The parity harness runs here now: RGBDS was built from source into `/usr/local`, the
   ROM sits at `/root/lsdj/lsdj9_3_9.gb` (container only), `build-ref/` holds the build.
   `f_table_speed` is a new case; only it and `i_kill_delay_chord` were traced on 9.3.9.

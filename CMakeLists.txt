@@ -37,7 +37,10 @@ add_library(chipboy_core STATIC
     Source/core/Driver/Clock.cpp
     Source/core/Driver/Driver.cpp
     Source/core/Tracker/Player.cpp
-    Source/core/Tracker/Song.cpp)
+    Source/core/Tracker/Song.cpp
+    Source/core/Import/LsdjSave.cpp
+    Source/core/Import/LsdjModel.cpp
+    Source/core/Import/LsdjSong.cpp)
 target_include_directories(chipboy_core PUBLIC Source)
 target_compile_features(chipboy_core PUBLIC cxx_std_20)
 if(MSVC)
@@ -78,6 +81,7 @@ if(CHIPBOY_BUILD_TESTS)
         Tests/SameSuiteTests.cpp
         Tests/RenderTests.cpp
         Tests/DriverTests.cpp
+        Tests/LsdjImportTests.cpp
         Tests/ClockTests.cpp
         Tests/TrackerTests.cpp
         Tests/PresetTests.cpp

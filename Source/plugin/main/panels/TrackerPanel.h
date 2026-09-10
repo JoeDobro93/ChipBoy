@@ -55,6 +55,9 @@ private:
     void report(const RichText& text);
     void saveSong();
     void loadSong();
+    /// Import .sav... (docs/plan-lsdj-import.md): a chooser, then the dialog
+    /// listing the save's songs; each chosen one opens in a tab of its own.
+    void importSav();
     void closeTab(int index);
     /// One edit of the song; `what` names it on the undo history, and a run
     /// of edits under the same name -- the digits of one typed value -- is
@@ -64,7 +67,7 @@ private:
 
     ui::Led playLed_;
     TextLine playText_, pos_, startLabel_, tempoLabel_;
-    juce::TextButton play_, stop_, loop_, follow_, rec_, saveSong_, loadSong_, export_;
+    juce::TextButton play_, stop_, loop_, follow_, rec_, saveSong_, loadSong_, importSav_, export_;
     // the song's own timeline: its master tempo (section 19) and where its
     // tick 0 sits on the host's. Beats and Steps / bar went with the bars.
     ui::Stepper tempo_, songStart_;

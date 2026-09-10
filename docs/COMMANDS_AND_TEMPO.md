@@ -1511,3 +1511,31 @@ channel whose two NR51 bits are both clear draws as off — the dashed baseline 
 mixer and the visualizer alike, from the mix word the processor already publishes. The
 analog trace is clamped to the DAC's sixteen levels, so the coupling capacitor's overshoot
 on a DMG step stays inside the scope's grid instead of running through its border.
+
+## 54. Importing LSDj songs
+
+*Import .sav…* in the Tracker head reads an LSDj save and opens the songs the user picks in
+tabs of their own, each with the bank it needs (`docs/plan-lsdj-import.md` has the layouts
+and the plan). The rules are the ones the recreation established, §45–§52, now in
+`Source/core/Import/`:
+
+- **The save** (`LsdjSave`): the working song is the first 32 KB, the file table the block
+  at `0x8000`, each file a chain of 512-byte blocks in LSDj's run-length code with two
+  escapes and two default codes (`E0 F0` the default wave, `E0 F1` the default instrument).
+  Confirmed on the user's save: the SUNRISE file decompresses to the working song, byte for
+  byte but for the edit state at `0x3FC1`; six older files read as **format 3**.
+- **The model** (`LsdjModel`): a song's format version (byte `0x7FFF`) picks how its bytes
+  are read — the command letter table, the envelope (three stages or the NRx2 byte), the
+  noise map, the wave octave, PU2 TSP. Two ship: **LSDj 9.3.9** (format 20–31, every table
+  measured on the user's ROM) and **legacy** (0–19: the tables the 9.3.9 ROM applied to the
+  harness's version-0 saves, assumed for the rest and marked so). A format no model knows
+  takes the ROM found beside the save when its title names a version; else the newest.
+  `LsdjModel.h` says how to add a version when a ROM arrives; `HANDOFF.md` repeats it.
+- **The song** (`LsdjSong`): instruments by slot with the envelope of §51, wave frames per
+  LSDj synth, tables with the noise rows converted through the map (§45), one phrase per
+  LSDj phrase and channel with the chain's transposes (§48), `A` into the TBL column (§46),
+  the noise notes by LFSR clock, grooves, the tempo. Kits are noted and skipped: their
+  samples live in the ROM. What could not be carried over exactly is a **note**, one line
+  each; the dialog shows them after the import.
+
+The song file this produces is a plain `.cbsong` once saved; nothing of LSDj's stays in it.

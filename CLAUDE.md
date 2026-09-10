@@ -12,6 +12,8 @@ design. Read `docs/HANDOFF.md` first: current state, open questions, next steps.
 - Gate (build + every check, short output): `tools/gate.sh` — `core`, `plugin` or
   `all` (default); `tools/gate.sh core -t driver` runs one test area (a Catch2 tag) while working.
   Full logs in `build-*/gate.log`. Set `CHIPBOY_JUCE_DIR` to a local JUCE 8.0.15 clone.
+- LSDj import from the command line: `chipboy_recordtest --import-sav SAV NAME|working OUT.cbsong`
+  (the same code as *Import .sav…*; the save stays outside the tree).
 - Screenshots: `chipboy_uishot` under Xvfb (`--song`, `--shaped`, `--hex`,
   `--scope-check`, `--tab-switch`).
 - LSDj parity: configure with `-DCHIPBOY_LSDJREF=ON` and `CHIPBOY_LSDJ_ROM` (the ROM

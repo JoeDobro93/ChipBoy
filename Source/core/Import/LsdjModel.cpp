@@ -1,0 +1,100 @@
+// ChipBoy -- the LSDj models (docs/plan-lsdj-import.md section 3).
+#include "core/Import/LsdjModel.h"
+
+#include <cstring>
+#include <string>
+
+namespace chipboy::lsdj {
+
+namespace {
+
+// --- LSDj 9.3.9, song format 22: every table traced on the user's ROM ------
+
+// Command bytes (docs/COMMANDS_AND_TEMPO.md section 44's finding): B sits at
+// 2 and shifts every letter after it.
+constexpr const char* kLetters9 = "-ABCDEFGHKLMOPRSTVWZ";
+// The letters before B existed: the version-0 saves the harness writes are
+// read with this table (measured on the same ROM).
+constexpr const char* kLettersLegacy = "-ACDEFGHKLMOPRSTVWZ";
+
+// Pitch-clock periods (11712 cycles, 2.79 ms) per level for envelope speeds
+// 0-F (section 51). 0 holds.
+constexpr uint8_t kEnvPeriods9[16] = { 0, 1, 2, 3, 4, 6, 8, 11, 15, 20, 27, 36, 48, 64, 86, 115 };
+
+// The noise map: MIDI note -> NR43, measured note by note on a format-22 song
+// for C-2 (36) to G-8 (115); above A-6 the values are 7-bit (bit 3). Below
+// and above the measured range 0xFF says "unmeasured", and the interpreter
+// folds the note into the range.
+constexpr uint8_t kNoise9[128] = {
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,   // 0-11
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,   // 12-23
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x08,   // 24-35 (35: a table row landed there in the song trace)
+    0xD7, 0xD6, 0xD5, 0xD4, 0xC7, 0xD3, 0xC5, 0xD2, 0xB7, 0xC3, 0xB5, 0xD1,   // 36-47
+    0xA7, 0xB3, 0xA5, 0xD0, 0x97, 0xA3, 0x95, 0xC0, 0x87, 0x93, 0x85, 0xB0,   // 48-59
+    0x77, 0x83, 0x75, 0xA0, 0x67, 0x73, 0x65, 0x90, 0x57, 0x63, 0x55, 0x80,   // 60-71
+    0x47, 0x53, 0x45, 0x70, 0x37, 0x43, 0x35, 0x60, 0x27, 0x33, 0x25, 0x50,   // 72-83
+    0x17, 0x23, 0x15, 0x40, 0x07, 0x13, 0x05, 0x30, 0x03, 0x20, 0x10, 0x00,   // 84-95
+    0xDF, 0xDE, 0xDD, 0xDC, 0xCF, 0xDB, 0xCD, 0xDA, 0xBF, 0xCB, 0xBD, 0xD9,   // 96-107 (7-bit)
+    0xAF, 0xBB, 0xAD, 0xD8, 0x9F, 0xAB, 0x9D, 0xC8, 0xFF, 0xFF, 0xFF, 0xFF,   // 108-119
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF                            // 120-127
+};
+
+// --- legacy: the formats before 9.x -----------------------------------------
+// Traced on the 9.3.9 ROM playing the harness's version-0 saves, which it
+// reads with the old rules: the command table without B and this noise map.
+// The envelope byte is NRx2 itself. Assumed to hold for formats 0-19 until a
+// ROM of each is measured (LsdjModel.h explains how).
+constexpr uint8_t kNoiseLegacy[128] = {
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xDF, 0xDE, 0xDD, 0xDC, 0xDB, 0xDA, 0xD9, 0xD8, 0xD7, 0xD6, 0xD5, 0xD4,   // 36-47
+    0xD3, 0xD2, 0xD1, 0xD0, 0xCF, 0xDB, 0xCD, 0xDA, 0xCB, 0xD9, 0xD8, 0xC8,   // 48-59
+    0xC7, 0xD3, 0xC5, 0xD2, 0xC3, 0xD1, 0xD0, 0xC0, 0xBF, 0xCB, 0xBD, 0xD9,   // 60-71
+    0xBB, 0xD8, 0xC8, 0xB8, 0xB7, 0xC3, 0xB5, 0xD1, 0xB3, 0xD0, 0xC0, 0xB0,   // 72-83
+    0xAF, 0xDF, 0xDE, 0xDD, 0xDC, 0xDB, 0xDA, 0xD9, 0xD8, 0xD7, 0xD6, 0xD5,   // 84-95
+    0xD4, 0xD3, 0xD2, 0xD1, 0xD0, 0xCF, 0xDB, 0xCD, 0xDA, 0xCB, 0xD9, 0xD8,   // 96-107
+    0xC8, 0xC7, 0xD3, 0xC5, 0xD2, 0xC3, 0xD1, 0xD0, 0xFF, 0xFF, 0xFF, 0xFF,   // 108-119
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
+};
+
+constexpr LsdjModel kLsdj939 { "LSDj 9.3.9", 22, 20, 31, kLetters9, true, kEnvPeriods9, kNoise9, -12, true, true };
+constexpr LsdjModel kLegacy  { "LSDj before 9 (legacy)", 3, 0, 19, kLettersLegacy, false, nullptr, kNoiseLegacy, -12, true, false };
+
+constexpr const LsdjModel* kModels[] = { &kLsdj939, &kLegacy };   // newest first
+
+} // namespace
+
+const LsdjModel* const* lsdjModels(int& count) { count = int(sizeof(kModels) / sizeof(kModels[0])); return kModels; }
+const LsdjModel& lsdjLatestModel() { return *kModels[0]; }
+
+const LsdjModel* lsdjModelForFormat(int formatVersion)
+{
+    for (const LsdjModel* m : kModels) if (formatVersion >= m->formatMin && formatVersion <= m->formatMax) return m;
+    return nullptr;
+}
+
+const LsdjModel* lsdjModelForRomVersion(const char* version)
+{
+    if (version == nullptr || *version == 0) return nullptr;
+    const std::string v = version;
+    for (const LsdjModel* m : kModels) {
+        const std::string name = m->name;
+        if (name.find(v) != std::string::npos) return m;
+    }
+    // A version no model names: the newest model at or below its major
+    // number, which is what LSDj itself does with a song from a near version.
+    const int major = v[0] >= '0' && v[0] <= '9' ? v[0] - '0' : -1;
+    if (major >= 9) return &kLsdj939;
+    if (major >= 0) return &kLegacy;
+    return nullptr;
+}
+
+const LsdjModel* lsdjModelNamed(const char* name)
+{
+    if (name == nullptr) return nullptr;
+    for (const LsdjModel* m : kModels) if (std::strcmp(m->name, name) == 0) return m;
+    return nullptr;
+}
+
+} // namespace chipboy::lsdj

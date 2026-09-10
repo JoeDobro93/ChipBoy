@@ -159,7 +159,7 @@ struct ScopeView::Impl : juce::Timer {
     std::vector<double> capState;     ///< the capacitor's voltage right after each sample, level units
     std::vector<std::pair<int, int>> offSpans;
     uint32_t n = 0;
-    uint64_t packed = 0, latest = 0;
+    uint64_t packed = 0, latest = 0, lastLatest = 0;
     /// The cycle the window ends at, taken with the samples: paint() reads
     /// no live atomic, so one snapshot always draws one picture.
     double endCycle = 0.0;
@@ -231,9 +231,18 @@ struct ScopeView::Impl : juce::Timer {
         const uint64_t newPacked = src.state != nullptr ? src.state->load(std::memory_order_relaxed) : 0;
         const uint64_t newLatest = src.latestCycle != nullptr ? src.latestCycle->load(std::memory_order_relaxed) : 0;
         const uint64_t newestCycle = count > 0 ? buf[count - 1].cycle : 0;
-        const bool changed = count != n || newPacked != packed || (count > 0 && newestCycle != latest) || (ch == 3 && newLatest != latest);
+        // A picture holds while nothing changes -- except that the window
+        // keeps sliding past the last sample after a channel goes quiet, so
+        // the tail of its last waveform must be drawn out of the frame: while
+        // the newest sample is still inside a window of the present, every
+        // new block is a repaint (UI_DESIGN section 3).
+        const double windowCycles = (ch == 3 || fixedWindow) ? kNoiseWindowSeconds * double(kCpuHz)
+                                                             : double(periods) * cyclesPerPeriod(ch, period);
+        const bool trailing = count > 0 && newLatest != lastLatest && double(newLatest) - double(newestCycle) < 2.0 * windowCycles + double(kCpuHz) / 4.0;
+        const bool changed = count != n || newPacked != packed || (count > 0 && newestCycle != latest) || (ch == 3 && newLatest != latest) || trailing;
         n = count;
         packed = newPacked;
+        lastLatest = newLatest;
         latest = ch == 3 ? newLatest : newestCycle;
         endCycle = double(std::max(newLatest, newestCycle));
         driver::VoiceView v;

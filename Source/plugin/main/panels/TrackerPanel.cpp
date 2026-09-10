@@ -1,5 +1,7 @@
 #include "plugin/main/panels/TrackerPanel.h"
 
+#include "plugin/main/panels/LsdjImportDialog.h"
+#include "plugin/shared/LsdjImport.h"
 #include "plugin/shared/SongFiles.h"
 
 #include <cmath>
@@ -41,7 +43,7 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
       tempoLabel_("Tempo", Fonts::caption(10.0f), colours::textDim),
       play_(String(CharPointer_UTF8("\xe2\x96\xb6 Play"))), stop_(String(CharPointer_UTF8("\xe2\x96\xa0 Stop"))), loop_("Loop"), follow_("Follow"),
       rec_(String(CharPointer_UTF8("\xe2\x97\x8f Rec"))),
-      saveSong_("Save song" + ellipsis()), loadSong_("Load song" + ellipsis()),
+      saveSong_("Save song" + ellipsis()), loadSong_("Load song" + ellipsis()), importSav_("Import .sav" + ellipsis()),
       export_("Export .gb" + ellipsis())
 {
     for (auto* l : { &startLabel_, &tempoLabel_ }) l->setUpperCase(true);
@@ -49,7 +51,7 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     playLed_.setInterceptsMouseClicks(false, false);
     for (auto* c : std::initializer_list<Component*>{ &play_, &stop_, &loop_, &follow_, &playLed_, &playText_, &pos_, &rec_,
                                                      &tempoLabel_, &tempo_, &startLabel_, &songStart_,
-                                                     &saveSong_, &loadSong_, &export_, &tabs_, &scroll_, &chain_ }) addAndMakeVisible(c);
+                                                     &saveSong_, &loadSong_, &importSav_, &export_, &tabs_, &scroll_, &chain_ }) addAndMakeVisible(c);
 
     // The transport (docs/COMMANDS_AND_TEMPO.md section 16). With no host
     // play head these run the song themselves; in a host they mirror it and
@@ -84,6 +86,9 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     saveSong_.onClick = [this] { saveSong(); };
     loadSong_.setTooltip("Read a .cbsong file into a tab of its own, with the bank it was written with.");
     loadSong_.onClick = [this] { loadSong(); };
+
+    importSav_.setTooltip("Read an LSDj .sav: pick the songs it holds -- the working song and every saved file -- and open each in a tab with its own bank, read by the rules of its LSDj version.");
+    importSav_.onClick = [this] { importSav(); };
 
     export_.setEnabled(false);
     export_.setTooltip("Later: compile this song into a playback ROM for real hardware.");
@@ -381,6 +386,28 @@ void TrackerPanel::saveSong()
     });
 }
 
+void TrackerPanel::importSav()
+{
+    chooser_ = std::make_unique<FileChooser>("Import from LSDj", songsFolder(), "*.sav", true, false, this);
+    chooser_->launchAsync(kOpenFlags, [safe = Component::SafePointer<TrackerPanel>(this)](const FileChooser& fc) {
+        if (safe == nullptr) return;
+        const File file = fc.getResult();
+        if (!file.existsAsFile()) return;
+        SavePreview preview; String error;
+        if (!readSave(file, preview, error)) { RichText r; r.plain("Not an LSDj save: ").bold(error); safe->report(r); return; }
+        LsdjImportDialog::show(safe->processor, std::move(preview), safe.getComponent(), [safe, name = file.getFileName()](const LsdjImportDialog::Outcome& out) {
+            if (safe == nullptr) return;
+            safe->bar_ = 0;
+            safe->refreshViews();
+            safe->contextChanged();
+            RichText r;
+            r.plain("Imported ").bold(String(out.songs) + (out.songs == 1 ? " song" : " songs")).plain(" from ").bold(name);
+            if (!out.notes.isEmpty()) r.plain(middot() + String(out.notes.size()) + (out.notes.size() == 1 ? " note" : " notes"));
+            safe->report(r);
+        });
+    });
+}
+
 void TrackerPanel::loadSong()
 {
     chooser_ = std::make_unique<FileChooser>("Open song", songsFolder(), String("*") + kSongExtension, true, false, this);
@@ -564,6 +591,8 @@ void TrackerPanel::resized()
     place(row2, saveSong_, 104, 24);
     row2.removeFromLeft(6);
     place(row2, loadSong_, 104, 24);
+    row2.removeFromLeft(6);
+    place(row2, importSav_, 108, 24);
     row2.removeFromLeft(12);
     place(row2, export_, 96, 24);
     close(3, row2, from);

@@ -31,7 +31,7 @@ Four voices per instance, always. If you want more, load another instance.
 **v1 is built.** Everything the workshop decided ships: the cycle-exact APU with the
 DMG and CGB chip variants, the measured analog stage with a RAW bypass, the LSDj-shaped
 bank (instruments, tables, waves and frames, kits), a driver with its own tick, a
-tracker with song tabs — each song owning its own bank — that follows the host
+tracker with song tabs — each song owning its own bank, an LSDj `.sav` importable into them (*Import .sav…*) — that follows the host
 transport or runs its own, records, and saves songs and instrument presets to their own
 files, two plugins linked through shared memory, the Hardware panel's options, and the
 window from the mockup with its visualizer and period-locked scopes. It has

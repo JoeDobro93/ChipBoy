@@ -38,8 +38,10 @@
 //   chipboy_recordtest --play-song FILE [bars]   play a song file and hear it
 //
 // Exit code 0 when the passes agree.
+#include "core/Import/LsdjSong.h"
 #include "plugin/main/ChipBoyProcessor.h"
 #include "plugin/shared/BankJson.h"
+#include "plugin/shared/LsdjImport.h"
 #include "plugin/shared/SongFiles.h"
 
 #include <algorithm>
@@ -626,6 +628,7 @@ int main(int argc, char** argv)
     juce::File demoDir = juce::File(CHIPBOY_DEMO_DIR);
     juce::File outDir = juce::File::getCurrentWorkingDirectory().getChildFile("recordtest");
     juce::File writeSong, checkSong, writeState, checkState, playFile;
+    juce::File importSav, importOut; juce::String importWhich;   // --import-sav SAV NAME|working OUT.cbsong
     int playBars = 8;                                         // --play-song's default (section 24)
     bool dump = false;
     for (int i = 1; i < argc; ++i) {
@@ -638,6 +641,9 @@ int main(int argc, char** argv)
         else if (key == "--check-song") checkSong = juce::File(juce::String(argv[++i]));
         else if (key == "--write-state") writeState = juce::File(juce::String(argv[++i]));
         else if (key == "--check-state") checkState = juce::File(juce::String(argv[++i]));
+        else if (key == "--import-sav" && i + 3 < argc) {
+            importSav = juce::File(juce::String(argv[++i])); importWhich = juce::String(argv[++i]); importOut = juce::File(juce::String(argv[++i]));
+        }
         else if (key == "--play-song") {
             playFile = juce::File(juce::String(argv[++i]));
             // The bar count is optional and follows the file, so it is taken
@@ -647,6 +653,36 @@ int main(int argc, char** argv)
         }
     }
     outDir.createDirectory();
+
+    /* ---- --import-sav: one song of an LSDj save into a .cbsong (section 54) ---- */
+    // The plugin's importer from the command line: the same code the dialog
+    // runs, so a save can be converted and then played with --play-song.
+    if (importSav != juce::File()) {
+        plugin::SavePreview preview; juce::String error;
+        if (!plugin::readSave(importSav, preview, error)) { std::printf("FAIL %s\n", error.toRawUTF8()); return 1; }
+        std::vector<uint8_t> bytes; std::string err; int format = preview.index.workingFormat; juce::String name = importWhich;
+        if (importWhich == "working") { lsdj::workingSong(preview.bytes.data(), preview.bytes.size(), bytes); name = "Working song"; }
+        else {
+            const chipboy::lsdj::SaveEntry* hit = nullptr;
+            for (const auto& e : preview.index.files) if (juce::String(e.name).equalsIgnoreCase(importWhich) || juce::String(e.file) == importWhich) hit = &e;
+            if (hit == nullptr) {
+                std::printf("FAIL no song named %s; the save holds:", importWhich.toRawUTF8());
+                for (const auto& e : preview.index.files) std::printf(" %s(%d,f%d)", e.name.c_str(), e.file, e.formatVersion);
+                std::printf("\n"); return 1;
+            }
+            if (!lsdj::decompressFile(preview.bytes.data(), preview.bytes.size(), hit->file, bytes, err)) { std::printf("FAIL %s\n", err.c_str()); return 1; }
+            format = hit->formatVersion; name = hit->name;
+        }
+        const auto& model = plugin::autoModel(format, preview.romVersion);
+        auto bank = std::make_unique<bank::Bank>(); auto song = std::make_unique<tracker::Song>();
+        lsdj::ImportSummary sum; lsdj::ImportNotes notes;
+        if (!lsdj::importSong(bytes.data(), bytes.size(), model, *bank, *song, sum, notes)) { std::printf("FAIL the song could not be read\n"); return 1; }
+        if (!plugin::saveSong(*song, *bank, importOut, "LSDj " + juce::String(juce::CharPointer_UTF8("\xc2\xb7")) + " " + name)) { std::printf("FAIL cannot write %s\n", importOut.getFullPathName().toRawUTF8()); return 1; }
+        std::printf("wrote %s: %s, format %d read as %s, %d instruments, %d tables, %d waves, %d phrases, %d rows, tempo %.0f, %d notes\n",
+                    importOut.getFullPathName().toRawUTF8(), name.toRawUTF8(), format, model.name, sum.instruments, sum.tables, sum.waves, sum.phrases, sum.rows, sum.tempoBpm, int(notes.lines.size()));
+        for (const auto& l : notes.lines) std::printf("  - %s\n", l.c_str());
+        return 0;
+    }
 
     /* ---- --play-song: a song file plays, and is heard (section 24) ---- */
     // Nothing under Demo/ is needed for this, so it runs before the demo is
