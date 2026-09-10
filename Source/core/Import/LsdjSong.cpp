@@ -234,6 +234,23 @@ struct Reader {
         }
         return m.noiseMap[size_t(k)];
     }
+    /// Section 81: the note LSDj's own table has an entry for -- the note
+    /// itself, or its octave neighbour inside the measured range. This is what
+    /// the cell carries when the instrument reads `Bank::noiseMap` directly, so
+    /// no clock is ever crossed into ChipBoy's own map and back.
+    bool mappedNoise() const { return m.noiseRule == NoiseRule::Map && m.noiseMap != nullptr; }
+    int noiseNoteInMap(int midi)
+    {
+        const int lo = std::clamp(m.noiseLo, 0, 127), hi = std::clamp(m.noiseHi, lo, 127);
+        int k = std::clamp(midi, 0, 127);
+        if (k < lo || k > hi) {
+            notes.add("noise note " + std::to_string(midi) + " is outside the measured map; mapped as its octave's neighbour");
+            while (k < lo) k += 12;
+            while (k > hi) k -= 12;
+            k = std::clamp(k, lo, hi);
+        }
+        return k;
+    }
     int offsetOf(int slot) const { const auto it = noiseOffset.find(slot); return it == noiseOffset.end() ? 0 : it->second; }
     /// The ChipBoy note that plays NR43 `v` on `slot`, its Shift offset taken
     /// into account: the map's clock is 2^offset times the byte's.
@@ -389,6 +406,14 @@ struct Reader {
             // itself at the chip's own rate (section 70).
             o.envRetrig = m.envelopeLaw != EnvelopeLaw::SoftwareStages;
             instTranspose[size_t(i)] = o.transpose;
+            // Section 81: a noise instrument reads LSDj's own table straight off
+            // the bank, so the cell's note is LSDj's note and the byte the driver
+            // writes is the byte the ROM writes.
+            if (type == bank::InstrumentType::Noise && mappedNoise()) {
+                o.noiseLsdjMap = true;
+                std::copy(m.noiseMap, m.noiseMap + 128, bank.noiseMap.begin());
+                bank.noiseMapSet = true;
+            }
             if (t == 0 || t == 3) envelope(b, o, name);
             if (t == 0) {
                 o.duty = uint8_t(b[7] >> 6); o.dutySeqLen = 0; o.pitchSpeed = m.pitchLaw == PitchLaw::Register ? bank::PitchSpeed::Drum : pitchSpeedOf(b[5]);
@@ -616,7 +641,9 @@ struct Reader {
                 for (const auto& [ins, ch, midi] : it->second) { if (kindFor(ins, ch) == 3) { if (bases.empty() || midi < *bases.begin()) noiseInst = ins; bases.insert(midi); } else others = true; }
             if (!bases.empty()) {
                 noiseBase = *bases.begin();
-                if (bases.size() > 1) notes.add("table " + hex2(t) + " is used by several noise notes: its transposes are mapped for the lowest; the others land a little off");
+                // Under LSDj's own table (section 81) the column is semitones and
+                // every note it serves lands right, so there is nothing to say.
+                if (bases.size() > 1 && !mappedNoise()) notes.add("table " + hex2(t) + " is used by several noise notes: its transposes are mapped for the lowest; the others land a little off");
                 if (others) notes.add("table " + hex2(t) + " is used by noise and non-noise instruments: its transposes are mapped for the noise");
             }
             auto& tb = bank.tables[size_t(t)];
@@ -644,7 +671,12 @@ struct Reader {
                 const std::pair<uint8_t, uint8_t> cmds[2] = { { at(kTableCmd1 + i), at(kTableCmd1V + i) }, { at(kTableCmd2 + i), at(kTableCmd2V + i) } };
                 if (tsp) {
                     st.hasTranspose = true;
-                    if (noiseBase >= 0) {
+                    // Section 81: under LSDj's own table the column is what it says
+                    // -- semitones on the note -- so it goes through untouched and
+                    // every note the table serves lands where the ROM puts it, not
+                    // only the lowest.
+                    if (noiseBase >= 0 && mappedNoise()) st.transpose = int8_t(signedByte(tsp));
+                    else if (noiseBase >= 0) {
                         // Before 9 the column is subtracted from NR43 itself, byte-wise
                         // (a -2 is +2 on the register; measured on the format-3
                         // songs); on 9.x it moves the note through the map.
@@ -705,8 +737,15 @@ struct Reader {
                     const uint8_t nr43 = lsdjNr43(tspMidi, cur);
                     state.noiseSlot = slotFor(cur, channel);
                     noiseWidths[state.noiseSlot].insert((nr43 & 8) != 0);
-                    midi = noteForNr43(nr43, tspMidi, state.noiseSlot);
-                    if (midi < 12) { notes.add("noise NR43 " + hex2(nr43) + " clocks below ChipBoy's lowest noise note (a click rather than a pitch); the lowest, note 12, is used"); midi = 12; }
+                    // Section 81: with LSDj's own table on the bank the cell carries
+                    // the **LSDj note**, and the driver reads the same byte the ROM
+                    // writes. Without one -- an older format whose rule is a shape or
+                    // a raw byte -- it still has to cross into ChipBoy's map.
+                    if (mappedNoise()) midi = noiseNoteInMap(tspMidi);
+                    else {
+                        midi = noteForNr43(nr43, tspMidi, state.noiseSlot);
+                        if (midi < 12) { notes.add("noise NR43 " + hex2(nr43) + " clocks below ChipBoy's lowest noise note (a click rather than a pitch); the lowest, note 12, is used"); midi = 12; }
+                    }
                     state.nr43 = nr43; state.chipNote = midi;             // an S on this row moves on from here
                 }
                 c.note = uint8_t(std::clamp(midi, kind == 3 ? 12 : 1, 127));

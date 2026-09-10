@@ -86,6 +86,7 @@ String commandRevertText(bank::Cmd c)
 {
     switch (c) {
         case bank::Cmd::A: return "stop the table";
+        case bank::Cmd::B: return {};                     // a chance leaves nothing behind (73)
         case bank::Cmd::G: return "the phrase's groove";
         case bank::Cmd::M: return "the master parameters";
         case bank::Cmd::P: return "no offset, no bend";

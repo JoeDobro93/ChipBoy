@@ -108,9 +108,11 @@ def ticks(beats):
 # The letters a command slot can hold, in the order Parameters.cpp builds the
 # choice: "none", then the enum's order without H (tables only). A lane stores
 # the index. What x and y mean is per letter -- docs/COMMANDS_AND_TEMPO.md
-# section 2.
+# section 2. B is last rather than in its alphabetical place, so every letter
+# before it keeps the index it has always had and a saved automation value
+# still means what it did (section 73).
 CMD_CHOICES = ["none", "A", "C", "D", "E", "F", "G", "K", "L", "M",
-               "O", "P", "R", "S", "T", "V", "W", "Z"]
+               "O", "P", "R", "S", "T", "V", "W", "Z", "B"]
 CMD = {letter: index for index, letter in enumerate(CMD_CHOICES)}
 
 

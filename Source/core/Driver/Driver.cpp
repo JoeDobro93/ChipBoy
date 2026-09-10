@@ -1061,7 +1061,15 @@ void Driver::writePeriod(int ch, bool trigger)
             // The instrument's Shift is an offset from the map's pair (5 is
             // none); it is read from the instrument, not from the pair the last
             // write left in `v.noiseShift`, or a second write would compound it.
-            s = uint8_t(noiseShiftMap_[size_t(n + kNoiseMapBelow)]); d = uint8_t(noiseDivMap_[size_t(n + kNoiseMapBelow)]); s = uint8_t(std::clamp(int(s) + int(v.inst.noiseShift) - 5, 0, 13));
+            if (v.inst.noiseLsdjMap && bank_ != nullptr && bank_->noiseMapSet) {
+                // Section 81: LSDj's own table, so an imported drum lands on the
+                // byte the ROM writes rather than on ChipBoy's nearest clock.
+                const uint8_t nr = bank_->noiseMap[size_t(std::clamp(n, 0, 127))];
+                s = uint8_t(nr >> 4); d = uint8_t(nr & 7);
+            } else {
+                s = uint8_t(noiseShiftMap_[size_t(n + kNoiseMapBelow)]); d = uint8_t(noiseDivMap_[size_t(n + kNoiseMapBelow)]);
+            }
+            s = uint8_t(std::clamp(int(s) + int(v.inst.noiseShift) - 5, 0, 13));
         }
         // The pair the note chose is what the voice keeps; the section 66 delta
         // is taken off the byte on its way out, so it never compounds. Its low
@@ -1069,8 +1077,13 @@ void Driver::writePeriod(int ch, bool trigger)
         v.noiseShift = s; v.noiseDiv = d;
         uint8_t nr = uint8_t((s << 4) | (v.lfsr7 ? 8 : 0) | (d & 7));
         if (v.inst.noiseDomain == bank::NoiseSweepDomain::Register && v.noiseReg) nr = bank::noiseNibbleSub(nr, v.noiseReg);
+        // Section 82: turning the **7-bit** LFSR on mid-note triggers the channel;
+        // turning it off does not. Measured over every NR43 write of a real song,
+        // fifteen of each and no exception either way.
+        const bool wasWide = v.lastPeriod >= 0 && (v.lastPeriod & 8) == 0;
+        const bool widthOn = !trigger && v.active && (nr & 8) != 0 && wasWide;
         emit(regAddr(3, 3), nr, true);
-        if (trigger) { emit(regAddr(3, 4), uint8_t(0x80 | (v.inst.length ? 0x40 : 0)), true); markTrigger(ch); }
+        if (trigger || widthOn) { emit(regAddr(3, 4), uint8_t(0x80 | (v.inst.length ? 0x40 : 0)), true); markTrigger(ch); }
         v.lastPeriod = int16_t(nr);
         return;
     }

@@ -206,6 +206,11 @@ struct InstrumentCore {
     /// the note through the map, Register the NR43 byte nibble-wise.
     NoiseSweepDomain noiseDomain = NoiseSweepDomain::Notes;
     bool     lfsr7 = false;
+    /// Section 81: read `NR43` straight out of the bank's LSDj map instead of
+    /// ChipBoy's nearest-clock rule. Set by the importer on every noise
+    /// instrument it brings in, so a transpose, an `S`, a chord or a vibrato
+    /// lands on the entry of LSDj's own table that the ROM lands on.
+    bool     noiseLsdjMap = false;
     bool     noiseManual = false;
     uint8_t  noiseShift = 5;
     uint8_t  noiseDivisor = 1;
@@ -326,6 +331,11 @@ struct Bank {
     std::array<Table, kTableSlots>           tables;
     std::array<Wave, kWaveSlots>             waves;
     std::array<Kit, kKitSlots>               kits;
+    /// Section 81: LSDj's own note-to-`NR43` table, when a song was imported
+    /// from a save. One per bank -- an import comes from one version -- and
+    /// used only by instruments whose `noiseLsdjMap` is set.
+    std::array<uint8_t, 128> noiseMap{};
+    bool                     noiseMapSet = false;
 
     /// Slot access, 1-based; nullptr for 0 or an unused slot.
     const Instrument* instrument(int slot) const;

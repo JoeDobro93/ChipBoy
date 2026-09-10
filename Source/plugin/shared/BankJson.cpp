@@ -95,6 +95,7 @@ var instrumentToVarSlot(const Instrument& i, int slot)
         o->setProperty("envReleaseCurve", int(i.env.releaseCurve));
     }
     o->setProperty("sweepRate", int(i.sweepRate)); o->setProperty("sweepDown", i.sweepDown); o->setProperty("sweepShift", int(i.sweepShift));
+    if (i.noiseLsdjMap) o->setProperty("noiseLsdjMap", true);          // section 81
     o->setProperty("wave", int(i.wave)); o->setProperty("frameAdvance", int(i.frameAdvance)); o->setProperty("frameLoop", int(i.frameLoop)); o->setProperty("waveLevel", int(i.waveLevel));
     o->setProperty("kit", int(i.kit)); o->setProperty("kitLoop", int(i.kitLoop));
     o->setProperty("lfsr7", i.lfsr7); o->setProperty("noiseManual", i.noiseManual); o->setProperty("noiseShift", int(i.noiseShift)); o->setProperty("noiseDivisor", int(i.noiseDivisor)); o->setProperty("noiseSweep", int(i.noiseSweep));
@@ -155,6 +156,7 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.env.decayCurve = EnvCurve(std::clamp(getOr(o, "envDecayCurve", 0), 0, 2));
     i.env.releaseCurve = EnvCurve(std::clamp(getOr(o, "envReleaseCurve", 0), 0, 2));
     i.sweepRate = uint8_t(std::clamp(getOr(o, "sweepRate", 0), 0, 7)); i.sweepDown = bool(o->getProperty("sweepDown")); i.sweepShift = uint8_t(std::clamp(getOr(o, "sweepShift", 0), 0, 7));
+    i.noiseLsdjMap = bool(o->getProperty("noiseLsdjMap"));             // section 81
     i.wave = uint8_t(std::clamp(getOr(o, "wave", 1), 1, 64)); i.frameAdvance = uint8_t(std::clamp(getOr(o, "frameAdvance", 0), 0, 15)); i.frameLoop = FrameLoop(std::clamp(getOr(o, "frameLoop", 0), 0, 2)); i.waveLevel = uint8_t(std::clamp(getOr(o, "waveLevel", 3), 0, 3));
     i.kit = uint8_t(std::clamp(getOr(o, "kit", 1), 1, 32)); i.kitLoop = KitLoop(std::clamp(getOr(o, "kitLoop", 0), 0, 2));
     i.lfsr7 = bool(o->getProperty("lfsr7")); i.noiseManual = bool(o->getProperty("noiseManual")); i.noiseShift = uint8_t(std::clamp(getOr(o, "noiseShift", 5), 0, 13)); i.noiseDivisor = uint8_t(std::clamp(getOr(o, "noiseDivisor", 1), 0, 7)); i.noiseSweep = int8_t(std::clamp(getOr(o, "noiseSweep", 0), -7, 7));
@@ -352,6 +354,13 @@ var bankToVar(const Bank& b)
     for (int i = 0; i < kWaveSlots; ++i) if (b.waves[size_t(i)].used) waves.add(waveToVarImpl(b.waves[size_t(i)], i + 1));
     for (int i = 0; i < kKitSlots; ++i) if (b.kits[size_t(i)].used) kits.add(kitToVarImpl(b.kits[size_t(i)], i + 1));
     o->setProperty("instruments", ins); o->setProperty("tables", tabs); o->setProperty("waves", waves); o->setProperty("kits", kits);
+    // Section 81: LSDj's own noise table, when the bank came from a save. A
+    // bank without one leaves the key out and reads back with the flag clear.
+    if (b.noiseMapSet) {
+        Array<var> nm;
+        for (uint8_t x : b.noiseMap) nm.add(int(x));
+        o->setProperty("noiseMap", nm);
+    }
     return var(o);
 }
 
@@ -373,6 +382,10 @@ bool bankFromVar(const var& v, Bank& out)
     });
     each(o->getProperty("waves"), kWaveSlots, [&](const var& e, int slot) { waveFromVarImpl(e, out.waves[size_t(slot - 1)]); });
     each(o->getProperty("kits"), kKitSlots, [&](const var& e, int slot) { kitFromVarImpl(e, out.kits[size_t(slot - 1)]); });
+    if (auto* nm = o->getProperty("noiseMap").getArray()) {                 // section 81
+        for (int i = 0; i < 128 && i < nm->size(); ++i) out.noiseMap[size_t(i)] = uint8_t(std::clamp(int((*nm)[i]), 0, 255));
+        out.noiseMapSet = true;
+    }
     return true;
 }
 

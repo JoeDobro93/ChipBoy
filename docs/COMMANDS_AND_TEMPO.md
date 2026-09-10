@@ -2292,3 +2292,53 @@ across passes has no place in a schedule that is built once.
 Until that changes the importer's job is to be accurate about what was lost, which means saying
 the right thing: a `H x y` with `x > 0` is a hop **within** the phrase, not "ends the phrase `x`
 times".
+
+## 81. An imported noise instrument plays LSDj's own note map
+
+ChipBoy builds its noise map by picking, for each note, the `(shift, divisor)` pair whose LFSR
+clock is nearest that note's frequency. LSDj has a **table** instead, measured per version and
+already carried by `LsdjModel::noiseMap`. The two are close but not the same, and the importer
+was crossing between them twice: LSDj note → LSDj's `NR43` → the nearest ChipBoy note → back to
+a `(shift, divisor)` pair by ChipBoy's own rule. On SUNRISE that round trip turns the ROM's
+`NR43 = 20` into `15` — two octaves and a bit of LFSR clock, which on a drum is not a nuance.
+
+**The fix is to stop crossing.** The bank carries LSDj's map and a noise instrument can say it
+wants it:
+
+- `Bank::noiseMap`, 128 bytes, and `Bank::noiseMapSet`. One map per bank, because an import
+  comes from one version; it is written by the importer and by nothing else.
+- `Instrument::noiseLsdjMap`, false by default. When it is set and the bank has a map, the
+  driver reads `NR43` straight out of `bank.noiseMap[note]` rather than from `noisePairForNote`.
+  Everything that moves a noise note -- a chain or table transpose, `S`'s semitones, a chord, a
+  vibrato -- still moves the *note*, so it lands on another entry of LSDj's own table exactly as
+  it does on the ROM.
+- The importer then writes the **LSDj note itself** into the cell (`note byte + 35`), fills
+  `bank.noiseMap` from the model, sets the flag on every noise instrument, and skips
+  `noteForNr43` altogether. `chooseNoiseOffsets`, which existed to squeeze LSDj's clocks onto
+  ChipBoy's keyboard, is not needed for a mapped instrument.
+
+An instrument the user builds by hand is unaffected: the flag is off and the map is ChipBoy's.
+A song imported before this reads with the flag off too, and sounds as it did.
+
+The instrument's own **Shift** offset still applies on top, as it did, so a kit-style noise
+instrument that shifts the whole map keeps working.
+
+## 82. The noise channel triggers when a note turns the 7-bit LFSR on
+
+Measured on 9.3.9 playing the user's own SUNRISE, over every `NR43` write in twenty-seven
+seconds, sorted by what the width bit (`NR43` bit 3) did and whether a trigger followed:
+
+| width bit | trigger | no trigger |
+|---|---|---|
+| 0 → 1 | **15** | 0 |
+| 1 → 0 | 0 | **15** |
+| unchanged | 55 (the note-ons) | 18 |
+
+So when a table's transpose, an `S` or any other move lands the note on a map entry that turns
+the **7-bit** LFSR on where it was off, LSDj **triggers the channel**; going back to 15-bit does
+not. The asymmetry is what a real driver would do: the short LFSR is a different sound rather
+than a pitch, and it only takes effect on a trigger.
+
+ChipBoy wrote the width bit and carried on, which cost SUNRISE fifteen of its seventy noise hits
+-- every one of them a snare's click. `writePeriod`'s noise branch now triggers on the rising
+edge, mid-note only: a note-on has its own trigger and must not get a second.

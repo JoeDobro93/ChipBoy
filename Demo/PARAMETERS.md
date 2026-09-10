@@ -44,10 +44,10 @@ and the plugin rounds to the nearest step when it reads it back.
 | 19 | `ch1_level` | PU1 Level | 0-16 (16 = the instrument's) | 16 | 1379958257 |
 | 20 | `ch1_pan` | PU1 Pan | 0-4 (off, L, R, both, inst) | 4 (inst) | 694176330 |
 | 21 | `ch1_transpose` | PU1 Transpose | -60-60 (semitones) | 0 | 1117838118 |
-| 22 | `ch1_cmd1_type` | PU1 CMD1 | 0-17 (none, A, C, D, E, F, G, K, L, M, O, P, R, S, T, V, W, Z) | 0 (none) | 405983279 |
+| 22 | `ch1_cmd1_type` | PU1 CMD1 | 0-18 (none, A, C, D, E, F, G, K, L, M, O, P, R, S, T, V, W, Z, B) | 0 (none) | 405983279 |
 | 23 | `ch1_cmd1_x` | PU1 CMD1 x | 0-255 (the letter's x) | 0 | 1725655971 |
 | 24 | `ch1_cmd1_y` | PU1 CMD1 y | 0-255 (the letter's y) | 0 | 1725655972 |
-| 25 | `ch1_cmd2_type` | PU1 CMD2 | 0-17 (none, A, C, D, E, F, G, K, L, M, O, P, R, S, T, V, W, Z) | 0 (none) | 434612430 |
+| 25 | `ch1_cmd2_type` | PU1 CMD2 | 0-18 (none, A, C, D, E, F, G, K, L, M, O, P, R, S, T, V, W, Z, B) | 0 (none) | 434612430 |
 | 26 | `ch1_cmd2_x` | PU1 CMD2 x | 0-255 (the letter's x) | 0 | 1725656932 |
 | 27 | `ch1_cmd2_y` | PU1 CMD2 y | 0-255 (the letter's y) | 0 | 1725656933 |
 | 28 | `ch1_live_follow` | PU1 Live Follow | 0-1 (off, on) | 0 | 801014545 |
@@ -59,10 +59,10 @@ and the plugin rounds to the nearest step when it reads it back.
 | 34 | `ch2_level` | PU2 Level | 0-16 (16 = the instrument's) | 16 | 119978290 |
 | 35 | `ch2_pan` | PU2 Pan | 0-4 (off, L, R, both, inst) | 4 (inst) | 695099851 |
 | 36 | `ch2_transpose` | PU2 Transpose | -60-60 (semitones) | 0 | 1468370407 |
-| 37 | `ch2_cmd1_type` | PU2 CMD1 | 0-17 (none, A, C, D, E, F, G, K, L, M, O, P, R, S, T, V, W, Z) | 0 (none) | 756515568 |
+| 37 | `ch2_cmd1_type` | PU2 CMD1 | 0-18 (none, A, C, D, E, F, G, K, L, M, O, P, R, S, T, V, W, Z, B) | 0 (none) | 756515568 |
 | 38 | `ch2_cmd1_x` | PU2 CMD1 x | 0-255 (the letter's x) | 0 | 1320982658 |
 | 39 | `ch2_cmd1_y` | PU2 CMD1 y | 0-255 (the letter's y) | 0 | 1320982659 |
-| 40 | `ch2_cmd2_type` | PU2 CMD2 | 0-17 (none, A, C, D, E, F, G, K, L, M, O, P, R, S, T, V, W, Z) | 0 (none) | 785144719 |
+| 40 | `ch2_cmd2_type` | PU2 CMD2 | 0-18 (none, A, C, D, E, F, G, K, L, M, O, P, R, S, T, V, W, Z, B) | 0 (none) | 785144719 |
 | 41 | `ch2_cmd2_x` | PU2 CMD2 x | 0-255 (the letter's x) | 0 | 1320983619 |
 | 42 | `ch2_cmd2_y` | PU2 CMD2 y | 0-255 (the letter's y) | 0 | 1320983620 |
 | 43 | `ch2_live_follow` | PU2 Live Follow | 0-1 (off, on) | 0 | 507611538 |
@@ -74,10 +74,10 @@ and the plugin rounds to the nearest step when it reads it back.
 | 49 | `ch3_level` | WAV Level | 0-4 (0 mute, 1 25%, 2 50%, 3 100%, 4 = the instrument's) | 4 | 1007481971 |
 | 50 | `ch3_pan` | WAV Pan | 0-4 (off, L, R, both, inst) | 4 (inst) | 696023372 |
 | 51 | `ch3_transpose` | WAV Transpose | -60-60 (semitones) | 0 | 1818902696 |
-| 52 | `ch3_cmd1_type` | WAV CMD1 | 0-17 (none, A, C, D, E, F, G, K, L, M, O, P, R, S, T, V, W, Z) | 0 (none) | 1107047857 |
+| 52 | `ch3_cmd1_type` | WAV CMD1 | 0-18 (none, A, C, D, E, F, G, K, L, M, O, P, R, S, T, V, W, Z, B) | 0 (none) | 1107047857 |
 | 53 | `ch3_cmd1_x` | WAV CMD1 x | 0-255 (the letter's x) | 0 | 916309345 |
 | 54 | `ch3_cmd1_y` | WAV CMD1 y | 0-255 (the letter's y) | 0 | 916309346 |
-| 55 | `ch3_cmd2_type` | WAV CMD2 | 0-17 (none, A, C, D, E, F, G, K, L, M, O, P, R, S, T, V, W, Z) | 0 (none) | 1135677008 |
+| 55 | `ch3_cmd2_type` | WAV CMD2 | 0-18 (none, A, C, D, E, F, G, K, L, M, O, P, R, S, T, V, W, Z, B) | 0 (none) | 1135677008 |
 | 56 | `ch3_cmd2_x` | WAV CMD2 x | 0-255 (the letter's x) | 0 | 916310306 |
 | 57 | `ch3_cmd2_y` | WAV CMD2 y | 0-255 (the letter's y) | 0 | 916310307 |
 | 58 | `ch3_live_follow` | WAV Live Follow | 0-1 (off, on) | 0 | 214208531 |
@@ -89,10 +89,10 @@ and the plugin rounds to the nearest step when it reads it back.
 | 64 | `ch4_level` | NOI Level | 0-16 (16 = the instrument's) | 16 | 1894985652 |
 | 65 | `ch4_pan` | NOI Pan | 0-4 (off, L, R, both, inst) | 4 (inst) | 696946893 |
 | 66 | `ch4_transpose` | NOI Transpose | -60-60 (semitones) | 0 | 21951337 |
-| 67 | `ch4_cmd1_type` | NOI CMD1 | 0-17 (none, A, C, D, E, F, G, K, L, M, O, P, R, S, T, V, W, Z) | 0 (none) | 1457580146 |
+| 67 | `ch4_cmd1_type` | NOI CMD1 | 0-18 (none, A, C, D, E, F, G, K, L, M, O, P, R, S, T, V, W, Z, B) | 0 (none) | 1457580146 |
 | 68 | `ch4_cmd1_x` | NOI CMD1 x | 0-255 (the letter's x) | 0 | 511636032 |
 | 69 | `ch4_cmd1_y` | NOI CMD1 y | 0-255 (the letter's y) | 0 | 511636033 |
-| 70 | `ch4_cmd2_type` | NOI CMD2 | 0-17 (none, A, C, D, E, F, G, K, L, M, O, P, R, S, T, V, W, Z) | 0 (none) | 1486209297 |
+| 70 | `ch4_cmd2_type` | NOI CMD2 | 0-18 (none, A, C, D, E, F, G, K, L, M, O, P, R, S, T, V, W, Z, B) | 0 (none) | 1486209297 |
 | 71 | `ch4_cmd2_x` | NOI CMD2 x | 0-255 (the letter's x) | 0 | 511636993 |
 | 72 | `ch4_cmd2_y` | NOI CMD2 y | 0-255 (the letter's y) | 0 | 511636994 |
 | 73 | `ch4_live_follow` | NOI Live Follow | 0-1 (off, on) | 0 | 2068289172 |

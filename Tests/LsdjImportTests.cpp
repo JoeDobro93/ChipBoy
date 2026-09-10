@@ -128,6 +128,17 @@ struct SaveWriter {
     }
 };
 
+/// Section 81: under LSDj's own table the cell carries the **LSDj note** and
+/// the driver reads `Bank::noiseMap`, so the test is the stronger one -- the
+/// byte that will reach NR43 is the byte the ROM writes.
+bool noiseByteMatches(const bank::Bank& bank, const tracker::Phrase& p, int cell, uint8_t nr43)
+{
+    const auto& c = p.cells[size_t(cell)];
+    if (c.inst < 1 || !bank.noiseMapSet) return false;
+    if (!bank.instruments[size_t(c.inst - 1)].noiseLsdjMap) return false;
+    return c.note < 128 && bank.noiseMap[size_t(c.note)] == nr43;
+}
+
 } // namespace
 
 TEST_CASE("the save's file table and its compressed files are read back", "[lsdj]")
@@ -257,7 +268,7 @@ TEST_CASE("a format-22 song imports its instruments, tables, phrases and chains"
     for (int ch = 0; ch < 4; ++ch) for (uint8_t slot : out->chain[size_t(ch)]) {
         const auto* p = out->phrase(slot);
         if (ch == 2 && p) { foundWave = true; CHECK(p->cells[0].note == 48 - 12); }
-        if (ch == 3 && p) { foundNoise = true; CHECK(p->cells[0].note == chipboyNoteForNr43(0x20, 93)); }
+        if (ch == 3 && p) { foundNoise = true; CHECK(noiseByteMatches(*bank, *p, 0, 0x20)); }   // section 81
     }
     CHECK(foundWave); CHECK(foundNoise);
     // Chains: chain 0 is the phrase twice, the second transposed +5, and PU1 plays it in both song rows; PU2 is empty (a note).
@@ -453,7 +464,7 @@ TEST_CASE("the formats before 9 read the noise SHAPE and resolve S to the note i
     REQUIRE(noi9 != nullptr);
     REQUIRE(noi9->cells[0].cmd1.cmd == bank::Cmd::S);
     CHECK(semitoneOf(noi9->cells[0].cmd1) == -15);                             // F1 two's complement
-    CHECK(noiseClockMatches(*bank, *noi9, 0, 0x77));                          // C-4 on the 9.x map: 292 Hz, three octaves below the keyboard
+    CHECK(noiseByteMatches(*bank, *noi9, 0, 0x77));                          // C-4 on the 9.x map, byte for byte (section 81)
 }
 
 TEST_CASE("the formats before 5.7 convert P, L and V from the period register", "[lsdj]")
