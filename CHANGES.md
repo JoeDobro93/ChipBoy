@@ -2387,3 +2387,35 @@ them (§70).
 **Note:** the verbatim changelog line quoted in the §70 entries has been paraphrased. L3 keeps
 LSDj's own text out of the repository; behaviour may be checked and described, which is what
 these entries do.
+
+### 2026-09-10 — the command matrix measured on 9.3.9
+
+**Changed:** the matrix's rows were a mix of 9.2.J measurements, 8.4.4 measurements and
+changelog reading. A rig was built for 9.3.9 (`tools/lsdjref/probe_fmt22.py`, `run.py`) and
+every row that was not already a 9.x register measurement has been traced on that ROM.
+
+Three of them came back different from what the changelog says or what ChipBoy assumes:
+
+- **`B`'s sense is inverted from its changelog examples.** On 9.3.9 `B00` never plays the note
+  and `B0F` always does; the changelog describes the opposite. Each nibble is an independent
+  roll of about `n/15` and the note sounds if either passes -- `B44` at 48/102 matches
+  `1 - (1 - 23/102)(1 - 30/102)`, not the larger nibble. In a table, `x` is the hop chance and
+  `y` the destination row, and a zero `x` never hops.
+- **`Z` re-runs the last command executed, not the other column's**, and its digits add to the
+  target byte's nibbles. ChipBoy prefers the other slot or column and adds to the `a`/`b`
+  fields, which diverges for every command whose argument is a whole byte.
+- **`C` and `V` both work on the noise channel**, walking the note map; ChipBoy discards both.
+
+`F` was also decoded properly for the first time: on PU1 it is a downward finetune of `y/32` of
+a semitone with `x` ignored, on PU2 it is `x` semitones plus `y/32` upward, and on WAV it picks
+the frame. ChipBoy drops it on PU1 and reads the whole byte as semitones on PU2; both are
+wrong, and PU1 maps exactly onto `fineOffset` as `-8 * y`.
+
+**Rig validation, before any of it was trusted:** the working-area path was checked against
+booting the save as a file and 12549 of 12551 writes matched in order; the probe song is built
+on a real editor-written format-22 song and only writes into slots that song already allocates,
+which is what keeps it clear of the section 58 trap.
+
+**Not done:** twelve letters still carry a 9.2.J measurement rather than a 9.3.9 one. They are
+the same format-22 model and the same ROM code path, so they are expected to hold, and the
+document says plainly which ones they are.

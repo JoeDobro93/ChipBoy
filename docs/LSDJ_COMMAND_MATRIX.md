@@ -28,10 +28,10 @@ the assumed ones have been wrong before.
 
 | Mark | Means |
 |---|---|
-| **M9** | Measured on a 9.x ROM by logging register writes. The ROM version is named. |
-| **M8** | Measured on 8.4.4 or 5.0.3 playing a real user song. Named where it appears. |
-| **D** | From LSDj's own changelog or manual -- documented behaviour, not yet traced. |
-| **A** | Assumed from a neighbouring version or from how the format is laid out. **Not evidence.** |
+| **939** | **Measured on 9.3.9**, on the rig in §3, by logging register writes. The standard this table is held to. |
+| **92J** | Measured on 9.2.J -- the same format-22 model, so expected to hold, but not confirmed on 9.3.9. |
+| **M8** | Measured on 8.4.4 or 5.0.3. Kept only where it says something about an older format. |
+| **D** | From LSDj's own changelog -- documented, not traced. **Twice now the changelog has been wrong about the current build** (see `B`). |
 | **?** | Unknown. Nobody has looked. |
 
 Two warnings, both learned the hard way and both recorded in `COMMANDS_AND_TEMPO.md`:
@@ -63,25 +63,25 @@ Two warnings, both learned the hard way and both recorded in `COMMANDS_AND_TEMPO
 
 | Cmd | LSDj 9.3.9, in one line | Channels | Phrase vs table | ChipBoy now | Mappable | Prov. |
 |---|---|---|---|---|---|---|
-| `A` | Run table `xy`; `A20` stops the table | all | same | `Cmd::A`, slot `xy + 1`, 0 stops | Yes (slot + 1; a table *column* cannot say "stop") | D |
-| `B` | **MayBe**: phrase = play-probability, table = probabilistic hop | all | **different** | **absent** | **No** -- dropped with a note | D |
-| `C` | Chord: arpeggiate note, note+`x`, note+`y` | PU1 PU2 WAV | same | `Cmd::C`, same | Yes | M9 (9.2.J, §9) |
-| `D` | Delay the note by `xy` ticks | all | same | `Cmd::D`, read at the note-on | Yes | M9 (§9) |
-| `E` | Envelope: level `x`, `y` is the NRx2 low nibble | PU1 PU2 NOI (WAV: level only) | same | `Cmd::E`; runs the envelope in software | Yes, **but see §4** (rate table is version-dependent) | M9 (§6, §7), M8 (§67, §70) |
-| `F` | Wave: frame. PU2: finetune/transpose. Elsewhere: finetune | WAV, PU2 | same | `Cmd::F`: frame on WAV, transpose on PU2, inert elsewhere | Partly -- PU1/NOI finetune is **No** | A |
+| `A` | Run table `xy`; **`A20` stops it**, even when the instrument names a table | all | same | `Cmd::A`, slot `xy + 1`, 0 stops | Yes (slot + 1) | **939** |
+| `B` | **Chance.** Phrase: two rolls, note sounds if either passes. Table: hop to row `y` with chance `x` | all | **different** | **absent** | **No** -- dropped with a note | **939** |
+| `C` | Chord: note, note+`x`, note+`y`, one step a tick | PU1 PU2 WAV **and NOI** | same | `Cmd::C`; **ignored on noise** | Yes on PU/WAV; **Engine** on noise | 92J; **939** on noise |
+| `D` | Delay the note by `xy` ticks | all | same | `Cmd::D`, read at the note-on | Yes | 92J |
+| `E` | Envelope: level `x`, `y` the `NRx2` low nibble. 9.3.9 steps the level in software -- every `NRx2` goes out with low nibble 8 | PU1 PU2 NOI (WAV: level only) | same | `Cmd::E`; software envelope, `envChipTiming` picks the rate table | Yes | 92J; **939** confirms the software envelope |
+| `F` | **PU1**: `y`/32 semitone **down**, `x` ignored. **PU2**: `x` semitones + `y`/32 semitone **up**. **WAV**: selects the frame | PU1 PU2 WAV | same | frame on WAV, whole byte as transpose on PU2, **dropped on PU1** | **Value** -- see §6.6, it maps exactly onto `fineOffset` | **939** |
 | `G` | Groove `xy` | all | **different** -- see §5 | `Cmd::G`, slot `xy + 1` | Yes (slot + 1); pre-9 differs (§63) | M8 (§63) |
 | `H` | Phrase: hop out of the phrase. Table: hop `x` times to row `y` | all | **different** | `Cmd::H` both forms | Yes, except phrase `HFF` (§56) | M8 (§34, §56) |
-| `K` | Kill the note after `xy` ticks | all | same | `Cmd::K`, same | Yes | M9 (§9) |
-| `L` | Slide to the note, over `xy + 1` pitch updates | all | same | `Cmd::L`; §68, §71 | Yes | M9 (§4), M8 (§68, §71) |
-| `M` | Master volume, `x` left `y` right | global | same | `Cmd::M`, both nibbles | Yes | M9 (§34) |
-| `O` | Output/pan, `xy` in 0-3 | all | same | `Cmd::O`, same | Yes | M9 |
-| `P` | Pitch bend, `xy` two's complement | all (NOI differs) | same | `Cmd::P`; speed law per instrument | Yes; older formats need a **Value** map (§56) | M9 (§5), M8 (§66) |
-| `R` | Retrigger every `y` ticks, `x` a volume step; `x=8` resyncs | all | same | `Cmd::R`, same | Yes | M9 (§8) |
-| `S` | PU1: hardware sweep. NOI: shape/transpose. PU2, WAV: inert | PU1 NOI | same | `Cmd::S`; two noise domains (§66) | Yes | M9 (§34), M8 (§55, §66) |
-| `T` | Tempo `xy` BPM | global | same | `Cmd::T`, the Clock owns it | Yes | M9 |
-| `V` | Vibrato, `x` speed `y` depth | PU1 PU2 WAV | same | `Cmd::V`, same | Yes; format 0 needs a **Value** map (§56) | M9 (§3) |
-| `W` | PU: duty. WAV: wave/synth | PU1 PU2 WAV | same | `Cmd::W`: duty or wave slot | Partly -- wave-instrument `W` (synth speed/length) is **No** | A |
-| `Z` | Randomise: re-run the last command with `0..x`, `0..y` added | all | same | `Cmd::Z`, re-runs last non-Z/H | **Value** -- ChipBoy adds to fields, LSDj to nibbles (§6.19) | D |
+| `K` | Kill the note after `xy` ticks | all | same | `Cmd::K`, same | Yes | 92J |
+| `L` | Slide to the note over `xy + 1` pitch updates, linear in semitones | all | same | `Cmd::L`; §68, §71 | Yes | 92J; M8 (§68, §71) |
+| `M` | Master volume, `x` left `y` right | global | same | `Cmd::M`, both nibbles | Yes | 92J |
+| `O` | Output/pan, `xy` in 0-3 | all | same | `Cmd::O`, same | Yes | 92J |
+| `P` | Pitch bend, `xy` two's complement | all (NOI differs) | same | `Cmd::P`; speed law per instrument | Yes | 92J; M8 (§66) |
+| `R` | Retrigger every `y` ticks, `x` a volume step; `x=8` resyncs | all | same | `Cmd::R`, same | Yes | 92J |
+| `S` | PU1: hardware sweep. NOI: semitones through the map. PU2, WAV: inert | PU1 NOI | same | `Cmd::S`; two noise domains (§66) | Yes | 92J; M8 (§55, §66) |
+| `T` | Tempo `xy` BPM | global | same | `Cmd::T`, the Clock owns it | Yes | 92J |
+| `V` | Vibrato, `x` speed `y` depth | PU1 PU2 WAV **and NOI** | same | `Cmd::V`; **ignored on noise** | Yes on PU/WAV; **Engine** on noise | 92J; **939** on noise |
+| `W` | PU: duty from the **low nibble**, high ignored. WAV: no effect seen -- see §6.18 | PU1 PU2 (WAV **?**) | same | `Cmd::W`: `xy & 3` duty, wave slot on WAV | Yes for duty; WAV **?** | **939** (pulses) |
+| `Z` | Re-runs **the last command executed**, adding a random `0..x` to the target byte's high nibble and `0..y` to its low | all | same | re-runs the **other slot/column**, adding to its `a`/`b` fields | **Engine** -- both halves differ, see §6.19 | **939** |
 
 ---
 
@@ -128,7 +128,38 @@ Match the durations or the note counts are not comparable. The binary is at
   with `f = K / (2048 - period)`, `K = 65536` on wave and `131072` on the pulses, and
   `midi = 69 + 12 * log2(f / 440)`.
 
-### 3.4 Isolate one variable inside a real save
+### 3.4 The 9.3.9 command rig
+
+`tools/lsdjref/probe_fmt22.py` and `tools/lsdjref/run.py` are the rig every **939** row in this
+document was measured on. The builder starts from a real editor-written format-22 song
+(`/root/lsdj/kits.sav`, CASTSHDW), keeps every structure that song built, and overwrites only
+the song row, chain, phrase, table and instrument being probed -- **and only ever in slots the
+host song already allocates**, which is what keeps it clear of §1's first warning. The result
+goes into the working area, the path LSDj takes for a song being edited.
+
+```python
+import sys; sys.path.insert(0, 'tools/lsdjref')
+from probe_fmt22 import Probe, INST, TABLE
+import run
+
+p = Probe()
+ph = p.only(0)                                   # PU1 alone, song ends after row 0
+p.tempo(128, (6, 6))
+p.pulse(INST[0], env=0xF0, duty=2, pan=3)        # flat level 15, no table, no vibrato
+p.phrase(ph, {0: (0x18, INST[0], 'F', 0x0F)})    # note, instrument, command
+p.write('probe.sav')
+run.trace('probe.sav', 'probe.csv')              # 9.3.9 by default
+run.show('probe.csv', 0)                         # the channel's writes, periods decoded
+```
+
+`Probe.table(slot, rows)` fills a table; `Probe.wave()` and `Probe.noise()` build the other
+instrument kinds; `run.events()` returns a channel's writes with `t = 0` at its first trigger.
+
+**Validate the rig before trusting it.** A plain note on PU1 should come out as one `NR12 = F8`
+(the software-envelope hold), one period write and one trigger, and two notes eight rows apart
+at 128 BPM should be 0.9375 s apart. Both were checked before any measurement here was taken.
+
+### 3.5 Isolate one variable inside a real save
 
 `/root/lsdj/work.py SAV FILEIDX OUT.sav [addr=val ...]` decompresses one song out of a save,
 patches the bytes named, writes it into the save's **working area** (0x0000-0x7FFF) and sets
@@ -138,7 +169,7 @@ byte changed -- the only trustworthy way to probe a table command (§1, warning 
 `/root/lsdj/dump.py SAV` lists the songs; `dump.py SAV IDX [TABLE...]` prints a song's header
 and any table's four columns.
 
-### 3.5 Isolate one variable inside ChipBoy
+### 3.6 Isolate one variable inside ChipBoy
 
 Core links nothing, so a scratch probe compiles directly:
 
@@ -158,7 +189,7 @@ git show <sha>:Source/core/Driver/Driver.cpp > old/Driver.cpp
 
 and compile that instead. This is how §67 and §71 were confirmed.
 
-### 3.6 Reading the ROM directly
+### 3.7 Reading the ROM directly
 
 The project owner has cleared disassembling the ROM to settle a constant that resists
 measurement (their call; the repository stays clean either way -- **no ROM-derived code or
@@ -230,39 +261,56 @@ mapping. `x`/`y` are the byte's nibbles.
 
 ### 6.1 `A` -- table
 
-**LSDj (D):** starts table `xy` on the channel. `A20` stops the running table. In a table,
-`A` switches to another table.
+**LSDj 9.3.9 (939):** `Axy` runs table `xy` on the channel; `A20` **stops** the table, and does
+so even when the instrument itself names one. Measured with a table whose row 1 transposes
++12: with no `A` the period stays 1517; with `A04` it walks 1517 → 1783 → 1517; with the
+instrument pointing at table 04 the result is identical; with `A20` it stays 1517 throughout.
 **ChipBoy:** `Cmd::A` with slot `xy + 1` (ChipBoy's slots are 1-based, 0 = none).
-**Mapping — Yes.** The importer prefers the cell's *Table column* when the `A` is in a phrase
-cell, since ChipBoy has a dedicated column. `A20` in a table column cannot be expressed there
-and is dropped with a note; as a command it becomes `A 0`.
+**Mapping — Yes.** The importer prefers the cell's *Table column* when the `A` sits in a phrase
+cell, since ChipBoy has a dedicated column for it. `A20` cannot be expressed in that column and
+is dropped with a note; as a command it becomes `A 0`.
 
-### 6.2 `B` -- MayBe *(not implemented)*
+### 6.2 `B` -- chance *(not implemented)*
 
-**LSDj (D, added v7.1.0, renamed "maybe" in v7.1.1):** the letter makes something conditional
-on a die roll, and what it gates depends on where it sits.
-- *In a phrase* — how likely the note is to sound at all. The high digit governs the left kit
-  and the low digit the note and the right kit, with zero meaning certain: `B00` always plays,
-  a high low-digit usually skips, and `B80` drops the left kit about half the time.
-- *In a table* — a hop that only sometimes happens. The high digit is the probability and the
-  low digit the destination row, so `B05` is an unconditional hop to row 5 while `B84` reaches
-  row 4 about half the time.
+**LSDj 9.3.9 (939).** Measured, and **the changelog's examples are the wrong way round for this
+build** -- it describes `B00` as "always plays" and a high value as "usually skips", where
+9.3.9 does the opposite. Do not take the changelog's sense on trust here.
 
-**ChipBoy:** nothing. The letter does not exist in `bank::Cmd`.
-**Mapping — No.** The importer drops it with a note naming the cell. To close this: `B` needs
-adding to `Cmd`, to the parameter table, and to the driver — the table form is a `H` with a
-probability gate, the phrase form a note-on gate. Being random, it cannot be flattened into a
-deterministic equivalent, so this is genuinely an engine feature, not a mapping.
+*In a phrase* — the byte gates whether the note sounds. Each nibble is an independent roll of
+about `n/15`, and the note sounds if **either** passes. Over 102 notes:
+
+| `B` | `00` | `02` | `04` | `08` | `0C` | `0F` | `20` | `40` | `80` | `F0` | `22` | `44` | `FF` |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| played | 0 | 17 | 30 | 61 | 84 | 102 | 13 | 23 | 53 | 102 | 28 | 48 | 102 |
+
+`B44` at 48/102 is what two independent rolls predict -- `1 - (1 - 23/102)(1 - 30/102) = 45%` --
+not the 30 that "take the larger nibble" would give, and `B22` (28) matches the same rule.
+`B00` never plays; `B0F`, `BF0` and `BFF` always do.
+
+*In a table* — a hop that only sometimes happens: **`x` is the chance and `y` the destination
+row**. With rows 0-3 stepping +0/+12/+24/+36 and the `B` on row 3, `BF0` gives a three-row
+cycle (it always hops to row 0), `BF1` a two-row cycle, `B80` hops about half the time, and
+`B00`, `B08` and `B0F` never hop at all -- so a zero high nibble is "never", not "always".
+
+**ChipBoy:** nothing. The letter is not in `bank::Cmd`.
+**Mapping — No.** The importer drops it with a note naming the cell. To close it: add `B` to
+`Cmd`, to the parameter table and to the driver -- the table form is an `H` behind a
+probability gate, the phrase form a gate on the note-on. Being random it cannot be flattened
+into anything deterministic, so this is engine work, not a mapping.
 
 ### 6.3 `C` -- chord
 
-**LSDj (M9, §9):** arpeggiates the note with `note`, `note + x`, `note + y`, one step per tick
-(per the instrument's chord/FX speed).
-**Channels:** pulses and wave. On noise, LSDj's `C` changed at 7.0.4/7.0.6 (**?** — not
-traced); ChipBoy ignores `C` on noise.
-**ChipBoy:** `Cmd::C`, `chord[0] = 0`, `chord[1] = x`, `chord[2] = y`, stepping every
-`chordRate + 1` ticks.
-**Mapping — Yes.**
+**LSDj 9.3.9 (939 on noise, 92J elsewhere):** arpeggiates the note with `note`, `note + x`,
+`note + y`, one step per tick.
+**Channels:** pulses and wave — **and noise, which works.** Measured: a noise note whose
+`NR43` is `50` with `C 3 7` cycles `NR43` through `50 → 15 → 05 → 50 …`, walking the note map
+the same way 9.x's `S` does. ChipBoy ignores `C` on noise entirely.
+**ChipBoy:** `Cmd::C`, `chord[0] = 0`, `chord[1] = x`, `chord[2] = y`, one step every
+`chordRate + 1` ticks; `if (noise) break;` at the top.
+**Mapping — Yes on the pulses and wave; Engine on noise.** The importer can already carry the
+byte; the driver has to stop discarding it and walk the noise map, which it can already do —
+`writePeriod` maps a note to `NR43` for the noise channel, so `C` needs the same treatment `S`
+got in §66.
 
 ### 6.4 `D` -- delay
 
@@ -292,14 +340,41 @@ meaningless.
 `NRx2` value of `08` in a ChipBoy trace is an *increment*, not "volume 0".
 **Mapping — Yes**, with `envChipTiming` and `envRetrig` set from the model's `EnvelopeLaw`.
 
-### 6.6 `F` -- frame / finetune
+### 6.6 `F` -- finetune / frame
 
-**LSDj (A):** on a wave instrument, selects the frame. On PU2, a transpose for the note
-(§49). Elsewhere a finetune. **The general finetune behaviour is not traced (`?`).**
-**ChipBoy:** `Cmd::F` names the wave frame outright (§65: `F 06` loads frame 5 whether or not
-the run visits it, measured on 8.4.4) and on PU2 sets `instTranspose` two's complement.
-**Mapping — partly.** WAV and PU2 are Yes. `F` on PU1 or NOI is dropped with a note; closing
-it needs the finetune measured first.
+**LSDj 9.3.9 (939).** Measured on every channel, and it is three different things:
+
+- **PU1** — a **downward finetune**. The **low nibble only**; `x` does nothing (`FF0` and `F10`
+  leave the period untouched). The shift is about `y/32` of a semitone, applied in period
+  units, so it scales with where the note sits. `F0F` measured against the semitone width:
+
+  | note | period | semitone width | `F0F` delta | as a fraction of a semitone |
+  |---|---|---|---|---|
+  | `10` | 1205 | 48 | −23 | 0.479 |
+  | `18` | 1517 | 30 | −15 | 0.500 |
+  | `20` | 1714 | 18 | −9 | 0.500 |
+  | `28` | 1837 | 12 | −6 | 0.500 |
+  | `30` | 1915 | 8 | −4 | 0.500 |
+  | `38` | 1964 | 5 | −2 | 0.400 |
+
+  So `F0F` is half a semitone down and `F01` is 1/32 of one. The last unit of rounding is not
+  pinned — a couple of widths come out one period unit off a plain `round(y * width / 32)` —
+  but the law is clear.
+- **PU2** — an **upward transpose**: `x` **semitones** plus `y/32` of a semitone. Measured from
+  note `18` (period 1517): `F10` gives 1547, which is exactly note `19`; `FF0` gives 1825,
+  which is exactly fifteen semitones up; `F01` gives 1518 and `F0F` gives 1531.
+- **WAV** — selects the frame. `F00`, `F03` and `F0F` load visibly different wave RAM.
+- **NOI** — not measured (`?`).
+
+**ChipBoy:** `Cmd::F` names the wave frame on WAV (§65), sets `instTranspose` from the **whole
+byte** as two's complement on PU2, and is **dropped on PU1**.
+**Mapping — Value, and both pulses need work.**
+
+- PU1 is exactly expressible: ChipBoy's `fineOffset` is in 1/256 semitones, so `F y` is
+  `fineOffset -= 8 * y`. Nothing new is needed in the engine, only in the importer and a
+  driver case.
+- PU2 is currently wrong: the whole byte is read as a signed semitone count where LSDj reads
+  `x` semitones **and** `y/32`. It should be `instTranspose += x` and `fineOffset += 8 * y`.
 
 ### 6.7 `G` -- groove
 
@@ -407,42 +482,57 @@ way out so it never compounds.
 
 ### 6.17 `V` -- vibrato
 
-**LSDj (M9, §3):** `x` speed, `y` depth. One cycle is `64 / (x + 1)` pitch updates, so `x = 0`
-is the **slowest**, not "off". The swing is symmetric about the note; the direction bit only
-says which half comes first.
-**Channels:** pulses and wave. `V` was added for noise in a later version (**?** — not
-traced); ChipBoy ignores it on noise.
-**ChipBoy:** `Cmd::V`, same, with the measured tick table for Tick mode. ChipBoy's saw and
-square vibrato shapes are its own — the ROM's could not be read off the register log (§13).
-**Mapping — Yes** on 9.x; **Value** on format 0, whose vibrato is one-sided below the note in
-register units. The importer converts:
-`speed = clamp(round(32 / (x + 1)) - 1, 0, 15)`, `depth = clamp(round(8 * y * (x + 1) / 2 / 19.11), 1, 15)`,
-with a note, because the shape genuinely differs (centred vs. one-sided).
+**LSDj 9.3.9 (939 on noise, 92J elsewhere):** `x` speed, `y` depth. One cycle is `64 / (x + 1)`
+pitch updates, so `x = 0` is the **slowest**, not "off". The swing is symmetric about the note;
+the direction bit only says which half comes first.
+**Channels:** pulses and wave — **and noise, which works.** Measured: a noise note holding
+`NR43 = 50` takes `V 4 8` and starts moving `NR43` continuously (`DD CF DB DC DF 10 20 05 07
+23 …`), so the vibrato drives the LFSR clock through the map. ChipBoy ignores `V` on noise.
+**ChipBoy:** `Cmd::V`, with the measured tick table for Tick mode, and `if (noise) break;`.
+ChipBoy's saw and square vibrato shapes are its own — the ROM's could not be read off the
+register log (`LSDJ_PARITY.md` §13).
+**Mapping — Yes on the pulses and wave; Engine on noise**, the same gap as `C`.
 
-### 6.18 `W` -- wave / duty
+### 6.18 `W` -- duty / wave
 
-**LSDj (A):** on the pulses, the duty. On a wave instrument, the wave or synth.
+**LSDj 9.3.9 (939 on the pulses).** On a pulse the **low nibble** is the duty and the high
+nibble is ignored: `W00` writes `NR11 = 00`, `W03` writes `C0`, and `WF1` writes `40` — the
+same as `W01`.
+On the wave channel **nothing was observed**: `W00`, `W02` and `W0F` all loaded identical wave
+RAM on an instrument with synth 0. That is consistent with `W` there setting a synth's speed or
+length rather than choosing a wave, which this probe would not show — it needs an instrument
+whose synth actually animates. **Still `?`.**
 **ChipBoy:** `Cmd::W`: `duty = xy & 3` on the pulses, wave slot on WAV.
-**Mapping — partly.** The duty is Yes; the importer keeps only the low digit and notes that
-the high digit has no register effect. `W` on a *wave instrument* (synth speed / length) is
-**No** and dropped with a note.
+**Mapping — Yes for the duty.** The importer keeps only the low digit and notes that the high
+digit has no register effect, which the measurement now backs. `W` on a *wave instrument* is
+dropped with a note, and stays open until the wave side is measured.
 
 ### 6.19 `Z` -- randomise
 
-**LSDj (D, changelog v6.x):** re-runs the last command with a random amount added. Each digit
-is the **maximum possible random value** for that nibble, and the digits are added
-independently: `Z02` adds one of 0, 1, 2; `Z20` adds one of `0x00`, `0x10`, `0x20`. Since
-8.1.9 it affects every command but `H`. Since 6.1.3 the "last command" is remembered
-per-table rather than per-column.
-**ChipBoy:** `Cmd::Z` re-runs the last command that is not `Z` or `H` — the other slot or
-column when set, else the channel's last — adding `rand(0..x)` to its `a` and `rand(0..y)` to
-its `b`.
-**Mapping — Value, and worth a look.** ChipBoy adds to the target's two *fields*; LSDj adds to
-the target byte's two *nibbles*. For a command whose argument is a nibble pair (`C`, `E`, `M`,
-`R`, `S`, `V`) these agree. For a command whose argument is a whole byte (`D`, `K`, `L`, `P`,
-`T`, `A`, `G`, `O`) they do not: LSDj's `x` contributes `rand(0..x) * 16` to the byte, where
-ChipBoy's contributes `rand(0..x) * 1` and its `y` lands in an unused field. **Not measured
-(`D` only) — probe before changing anything.**
+**LSDj 9.3.9 (939).** Two things, and ChipBoy has both wrong.
+
+1. **`Z` re-runs the last command *executed*, not the other column's.** Measured in a table
+   with `W 00` in column 1 and `Z` in column 2 of the same row: the duty never varied. Move the
+   `Z` to the **next row** of the same column and it varies at once. (The second column is not
+   the problem: `cmd2 = W03` on its own drives the duty exactly as `cmd1 = W03` does, and with
+   both columns set both fire.)
+2. **Each digit adds a random `0..that digit` to the matching nibble of the target's byte.**
+   With `W 00` on row 0 and `Z 03` or `Z 0F` on row 1, the duty takes every value 0-3; with
+   `Z F0` it stays 0, because the random lands on the high nibble and `W` reads only the low
+   one. That is the changelog's own description -- `Z20` adds one of `0x00`, `0x10`, `0x20` --
+   and here the changelog and the ROM agree.
+
+**ChipBoy:** `Cmd::Z` re-runs the last command that is not `Z` or `H`, preferring **the other
+slot or column** and falling back to the channel's last; it adds `rand(0..x)` to the target's
+`a` field and `rand(0..y)` to its `b`.
+**Mapping — Engine, on both counts.**
+
+- The *source* is wrong: prefer the previous command in time, not the other column.
+- The *arithmetic* is wrong for any command whose argument is a whole byte rather than a nibble
+  pair. For `C`, `E`, `M`, `R`, `S`, `V` the two agree, because `a` and `b` really are the
+  nibbles. For `A`, `D`, `G`, `K`, `L`, `O`, `P`, `T` they do not: LSDj's `x` contributes
+  `rand(0..x) * 16` to the byte, where ChipBoy's contributes `rand(0..x) * 1` and its `y` lands
+  in a field the command does not read.
 
 ---
 
@@ -558,25 +648,55 @@ only mentions that the numbers moved, not that anything was lost.
 
 ---
 
-## 9. What is still open
+## 9. Verification status against 9.3.9
+
+Everything below was traced on **9.3.9** with the rig in §3 unless the row says otherwise.
+
+| Verified on 9.3.9 | How |
+|---|---|
+| `A` | table select and `A20` stop, against a transposing table |
+| `B` | phrase probability over 102 notes at 13 values; table hop probability and destination |
+| `C` on noise | `NR43` walks the note map |
+| `E`'s software envelope | every `NRx2` goes out with low nibble 8 (`F8` on a plain note) |
+| `F` on PU1, PU2, WAV | full nibble sweeps across six notes, plus wave RAM |
+| `V` on noise | `NR43` moves continuously under `V 4 8` |
+| `W` on the pulses | duty from the low nibble, high ignored |
+| `Z` | source (previous command, not the other column) and per-nibble arithmetic |
+| the table's second command column | fires on its own and alongside the first |
+
+**Not yet re-measured on 9.3.9**, and still carrying a 9.2.J measurement: `C` on the pulses and
+wave, `D`, `E`'s level and rate arithmetic, `K`, `L`, `M`, `O`, `P`, `R`, `S`, `T`, `V` on the
+pulses and wave. These are the same format-22 model and the same code path in the ROM, so they
+are expected to hold — but §70 is the standing reminder that "expected to hold" is not a
+measurement. Each is a short probe on the rig that already exists.
+
+**Rig validation.** Before any of this was trusted: the working-area path was checked against
+booting the save as a file, and 12549 of 12551 register writes matched in order (the two that
+differ are an adjacent swap of unrelated registers). The probe song is built on top of a real
+editor-written format-22 song and only ever writes into slots that song already allocates —
+which is what keeps it clear of the §58 trap.
+
+---
+
+## 10. What is still open
 
 Ordered by how much it costs a real song.
 
-1. **`B` (MayBe) is missing entirely** (§6.2). Engine work: a probability gate on a note-on and
-   on a table hop.
-2. **`Z`'s random may land on the wrong digits** (§6.19). Documented, not measured. Cheap to
-   probe, and it silently changes any song using `Z` on a byte-argument command.
-3. **`F` finetune on PU1 and NOI** (§6.6) is dropped. Not traced.
-4. **`W` on a wave instrument** (synth speed / length) is dropped (§6.18).
-5. **Phrase `HFF`** cannot be expressed (§6.8); ChipBoy's phrases always start at row 0.
-6. **Kit `DIST` mixing** — narrowed to instrument byte 13's bit 6; needs a kit-stream decoder
-   to read the modes off. 61 of 69 kit instruments in the user's saves mix two kits.
-7. **`C` and `V` on noise** — LSDj added both at some point; neither is traced, and ChipBoy
-   ignores both there.
-8. **`LSDJ_PARITY.md` was measured on 9.2.J.** §7 and §10 have been marked as 8.8.0-and-after;
-   the rest has not been re-read for version sensitivity, and §70 is the standing proof that
-   it can matter.
-9. **Formats 16-21 are unmeasured** for §63's table `G` and the §64 envelope hop.
+1. **`B` (chance) is missing entirely** (§6.2). Engine work: a probability gate on the note-on
+   and on a table hop. Fully characterised now, so it is ready to implement.
+2. **`Z` is wrong twice over** (§6.19): it re-runs the wrong command, and its random lands on
+   the wrong digits for byte-argument commands. Both measured, both engine fixes.
+3. **`C` and `V` are dropped on noise** (§6.3, §6.17), and both work on the ROM. The driver
+   already maps a note to `NR43`, so this is the same shape of fix `S` got in §66.
+4. **`F` is dropped on PU1 and wrong on PU2** (§6.6). PU1 maps exactly onto `fineOffset` as
+   `-8 * y`; PU2 needs `x` semitones plus `y/32`, not the whole byte as semitones.
+5. **`W` on a wave instrument** is unmeasured and dropped (§6.18).
+6. **Phrase `HFF`** cannot be expressed (§6.8); ChipBoy's phrases always start at row 0.
+7. **Kit `DIST` mixing** — narrowed to instrument byte 13's bit 6; needs a kit-stream decoder.
+   61 of 69 kit instruments in the user's saves mix two kits.
+8. **The twelve letters still on a 9.2.J measurement** (§9) want the same treatment as the rest.
+9. **`LSDJ_PARITY.md` was measured on 9.2.J.** §7 and §10 are marked as 8.8.0-and-after; the
+   rest has not been re-read for version sensitivity.
 
 ### Where SPACE TI stands (the working song, LSDj 8.4.4)
 

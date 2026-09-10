@@ -307,6 +307,10 @@ design-log section the change touches. Update this file at the end of every chan
   - **Method note**: the user has cleared reading the ROM directly rather than only tracing it
     (their project, their call on L3). Register-stream diffing settled this one without it, but
     it is available for constants that resist measurement.
+- **`tools/lsdjref/probe_fmt22.py` + `run.py`** build and trace a controlled probe song inside a
+  real format-22 save, which is how every 9.3.9 row in the command matrix was measured. Start
+  from it for any new LSDj question; validate it (a plain note is one `NR12 = F8`, and two notes
+  eight rows apart at 128 BPM are 0.9375 s apart) before trusting a result.
 - **`docs/LSDJ_COMMAND_MATRIX.md`** is the working reference for LSDj parity: every command
   as LSDj 9.3.9 handles it, what differs per channel and between a phrase and a table, what
   ChipBoy does now, whether the importer can bridge the gap, how to probe another ROM version
