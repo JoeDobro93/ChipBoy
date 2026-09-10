@@ -2142,3 +2142,44 @@ SPACE TI's PU1 is rate 7 fifty-five times and rate 4 twenty-nine times, so under
 table every swell on it finished about a tenth of a second early. The instrument carries the
 choice, not the song, so a bank may hold both -- and a ChipBoy instrument written from
 scratch may pick either, because the chip's rates are a real thing to want.
+
+## 71. A slide holds its own aim: the table's column, and the bottom of the range
+
+§68 got the wave kick's *start* right -- a table row carrying a transpose beside an `L`
+sounds the plain note and slides to the transposed one -- and its sweep still came out as a
+rising whine. Two things were wrong once the slide was running, and the register log of
+LSDj 8.4.4 playing SPACE TI's WAV phrase 17 shows both.
+
+The kick is instrument 10, table 01: row 0 is `TSP c4` -- **signed, sixty semitones down** --
+beside `L20`, and rows 1 to 13 are empty. LSDj writes, from the note-on at C-5:
+
+```
+period  1923 1911 1900 1887 1873 1857 1840 1823 1803 1782 1758 1732 1705 1675 1642
+        1607 1568 1526 1481 1431 1377 1318 1255 1184 1109 1027  937  840  735  620
+         494  359  210   50   44          <- and there it stops, 92 ms after the note
+```
+
+**The table's column cannot move the target.** A table steps every tick, so a slide of any
+length outlives the row that started it. ChipBoy kept the slide as a residual added to the
+live pitch, and the live pitch reads the table's transpose column, so one tick in -- when the
+table stepped from row 0 to the empty row 1 -- the base jumped sixty semitones and took the
+sounding pitch from note 70 to note 132. That is the whine, and it is why it *rose*: the
+residual was still walking down through a base that had leapt up. A slide now holds a copy of
+that column for its whole run, chosen so the base sits exactly on the target, and the residual
+falls to zero right where the slide is aimed however the table steps underneath.
+
+**The aim itself is a note the channel can sound.** Sixty semitones below C-5 is note 12, and
+the wave channel bottoms out at note 24 -- period 44, because below that the period would
+have to pass 2048 and there is no register for it. LSDj divides the distance to the
+*reachable* note by `x + 1`: 48 semitones over 33 updates, 1.4545 a piece, landing on 44 as
+the last update falls due. ChipBoy divided 60 by 33 and got 1.818, a quarter too fast, and
+then ran off the bottom into periods that wrapped. The target is clamped to
+`lowestNote(channel)` before the step is worked out, so the rate is right *because* the
+destination is.
+
+With both, ChipBoy's sweep is LSDj's period for period, off by one unit twice where the
+fixed-point step rounds the other way.
+
+> The hold lasts the slide, not the note. Nothing measured says what a table row that sets a
+> *new* transpose under a running slide should do -- the kick's rows are empty -- so the
+> simple rule stands until a song shows otherwise.

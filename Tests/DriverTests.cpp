@@ -1742,6 +1742,51 @@ TEST_CASE("E never triggers, whatever it does to the envelope", "[driver][zombie
     }
 }
 
+TEST_CASE("a slide holds its aim through the table and stops at the bottom of the range", "[driver][table]")
+{
+    // Section 71: LSDj's wave kick is a table row carrying TSP -60 beside L20,
+    // and the rows after it are empty. The sweep has to survive the table
+    // stepping off that row, and it has to aim at a note the channel can
+    // sound -- note 12 is below the wave channel's bottom, so LSDj slides to
+    // note 24 in x + 1 updates instead of tearing past it.
+    Rig r;
+    auto& tb = r.bank.tables[0];
+    tb.used = true; tb.name = "Kick";
+    tb.steps[0].hasTranspose = true; tb.steps[0].transpose = -60;
+    tb.steps[0].cmd1 = Command{ Cmd::L, 0x20, 0, 0 };
+    auto& in = r.bank.instruments[0];
+    in = Instrument::defaults(InstrumentType::Wave, "Kick");
+    in.used = true; in.table = 1; in.transpose = true;
+    r.song.noteSource[2] = tracker::NoteSource::Tracker;
+    ChannelParams p; p.instrument = 1; r.drv.setParams(2, p);
+    NoteEvent e = cellOn(2, 72, 1); e.velSet = false;
+    std::vector<int> periods;
+    int lo = 0;
+    for (int b = 0; b < 900 && periods.size() < 400; ++b)
+        for (const auto& x : r.block(b == 0 ? std::vector<NoteEvent>{ e } : std::vector<NoteEvent>{}, 128)) {
+            if (x.addr == 0xFF1D) lo = x.value;
+            else if (x.addr == 0xFF1E) {
+                const int per = ((x.value & 7) << 8) | lo;
+                if (periods.empty() || per != periods.back()) periods.push_back(per);
+            }
+        }
+    REQUIRE(periods.size() > 20);
+    CHECK(periods[0] == 1923);                       // the plain note, C-5 (section 68)
+    // It falls, every update, and never turns back up: the whine was the base
+    // leaping by the transpose when the table stepped to its empty second row.
+    for (size_t i = 1; i < 20; ++i) CHECK(periods[i] < periods[i - 1]);
+    // LSDj's own periods for the first updates of this sweep, off by at most
+    // one where the fixed-point step rounds the other way.
+    const int lsdj[10] = { 1923, 1911, 1900, 1887, 1873, 1857, 1840, 1823, 1803, 1782 };
+    for (size_t i = 0; i < 10; ++i) CHECK(std::abs(periods[i] - lsdj[i]) <= 1);
+    // It reaches the bottom of the range rather than wrapping past it: the
+    // whine was the period leaping to 2040, which is -8 in eleven bits.
+    CHECK(*std::min_element(periods.begin(), periods.end()) <= 60);
+    CHECK(*std::max_element(periods.begin(), periods.end()) == 1923);  // nothing ever rises above the note
+    CHECK(Driver::lowestNote(true) == 24);           // wave: note 24 is period 44, LSDj's own resting place
+    CHECK(Driver::lowestNote(false) == 36);          // pulse counts twice as fast, so an octave higher
+}
+
 TEST_CASE("an envelope's levels come at the chip's rate or at LSDj 8.8's table", "[driver][zombie]")
 {
     // Section 70: before 8.8.0 LSDj let the chip's envelope generator run, so

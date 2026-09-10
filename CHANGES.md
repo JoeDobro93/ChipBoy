@@ -2332,3 +2332,34 @@ the flag from the model's existing `EnvelopeLaw`, and the instrument panel has *
 the envelope. It would be exact rather than 0.4 % out, but it breaks §26's invariant that
 every `NRx2` the driver writes is a hold, which the zombie-step model and its tests rest on,
 and it would take away the level list §27 exists for.
+
+### 2026-09-10 (SPACE TI) — the wave kick's slide holds its own aim (spec §71)
+
+**Changed:** the user reported the WAV kick still sounding like "a high pitched laser" after
+§68 fixed where its slide *starts*. Two things were wrong once the slide was running, both
+read off LSDj 8.4.4's register log for phrase 17 (instrument 10, table 01: row 0 is `TSP c4`
+-- signed, sixty semitones down -- beside `L20`, rows 1-13 empty, row 14 `K00`).
+
+1. **A table's transpose column was dragging the target.** ChipBoy kept a slide as a residual
+   added to the *live* pitch, and the live pitch reads the table's transpose column. A table
+   steps every tick, so one tick in -- row 0 to the empty row 1 -- the base jumped sixty
+   semitones and took the sounding note from 70 to 132, with the residual still walking down
+   through it. That is the whine, and it is why it rose. A slide now holds a copy of that
+   column for its whole run, chosen so the base sits exactly on the target; when it lands the
+   channel keeps the note it reached and the column applies on top again.
+2. **The aim was a note the channel cannot sound.** Sixty semitones below C-5 is note 12; the
+   wave channel bottoms out at note 24, period 44, because below that the period would have
+   to pass 2048. LSDj divides the distance to the *reachable* note by `x + 1` -- 48 semitones
+   over 33 updates, 1.4545 apiece -- and lands on 44 as the last update falls due. ChipBoy
+   divided 60 by 33, ran a quarter too fast, and then off the bottom into periods that wrapped
+   into eleven bits (2040 is -8). The target is clamped to the new `lowestNote(channel)`
+   before the step is worked out, so the rate comes out right because the destination does.
+
+**Measured after:** the imported song's kick is LSDj's sweep period for period across all
+thirty-five updates -- `1923 1911 1900 1887 ... 210 49 44` against `... 210 50 44` -- six of
+them off by a single period unit where the fixed-point step rounds the other way, and it
+comes to rest on 44 exactly as LSDj does.
+
+**Left open:** the hold lasts the slide, not the note. Nothing measured says what a table row
+setting a *new* transpose under a running slide should do -- the kick's rows are empty -- so
+the simple rule stands until a song shows otherwise.

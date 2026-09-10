@@ -290,6 +290,23 @@ design-log section the change touches. Update this file at the end of every chan
     re-reading before it is trusted for an older import.
   - **Where SPACE TI stands** (note-ons against LSDj 8.4.4, 23.8 s): PU1 67/103, PU2 104/153,
     WAV 198/219, NOI 32/32. PU1 and PU2 are the weak ones.
+- Round 19: **the wave kick's slide holds its own aim** (`COMMANDS_AND_TEMPO.md` §71; CHANGES
+  2026-09-10 SPACE TI). The user reported the kick still a "high pitched laser" after §68 fixed
+  where its slide starts. Two faults, both off the 8.4.4 register log for phrase 17:
+  - A table steps every tick, so a slide outlives the row that aimed it. ChipBoy held a slide
+    as a residual over the *live* pitch, which reads the table's transpose column, so stepping
+    from row 0 (`TSP c4`, -60) to the empty row 1 threw the base up sixty semitones mid-sweep
+    -- note 70 to note 132. A slide now holds its own copy of that column and rebases onto the
+    note it reaches.
+  - The aim has to be a note the channel can sound. `lowestNote()` is new: wave bottoms at note
+    24 (period 44), pulse at 36. LSDj divides the distance to the *reachable* note by x + 1;
+    ChipBoy divided by the unreachable one, ran a quarter fast, and wrapped into eleven bits
+    (period 2040 is -8).
+  - Verified in the real song: the kick is LSDj's sweep period for period over all 35 updates,
+    six off by one unit from fixed-point rounding, resting on 44 like LSDj.
+  - **Method note**: the user has cleared reading the ROM directly rather than only tracing it
+    (their project, their call on L3). Register-stream diffing settled this one without it, but
+    it is available for constants that resist measurement.
 - **Adding an LSDj version** when the user supplies its ROM (the steps also head
   `Source/core/Import/LsdjModel.h`): put the ROM beside the others outside the tree
   (`/root/lsdj/` here), copy the 9.3.9 entry in `LsdjModel.cpp`, set the format it writes

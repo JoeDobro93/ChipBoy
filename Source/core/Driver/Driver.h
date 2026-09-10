@@ -179,6 +179,8 @@ public:
     /// One entry of the note table: a whole semitone's period, as LSDj holds
     /// it. `periodForNote` interpolates between two of these in period units.
     static int  periodOfSemitone(int note, bool waveChannel);
+    /// The lowest note the channel has a period for (section 71).
+    static int  lowestNote(bool waveChannel);
     static double periodRealForNote(double note, bool waveChannel);   ///< unrounded, for Drum
     /// P's step per pitch update in 1/256 of a semitone, for a magnitude 0-127
     /// (docs/LSDJ_PARITY.md section 5). Public so a test can pin the table.
@@ -211,6 +213,12 @@ private:
         int32_t  slideOff256 = 0;     ///< what is left of the slide, 1/256 semitones
         int32_t  slideStep256 = 0;    ///< and what one update takes off it
         int32_t  slideLeft = 0, slideTotal = 0;   ///< updates remaining, and the duration
+        /// The table transpose the slide was aimed through, held for its whole
+        /// run so a table row stepping off that column cannot drag the target
+        /// with it (section 71). Only a slide a transposed table row started
+        /// holds one.
+        int32_t  slideTspFine = 0;
+        bool     slideTspHeld = false;
         int32_t  pitchNowFine = 0;    ///< where the channel is, as of the last write, 1/256 semitones
         bool     pitchValid = false;  ///< something has sounded, so a slide has somewhere to come from
         bool     pitchClockOn = false;

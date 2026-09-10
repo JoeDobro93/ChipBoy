@@ -165,6 +165,17 @@ int Driver::periodOfSemitone(int note, bool waveChannel)
     return std::min(2047, int(std::floor(p + 0.5)));
 }
 
+/// The lowest note the channel can sound: below it the period would have to go
+/// past 2048 and there is no register for it. Wave reaches an octave lower than
+/// pulse, because its period counts at half the rate -- note 24 on wave is
+/// period 44, which is where LSDj's own slides come to rest (section 71).
+int Driver::lowestNote(bool waveChannel)
+{
+    for (int n = 0; n < 128; ++n)
+        if (periodOfSemitone(n, waveChannel) >= 0) return n;
+    return 0;
+}
+
 /// The period of a note and a fraction. The table is one entry a semitone and
 /// the fraction is interpolated **in period units**, not in frequency: LSDj
 /// does that, and it is measurable -- a vibrato half a semitone below C-5
@@ -539,7 +550,7 @@ void Driver::noteOff(int ch, uint8_t note)
 void Driver::beginRelease(int ch)
 {
     Voice& v = v_[size_t(ch)];
-    v.active = false; v.tableOn = false; v.sliding = false; v.chordN = 0;
+    v.active = false; v.tableOn = false; v.sliding = false; v.slideTspFine = 0; v.slideTspHeld = false; v.chordN = 0;
     v.pitchClockOn = false; v.retrigEvery = 0; v.retrigOn = false; v.retrigFast = false; v.bendSpeed = 0;
     // A shaped envelope has its own release: from the level the note-off found
     // to silence, one level per tick, over its own curve (section 27). A level
@@ -633,6 +644,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     v.instKey = instrumentKey(ch, vel);
     v.ticks = 0; v.vibPhase9 = 0; v.pitchCount = 0;
     v.fineOffset = 0; v.fineQueued = 0; v.drumOffset = 0.0; v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0;
+    v.slideTspFine = 0; v.slideTspHeld = false;      // a note starts on its own pitch (section 71)
     v.chordN = 0; v.chordIdx = 0; v.chordCount = 0;
     v.dutyIdx = 0; v.kill = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigFast = false; v.envCount = 0; v.lastCmd = {}; v.frameStep = 0; v.frameIdx = 0;   // the run starts at its first step (section 65)
     v.rng = v.rng * 1664525u + 1013904223u + note;
@@ -696,7 +708,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     if (base < 0 && core.type != InstrumentType::Noise && core.type != InstrumentType::Kit) {
         // Below the chip's range: does not sound (C4). The key is still held,
         // so the held stack stays as it is.
-        v.basePeriod = 0; v.tableOn = false; v.sliding = false; v.chordN = 0; v.pitchClockOn = false;
+        v.basePeriod = 0; v.tableOn = false; v.sliding = false; v.slideTspFine = 0; v.slideTspHeld = false; v.chordN = 0; v.pitchClockOn = false;
         killDac(ch);
         v.active = true; view_[size_t(ch)].outOfRange = true;
         return;
@@ -793,7 +805,7 @@ void Driver::killDac(int ch)
 void Driver::stopVoice(int ch, bool kill)
 {
     Voice& v = v_[size_t(ch)];
-    v.active = false; v.tableOn = false; v.sliding = false; v.chordN = 0; v.kitOn = false; v.streamActive = false; v.pendingOn = false;
+    v.active = false; v.tableOn = false; v.sliding = false; v.slideTspFine = 0; v.slideTspHeld = false; v.chordN = 0; v.kitOn = false; v.streamActive = false; v.pendingOn = false;
     v.pitchClockOn = false; v.releasing = false; v.pulseReleasing = false;
     v.shapedOn = false; v.shapedRelease = false; v.tableJustStarted = false;
     // A kill or a stop ends the phrase: a key released afterwards must not
@@ -879,7 +891,17 @@ double Driver::noteOfVoice(int ch) const
     const Voice& v = v_[size_t(ch)];
     double note = v.note + v.noteTsp + v.instTranspose + v.p.transpose + v.bend;
     if (v.chordN) note += v.chord[v.chordIdx % v.chordN];
-    note += tableTransposeOf(v);
+    // A slide aimed through a table's transpose keeps that column for its whole
+    // run (section 71): the table steps on every tick, and a slide of any
+    // length outlives the row that started it, so reading the live column would
+    // move the target out from under the slide and throw the pitch by the
+    // transpose in one update.
+    // What a slide made of the table's transpose column (section 71). While it
+    // runs it stands in for the column, so a table stepping off the row that
+    // aimed it cannot drag the pitch; once it lands the channel keeps the note
+    // it reached and the column applies on top of that again.
+    note += double(v.slideTspFine) / 256.0;
+    if (!(v.sliding && v.slideTspHeld)) note += double(tableTransposeOf(v));
     const int32_t fine = v.fineOffset + slideResidual(v);
     return note + double(fine) / 256.0;
 }
@@ -1489,12 +1511,36 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
             v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0; v.slideStep256 = 0;
             const int dur = std::clamp<int>(c.a, 0, 255) + 1;
             if (!have) { if (live) writePeriod(ch, false); break; }
-            const int32_t target = int32_t(std::lround(noteOfVoice(ch) * 256.0));
+            // Section 71: the slide aims at a note the channel can sound. A
+            // table transpose can name one far below the register -- the wave
+            // kick's is sixty semitones down -- and LSDj divides the distance
+            // to the *reachable* note by x + 1, so the sweep lands on the
+            // bottom of the range exactly as the last update falls due rather
+            // than tearing past it at a rate meant for somewhere lower.
+            // The pitch without the table's transpose column: the slide holds
+            // its own copy of that column, so the base it walks over stands
+            // still while the table steps.
+            const double liveTsp = double(tableTransposeOf(v));
+            const int32_t liveFine = int32_t(std::lround(liveTsp * 256.0));
+            // The note as the table names it, with neither the column nor what
+            // an earlier slide made of it: a table's transpose is always read
+            // from the note, so that is what this one aims from too.
+            const int32_t baseFine = int32_t(std::lround(noteOfVoice(ch) * 256.0)) - v.slideTspFine - liveFine;
+            const int32_t floorFine = int32_t(lowestNote(wave)) * 256;
+            const int32_t target = std::max(floorFine, baseFine + liveFine);
             const int32_t from = fromFine - target;
             if (from != 0) {
                 v.slideOff256 = from;
                 v.slideStep256 = int32_t(-from / dur);      // C++ truncates toward zero
                 v.slideLeft = dur; v.slideTotal = dur; v.sliding = true;
+                // Section 71: hold a column that puts the base exactly on the
+                // target, so the residual runs to zero right where the slide
+                // is aimed however the table steps under it.
+                v.slideTspHeld = true;
+                v.slideTspFine = target - baseFine;
+            } else {
+                v.slideTspFine = target - baseFine;      // L 00: it is simply there
+                v.slideTspHeld = false;
             }
             if (live) writePeriod(ch, false);
             break;
