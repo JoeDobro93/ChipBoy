@@ -37,14 +37,21 @@ bool indexSave(const uint8_t* data, size_t size, SaveIndex& out, std::string& er
 /// Decompresses one file into 32768 bytes. False, with a message, when the
 /// file does not exist or its stream is damaged.
 bool decompressFile(const uint8_t* data, size_t size, int file, std::vector<uint8_t>& song, std::string& error);
+/// A project file (.lsdprj, .lsdsng; plan section 1a): 8 bytes of name, a
+/// version byte, then the song's compressed blocks in order. Decompresses it
+/// into 32768 bytes; false, with a message, when the buffer is not one.
+bool decompressProject(const uint8_t* data, size_t size, std::string& name, int& version, std::vector<uint8_t>& song, std::string& error);
+/// Whether a buffer has a project file's shape: a name, a version, whole blocks.
+bool looksLikeProject(const uint8_t* data, size_t size);
 /// The working song: the save's first 32 KB, copied.
 bool workingSong(const uint8_t* data, size_t size, std::vector<uint8_t>& song);
 /// Byte 0x7FFF of a song, -1 when the buffer is short.
 int  formatVersionOf(const uint8_t* song, size_t size);
 /// Whether a song holds anything: an allocated instrument or a song row.
 bool songLooksUsed(const uint8_t* song, size_t size);
-/// The version an LSDj ROM's cartridge title names ("LSDj-v9.3.9" -> "9.3.9");
-/// empty when the buffer is not an LSDj ROM. Reads the header only.
+/// The version an LSDj ROM names: the cartridge title from 4.3 ("LSDj-v9.3.9"
+/// -> "9.3.9"), the welcome string before that ("LITTLE SOUND DJ V3.5.1");
+/// empty when the buffer is not an LSDj ROM. Reads the first 64 KB at most.
 std::string romVersion(const uint8_t* rom, size_t size);
 
 } // namespace chipboy::lsdj

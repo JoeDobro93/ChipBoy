@@ -2026,6 +2026,50 @@ TEST_CASE("a noise instrument takes its table's transpose column through the map
     CHECK(last(w, 0xFF22)->value == nr43For(72));
 }
 
+TEST_CASE("S on the noise channel transposes through the map and adds up", "[driver][noise]")
+{
+    // Section 55: S xy adds int8(xy) semitones to the noise note, each S on
+    // top of the last, NR43 rewritten without a trigger; a note-on clears it.
+    Rig r;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    { ChannelParams p; p.instrument = 21; for (int ch = 0; ch < 4; ++ch) r.drv.setParams(ch, p); }
+    auto& i = r.bank.instruments[20]; i = Instrument::defaults(InstrumentType::Noise, "snare");   // slot 21
+    auto w = r.block({ cellOn(3, 72, 21) }, 200);
+    REQUIRE(last(w, 0xFF22) != nullptr);
+    CHECK(last(w, 0xFF22)->value == nr43For(72));
+    w = r.block({ cellCmd(3, Command{ Cmd::S, 0, 1, 0 }) }, 200);        // S01: one up
+    REQUIRE(last(w, 0xFF22) != nullptr);
+    CHECK(last(w, 0xFF22)->value == nr43For(73));
+    CHECK_FALSE(has(w, 0xFF23));
+    w = r.block({ cellCmd(3, Command{ Cmd::S, 0xF, 0xE, 0 }) }, 200);    // SFE: two down, on top of the one up
+    REQUIRE(last(w, 0xFF22) != nullptr);
+    CHECK(last(w, 0xFF22)->value == nr43For(71));
+    w = r.block({ cellCmd(3, Command{ Cmd::S, 1, 0, 0 }) }, 200);        // S10: sixteen up
+    CHECK(last(w, 0xFF22)->value == nr43For(87));
+    w = r.block({ cellOn(3, 72, 21) }, 200);                             // the note-on starts over
+    CHECK(last(w, 0xFF22)->value == nr43For(72));
+    // An S in the note's own cell transposes the note-on itself (the write is
+    // the tick's); the next cell's S adds to it.
+    auto e = cellOn(3, 48, 21); e.cmd1 = Command{ Cmd::S, 0xF, 0xA, 0 };  // SFA: six down
+    w = r.block({ e }, 200);
+    REQUIRE(last(w, 0xFF22) != nullptr);
+    CHECK(last(w, 0xFF22)->value == nr43For(42));
+    w = r.block({ cellCmd(3, Command{ Cmd::S, 0xF, 0xA, 0 }) }, 200);
+    REQUIRE(last(w, 0xFF22) != nullptr);
+    CHECK(last(w, 0xFF22)->value == nr43For(36));
+    // A table's S rows do the same: row 0 in the note-on itself, row 1 a tick later, adding up.
+    auto& t = r.bank.tables[9]; t = Table{}; t.used = true; t.end = TableEnd::Stop;   // slot 10
+    t.steps[0].cmd1 = Command{ Cmd::S, 0xF, 0xE, 0 };                                   // two down
+    t.steps[1].cmd1 = Command{ Cmd::S, 0, 5, 0 };                                       // five up, on top
+    i.table = 10;
+    w = r.block({ cellOn(3, 72, 21) }, 200);
+    REQUIRE(last(w, 0xFF22) != nullptr);
+    CHECK(last(w, 0xFF22)->value == nr43For(70));
+    w = r.block({}, 200);
+    REQUIRE(last(w, 0xFF22) != nullptr);
+    CHECK(last(w, 0xFF22)->value == nr43For(75));
+}
+
 TEST_CASE("a TBL column lasts until a cell names an instrument", "[driver][commands]")
 {
     Rig r;

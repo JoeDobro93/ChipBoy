@@ -56,45 +56,58 @@ constexpr uint8_t kNoise886[128] = {
     0,0,0,0,0,0,0,0
 };
 
-// --- LSDj 8.4.0, song format 11: traced on the user's ROM --------------------
-// The envelope byte is NRx2 itself (the chip's envelope). The noise map moves
-// by octaves only: C-2 to B-5 write FF, C-6 to B-6 EF, C-7 to B-7 DF, C-8 up
-// CF. The letter table with B is in the ROM.
-constexpr uint8_t kNoise840[128] = {
-    0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,   // 36-47
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,   // 48-59
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,   // 60-71
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,   // 72-83
-    0xEF, 0xEF, 0xEF, 0xEF, 0xEF, 0xEF, 0xEF, 0xEF, 0xEF, 0xEF, 0xEF, 0xEF,   // 84-95
-    0xDF, 0xDF, 0xDF, 0xDF, 0xDF, 0xDF, 0xDF, 0xDF, 0xDF, 0xDF, 0xDF, 0xDF,   // 96-107
-    0xCF, 0xCF, 0xCF, 0xCF, 0xCF, 0xCF, 0xCF, 0xCF, 0,0,0,0,                  // 108-115
-    0,0,0,0,0,0,0,0
+// --- 8.4.0 - 8.5.1 (format 11) and every release before: the SHAPE rule ----
+// Traced on 3.1.5, 3.1.9, 3.4.4, 3.5.1, 3.6.8, 3.7.5, 3.8.7, 3.8.9, 3.9.2,
+// 4.0.4, 4.1.0, 4.3.0, 4.4.0, 4.5.4, 4.6.0, 4.6.2, 4.6.9, 4.7.3, 4.8.0,
+// 4.9.4, 5.0.3, 5.7.8, 5.8.8, 5.9.9, 6.0.1, 6.4.5, 6.8.2, 6.9.0, 7.0.2, 8.4.0,
+// 8.4.4 and 8.5.1 (section 56): a noise note writes NR43 = ~SHAPE + 16 x
+// (5 - octave), saturating, SHAPE being the instrument's byte 4; the note
+// inside the octave is ignored. S on noise subtracts its nibbles from NR43's,
+// each modulo 16, and adds up until the next note-on. The envelope byte is
+// NRx2 itself. From 8.4.0 the letter table has B; before, it has not (3.1 has
+// no Z either). Before 5.7.8 P and L work in period-register units a pitch
+// clock and there are no pitch modes; before 3.6.8 V does too.
+
+constexpr LsdjModel kLsdj9   { "LSDj 9.2.J - 9.4.2 (format 22)",   22, 22, 31, kLetters9,      true,  kEnvPeriods9, NoiseRule::Map,   kNoise9,   36, 115, NoiseS::Semitones, PitchLaw::Semitone, VibratoLaw::Semitone,         -12, true, true };
+constexpr LsdjModel kLsdj886 { "LSDj 8.8.6 (format 15)",           15, 15, 21, kLetters9,      true,  kEnvPeriods9, NoiseRule::Raw,   kNoise886, 36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         -12, true, true };
+constexpr LsdjModel kLsdj84  { "LSDj 8.4.0 - 8.5.1 (format 11)",   11, 11, 14, kLetters9,      false, nullptr,      NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         -12, true, true };
+constexpr LsdjModel kLsdj57  { "LSDj 5.7.8 - 7.0.2 (formats 4-7)",  4,  4, 10, kLettersLegacy, false, nullptr,      NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         -12, true, true };
+constexpr LsdjModel kLsdj36  { "LSDj 3.6.8 - 5.0.3 (formats 2-3)",  3,  2,  3, kLettersLegacy, false, nullptr,      NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Register, VibratoLaw::Semitone,         -12, true, true };
+constexpr LsdjModel kLsdj31  { "LSDj 3.1.5 - 3.5.1 (format 0)",     0,  0,  1, kLettersLegacy, false, nullptr,      NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Register, VibratoLaw::RegisterOneSided, -12, true, true };
+
+constexpr const LsdjModel* kModels[] = { &kLsdj9, &kLsdj886, &kLsdj84, &kLsdj57, &kLsdj36, &kLsdj31 };   // newest first
+
+// The format each measured release writes, newest first (section 56). A
+// version between two entries takes the entry below it.
+struct VersionFormat { int major, minor, patch; int format; };
+constexpr VersionFormat kVersionFormats[] = {
+    { 9, 4, 2, 22 }, { 9, 3, 9, 22 }, { 9, 2, 0, 22 },
+    { 8, 8, 6, 15 },
+    { 8, 5, 1, 11 }, { 8, 4, 4, 11 }, { 8, 4, 0, 11 },
+    { 7, 0, 2, 7 }, { 6, 9, 0, 7 }, { 6, 8, 2, 7 },
+    { 6, 4, 5, 5 },
+    { 6, 0, 1, 4 }, { 5, 9, 9, 4 }, { 5, 8, 8, 4 }, { 5, 7, 8, 4 },
+    { 5, 0, 3, 3 }, { 4, 9, 4, 3 }, { 4, 8, 0, 3 }, { 4, 7, 3, 3 }, { 4, 6, 9, 3 }, { 4, 6, 2, 3 }, { 4, 6, 0, 3 }, { 4, 5, 4, 3 }, { 4, 4, 0, 3 },
+    { 4, 3, 0, 2 }, { 4, 1, 0, 2 }, { 4, 0, 4, 2 }, { 3, 9, 2, 2 }, { 3, 8, 9, 2 }, { 3, 8, 7, 2 }, { 3, 7, 5, 2 }, { 3, 6, 8, 2 },
+    { 3, 5, 1, 0 }, { 3, 4, 4, 0 }, { 3, 1, 9, 0 }, { 3, 1, 5, 0 },
 };
 
-// --- before 8.4: assumed -------------------------------------------------------
-// Traced on the 9.3.9 ROM playing the harness's version-0 saves, which it
-// reads with older rules: the command table without B and this noise map;
-// the envelope byte is NRx2. Assumed for formats 0-10 until a ROM of each is
-// measured (LsdjModel.h explains how).
-constexpr uint8_t kNoiseLegacy[128] = {
-    0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,
-    0xDF, 0xDE, 0xDD, 0xDC, 0xDB, 0xDA, 0xD9, 0xD8, 0xD7, 0xD6, 0xD5, 0xD4,   // 36-47
-    0xD3, 0xD2, 0xD1, 0xD0, 0xCF, 0xDB, 0xCD, 0xDA, 0xCB, 0xD9, 0xD8, 0xC8,   // 48-59
-    0xC7, 0xD3, 0xC5, 0xD2, 0xC3, 0xD1, 0xD0, 0xC0, 0xBF, 0xCB, 0xBD, 0xD9,   // 60-71
-    0xBB, 0xD8, 0xC8, 0xB8, 0xB7, 0xC3, 0xB5, 0xD1, 0xB3, 0xD0, 0xC0, 0xB0,   // 72-83
-    0xAF, 0xDF, 0xDE, 0xDD, 0xDC, 0xDB, 0xDA, 0xD9, 0xD8, 0xD7, 0xD6, 0xD5,   // 84-95
-    0xD4, 0xD3, 0xD2, 0xD1, 0xD0, 0xCF, 0xDB, 0xCD, 0xDA, 0xCB, 0xD9, 0xD8,   // 96-107
-    0xC8, 0xC7, 0xD3, 0xC5, 0xD2, 0xC3, 0xD1, 0xD0, 0,0,0,0,
-    0,0,0,0,0,0,0,0
-};
-
-constexpr LsdjModel kLsdj939 { "LSDj 9.2.J - 9.3.9 (format 22)", 22, 22, 31, kLetters9, true,  kEnvPeriods9, kNoise9,      36, 115, -12, true, true };
-constexpr LsdjModel kLsdj886 { "LSDj 8.8.6 (format 15)",         15, 15, 21, kLetters9, true,  kEnvPeriods9, kNoise886,    36, 115, -12, true, false };
-constexpr LsdjModel kLsdj840 { "LSDj 8.4.0 (format 11)",         11, 11, 14, kLetters9, false, nullptr,      kNoise840,    36, 115, -12, true, false };
-constexpr LsdjModel kLegacy  { "LSDj before 8.4 (assumed)",       3,  0,  10, kLettersLegacy, false, nullptr, kNoiseLegacy, 36, 115, -12, true, false };
-
-constexpr const LsdjModel* kModels[] = { &kLsdj939, &kLsdj886, &kLsdj840, &kLegacy };   // newest first
+/// "9.2.J" -> 9, 2, 19 (a letter patch counts from A = 10 so it sorts after
+/// the digits); false when the string does not start with a version.
+bool parseVersion(const char* v, int& major, int& minor, int& patch)
+{
+    if (v == nullptr) return false;
+    auto digit = [](char c) { return c >= '0' && c <= '9'; };
+    if (!digit(v[0]) || v[1] != '.' || !digit(v[2])) return false;
+    major = v[0] - '0'; minor = v[2] - '0'; patch = 0;
+    if (v[3] == '.' && v[4] != 0) {
+        const char c = v[4];
+        if (digit(c)) { patch = c - '0'; if (digit(v[5])) patch = patch * 10 + (v[5] - '0'); }
+        else if (c >= 'A' && c <= 'Z') patch = 10 + (c - 'A');
+        else if (c >= 'a' && c <= 'z') patch = 10 + (c - 'a');
+    }
+    return true;
+}
 
 } // namespace
 
@@ -107,21 +120,22 @@ const LsdjModel* lsdjModelForFormat(int formatVersion)
     return nullptr;
 }
 
+int lsdjFormatForVersion(const char* version)
+{
+    int major = 0, minor = 0, patch = 0;
+    if (!parseVersion(version, major, minor, patch)) return -1;
+    const long key = long(major) * 10000 + long(minor) * 100 + long(patch);
+    for (const auto& e : kVersionFormats) {
+        const long k = long(e.major) * 10000 + long(e.minor) * 100 + long(e.patch);
+        if (key >= k) return e.format;
+    }
+    return kVersionFormats[sizeof(kVersionFormats) / sizeof(kVersionFormats[0]) - 1].format;   // older than the oldest measured
+}
+
 const LsdjModel* lsdjModelForRomVersion(const char* version)
 {
-    if (version == nullptr || *version == 0) return nullptr;
-    const std::string v = version;
-    for (const LsdjModel* m : kModels) {
-        const std::string name = m->name;
-        if (name.find(v) != std::string::npos) return m;
-    }
-    // A version no model names: the nearest measured one below it.
-    const int major = v[0] >= '0' && v[0] <= '9' ? v[0] - '0' : -1;
-    const int minor = v.size() > 2 && v[2] >= '0' && v[2] <= '9' ? v[2] - '0' : 0;
-    if (major >= 9) return &kLsdj939;
-    if (major == 8) return minor >= 8 ? &kLsdj886 : minor >= 4 ? &kLsdj840 : &kLegacy;
-    if (major >= 0) return &kLegacy;
-    return nullptr;
+    const int f = lsdjFormatForVersion(version);
+    return f < 0 ? nullptr : lsdjModelForFormat(f);
 }
 
 const LsdjModel* lsdjModelNamed(const char* name)

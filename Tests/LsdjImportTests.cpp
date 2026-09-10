@@ -7,6 +7,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -175,19 +177,30 @@ TEST_CASE("the default codes expand to the default wave and instrument", "[lsdj]
 TEST_CASE("a model is chosen by format, by ROM title, by name, or the newest", "[lsdj]")
 {
     int n = 0; const auto* const* models = lsdjModels(n);
-    REQUIRE(n >= 4);
-    CHECK(std::string(lsdjLatestModel().name).find("9.3.9") != std::string::npos);
+    REQUIRE(n == 6);
+    CHECK(std::string(lsdjLatestModel().name).find("9.4.2") != std::string::npos);
     CHECK(lsdjModelForFormat(22) == models[0]);
     CHECK(lsdjModelForFormat(15)->formatVersion == 15);          // 8.8.6, measured
-    CHECK(lsdjModelForFormat(18)->formatVersion == 15);          // no ROM yet: the nearest below
-    CHECK(lsdjModelForFormat(11)->formatVersion == 11);          // 8.4.0, measured
-    CHECK(lsdjModelForFormat(3) != nullptr); CHECK(std::string(lsdjModelForFormat(3)->name).find("assumed") != std::string::npos);
+    CHECK(lsdjModelForFormat(18)->formatVersion == 15);          // no release wrote it: the nearest below
+    CHECK(lsdjModelForFormat(11)->formatVersion == 11);          // 8.4.x, 8.5.1
+    CHECK(lsdjModelForFormat(7)->pitchLaw == PitchLaw::Semitone); CHECK(lsdjModelForFormat(7)->noiseRule == NoiseRule::Shape);
+    CHECK(lsdjModelForFormat(3)->pitchLaw == PitchLaw::Register); CHECK(lsdjModelForFormat(3)->vibratoLaw == VibratoLaw::Semitone);
+    CHECK(lsdjModelForFormat(0)->vibratoLaw == VibratoLaw::RegisterOneSided);
+    CHECK(lsdjModelForFormat(1) == lsdjModelForFormat(0));
+    for (int i = 0; i < n; ++i) CHECK(models[i]->measured);
     CHECK(lsdjModelForFormat(99) == nullptr);
+    // A version string to the format it writes: the measured table, the nearer below between entries.
+    CHECK(lsdjFormatForVersion("9.3.9") == 22); CHECK(lsdjFormatForVersion("9.2.J") == 22); CHECK(lsdjFormatForVersion("9.4.2") == 22);
+    CHECK(lsdjFormatForVersion("8.8.6") == 15); CHECK(lsdjFormatForVersion("8.4.4") == 11); CHECK(lsdjFormatForVersion("8.6.0") == 11);
+    CHECK(lsdjFormatForVersion("7.0.2") == 7); CHECK(lsdjFormatForVersion("6.4.5") == 5); CHECK(lsdjFormatForVersion("6.2.0") == 4);
+    CHECK(lsdjFormatForVersion("5.0.3") == 3); CHECK(lsdjFormatForVersion("4.7.3") == 3); CHECK(lsdjFormatForVersion("4.3.0") == 2);
+    CHECK(lsdjFormatForVersion("3.5.1") == 0); CHECK(lsdjFormatForVersion("3.1.5") == 0); CHECK(lsdjFormatForVersion("2.0.0") == 0);
+    CHECK(lsdjFormatForVersion("nonsense") == -1);
     CHECK(lsdjModelForRomVersion("9.3.9") == models[0]);
-    CHECK(lsdjModelForRomVersion("9.2.J") == models[0]);
     CHECK(lsdjModelForRomVersion("8.8.6")->formatVersion == 15);
     CHECK(lsdjModelForRomVersion("8.4.0")->formatVersion == 11);
-    CHECK(lsdjModelForRomVersion("4.7.3")->formatVersion == 3);
+    CHECK(lsdjModelForRomVersion("4.7.3") == lsdjModelForFormat(3));
+    CHECK(lsdjModelForRomVersion("7.0.2") == lsdjModelForFormat(7));
     CHECK(lsdjModelForRomVersion("") == nullptr);
     CHECK(lsdjModelNamed(models[0]->name) == models[0]);
     CHECK(lsdjModelNamed("nothing") == nullptr);
@@ -197,6 +210,11 @@ TEST_CASE("a model is chosen by format, by ROM title, by name, or the newest", "
     CHECK(romVersion(rom.data(), rom.size()) == "9.3.9");
     std::memcpy(rom.data() + 0x134, "TETRIS\0\0\0\0\0", 11);
     CHECK(romVersion(rom.data(), rom.size()).empty());
+    // Before 4.3 the title is "LSDJ" and the welcome line carries the version.
+    std::vector<uint8_t> old(0x2000, 0);
+    std::memcpy(old.data() + 0x134, "LSDJ", 4);
+    std::memcpy(old.data() + 0x9F2, "WELCOME TO LITTLE SOUND DJ V3.5.1!", 34);
+    CHECK(romVersion(old.data(), old.size()) == "3.5.1");
 }
 
 TEST_CASE("a format-22 song imports its instruments, tables, phrases and chains", "[lsdj]")
@@ -255,6 +273,20 @@ TEST_CASE("a format-22 song imports its instruments, tables, phrases and chains"
     CHECK(noted);
 }
 
+namespace {
+double noiseClockOf(uint8_t nr43) { const int d = nr43 & 7; return 524288.0 / (d == 0 ? 0.5 : double(d)) / double(1u << ((nr43 >> 4) + 1)); }
+/// Whether the cell's note, through its instrument's Shift, is the ChipBoy
+/// note nearest the LSDj byte's clock and on the keyboard (12 or above).
+bool noiseClockMatches(const bank::Bank& bank, const tracker::Phrase& p, int cell, uint8_t nr43)
+{
+    const auto& c = p.cells[size_t(cell)];
+    if (c.inst < 1 || c.note < 12) return false;
+    const int off = int(bank.instruments[size_t(c.inst - 1)].noiseShift) - 5;
+    const int want = std::max(12, chipboyNoteForClock(noiseClockOf(nr43) * std::pow(2.0, off), 60));
+    return c.note == want;
+}
+} // namespace
+
 TEST_CASE("the same bytes under the older models take their own envelope, letters and noise", "[lsdj]")
 {
     SECTION("before 8.4: the letters without B and the hardware envelope") {
@@ -277,7 +309,7 @@ TEST_CASE("the same bytes under the older models take their own envelope, letter
         CHECK(bank->instruments[0].env.mode == bank::EnvMode::Chip); CHECK(bank->instruments[0].envRate == 5);
         CHECK(out->phrase(1)->cells[4].cmd1.cmd == bank::Cmd::P);
         bool found = false;
-        for (uint8_t slot : out->chain[3]) if (const auto* p = out->phrase(slot)) { found = true; CHECK(p->cells[0].note == chipboyNoteForNr43(0xEF, 93)); }   // A-6 writes EF on 8.4.0
+        for (uint8_t slot : out->chain[3]) if (const auto* p = out->phrase(slot)) { found = true; CHECK(noiseClockMatches(*bank, *p, 0, 0xEF)); }   // A-6 writes EF on 8.4.0: a 2.3 Hz click, the deepest the Shift reaches
         CHECK(found);
     }
     SECTION("8.8.6, format 15: the three stages and the raw noise column") {
@@ -287,9 +319,147 @@ TEST_CASE("the same bytes under the older models take their own envelope, letter
         REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(15), *bank, *out, sum, notes));
         CHECK(bank->instruments[0].env.mode == bank::EnvMode::Shaped); CHECK(bank->instruments[0].env.attackTicks == 11);
         bool found = false;
-        for (uint8_t slot : out->chain[3]) if (const auto* p = out->phrase(slot)) { found = true; CHECK(p->cells[0].note == chipboyNoteForNr43(uint8_t(0xFF - (93 - 35)), 93)); }   // A-6 is note byte 58: FF - 58
+        for (uint8_t slot : out->chain[3]) if (const auto* p = out->phrase(slot)) { found = true; CHECK(noiseClockMatches(*bank, *p, 0, uint8_t(0xFF - (93 - 35)))); }   // A-6 is note byte 58: FF - 58
         CHECK(found);
     }
+}
+
+namespace {
+/// A song for the older formats (section 56): a pulse lead, a noise drum with
+/// SHAPE E3 and a table of S rows, two phrases -- the noise one with S on the
+/// note's row and the next, the pulse one with L and P and V.
+std::vector<uint8_t> oldSong(int format)
+{
+    auto s = blankSong(format);
+    const bool withB = format >= 11;
+    const auto letter = [withB](char c) { const char* t = withB ? "-ABCDEFGHKLMOPRSTVWZ" : "-ACDEFGHKLMOPRSTVWZ"; return uint8_t(std::strchr(t, c) - t); };
+    s[kInstAlloc + 0] = 1;
+    uint8_t* i0 = s.data() + kInst; i0[0] = 0; i0[1] = 0xA5; i0[4] = 0xFF; i0[7] = 0x80 | 3;
+    s[kInstAlloc + 1] = 1;
+    uint8_t* i1 = s.data() + kInst + 16; i1[0] = 3; i1[1] = 0x51; i1[4] = 0xE3; i1[7] = 3;          // SHAPE E3
+    s[kInstAlloc + 2] = 1;
+    uint8_t* i2 = s.data() + kInst + 32; i2[0] = 3; i2[1] = 0x51; i2[4] = 0xE3; i2[6] = 0x20 | 0; i2[7] = 3;   // the same, table 0 on
+    // table 0: S07 at row 1, S10 at row 2
+    s[kTableAlloc + 0] = 1;
+    s[kTableCmd1 + 1] = letter('S'); s[kTableCmd1V + 1] = 0x07;
+    s[kTableCmd1 + 2] = letter('S'); s[kTableCmd1V + 2] = 0x10;
+    auto alloc = [&](int p) { s[kPhraseAlloc + size_t(p / 8)] |= uint8_t(1 << (p % 8)); };
+    alloc(0); alloc(1);
+    // phrase 0 (NOI): C-4 with the drum and SF1, SF1 on the next row; C-5 with the tabled drum at step 8
+    s[kNotes + 0] = 60 - 35; s[kPhraseInst + 0] = 1; s[kCmd + 0] = letter('S'); s[kCmdV + 0] = 0xF1;
+    s[kCmd + 1] = letter('S'); s[kCmdV + 1] = 0xF1;
+    s[kNotes + 8] = 72 - 35; s[kPhraseInst + 8] = 2;
+    // phrase 1 (PU1): C-4 with the lead; E-4 with L04 at step 2; P08 at step 4; V24 at step 6
+    s[kNotes + 16 + 0] = 60 - 35; s[kPhraseInst + 16 + 0] = 0;
+    s[kNotes + 16 + 2] = 64 - 35; s[kCmd + 16 + 2] = letter('L'); s[kCmdV + 16 + 2] = 0x04;
+    s[kCmd + 16 + 4] = letter('P'); s[kCmdV + 16 + 4] = 0x08;
+    s[kCmd + 16 + 6] = letter('V'); s[kCmdV + 16 + 6] = 0x24;
+    s[kChainPhrases + 0] = 1;                       // chain 0 = phrase 1 (PU1)
+    s[kChainPhrases + 16] = 0;                      // chain 1 = phrase 0 (NOI)
+    s[kRows + 0] = 0; s[kRows + 1] = 0xFF; s[kRows + 2] = 0xFF; s[kRows + 3] = 1;
+    return s;
+}
+int semitoneOf(const bank::Command& c) { return int(int8_t(uint8_t((c.a << 4) | c.b))); }
+} // namespace
+
+TEST_CASE("the formats before 9 read the noise SHAPE and resolve S to the note it lands on", "[lsdj]")
+{
+    // Section 56: NR43 = ~SHAPE + 16 x (5 - octave); S subtracts its nibbles from NR43's.
+    const auto song = oldSong(11);
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(11), *bank, *out, sum, notes));
+    const auto* noi = out->phrase(out->chain[3].at(0));
+    REQUIRE(noi != nullptr);
+    // ~E3 = 1C, octave 4: 1C + 16 = 2C (16 kHz, 7-bit); the drum's Shift puts it on the keyboard.
+    const int slot = noi->cells[0].inst;
+    REQUIRE(slot >= 1);
+    const int off = int(bank->instruments[size_t(slot - 1)].noiseShift) - 5;
+    const auto noteOf = [off](uint8_t nr43, int prefer) { return chipboyNoteForClock(noiseClockOf(nr43) * std::pow(2.0, off), prefer); };
+    const int n2C = noteOf(0x2C, 60), n3B = noteOf(0x3B, n2C), n4A = noteOf(0x4A, n3B);
+    CHECK(noi->cells[0].note == n2C);
+    CHECK(bank->instruments[size_t(slot - 1)].lfsr7);
+    REQUIRE(noi->cells[0].cmd1.cmd == bank::Cmd::S);
+    CHECK(semitoneOf(noi->cells[0].cmd1) == n3B - n2C);                       // SF1: 2C -> 3B
+    REQUIRE(noi->cells[1].cmd1.cmd == bank::Cmd::S);
+    CHECK(semitoneOf(noi->cells[1].cmd1) == n4A - n3B);                       // and again, on top: 3B -> 4A
+    CHECK(noiseClockMatches(*bank, *noi, 8, 0x1C));                          // C-5: 1C + 0
+    // The table's S rows are folded into its transpose column for the note it is used with (C-5, 1C).
+    const auto& t = bank->tables[0];
+    REQUIRE(t.used);
+    const int slot2 = noi->cells[8].inst; REQUIRE(slot2 >= 1);
+    const int off2 = int(bank->instruments[size_t(slot2 - 1)].noiseShift) - 5;
+    const auto noteOf2 = [off2](uint8_t nr43, int prefer) { return chipboyNoteForClock(noiseClockOf(nr43) * std::pow(2.0, off2), prefer); };
+    // The table's S rows become ChipBoy's S (section 55), each the semitones from where the row before left NR43.
+    CHECK_FALSE(t.steps[0].hasTranspose); CHECK_FALSE(t.steps[1].hasTranspose); CHECK_FALSE(t.steps[2].hasTranspose);
+    const int t0 = noteOf2(0x1C, 72), t1 = noteOf2(0x15, t0), t2 = noteOf2(0x05, t1);   // each row's note is chosen nearest the row before
+    REQUIRE(t.steps[1].cmd1.cmd == bank::Cmd::S); CHECK(semitoneOf(t.steps[1].cmd1) == t1 - t0);   // S07: 1C -> 15
+    REQUIRE(t.steps[2].cmd1.cmd == bank::Cmd::S); CHECK(semitoneOf(t.steps[2].cmd1) == t2 - t1);   // S10 on top: 15 -> 05
+    // On 9.x the same byte is the transpose itself.
+    const auto song9 = oldSong(22);
+    REQUIRE(importSong(song9.data(), song9.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes));
+    const auto* noi9 = out->phrase(out->chain[3].at(0));
+    REQUIRE(noi9 != nullptr);
+    REQUIRE(noi9->cells[0].cmd1.cmd == bank::Cmd::S);
+    CHECK(semitoneOf(noi9->cells[0].cmd1) == -15);                             // F1 two's complement
+    CHECK(noiseClockMatches(*bank, *noi9, 0, 0x77));                          // C-4 on the 9.x map: 292 Hz, three octaves below the keyboard
+}
+
+TEST_CASE("the formats before 5.7 convert P, L and V from the period register", "[lsdj]")
+{
+    const auto song = oldSong(3);
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(3), *bank, *out, sum, notes));
+    CHECK(bank->instruments[0].pitchSpeed == bank::PitchSpeed::Drum);         // P and L work in the register: Drum
+    const auto* pu = out->phrase(out->chain[0].at(0));
+    REQUIRE(pu != nullptr);
+    // L04 from C-4 to E-4: the register distance over 4 units a clock, less one, is the duration.
+    REQUIRE(pu->cells[2].cmd1.cmd == bank::Cmd::L);
+    const double dist = (2048.0 - 131072.0 / 329.6276) - (2048.0 - 131072.0 / 261.6256);
+    CHECK(int(pu->cells[2].cmd1.a) == int(std::ceil(dist / 4.0)) - 1);
+    // P08: 8 units a clock, the Drum speed whose measured step is nearest (27: 105/256 x 19.11 = 7.84).
+    REQUIRE(pu->cells[4].cmd1.cmd == bank::Cmd::P);
+    CHECK(int(pu->cells[4].cmd1.a) == 27);
+    // V under format 3 is already the 9.x law: untouched.
+    REQUIRE(pu->cells[6].cmd1.cmd == bank::Cmd::V);
+    CHECK(int(pu->cells[6].cmd1.a) == 2); CHECK(int(pu->cells[6].cmd1.b) == 4);
+    // Format 0's one-sided vibrato: 8y units a clock for x + 1 clocks, centred by ChipBoy.
+    const auto song0 = oldSong(0);
+    REQUIRE(importSong(song0.data(), song0.size(), *lsdjModelForFormat(0), *bank, *out, sum, notes));
+    const auto* pu0 = out->phrase(out->chain[0].at(0));
+    REQUIRE(pu0 != nullptr);
+    REQUIRE(pu0->cells[6].cmd1.cmd == bank::Cmd::V);
+    CHECK(int(pu0->cells[6].cmd1.a) == 10); CHECK(int(pu0->cells[6].cmd1.b) == 3);
+    // Under format 7 the same bytes keep the 9.x laws and the instrument's own pitch mode.
+    const auto song7 = oldSong(7);
+    REQUIRE(importSong(song7.data(), song7.size(), *lsdjModelForFormat(7), *bank, *out, sum, notes));
+    CHECK(bank->instruments[0].pitchSpeed == bank::PitchSpeed::Fast);
+    CHECK(int(out->phrase(out->chain[0].at(0))->cells[4].cmd1.a) == 8);
+}
+
+TEST_CASE("a project file decompresses to the song the save's file holds", "[lsdj]")
+{
+    // Plan section 1a: name, version, the blocks in order; the jump codes
+    // inside still name the save's block numbers and are read as "next".
+    SaveWriter w;
+    const auto song = testSong(22);
+    w.addFile(3, "PROJECT", song, true);
+    const auto& save = w.save;
+    int first = -1, count = 0;
+    for (int b = 0; b < kBlockCount; ++b) if (save[0x8141 + size_t(b)] == 3) { if (first < 0) first = b + 1; ++count; }
+    REQUIRE(first > 0);
+    std::vector<uint8_t> proj(9, 0);
+    std::memcpy(proj.data(), "PROJECT", 7); proj[8] = 5;
+    proj.insert(proj.end(), save.begin() + 0x8000 + first * 0x200, save.begin() + 0x8000 + (first + count) * 0x200);
+    CHECK(looksLikeProject(proj.data(), proj.size()));
+    CHECK_FALSE(looksLikeProject(save.data(), save.size()));
+    std::string name, err; int version = -1; std::vector<uint8_t> out;
+    REQUIRE(decompressProject(proj.data(), proj.size(), name, version, out, err));
+    CHECK(name == "PROJECT"); CHECK(version == 5);
+    CHECK(out == song);
+    proj.resize(proj.size() - 7);                    // a torn file is refused
+    CHECK_FALSE(looksLikeProject(proj.data(), proj.size()));
 }
 
 TEST_CASE("a noise byte maps to the ChipBoy note with the same LFSR clock", "[lsdj]")

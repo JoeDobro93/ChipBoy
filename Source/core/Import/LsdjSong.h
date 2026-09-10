@@ -35,7 +35,10 @@ bool importSong(const uint8_t* song, size_t size, const LsdjModel& model,
                 const std::vector<LsdjKit>* kits = nullptr);
 
 /// The ChipBoy note whose noise pair has the same LFSR clock as an NR43
-/// byte, the one nearest `prefer` on a tie (section 45). Exposed for tests.
+/// byte, the one nearest `prefer` on a tie (section 45); the map continues
+/// below the keyboard, so the note can be negative (section 55). Exposed for
+/// tests. `chipboyNoteForClock` is the same for a clock in Hz.
 int chipboyNoteForNr43(uint8_t nr43, int prefer);
+int chipboyNoteForClock(double hz, int prefer);
 
 } // namespace chipboy::lsdj

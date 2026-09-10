@@ -26,6 +26,24 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-10 — every stable LSDj release measured; the older formats import; S on noise; project files
+
+[`COMMANDS_AND_TEMPO.md`](docs/COMMANDS_AND_TEMPO.md) §55–§56, [`plan-lsdj-import.md`](docs/plan-lsdj-import.md) §1a, §3, §4b:
+
+- **S on the noise channel** (§55) is a transpose in semitones through the map, adding up until the
+  next note-on — LSDj 9's rule, measured on 9.3.9 and 9.4.2. Spec §34 had S inert on NOI. The palette
+  lets `x` run 0–15; PU1's sweep reads it as before. The noise map continues below the keyboard for
+  transposes (to −72) and the instrument's Shift is read from the instrument, not from the last pair
+  written (a driver bug: a second NR43 write compounded the offset).
+- **The models** grew rules per format (noise Shape/Raw/Map, S in nibbles or semitones, P/L/V in
+  register units or semitones), measured on all 31 archived releases; the importer converts the older
+  laws (§56): SHAPE noise, nibble S resolved to semitones, register P/L/V into Drum, any instrument on
+  any channel as a variant, notes before an instrument column as instrument 00, tables by content, a
+  noise slot's Shift chosen to reach LSDj's low clocks. Left alone with the reason in §56: P on noise,
+  8.4.x's table row-0 timing, 5.x–6.x drum tables.
+- **Project files** (`.lsdprj`, `.lsdsng`) import beside saves, several at once (D-UI-22).
+- `chipboy_recordtest --trace-song` writes a song's register trace for comparison with an LSDj trace.
+
 ### 2026-09-10 — kit instruments imported from the ROM beside the save
 
 The kit instrument's byte layout was measured on the user's 9.2.L ROM by copying a real kit instrument into probe songs and matching the streamed wave RAM against the ROM's kit banks ([`plan-lsdj-import.md`](docs/plan-lsdj-import.md) §4a): the note's high digit picks a sample of the kit in byte 2, the low digit one of the kit in byte 9, bytes 3 and 11 cut them to 32-sample frames, and byte 8 is a signed offset on the period 1865. The importer reads the `*.gb` beside the `.sav` (the one that reads the song's format, else the newest), turns each kit instrument into a ChipBoy kit of the samples its notes use, and rewrites the cells' notes to those samples. A note that plays both kits is summed and clipped and noted — LSDj's DIST modes did not match any simple combination in the probes. Offsets, loop and half-speed flags are noted. Nothing of the ROM enters the repository; the samples land in the user's song file.

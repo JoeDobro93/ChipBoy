@@ -7,9 +7,11 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <set>
+#include <tuple>
 
 namespace chipboy::lsdj {
 
@@ -35,6 +37,24 @@ constexpr double kPitchClockMs = 11712.0 * 1000.0 / 4194304.0;   // 2.7924 ms
 int signedByte(int b) { return b >= 128 ? b - 256 : b; }
 std::string hex2(int v) { static const char* d = "0123456789ABCDEF"; std::string s; s += d[(v >> 4) & 15]; s += d[v & 15]; return s; }
 double noiseClockHz(int shift, int divisor) { return 524288.0 / (divisor == 0 ? 0.5 : double(divisor)) / double(1u << (shift + 1)); }
+
+/// S on noise before 9 (section 56): each nibble of NR43 less the matching
+/// nibble of xy, modulo 16, no borrow between them.
+uint8_t nibbleS(uint8_t nr43, int xy) { return uint8_t(((((nr43 >> 4) - (xy >> 4)) & 15) << 4) | (((nr43 & 15) - (xy & 15)) & 15)); }
+/// The pulse period register for a MIDI note, the chip's own formula (the
+/// LSDj table is within a unit of it): what a register-unit slide covers.
+double gbPeriod(int midi) { return 2048.0 - 131072.0 / (440.0 * std::pow(2.0, (midi - 69) / 12.0)); }
+/// Drum mode's units a pitch clock for a P speed (Driver.cpp: bendStep256 /
+/// 256 of a semitone at kDrumUnitsPerSemitone).
+double drumUnitsPerClock(int speed) { return double(driver::Driver::bendStepFor(speed)) / 256.0 * 19.11; }
+/// The ChipBoy P speed whose Drum step is nearest `units` a pitch clock
+/// (section 56: an old P adds its byte to the register every clock).
+int drumSpeedFor(int units)
+{
+    int best = 1; double bestErr = 1e9;
+    for (int m2 = 1; m2 <= 127; ++m2) { const double e = std::fabs(drumUnitsPerClock(m2) - double(units)); if (e < bestErr) { bestErr = e; best = m2; } }
+    return best;
+}
 
 /// The interpreter's state for one song.
 /// A kit instrument's two kits (plan section 4a, measured on 9.2.L): the
@@ -62,16 +82,39 @@ struct Reader {
     std::array<int, kLsdjInstruments> instType{};        // -1 none, 0 pulse, 1 wave, 2 kit, 3 noise
     std::array<bool, kLsdjInstruments> instTranspose{};
     std::map<int, int> waveSlotOfSynth;                  // LSDj synth -> ChipBoy wave slot
-    std::map<int, std::set<bool>> noiseWidths;           // instrument -> the LFSR widths its notes take
-    std::map<std::pair<int, int>, int> phraseSlot;       // (LSDj phrase, channel) -> ChipBoy phrase slot
+    std::map<int, std::set<bool>> noiseWidths;           // ChipBoy slot -> the LFSR widths its notes take
+    // LSDj's noise clocks run from 16 Hz to 524 kHz; ChipBoy's notes 12-127
+    // reach 2 kHz and up (section 9.4). The instrument's Shift parameter moves
+    // the whole map by octaves, so each noise slot takes the offset that puts
+    // the clocks its notes ask for onto the keyboard (section 56).
+    std::map<int, std::set<uint8_t>> noiseClocks;         // ChipBoy slot -> the NR43 bytes its notes write
+    std::map<int, int> noiseOffset;                       // ChipBoy slot -> shift offset (noiseShift - 5)
+    /// What a channel carries from cell to cell in chain order (section 56):
+    /// the noise channel's NR43 and the ChipBoy note it landed on, for S;
+    /// the last note's LSDj MIDI on a pulse or wave channel, for L.
+    /// `inst` is the instrument the channel carries (LSDj's is 00 at the
+    /// start); `instSeen` whether a cell has named one yet.
+    struct ChannelState { int nr43 = -1; int chipNote = 0; int lastMidi = -1; int inst = 0; bool instSeen = false; int noiseSlot = 0; };
+    struct PhraseOut { int slot = 0; ChannelState end; };
+    std::map<std::tuple<int, int, int>, PhraseOut> phraseSlot;   // (LSDj phrase, channel, folded noise transpose) -> ChipBoy phrase slot and the state it leaves
+    // LSDj plays any instrument on any channel as the channel's kind -- a
+    // pulse on NOI is a noise instrument with the same bytes (section 56).
+    // ChipBoy's instruments have a type, so such a use gets a variant of the
+    // channel's kind in the slots above LSDj's 64.
+    std::map<int, std::set<int>> phraseChannels;         // LSDj phrase -> the channels it plays on
+    std::map<std::pair<int, int>, int> variantSlot;      // (LSDj instrument, kind) -> ChipBoy slot, 1-based
+    std::map<int, std::set<std::tuple<int, int, int>>> tableUse;   // table -> (LSDj instrument, channel, MIDI) of the notes that run it
+    std::set<int> instUsed;                              // LSDj instruments a note plays, allocated or not
+    int nextVariant = kLsdjInstruments;                  // the next free 0-based slot for a variant
     int phrasesOut = 0;
-    std::array<double, 128> chipboyClock{};
+    /// ChipBoy's LFSR clock for a note, -72..127: the map continues below the
+    /// keyboard for transposes (section 55).
+    static double chipboyClockOf(int note) { uint8_t sh = 0, d = 0; driver::Driver::noisePairForNote(note, sh, d); return noiseClockHz(sh, d); }
 
     Reader(const uint8_t* bytes, const LsdjModel& model, bank::Bank& b, tracker::Song& so, ImportNotes& n)
         : s(bytes), m(model), bank(b), song(so), notes(n)
     {
         instType.fill(-1);
-        for (int k = 0; k < 128; ++k) { uint8_t sh = 0, d = 0; driver::Driver::noisePairForNote(k, sh, d); chipboyClock[size_t(k)] = noiseClockHz(sh, d); }
     }
 
     // --- bytes ----------------------------------------------------------
@@ -91,10 +134,94 @@ struct Reader {
         return 0;
     }
     bool phraseAllocated(int p) const { return (at(kPhraseAlloc + size_t(p / 8)) >> (p % 8)) & 1; }
+    /// The kind a channel plays: pulse on PU1 and PU2, a kit or a wave on WAV, noise on NOI.
+    int kindFor(int ins, int ch) const { if (ch == 3) return 3; if (ch == 2) return (ins >= 0 && ins < kLsdjInstruments && inst(ins)[0] == 2) ? 2 : 1; return 0; }
+    /// The ChipBoy slot (1-based) a cell on `ch` reaches for LSDj instrument `ins`.
+    int slotFor(int ins, int ch) const { const auto it = variantSlot.find({ ins, kindFor(ins, ch) }); return it != variantSlot.end() ? it->second : ins + 1; }
+    bool transposeOn(int ins) const { return ins >= 0 && ins < kLsdjInstruments && !(inst(ins)[5] & 0x20); }
+    static const char* channelName(int ch) { static const char* k[4] = { "PU1", "PU2", "WAV", "NOI" }; return k[ch & 3]; }
+
+    /// Which phrases play on which channels and which instruments notes reach
+    /// there, in chain order, before anything is built: the variants come from
+    /// this, and so do the instruments a note plays without a column (LSDj's
+    /// instrument 00 until a cell names one).
+    void usage()
+    {
+        std::array<int, 4> cur{ 0, 0, 0, 0 };
+        int runNr = -1;                                       // the noise channel's NR43, for the S rows' clocks
+        const bool fold = m.noiseRule != NoiseRule::Map;
+        const auto use = [this](int ins, int ch) {
+            if (ins < 0 || ins >= kLsdjInstruments) return;
+            instUsed.insert(ins);
+            const int kind = kindFor(ins, ch), own = inst(ins)[0];
+            if (kind == own || kind == 2) return;
+            const auto key = std::make_pair(ins, kind);
+            if (variantSlot.count(key)) return;
+            if (nextVariant >= bank::kInstrumentSlots) { notes.add("no slot left for a " + std::string(channelName(ch)) + " variant of instrument " + hex2(ins) + "; it plays as itself"); return; }
+            variantSlot[key] = ++nextVariant;                                  // 1-based: 0-based slot nextVariant - 1
+        };
+        for (int r = 0; r < 256; ++r) {
+            const uint8_t* row = s + kSongRows + size_t(r) * 4;
+            if (row[0] == 0xFF && row[1] == 0xFF && row[2] == 0xFF && row[3] == 0xFF) break;
+            for (int ch = 0; ch < 4; ++ch) {
+                const uint8_t c = row[ch];
+                if (c == 0xFF || c >= kLsdjChains) continue;
+                for (int st = 0; st < 16; ++st) {
+                    const uint8_t p = at(kChainPhrases + size_t(c) * 16 + size_t(st));
+                    if (p == 0xFF || p >= kLsdjPhrases) break;
+                    phraseChannels[p].insert(ch);
+                    const int tsp = signedByte(at(kChainTsp + size_t(c) * 16 + size_t(st)));
+                    for (int k = 0; k < 16; ++k) {
+                        const size_t i = size_t(p) * 16 + size_t(k);
+                        const uint8_t ins = at(kPhraseInst + i);
+                        if (ins != 0xFF && ins < kLsdjInstruments) cur[size_t(ch)] = ins;
+                        const uint8_t n = at(kPhraseNotes + i);
+                        if (!n) continue;
+                        const int ci = cur[size_t(ch)];
+                        const char letter = letterOf(at(kPhraseCmd + i));
+                        const uint8_t v = at(kPhraseCmdV + i);
+                        if (ch == 3 && !n && letter == 'S' && runNr >= 0 && m.noiseS == NoiseS::Nibbles) { runNr = nibbleS(uint8_t(runNr), v); noiseClocks[slotFor(ci, 3)].insert(uint8_t(runNr)); }
+                        if (!n) continue;
+                        use(ci, ch);
+                        // The table this note runs: the cell's A, else the instrument's.
+                        int tbl = -1;
+                        if (letter == 'A' && v != 0x20) tbl = v;
+                        else if (ci >= 0 && ci < kLsdjInstruments && (inst(ci)[6] & 0x20)) tbl = inst(ci)[6] & 0x1F;
+                        if (tbl >= 0 && tbl < kLsdjTables) tableUse[tbl].insert({ ci, ch, int(n) + 35 });
+                        if (ch == 3) {
+                            // The clocks this slot asks for: the note, the S rows after it, the table's rows.
+                            const int slot = slotFor(ci, 3);
+                            runNr = lsdjNr43(int(n) + 35 + (fold && transposeOn(ci) ? tsp : 0), ci);
+                            noiseClocks[slot].insert(uint8_t(runNr));
+                            if (letter == 'S' && m.noiseS == NoiseS::Nibbles) { runNr = nibbleS(uint8_t(runNr), v); noiseClocks[slot].insert(uint8_t(runNr)); }
+                            if (tbl >= 0 && tbl < kLsdjTables) {
+                                uint8_t tr = uint8_t(runNr);
+                                for (int r = 0; r < 16; ++r) {
+                                    const size_t ti = size_t(tbl) * 16 + size_t(r);
+                                    const uint8_t tt = at(kTableTsp + ti);
+                                    if (tt && fold) noiseClocks[slot].insert(uint8_t((int(runNr) - signedByte(tt)) & 0xFF));
+                                    for (const auto& [code, val] : { std::pair<uint8_t, uint8_t>{ at(kTableCmd1 + ti), at(kTableCmd1V + ti) }, std::pair<uint8_t, uint8_t>{ at(kTableCmd2 + ti), at(kTableCmd2V + ti) } })
+                                        if (letterOf(code) == 'S' && m.noiseS == NoiseS::Nibbles) { tr = nibbleS(tr, val); noiseClocks[slot].insert(tr); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // --- noise (section 45) ---------------------------------------------
-    uint8_t lsdjNr43(int midi)
+    /// NR43 for a noise note under the model's rule (section 56). `instSlot`
+    /// is the note's instrument, whose byte 4 is the SHAPE before 8.8.
+    uint8_t lsdjNr43(int midi, int instSlot)
     {
+        if (m.noiseRule == NoiseRule::Shape) {
+            const int shape = instSlot >= 0 && instSlot < kLsdjInstruments ? int(inst(instSlot)[4]) : 0xFF;
+            const int octave = (std::clamp(midi, 36, 36 + 12 * 12) - 36) / 12 + 2;   // C-2 to B-2 is octave 2
+            return uint8_t(std::clamp(((~shape) & 0xFF) + 16 * (5 - octave), 0, 255));
+        }
+        if (m.noiseRule == NoiseRule::Raw) return uint8_t(std::clamp(0xFF - (midi - 35), 0, 255));
         const int lo = std::clamp(m.noiseLo, 0, 127), hi = std::clamp(m.noiseHi, lo, 127);
         int k = std::clamp(midi, 0, 127);
         if (k < lo || k > hi) {
@@ -106,13 +233,39 @@ struct Reader {
         }
         return m.noiseMap[size_t(k)];
     }
-    int noteForNr43(uint8_t v, int prefer)
+    int offsetOf(int slot) const { const auto it = noiseOffset.find(slot); return it == noiseOffset.end() ? 0 : it->second; }
+    /// The ChipBoy note that plays NR43 `v` on `slot`, its Shift offset taken
+    /// into account: the map's clock is 2^offset times the byte's.
+    int noteForNr43(uint8_t v, int prefer, int slot)
     {
-        const int n = chipboyNoteForNr43(v, prefer);
-        const double c = noiseClockHz(v >> 4, v & 7);
-        if (std::fabs(std::log(chipboyClock[size_t(n)]) - std::log(c)) > 1e-6)
+        const double c = noiseClockHz(v >> 4, v & 7) * std::pow(2.0, offsetOf(slot));
+        const int n = chipboyNoteForClock(c, prefer);
+        if (std::fabs(std::log(chipboyClockOf(n)) - std::log(c)) > 1e-6)
             notes.add("noise NR43 " + hex2(v) + ": no ChipBoy note has exactly its clock; the nearest note is used");
         return n;
+    }
+    /// Each noise slot's Shift offset: the first of 0, +1 .. +8, -1 .. -5
+    /// that puts every note it plays on the keyboard (12-127), else the one
+    /// that puts most there.
+    void chooseNoiseOffsets()
+    {
+        static const int kTry[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, -1, -2, -3, -4, -5 };
+        for (const auto& [slot, bytes] : noiseClocks) {
+            int best = 0; double bestErr = 1e9;
+            for (int o : kTry) {
+                double err = 0.0;
+                for (uint8_t v : bytes) {
+                    const double c = noiseClockHz(v >> 4, v & 7);
+                    const int n = std::clamp(chipboyNoteForClock(c * std::pow(2.0, o), 60), 12, 127);
+                    uint8_t sh = 0, d = 0; driver::Driver::noisePairForNote(n, sh, d);
+                    const double got = noiseClockHz(std::clamp(int(sh) + o, 0, 13), d);   // the driver's shift clamp
+                    err += std::min(3.0, std::fabs(std::log2(got / c)));                    // octaves off, a click is a click past three
+                }
+                if (err < bestErr - 1e-9) { bestErr = err; best = o; }
+            }
+            noiseOffset[slot] = best;
+            if (best != 0) notes.add("noise slot " + hex2(slot - 1) + " plays clocks off ChipBoy's keyboard: its Shift is set to " + std::to_string(5 + best) + " so its notes land on it");
+        }
     }
 
     // --- envelope (section 51) ------------------------------------------
@@ -170,15 +323,36 @@ struct Reader {
     void instruments(ImportSummary& sum)
     {
         for (int i = 0; i < kLsdjInstruments; ++i) {
-            if (!at(kInstAlloc + size_t(i))) continue;
+            if (!at(kInstAlloc + size_t(i)) && !instUsed.count(i)) continue;
+            bank::Instrument o;
+            if (!buildInstrument(i, inst(i)[0], o)) continue;
+            instType[size_t(i)] = inst(i)[0];
+            bank.instruments[size_t(i)] = o;
+            ++sum.instruments;
+        }
+        for (const auto& [key, slot] : variantSlot) {
+            bank::Instrument o;
+            if (!buildInstrument(key.first, key.second, o)) continue;
+            static const char* kKind[4] = { " (PU)", " (WAV)", " (kit)", " (NOI)" };
+            o.name += kKind[key.second & 3];
+            bank.instruments[size_t(slot - 1)] = o;
+            notes.add("instrument " + hex2(key.first) + " " + bank.instruments[size_t(key.first)].name + " also plays on " + (key.second == 3 ? "NOI" : key.second == 0 ? "PU1/PU2" : "WAV") + ": a " + std::string(kKind[key.second & 3] + 2, std::strlen(kKind[key.second & 3]) - 3) + " variant sits in slot " + hex2(slot - 1));
+            ++sum.instruments;
+        }
+        for (const auto& [slot, o] : noiseOffset) if (slot >= 1 && slot <= bank::kInstrumentSlots) bank.instruments[size_t(slot - 1)].noiseShift = uint8_t(std::clamp(5 + o, 0, 13));
+        if (m.pitchLaw == PitchLaw::Register) notes.add("this format's P and L work in the period register (section 56): pulse and wave instruments are set to the Drum pitch mode and P, L and V are converted");
+    }
+    /// LSDj instrument `i` read as kind `t` (its own, or the channel's for a variant).
+    bool buildInstrument(int i, int t, bank::Instrument& o)
+    {
+        {
             const uint8_t* b = inst(i);
-            const int t = b[0];
             std::string name = instName(i);
             if (name.empty()) name = "Inst " + hex2(i);
-            if (t == 2 && (kits == nullptr || kits->empty())) { notes.add("instrument " + hex2(i) + " " + name + " is a kit: its samples live in the ROM, and none was found beside the save; skipped"); continue; }
-            if (t > 3) { notes.add("instrument " + hex2(i) + " has an unknown type " + std::to_string(t) + "; skipped"); continue; }
+            if (t == 2 && (kits == nullptr || kits->empty())) { notes.add("instrument " + hex2(i) + " " + name + " is a kit: its samples live in the ROM, and none was found beside the save; skipped"); return false; }
+            if (t > 3) { notes.add("instrument " + hex2(i) + " has an unknown type " + std::to_string(t) + "; skipped"); return false; }
             const auto type = t == 0 ? bank::InstrumentType::Pulse : t == 1 ? bank::InstrumentType::Wave : t == 2 ? bank::InstrumentType::Kit : bank::InstrumentType::Noise;
-            bank::Instrument o = bank::Instrument::defaults(type, name.c_str());
+            o = bank::Instrument::defaults(type, name.c_str());
             o.name = name;
             o.pan = bank::Pan(b[7] & 3); o.length = 0; o.noteOff = bank::NoteOff::Kill;
             o.cmdRate = uint8_t(b[8] & 15); o.chordRate = o.cmdRate;
@@ -190,7 +364,7 @@ struct Reader {
             instTranspose[size_t(i)] = o.transpose;
             if (t == 0 || t == 3) envelope(b, o, name);
             if (t == 0) {
-                o.duty = uint8_t(b[7] >> 6); o.dutySeqLen = 0; o.pitchSpeed = pitchSpeedOf(b[5]);
+                o.duty = uint8_t(b[7] >> 6); o.dutySeqLen = 0; o.pitchSpeed = m.pitchLaw == PitchLaw::Register ? bank::PitchSpeed::Drum : pitchSpeedOf(b[5]);
                 const int nr10 = (~b[4]) & 0xFF;
                 o.sweepRate = uint8_t((nr10 >> 4) & 7); o.sweepDown = (nr10 & 8) != 0; o.sweepShift = uint8_t(nr10 & 7);
                 if (m.pu2Transpose && b[2]) { o.pu2Transpose = int8_t(signedByte(b[2])); notes.add("pulse instrument " + name + " carries PU2 TSP " + hex2(b[2]) + " (" + std::to_string(signedByte(b[2])) + " semitones), kept as its PU2 transpose"); }
@@ -200,18 +374,16 @@ struct Reader {
                 o.waveLevel = kLevel[(b[1] >> 5) & 3];
                 const int synth = b[3] >> 4, w = b[3] & 15;
                 o.wave = uint8_t(waveSlotFor(synth)); o.frameAdvance = 0; o.frameLoop = bank::FrameLoop::Loop;
-                o.pitchSpeed = pitchSpeedOf(b[5]);
+                o.pitchSpeed = m.pitchLaw == PitchLaw::Register ? bank::PitchSpeed::Drum : pitchSpeedOf(b[5]);
                 if (w) notes.add("wave instrument " + name + " starts at wave " + hex2(w).substr(1) + " of synth " + hex2(synth).substr(1) + ", not at the first frame");
                 if (b[9] & 3) notes.add("wave instrument " + name + ": PLAY / SPEED / LENGTH frame animation is not mapped");
             } else if (t == 2) {
-                if (!kitInstrument(i, b, o, name)) continue;
+                if (!kitInstrument(i, b, o, name)) return false;
             } else {
                 o.lfsr7 = false; o.noiseManual = false; o.noiseShift = 5; o.noiseDivisor = 1; o.noiseSweep = 0;
             }
             o.used = true;
-            instType[size_t(i)] = t;
-            bank.instruments[size_t(i)] = o;
-            ++sum.instruments;
+            return true;
         }
     }
 
@@ -283,8 +455,12 @@ struct Reader {
 
     // --- commands (sections 34, 46, 49) -----------------------------------
     /// A phrase or table command into a ChipBoy one. `cell` takes an A as its
-    /// TBL column; `instKind` and `channel` decide E, F and W.
-    bool command(char letter, int v, const std::string& where, int instKind, int channel, tracker::Cell* cell, Command& out)
+    /// TBL column; `instKind` and `channel` decide E, F and W. `st` is the
+    /// channel's running state for S on noise and L (nullptr in a table, where
+    /// S on noise is folded into the transpose column instead); `targetMidi`
+    /// the cell's own LSDj note, -1 without one, for L.
+    bool command(char letter, int v, const std::string& where, int instKind, int channel, tracker::Cell* cell, Command& out,
+                 ChannelState* st = nullptr, int targetMidi = -1)
     {
         const int x = v >> 4, y = v & 15;
         out = Command{};
@@ -297,7 +473,15 @@ struct Reader {
                 }
                 out = { Cmd::A, int16_t(v == 0x20 ? 0 : std::min(v + 1, int(bank::kTableSlots))), 0, 0 }; return true;
             case 'C': out = { Cmd::C, int16_t(x), int16_t(y), 0 }; return true;
-            case 'V': out = { Cmd::V, int16_t(x), int16_t(y), 0 }; return true;
+            case 'V':
+                if (m.vibratoLaw == VibratoLaw::RegisterOneSided && channel != 3) {
+                    // Section 56: 8y units a clock for x + 1 clocks below the note and back.
+                    const int speed = std::clamp(int(std::lround(32.0 / double(x + 1))) - 1, 0, 15);
+                    const int depth = y == 0 ? 0 : std::clamp(int(std::lround(8.0 * y * (x + 1) / 2.0 / 19.11)), 1, 15);
+                    notes.add("V" + hex2(v) + " at " + where + ": this format's vibrato swings below the note in register units; ChipBoy's is centred (speed " + std::to_string(speed) + ", depth " + std::to_string(depth) + ")");
+                    out = { Cmd::V, int16_t(speed), int16_t(depth), 0 }; return true;
+                }
+                out = { Cmd::V, int16_t(x), int16_t(y), 0 }; return true;
             case 'Z': out = { Cmd::Z, int16_t(x), int16_t(y), 0 }; return true;
             case 'M': out = { Cmd::M, int16_t(x), int16_t(y), 0 }; return true;
             case 'R': out = { Cmd::R, int16_t(x), int16_t(y), 0 }; return true;
@@ -306,12 +490,45 @@ struct Reader {
                 if (instKind == 1) out = { Cmd::E, int16_t(std::min(3, y)), 0, 0 };
                 else out = { Cmd::E, int16_t(x), int16_t(y), 0 };
                 return true;
-            case 'S': out = { Cmd::S, int16_t(x & 7), int16_t(y), 0 }; return true;
+            case 'S':
+                if (channel == 3) {
+                    // Section 55 on 9.x: the byte is the transpose. Before, the
+                    // nibble rule of section 56, resolved to the note it lands on.
+                    if (m.noiseS == NoiseS::Semitones) { out = { Cmd::S, int16_t(x), int16_t(y), 0 }; if (st) st->chipNote += signedByte(v); return true; }
+                    if (st == nullptr) return false;                                       // a table's row: folded by tables()
+                    if (st->nr43 < 0) { notes.add("S" + hex2(v) + " at " + where + " on noise before any note in the chain: dropped"); return false; }
+                    const uint8_t nr = nibbleS(uint8_t(st->nr43), v);
+                    const int n = noteForNr43(nr, st->chipNote, st->noiseSlot);
+                    const int delta = std::clamp(n - st->chipNote, -128, 127);
+                    st->nr43 = nr; st->chipNote = n;
+                    if (delta == 0) { notes.add("S" + hex2(v) + " at " + where + " moves NR43 to " + hex2(nr) + ", the same ChipBoy note as before (a 7-bit or divisor change); dropped"); return false; }
+                    out = { Cmd::S, int16_t((delta >> 4) & 15), int16_t(delta & 15), 0 }; return true;
+                }
+                out = { Cmd::S, int16_t(x & 7), int16_t(y), 0 }; return true;
             case 'D': out = { Cmd::D, int16_t(v), 0, 0 }; return true;
             case 'K': out = { Cmd::K, int16_t(v), 0, 0 }; return true;
-            case 'L': out = { Cmd::L, int16_t(v), 0, 0 }; return true;
-            case 'P': out = { Cmd::P, int16_t(v), 0, 0 }; return true;                     // the two's-complement byte
-            case 'G': out = { Cmd::G, int16_t(std::min(v, 16)), 0, 0 }; return true;
+            case 'L':
+                if (m.pitchLaw == PitchLaw::Register && channel != 3) {
+                    // Section 56: a speed in register units a clock, into ChipBoy's duration.
+                    if (v == 0) { out = { Cmd::L, 0, 0, 0 }; return true; }
+                    if (st == nullptr) { notes.add("L" + hex2(v) + " at " + where + ": a slide speed inside a table has no start note to measure from; dropped"); return false; }
+                    if (targetMidi < 0) { notes.add("L" + hex2(v) + " at " + where + " has no note to slide to; dropped"); return false; }
+                    if (st->lastMidi < 0) { notes.add("L" + hex2(v) + " at " + where + " has no note before it in the chain to slide from; dropped"); return false; }
+                    const double dist = std::fabs(gbPeriod(targetMidi) - gbPeriod(st->lastMidi));
+                    const int updates = std::max(1, int(std::ceil(dist / double(v))));
+                    out = { Cmd::L, int16_t(std::clamp(updates - 1, 0, 255)), 0, 0 }; return true;
+                }
+                out = { Cmd::L, int16_t(v), 0, 0 }; return true;
+            case 'P':
+                if (channel == 3) { notes.add("P" + hex2(v) + " at " + where + " on noise: LSDj sweeps the noise shape every tick and ChipBoy has no noise bend; dropped"); return false; }
+                if (m.pitchLaw == PitchLaw::Register && v != 0) {
+                    // Section 56: xx register units a clock, into the Drum speed with the nearest step.
+                    const int units = signedByte(v);
+                    const int speed = drumSpeedFor(std::abs(units));
+                    out = { Cmd::P, int16_t(units < 0 ? 256 - speed : speed), 0, 0 }; return true;
+                }
+                out = { Cmd::P, int16_t(v), 0, 0 }; return true;                     // the two's-complement byte
+            case 'G': out = { Cmd::G, int16_t(std::min(v + 1, 16)), 0, 0 }; return true;           // LSDj's groove 00 is ChipBoy's slot 1
             case 'O': out = { Cmd::O, int16_t(v & 3), 0, 0 }; return true;
             case 'T': out = { Cmd::T, int16_t(v), 0, 0 }; return true;                     // the byte, as the driver reads it
             case 'W':
@@ -328,37 +545,18 @@ struct Reader {
     }
 
     // --- tables (section 45's noise rows) -----------------------------------
-    /// The noise notes each table is used with, for its transposes.
-    std::map<int, std::set<std::pair<int, int>>> tableUsers()   // table -> (inst, midi)
-    {
-        std::map<int, std::set<std::pair<int, int>>> users;
-        for (int p = 0; p < kLsdjPhrases; ++p) {
-            if (!phraseAllocated(p)) continue;
-            int last = -1;
-            for (int st = 0; st < 16; ++st) {
-                const size_t i = size_t(p) * 16 + size_t(st);
-                const uint8_t ins = at(kPhraseInst + i);
-                if (ins != 0xFF && ins < kLsdjInstruments) last = ins;
-                const uint8_t n = at(kPhraseNotes + i);
-                if (!n || last < 0) continue;
-                int tbl = -1;
-                const char letter = letterOf(at(kPhraseCmd + i));
-                const uint8_t v = at(kPhraseCmdV + i);
-                if (letter == 'A' && v != 0x20) tbl = v;
-                else if (inst(last)[6] & 0x20) tbl = inst(last)[6] & 0x1F;
-                if (tbl >= 0 && tbl < kLsdjTables) users[tbl].insert({ last, int(n) + 35 });
-            }
-        }
-        return users;
-    }
     void tables(ImportSummary& sum)
     {
-        const auto users = tableUsers();
+        const auto& users = tableUse;
         for (int t = 0; t < kLsdjTables; ++t) {
-            if (!at(kTableAlloc + size_t(t))) continue;
-            int noiseBase = -1; bool others = false; std::set<int> bases;
+            // Allocated, or holding anything: LSDj 9's allocation bytes miss
+            // tables its instruments name (measured on the user's saves).
+            bool content = at(kTableAlloc + size_t(t)) != 0;
+            for (int r = 0; r < 16 && !content; ++r) { const size_t i = size_t(t) * 16 + size_t(r); content = at(kTableEnv + i) || at(kTableTsp + i) || at(kTableCmd1 + i) || at(kTableCmd2 + i); }
+            if (!content) continue;
+            int noiseBase = -1, noiseInst = -1; bool others = false; std::set<int> bases;
             if (auto it = users.find(t); it != users.end())
-                for (const auto& [ins, midi] : it->second) { if (instType[size_t(ins)] == 3) bases.insert(midi); else others = true; }
+                for (const auto& [ins, ch, midi] : it->second) { if (kindFor(ins, ch) == 3) { if (bases.empty() || midi < *bases.begin()) noiseInst = ins; bases.insert(midi); } else others = true; }
             if (!bases.empty()) {
                 noiseBase = *bases.begin();
                 if (bases.size() > 1) notes.add("table " + hex2(t) + " is used by several noise notes: its transposes are mapped for the lowest; the others land a little off");
@@ -367,78 +565,115 @@ struct Reader {
             auto& tb = bank.tables[size_t(t)];
             tb = bank::Table{};
             tb.used = true; tb.name = "Table " + hex2(t); tb.end = bank::TableEnd::Loop; tb.hopStep = 1;
-            bool fade = false;
+            bool fade = false, resolvedS = false;
+            // Section 56: the noise rows are resolved for the lowest note the
+            // table runs with -- the transpose column through the shape rule,
+            // an S through the nibble rule into ChipBoy's S (section 55), whose
+            // semitones add up across the loop as LSDj's nibbles do.
+            const int noiseSlot = noiseInst >= 0 ? slotFor(noiseInst, 3) : 0;
+            const uint8_t baseNr = noiseBase >= 0 ? lsdjNr43(noiseBase, noiseInst) : uint8_t(0);
+            const int baseNote = noiseBase >= 0 ? std::max(12, noteForNr43(baseNr, noiseBase, noiseSlot)) : 0;   // what the cell plays: 12 at least
+            uint8_t runNr = baseNr; int runNote = baseNote;  // where the first pass has taken NR43 so far
             for (int r = 0; r < 16; ++r) {
                 const size_t i = size_t(t) * 16 + size_t(r);
                 const uint8_t env = at(kTableEnv + i), tsp = at(kTableTsp + i);
                 auto& st = tb.steps[size_t(r)];
                 st.vol = env ? int8_t(env >> 4) : int8_t(-1);
                 if (env & 15) fade = true;
+                const std::pair<uint8_t, uint8_t> cmds[2] = { { at(kTableCmd1 + i), at(kTableCmd1V + i) }, { at(kTableCmd2 + i), at(kTableCmd2V + i) } };
                 if (tsp) {
                     st.hasTranspose = true;
                     if (noiseBase >= 0) {
-                        const int base = noteForNr43(lsdjNr43(noiseBase), noiseBase);
-                        const int moved = noteForNr43(lsdjNr43(noiseBase + signedByte(tsp)), noiseBase + signedByte(tsp));
-                        st.transpose = int8_t(std::clamp(moved - base, -128, 127));
+                        // Before 9 the column is subtracted from NR43 itself, byte-wise
+                        // (a -2 is +2 on the register; measured on the format-3
+                        // songs); on 9.x it moves the note through the map.
+                        const int midi = noiseBase + signedByte(tsp);
+                        const uint8_t nr = m.noiseRule == NoiseRule::Map ? lsdjNr43(midi, noiseInst) : uint8_t((int(baseNr) - signedByte(tsp)) & 0xFF);
+                        st.transpose = int8_t(std::clamp(noteForNr43(nr, baseNote, noiseSlot) - baseNote, -128, 127));
                     } else st.transpose = int8_t(signedByte(tsp));
                 }
-                const std::pair<uint8_t, uint8_t> cmds[2] = { { at(kTableCmd1 + i), at(kTableCmd1V + i) }, { at(kTableCmd2 + i), at(kTableCmd2V + i) } };
                 for (int k = 0; k < 2; ++k) {
                     const char letter = letterOf(cmds[k].first);
                     if (!letter) continue;
                     Command c;
-                    if (command(letter, cmds[k].second, "table " + hex2(t) + " row " + std::to_string(r), -1, -1, nullptr, c)) (k == 0 ? st.cmd1 : st.cmd2) = c;
+                    if (letter == 'S' && noiseBase >= 0 && m.noiseS == NoiseS::Nibbles) {
+                        const uint8_t nr = nibbleS(runNr, cmds[k].second);
+                        const int n = noteForNr43(nr, runNote, noiseSlot);
+                        const int delta = std::clamp(n - runNote, -128, 127);
+                        runNr = nr; runNote = n; resolvedS = true;
+                        if (delta) (k == 0 ? st.cmd1 : st.cmd2) = Command{ Cmd::S, int16_t((delta >> 4) & 15), int16_t(delta & 15), 0 };
+                        continue;
+                    }
+                    if (command(letter, cmds[k].second, "table " + hex2(t) + " row " + std::to_string(r), -1, noiseBase >= 0 ? 3 : -1, nullptr, c)) (k == 0 ? st.cmd1 : st.cmd2) = c;
                 }
             }
+            if (resolvedS) notes.add("table " + hex2(t) + ": its S rows on noise (the nibble rule) are resolved to ChipBoy's S for the loop's first pass; later passes add the same semitones");
             if (fade) notes.add("table " + hex2(t) + ": the ENV column's low digit (fade speed per row) is not mapped; the amplitude is written at the row");
             ++sum.tables;
         }
     }
 
     // --- phrases and chains (section 48) -----------------------------------
-    int phraseFor(int p, int channel)
+    /// `state` is the channel's running state (section 56), read at the top
+    /// and left as the phrase ends; a phrase converted once keeps its first
+    /// reading and hands back the state it left then.
+    /// `noiseTsp` is the chain row's transpose when the noise channel folds
+    /// it into the note (section 56: before 9 the octave is all that counts,
+    /// so the phrase is converted per transpose), else 0.
+    int phraseFor(int p, int channel, ChannelState& state, int noiseTsp)
     {
-        const auto key = std::make_pair(p, channel);
-        if (auto it = phraseSlot.find(key); it != phraseSlot.end()) return it->second;
+        const auto key = std::make_tuple(p, channel, noiseTsp);
+        if (auto it = phraseSlot.find(key); it != phraseSlot.end()) { state = it->second.end; return it->second.slot; }
         if (phrasesOut >= tracker::kPhraseSlots) { notes.add("more phrase copies than ChipBoy's 255 slots; the rest are left empty"); return 0; }
         const int slot = ++phrasesOut;
-        phraseSlot[key] = slot;
         auto& ph = song.phrases[size_t(slot - 1)];
         ph = tracker::Phrase{};
         ph.used = true; ph.steps = 16; ph.groove = 0;
-        int last = -1;
         for (int st = 0; st < 16; ++st) {
             const size_t i = size_t(p) * 16 + size_t(st);
             const uint8_t n = at(kPhraseNotes + i), ins = at(kPhraseInst + i);
             auto& c = ph.cells[size_t(st)];
-            if (ins != 0xFF && ins < kLsdjInstruments) { last = ins; c.inst = uint8_t(ins + 1); }
-            const int cur = last;
-            const int kind = cur >= 0 ? instType[size_t(cur)] : -1;
+            if (ins != 0xFF && ins < kLsdjInstruments) { state.inst = ins; state.instSeen = true; c.inst = uint8_t(slotFor(ins, channel)); }
+            const int cur = state.inst;
+            const int kind = kindFor(cur, channel);
+            const int lsdjMidi = n ? int(n) + 35 : -1;
+            if (n && !state.instSeen) {
+                // A note before any instrument column: LSDj plays the channel's instrument, 00 at the start.
+                c.inst = uint8_t(slotFor(cur, channel)); state.instSeen = true;
+                notes.add(std::string(channelName(channel)) + " plays notes before any cell names an instrument: LSDj's instrument 00 is used for them");
+            }
             if (n && kind == 2) {
                 const uint8_t kn = kitNote(cur, int(n), "phrase " + hex2(p) + " step " + std::to_string(st));
                 if (kn) c.note = kn;
             } else if (n) {
-                int midi = int(n) + 35;
+                int midi = lsdjMidi;
                 if (kind == 1) midi += m.waveOctave;                       // the wave channel's period table (section 45)
                 else if (kind == 3) {
-                    const uint8_t nr43 = lsdjNr43(midi);
-                    noiseWidths[cur].insert((nr43 & 8) != 0);
-                    midi = noteForNr43(nr43, midi);
+                    const int tspMidi = midi + (transposeOn(cur) ? noiseTsp : 0);
+                    const uint8_t nr43 = lsdjNr43(tspMidi, cur);
+                    state.noiseSlot = slotFor(cur, channel);
+                    noiseWidths[state.noiseSlot].insert((nr43 & 8) != 0);
+                    midi = noteForNr43(nr43, tspMidi, state.noiseSlot);
+                    if (midi < 12) { notes.add("noise NR43 " + hex2(nr43) + " clocks below ChipBoy's lowest noise note (a click rather than a pitch); the lowest, note 12, is used"); midi = 12; }
+                    state.nr43 = nr43; state.chipNote = midi;             // an S on this row moves on from here
                 }
-                c.note = uint8_t(std::clamp(midi, 1, 127));
+                c.note = uint8_t(std::clamp(midi, kind == 3 ? 12 : 1, 127));
             }
             const char letter = letterOf(at(kPhraseCmd + i));
             if (letter) {
                 Command cmd;
-                if (command(letter, at(kPhraseCmdV + i), "phrase " + hex2(p) + " step " + std::to_string(st), kind, channel, &c, cmd)) c.cmd1 = cmd;
+                if (command(letter, at(kPhraseCmdV + i), "phrase " + hex2(p) + " step " + std::to_string(st), kind, channel, &c, cmd, &state, lsdjMidi)) c.cmd1 = cmd;
             }
+            if (lsdjMidi > 0 && kind != 3) state.lastMidi = lsdjMidi;      // an L on a later row slides from here
         }
+        phraseSlot[key] = PhraseOut{ slot, state };
         return slot;
     }
     void chains(ImportSummary& sum)
     {
         static const char* kNames[4] = { "PU1", "PU2", "WAV", "NOI" };
         bool noiseTsp = false;
+        std::array<ChannelState, 4> state{};
         for (int r = 0; r < 256; ++r) {
             const uint8_t* row = s + kSongRows + size_t(r) * 4;
             if (row[0] == 0xFF && row[1] == 0xFF && row[2] == 0xFF && row[3] == 0xFF) break;
@@ -450,10 +685,11 @@ struct Reader {
                     const uint8_t p = at(kChainPhrases + size_t(c) * 16 + size_t(st));
                     if (p == 0xFF || p >= kLsdjPhrases) break;
                     const int tsp = signedByte(at(kChainTsp + size_t(c) * 16 + size_t(st)));
-                    const int slot = phraseFor(p, ch);
+                    const bool fold = ch == 3 && m.noiseRule != NoiseRule::Map;   // section 56: the octave is all that counts, resolved here
+                    const int slot = phraseFor(p, ch, state[size_t(ch)], fold ? tsp : 0);
                     auto& chain = song.chain[size_t(ch)];
                     chain.push_back(uint8_t(slot));
-                    if (tsp) { song.setTranspose(ch, int(chain.size()) - 1, int8_t(tsp)); if (ch == 3) noiseTsp = true; }
+                    if (tsp && !fold) { song.setTranspose(ch, int(chain.size()) - 1, int8_t(tsp)); if (ch == 3) noiseTsp = true; }
                 }
             }
         }
@@ -462,9 +698,10 @@ struct Reader {
     }
     void noiseWidthsToInstruments()
     {
-        for (const auto& [i, widths] : noiseWidths) {
-            if (widths.size() > 1) notes.add("noise instrument " + bank.instruments[size_t(i)].name + " plays both 15-bit and 7-bit notes in LSDj; ChipBoy's width is per instrument (15-bit chosen)");
-            bank.instruments[size_t(i)].lfsr7 = widths.size() == 1 && *widths.begin();
+        for (const auto& [slot, widths] : noiseWidths) {                    // keyed by the ChipBoy slot, 1-based
+            auto& o = bank.instruments[size_t(slot - 1)];
+            if (widths.size() > 1) notes.add("noise instrument " + o.name + " plays both 15-bit and 7-bit notes in LSDj; ChipBoy's width is per instrument (15-bit chosen)");
+            o.lfsr7 = widths.size() == 1 && *widths.begin();
         }
     }
     void grooves()
@@ -482,11 +719,11 @@ struct Reader {
 
 } // namespace
 
-int chipboyNoteForNr43(uint8_t v, int prefer)
+int chipboyNoteForClock(double hz, int prefer)
 {
-    const double c = std::log(noiseClockHz(v >> 4, v & 7));
+    const double c = std::log(hz);
     int best = 1; double bestErr = 1e9; int bestDist = 1000;
-    for (int k = 1; k < 128; ++k) {
+    for (int k = -driver::Driver::kNoiseMapBelow; k < 128; ++k) {      // the map continues below the keyboard (section 55)
         uint8_t sh = 0, d = 0;
         driver::Driver::noisePairForNote(k, sh, d);
         const double err = std::round(std::fabs(std::log(noiseClockHz(sh, d)) - c) * 1e6) / 1e6;
@@ -495,6 +732,8 @@ int chipboyNoteForNr43(uint8_t v, int prefer)
     }
     return best;
 }
+
+int chipboyNoteForNr43(uint8_t v, int prefer) { return chipboyNoteForClock(noiseClockHz(v >> 4, v & 7), prefer); }
 
 bool importSong(const uint8_t* bytes, size_t size, const LsdjModel& model,
                 bank::Bank& bank, tracker::Song& out, ImportSummary& summary, ImportNotes& notes,
@@ -510,6 +749,8 @@ bool importSong(const uint8_t* bytes, size_t size, const LsdjModel& model,
     summary.tempoBpm = tempo;
     out.tempoBpm = tempo;
     r.tickMs = 60000.0 / (double(tempo) * 24.0);
+    r.usage();
+    r.chooseNoiseOffsets();
     r.instruments(summary);
     r.tables(summary);
     r.chains(summary);

@@ -13,12 +13,13 @@ namespace {
 constexpr int kPad = 16, kRowH = 26, kHead = 40, kFoot = 44, kVersionRow = 30;
 }
 
-/// One song of the save: a checkbox with the name, its format and the model
-/// it will take under Auto.
+/// One song: a checkbox with the name, its format and the model it will take
+/// under Auto. A save's file, its working song, or a project file.
 struct LsdjImportDialog::Row {
     ToggleButton check;
     Label detail;
-    int file = -1;                 ///< -1 the working song
+    int file = -1;                 ///< -1 the working song, else the save's file slot
+    int project = -1;              ///< >= 0: preview_.projects[project] instead
     int formatVersion = -1;
     String name;
 };
@@ -28,15 +29,17 @@ LsdjImportDialog::LsdjImportDialog(ChipBoyProcessor& processor, SavePreview prev
       import_("Import"), cancel_("Cancel")
 {
     const auto& idx = preview_.index;
-    title_.setText("Songs in " + preview_.file.getFileName(), dontSendNotification);
+    const bool haveSave = !preview_.bytes.empty();
+    title_.setText(haveSave ? "Songs in " + preview_.file.getFileName() + (preview_.projects.empty() ? String() : String(" and ") + String(int(preview_.projects.size())) + " project file" + (preview_.projects.size() == 1 ? "" : "s"))
+                            : String(int(preview_.projects.size())) + " project file" + (preview_.projects.size() == 1 ? "" : "s"), dontSendNotification);
     title_.setFont(Fonts::sans(15.0f, true));
     title_.setColour(Label::textColourId, colours::text);
     addAndMakeVisible(title_);
 
     // The working song first: it is what the machine was playing, saved or not.
-    auto addRow = [this](int file, const String& name, int format, bool checked) {
+    auto addRow = [this](int file, const String& name, int format, bool checked, int project = -1) {
         auto r = std::make_unique<Row>();
-        r->file = file; r->formatVersion = format; r->name = name;
+        r->file = file; r->project = project; r->formatVersion = format; r->name = name;
         r->check.setButtonText(name);
         r->check.setToggleState(checked, dontSendNotification);
         r->check.setColour(ToggleButton::textColourId, colours::text);
@@ -48,12 +51,16 @@ LsdjImportDialog::LsdjImportDialog(ChipBoyProcessor& processor, SavePreview prev
         addAndMakeVisible(r->detail);
         rows_.push_back(std::move(r));
     };
-    {
+    if (haveSave) {
         String workingName = "Working song";
         for (const auto& e : idx.files) if (e.active) workingName = e.name + " (working copy)";
         if (idx.workingUsed) addRow(-1, workingName, idx.workingFormat, idx.activeFile < 0);
+        for (const auto& e : idx.files) addRow(e.file, e.name, e.formatVersion, e.active);
     }
-    for (const auto& e : idx.files) addRow(e.file, e.name, e.formatVersion, e.active);
+    for (int k = 0; k < int(preview_.projects.size()); ++k) {
+        const auto& pr = preview_.projects[size_t(k)];
+        addRow(-1, pr.name + " (" + pr.file.getFileName() + ")", pr.formatVersion, true, k);
+    }
 
     // The version: Auto, then every model, newest first.
     versionLabel_.setText("Version", dontSendNotification);
@@ -71,8 +78,8 @@ LsdjImportDialog::LsdjImportDialog(ChipBoyProcessor& processor, SavePreview prev
 
     romLine_.setFont(Fonts::sans(11.0f));
     romLine_.setColour(Label::textColourId, colours::textDim);
-    romLine_.setText(preview_.romVersion.isNotEmpty() ? "ROM beside the save: LSDj " + preview_.romVersion + " (" + preview_.romFile.getFileName() + "), " + String(int(preview_.kits.size())) + " kits for the kit instruments"
-                                                      : "No LSDj ROM beside the save: kit instruments cannot be read, and an unknown format takes the newest version.", dontSendNotification);
+    romLine_.setText(preview_.romVersion.isNotEmpty() ? "ROM beside the file: LSDj " + preview_.romVersion + " (" + preview_.romFile.getFileName() + "), " + String(int(preview_.kits.size())) + " kits for the kit instruments"
+                                                      : "No LSDj ROM beside the file: kit instruments cannot be read, and an unknown format takes the newest version.", dontSendNotification);
     addAndMakeVisible(romLine_);
 
     import_.onClick = [this] { runImport(); };
@@ -128,8 +135,10 @@ void LsdjImportDialog::runImport()
     for (const auto& r : rows_) {
         if (!r->check.getToggleState()) continue;
         std::vector<uint8_t> song; std::string err;
-        const bool ok = r->file < 0 ? lsdj::workingSong(preview_.bytes.data(), preview_.bytes.size(), song)
-                                    : lsdj::decompressFile(preview_.bytes.data(), preview_.bytes.size(), r->file, song, err);
+        bool ok = false;
+        if (r->project >= 0) { song = preview_.projects[size_t(r->project)].song; ok = song.size() == lsdj::kSongSize; }
+        else ok = r->file < 0 ? lsdj::workingSong(preview_.bytes.data(), preview_.bytes.size(), song)
+                              : lsdj::decompressFile(preview_.bytes.data(), preview_.bytes.size(), r->file, song, err);
         if (!ok) { allNotes.add(r->name.toStdString() + ": " + (err.empty() ? std::string("could not be read") : err)); continue; }
         const auto& model = modelFor(r->formatVersion);
         // A bank is 41 KB and a song 300 KB: both on the heap (CLAUDE.md).

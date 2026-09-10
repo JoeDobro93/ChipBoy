@@ -87,7 +87,7 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     loadSong_.setTooltip("Read a .cbsong file into a tab of its own, with the bank it was written with.");
     loadSong_.onClick = [this] { loadSong(); };
 
-    importSav_.setTooltip("Read an LSDj .sav: pick the songs it holds -- the working song and every saved file -- and open each in a tab with its own bank, read by the rules of its LSDj version.");
+    importSav_.setTooltip("Read an LSDj .sav, or .lsdprj / .lsdsng project files: pick the songs -- the working song, every saved file, each project -- and open each in a tab with its own bank, read by the rules of its LSDj version.");
     importSav_.onClick = [this] { importSav(); };
 
     export_.setEnabled(false);
@@ -388,14 +388,16 @@ void TrackerPanel::saveSong()
 
 void TrackerPanel::importSav()
 {
-    chooser_ = std::make_unique<FileChooser>("Import from LSDj", songsFolder(), "*.sav", true, false, this);
-    chooser_->launchAsync(kOpenFlags, [safe = Component::SafePointer<TrackerPanel>(this)](const FileChooser& fc) {
+    chooser_ = std::make_unique<FileChooser>("Import from LSDj", songsFolder(), "*.sav;*.lsdprj;*.lsdsng", true, false, this);
+    chooser_->launchAsync(kOpenFlags | FileBrowserComponent::canSelectMultipleItems, [safe = Component::SafePointer<TrackerPanel>(this)](const FileChooser& fc) {
         if (safe == nullptr) return;
-        const File file = fc.getResult();
-        if (!file.existsAsFile()) return;
+        const Array<File> files = fc.getResults();
+        if (files.isEmpty()) return;
         SavePreview preview; String error;
-        if (!readSave(file, preview, error)) { RichText r; r.plain("Not an LSDj save: ").bold(error); safe->report(r); return; }
-        LsdjImportDialog::show(safe->processor, std::move(preview), safe.getComponent(), [safe, name = file.getFileName()](const LsdjImportDialog::Outcome& out) {
+        if (!readImportFiles(files, preview, error)) { RichText r; r.plain("Not an LSDj save or project: ").bold(error); safe->report(r); return; }
+        if (error.isNotEmpty()) { RichText r; r.plain("Skipped: ").bold(error); safe->report(r); }
+        const String name = files.size() == 1 ? files[0].getFileName() : String(files.size()) + " files";
+        LsdjImportDialog::show(safe->processor, std::move(preview), safe.getComponent(), [safe, name](const LsdjImportDialog::Outcome& out) {
             if (safe == nullptr) return;
             safe->bar_ = 0;
             safe->refreshViews();

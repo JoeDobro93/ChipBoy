@@ -50,6 +50,16 @@ that runs past its block, more than 191 blocks visited, or a file that does not 
 32768 bytes fail with a message; a working song with no allocated instrument and no chain
 row is still offered (the user may have only phrases).
 
+### 1a. Project files (`.lsdprj`, `.lsdsng`)
+
+One song per file: 8 bytes of name (NUL-padded), one version byte (the file table's, not
+the format), then the compressed blocks of the song in order, 512 bytes each, the same code
+as the save's. A block-jump code inside means **the next block in the file** — the number it
+names is the block the song had in the save it was exported from and is ignored. The end
+code closes it; the last block is padded with `FF`. `decompressProject` reads one;
+`readProject` on the plugin side adds it to a `SavePreview` as a project row, and the dialog
+lists projects and a save's files alike.
+
 ## 2. The song, 32 KB
 
 Offsets shared by every format read so far (liblsdj's layout, confirmed on formats 3 and
@@ -80,22 +90,27 @@ struct LsdjModel {
 ```
 
 The key is the **format version**, with the LSDj versions known to write it as the label.
-Measured (each ROM booted with `lsdjref_trace --init-sav`, the probes of §45–§51 patched
-into its own formatted save with its own format byte):
+Measured on every stable release in the LSDj archive (each ROM booted with `lsdjref_trace
+--init-sav`, the probes patched into its own formatted save with its own format byte;
+`COMMANDS_AND_TEMPO.md` §56 has the laws in full):
 
-| format | writes it | envelope | noise column | letters |
-|---|---|---|---|---|
-| 22 | 9.2.J, 9.3.9 (identical on every table traced) | three stages, §51's periods | the 9.x musical map | with `B` |
-| 15 | 8.8.6 | three stages, the same periods | raw: note byte *n* writes NR43 `FF − n` | with `B` (in the ROM; behaviour not traced) |
-| 11 | 8.4.0 | the NRx2 byte (the chip's) | by octave only: `FF` to B-5, `EF`, `DF`, `CF` above | with `B` (in the ROM) |
-| 0–10 | unknown | the NRx2 byte | the map the 9.3.9 ROM applied to version-0 saves | without `B` (as applied to version-0 saves) |
+| format | writes it | noise note | S on noise | envelope | P / L / V | letters |
+|---|---|---|---|---|---|---|
+| 22 | 9.2.J, 9.2.L, 9.3.9, 9.4.2 | the musical map | semitones, adding up (§55) | three stages, §51's periods | 9.x's | with `B` |
+| 15 | 8.8.6 | raw: note byte *n* writes `FF − n` | nibbles | three stages, the same periods | 9.x's | with `B` |
+| 11 | 8.4.0, 8.4.4, 8.5.1 | `~SHAPE + 16 × (5 − octave)` | nibbles | the NRx2 byte | 9.x's | with `B` |
+| 4, 5, 7 | 5.7.8 – 7.0.2 | shape | nibbles | NRx2 | 9.x's (drum's note table differs, not modelled) | without `B` |
+| 2, 3 | 3.6.8 – 5.0.3 | shape | nibbles | NRx2 | P, L in register units a pitch clock; V 9.x's | without `B` |
+| 0 | 3.1.5 – 3.5.1 | shape | nibbles | NRx2 | P, L, V in register units | without `B`, 3.1 without `Z` |
 
-Formats 12–14 and 16–21 take the nearest measured model below them until a ROM arrives.
-A song picks the model whose range holds its format; a format no model knows takes the ROM
-found beside the save, if its title names a version, else the newest model. The dialog's
-dropdown overrides all of that. Still to learn: which versions wrote 12–14 (8.5–8.7?) and
-16–21 (9.0–9.1?), where `B` and the raw noise column began, and which version wrote the
-format-3 songs in the user's save (LSDj 4.x–5.x?).
+Six models carry this (`LsdjModel.cpp`): formats 0–1, 2–3, 4–10, 11–14, 15–21, 22–31; the
+formats no release wrote take the nearest below. A song picks the model whose range holds
+its format; a format no model knows takes the ROM found beside the save, if it names a
+version (the cartridge title `LSDj-vX.Y.Z` from 4.3, the welcome string `LITTLE SOUND DJ
+VX.Y.Z` before that), else the newest model. The dialog's dropdown overrides all of that.
+The model fields beyond the table pointers: `noiseRule` (Shape / Raw / Map), `noiseS`
+(Nibbles / Semitones), `pitchLaw` (Register / Semitone), `vibratoLaw` (RegisterOneSided /
+Semitone); the converter switches on them (§4).
 
 **Adding a version** (the user will supply ROMs): copy `lsdj_9_3_9` in `LsdjModel.cpp`,
 give it the format range the ROM writes and reads, and re-measure with the harness what
@@ -163,6 +178,20 @@ own MIDI note from 36 up, cut to its length; the kit's `period` is the instrumen
 cells' notes become those sample notes. `lsdj::readKits`, `lsdj::kitPeriodOfSpeed`,
 `importSong(..., kits)`.
 
+### 4b. The older formats (`COMMANDS_AND_TEMPO.md` §56)
+
+`Reader::usage()` walks the song in chain order first: which phrases play on which
+channels, which instrument each note reaches (LSDj's 00 until a cell names one), the tables
+those notes run, and — on the noise channel — every NR43 byte the notes, their S rows and
+their tables will ask for. From it: the **variants** (an instrument used as another kind
+gets a slot above 64, `slotFor(ins, ch)`), the **table users** (for the noise base of a
+table's rows), and each noise slot's **Shift offset** (`chooseNoiseOffsets`: the offset
+0, +1…+8, −1…−5 with the least octave error over those bytes, the driver's shift clamp
+included). `phraseFor(p, ch, state, noiseTsp)` then converts with a `ChannelState` carried
+in chain order — the noise channel's NR43 and the ChipBoy note it landed on (for S), the
+last LSDj note (for L), the instrument (for bare notes) — and, before 9, per chain
+transpose on the noise channel, since the octave is all that counts of a noise note there.
+
 ## 5. The plugin
 
 - **Import .sav…** in the Tracker head's FILE group opens a chooser for `*.sav`.
@@ -186,3 +215,12 @@ format-22 song — instrument fields, the staged envelope's ticks at 165 BPM (A5
 wave's frames, a table's rows, a phrase's notes, `A` into TBL, a chain transpose, a noise
 note landing on the same LFSR clock — and of the same bytes under the legacy model (the
 hardware envelope, the shifted letters).
+- The models by format and by version string (`lsdjFormatForVersion` over the measured
+  table; the welcome-line version of the old ROMs).
+- A format-11 song: the SHAPE rule, S resolved to the note it lands on (the note's row and
+  the next), a table's S rows into ChipBoy's S, the 9.x byte through unchanged.
+- A format-3 song: pulse instruments in Drum, P to the nearest Drum speed, L from the two
+  notes' register distance, format 0's V converted, format 7 untouched.
+- A project file built from the save's own blocks: same song, torn file refused.
+- `[driver][noise]`: S on NOI adds up through the map, in the cell and in a table.
+

@@ -36,9 +36,17 @@
 //   chipboy_recordtest --write-state FILE    write the hybrid project's state
 //   chipboy_recordtest --check-state FILE    build it and compare against FILE
 //   chipboy_recordtest --play-song FILE [bars]   play a song file and hear it
+//   chipboy_recordtest --trace-song FILE OUT.csv [seconds]   the register writes a
+//                                        song file makes, in the lsdjref trace's
+//                                        CSV, to set beside an LSDj trace
 //
 // Exit code 0 when the passes agree.
+#include "core/Apu/Apu.h"
+#include "core/Console.h"
+#include "core/Driver/Clock.h"
+#include "core/Driver/Driver.h"
 #include "core/Import/LsdjSong.h"
+#include "core/Tracker/Player.h"
 #include "plugin/main/ChipBoyProcessor.h"
 #include "plugin/shared/BankJson.h"
 #include "plugin/shared/LsdjImport.h"
@@ -443,6 +451,74 @@ bool buildHybridProject(ChipBoyProcessor& p, const juce::File& songFile, const A
     return true;
 }
 
+/* ------------------------------------------------ --trace-song */
+
+/// `chipboy_recordtest --trace-song FILE OUT.csv [seconds]`: the song file's
+/// bank and song go through the core alone -- clock, player, driver, as the
+/// parity harness's compare tool drives a case -- and every register write is
+/// written as `cycle,addr,name,value`, the lsdjref trace's columns, so an
+/// imported song can be set beside the LSDj trace of the save it came from.
+int traceSong(const juce::File& file, const juce::File& out, double seconds)
+{
+    auto bank = std::make_unique<bank::Bank>();
+    auto song = std::make_unique<tracker::Song>();
+    SongReport report;
+    if (!plugin::loadSong(file, *song, report, nullptr, bank.get())) { std::printf("FAIL cannot open %s as a song file\n", file.getFullPathName().toRawUTF8()); return 1; }
+
+    driver::Clock clock;
+    tracker::Player player;
+    driver::Driver driver;
+    clock.prepare(kSampleRate);
+    player.prepare(kSampleRate);
+    driver.prepare(kSampleRate, bank.get(), song.get(), chipboy::Console::DMG);
+    player.setSong(song.get());
+    driver::ClockConfig cc;
+    cc.source = driver::TempoSource::Song;
+    cc.songTempo = std::clamp(song->tempoBpm, 40.0, 255.0);
+    clock.setConfig(cc);
+    if (!song->tempoMap.empty()) clock.setTempoMap(song->tempoMap.data(), song->tempoMap.size());
+    clock.setOwnsTransport(true);
+    clock.ownPlay();
+    std::vector<driver::RegWrite> log;
+    log.reserve(1u << 18);
+    driver.setWriteLog(&log);
+    for (int ch = 0; ch < 4; ++ch) driver.setParams(ch, driver::ChannelParams{});
+    std::vector<driver::NoteEvent> events;
+    std::vector<driver::RegWrite> blockWrites;
+    const auto cycleAt = [](uint64_t f) { return uint64_t(double(f) * double(chipboy::kCpuHz) / kSampleRate); };
+    const int64_t blocks = int64_t(seconds * kSampleRate / kBlock) + 1;
+    uint64_t frame = 0;
+    for (int64_t b = 0; b < blocks; ++b) {
+        driver::Transport t;
+        clock.process(t, kBlock, frame);
+        for (int ch = 0; ch < 4; ++ch) {
+            const int slot = driver.tableGrooveSlot(ch);
+            driver.setTableGroove(ch, slot >= 1 && slot <= 16 ? song->grooves[size_t(slot - 1)].ticks.data() : nullptr);
+            driver.setViewGroove(ch, player.groove(ch));
+        }
+        events.clear();
+        player.process(clock.ticks(), clock.tickCount(), clock.playing(), events);
+        blockWrites.clear();
+        driver.process(events.data(), events.size(), kBlock, frame, clock.ticks(), clock.tickCount(), cycleAt, blockWrites);
+        frame += kBlock;
+    }
+    driver.setWriteLog(nullptr);
+    std::stable_sort(log.begin(), log.end(), [](const driver::RegWrite& a, const driver::RegWrite& b) { return a.cycle < b.cycle; });
+    juce::String text;
+    text.preallocateBytes(log.size() * 32 + 64);
+    text << "# chipboy_recordtest --trace-song " << file.getFileName() << "\ncycle,addr,name,value\n";
+    const auto regName = [](uint16_t a) -> juce::String {
+        static const char* names[] = { "NR10", "NR11", "NR12", "NR13", "NR14", "?", "NR21", "NR22", "NR23", "NR24", "NR30", "NR31", "NR32", "NR33", "NR34", "?", "NR41", "NR42", "NR43", "NR44", "NR50", "NR51", "NR52" };
+        if (a >= 0xFF10 && a <= 0xFF26) return names[a - 0xFF10];
+        return (a >= 0xFF30 && a <= 0xFF3F) ? "WAVE" : "?";
+    };
+    for (const auto& w : log)
+        text << juce::String(juce::int64(w.cycle)) << "," << juce::String::toHexString(int(w.addr)).toUpperCase() << "," << regName(w.addr) << "," << juce::String::toHexString(int(w.value)).paddedLeft('0', 2).toUpperCase() << "\n";
+    if (!out.replaceWithText(text)) { std::printf("FAIL cannot write %s\n", out.getFullPathName().toRawUTF8()); return 1; }
+    std::printf("wrote %s: %d writes over %.1f s of %s\n", out.getFullPathName().toRawUTF8(), int(log.size()), seconds, file.getFileName().toRawUTF8());
+    return 0;
+}
+
 /* ------------------------------------------------ --play-song (section 24) */
 
 /// What one run heard: the RMS of every bar, the range the samples covered
@@ -628,7 +704,8 @@ int main(int argc, char** argv)
     juce::File demoDir = juce::File(CHIPBOY_DEMO_DIR);
     juce::File outDir = juce::File::getCurrentWorkingDirectory().getChildFile("recordtest");
     juce::File writeSong, checkSong, writeState, checkState, playFile;
-    juce::File importSav, importOut; juce::String importWhich;   // --import-sav SAV NAME|working OUT.cbsong
+    juce::File importSav, importOut; juce::String importWhich;   // --import-sav SAV NAME|working OUT.cbsong (a .lsdprj too)
+    juce::File traceFile, traceOut; double traceSeconds = 20.0;  // --trace-song FILE OUT.csv [seconds]
     int playBars = 8;                                         // --play-song's default (section 24)
     bool dump = false;
     for (int i = 1; i < argc; ++i) {
@@ -643,6 +720,11 @@ int main(int argc, char** argv)
         else if (key == "--check-state") checkState = juce::File(juce::String(argv[++i]));
         else if (key == "--import-sav" && i + 3 < argc) {
             importSav = juce::File(juce::String(argv[++i])); importWhich = juce::String(argv[++i]); importOut = juce::File(juce::String(argv[++i]));
+        }
+        else if (key == "--trace-song" && i + 2 < argc) {
+            traceFile = juce::File(juce::String(argv[++i])); traceOut = juce::File(juce::String(argv[++i]));
+            if (i + 1 < argc && juce::String(argv[i + 1]).containsOnly("0123456789.") && juce::String(argv[i + 1]).isNotEmpty())
+                traceSeconds = std::clamp(juce::String(argv[++i]).getDoubleValue(), 1.0, 600.0);
         }
         else if (key == "--play-song") {
             playFile = juce::File(juce::String(argv[++i]));
@@ -661,7 +743,8 @@ int main(int argc, char** argv)
         plugin::SavePreview preview; juce::String error;
         if (!plugin::readSave(importSav, preview, error)) { std::printf("FAIL %s\n", error.toRawUTF8()); return 1; }
         std::vector<uint8_t> bytes; std::string err; int format = preview.index.workingFormat; juce::String name = importWhich;
-        if (importWhich == "working") { lsdj::workingSong(preview.bytes.data(), preview.bytes.size(), bytes); name = "Working song"; }
+        if (!preview.projects.empty()) { bytes = preview.projects.front().song; format = preview.projects.front().formatVersion; name = preview.projects.front().name; }
+        else if (importWhich == "working") { lsdj::workingSong(preview.bytes.data(), preview.bytes.size(), bytes); name = "Working song"; }
         else {
             const chipboy::lsdj::SaveEntry* hit = nullptr;
             for (const auto& e : preview.index.files) if (juce::String(e.name).equalsIgnoreCase(importWhich) || juce::String(e.file) == importWhich) hit = &e;
@@ -684,6 +767,9 @@ int main(int argc, char** argv)
         for (const auto& l : notes.lines) std::printf("  - %s\n", l.c_str());
         return 0;
     }
+
+    /* ---- --trace-song: the register writes of a song file, as a CSV ---- */
+    if (traceFile != juce::File()) return traceSong(traceFile, traceOut, traceSeconds);
 
     /* ---- --play-song: a song file plays, and is heard (section 24) ---- */
     // Nothing under Demo/ is needed for this, so it runs before the demo is

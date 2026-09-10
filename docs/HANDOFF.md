@@ -95,6 +95,62 @@ design-log section the change touches. Update this file at the end of every chan
   preferring the one whose version reads the song's format. Not decoded: the DIST modes
   for notes that play both kits (summed and clipped instead, noted), offsets, loop and
   half-speed flags. All eight songs of the kit save convert and play.
+- Round 13: **every stable LSDj release measured, the older formats imported, S on noise, project
+  files** (`COMMANDS_AND_TEMPO.md` §55–§56, `plan-lsdj-import.md` §1a, §3, §4b; CHANGES 2026-09-10).
+  The user's archive of 31 stable releases (3.1.5 – 9.4.2) sits unpacked at `/root/lsdj/archive/`
+  (container only; `roms/<version>/lsdj_<version>.gb`, the `--init-sav` saves in `init/`, the probe
+  saves and traces in `cmp/`, `formats.json` = version → format). The 8.4.4 ROM and save the user
+  sent are at `/root/lsdj/mup/` (SPACE TI, GOAL ACH, STARWAY), the eight `.lsdprj` files and their
+  9.2.L save at `/root/lsdj/sly/`, decompressed song images at `/root/lsdj/songs/*.bin`, their
+  LSDj traces `*.503.csv` / `*.844.csv` and ChipBoy's imports and traces under `/root/lsdj/songs/out/`.
+  What was found and built:
+  - **Formats**: 0 (3.1.5–3.5.1), 2 (3.6.8–4.3.0), 3 (4.4.0–5.0.3), 4 (5.7.8–6.0.1), 5 (6.4.5),
+    7 (6.8.2–7.0.2), 11 (8.4.0–8.5.1), 15 (8.8.6), 22 (9.2.J–9.4.2). Six `LsdjModel`s with new
+    fields `noiseRule` (Shape / Raw / Map), `noiseS` (Nibbles / Semitones), `pitchLaw`
+    (Register / Semitone), `vibratoLaw`; `lsdjFormatForVersion` holds the measured table; the old
+    ROMs' version comes from their welcome line (`romVersion`).
+  - **Noise before 9**: NR43 = ~SHAPE (byte 4) + 16 × (5 − octave), saturating; **S on noise**
+    subtracts its nibbles from NR43's, mod 16, adding up until the note-on; P on noise does that
+    every tick (not mapped). **9.x S on noise** = signed semitones through the map, adding up —
+    now ChipBoy's own S on NOI (§55, `Voice::noiseTsp`); the noise map continues to −72 for
+    transposes (`Driver::kNoiseMapBelow`); the driver's noise Shift offset is read from the
+    instrument (it compounded on a second write before). The importer resolves the old S to
+    semitone deltas in chain order (`ChannelState`), folds noise chain transposes into the note
+    before 9, and gives each noise slot the Shift that puts LSDj's clocks (16 Hz up) onto ChipBoy's
+    keyboard (2 kHz up): `chooseNoiseOffsets`. Cells never go below note 12 (the command octave).
+  - **Pitch before 5.7** (formats 0–3): P adds its byte to the period register every pitch clock,
+    L is a speed in units a clock, format 0's V is a one-sided register triangle; the importer puts
+    those instruments in Drum and converts (`drumSpeedFor`, `gbPeriod`).
+  - **Any instrument on any channel** (LSDj plays it as the channel's kind): variants in slots
+    65–128 (`usage()`, `slotFor`); notes before any instrument column play LSDj's 00; tables
+    imported by content (9.x's alloc bytes miss named tables); a table's `G` is LSDj's groove + 1;
+    a noise table's transpose column is subtracted from NR43 byte-wise before 9.
+  - **Project files** (`decompressProject`, `readProject`, `readImportFiles`): the chooser takes
+    `.sav`, `.lsdprj`, `.lsdsng`, several at once; the dialog lists projects as rows. The eight
+    projects equal the save's songs but for LSDj's kit renumbering.
+  - **Verification tooling**: `chipboy_recordtest --trace-song FILE OUT.csv [seconds]` writes
+    ChipBoy's register writes in the harness CSV; `/root/lsdj/cmp.py LSDJ.csv CHIPBOY.csv [detail]`
+    (container only) compares per channel — noise by LFSR clock and 7-bit flag with the note's own
+    S merged into the note-on, pulses and wave by pitch sequence. On the nine old songs the noise
+    channel now lands on LSDj's clocks (SPACE TI: the S sweeps match; GUUDE's pulse-on-noise plays);
+    pulses and wave match where no table/vibrato timing differs (see open issues).
+  **The procedure for the next measurement** (the same for any question about an LSDj version):
+  1. Boot the ROM once: `build-ref/lsdjref/lsdjref_trace --rom R.gb --bootrom-dir build-ref/lsdjref/BootROMs
+     --model dmg --frames 3000 --init-sav init.sav --out /dev/null` — byte `0x7FFF` of `init.sav`
+     is the format it writes.
+  2. Author a probe with `tools/lsdjref/lsdjref_sav.py --spec X.spec --base build-ref/lsdjref/base.sav
+     --out DIR --case NAME` (notes, instruments, tables, `c=S:01`-style commands; it writes the
+     letter table **without B**, so for a ROM from 8.4 up patch the command bytes: byte b → index
+     of the same letter in `-ABCDEFGHKLMOPRSTVWZ`, in phrases at `0x4000` and tables at
+     `0x3680`/`0x3A80`). Patch instrument bytes directly (`0x3080 + 16 i`).
+  3. Copy the probe's first `0x7FFF` bytes over `init.sav` and keep `init.sav`'s `0x7FFF`; trace
+     with `--sav`, `--keys 180:start`, 700–1500 frames; the CSV is `cycle,addr,name,value`; the
+     pitch clock is 11712 cycles; a row at 120 BPM is 44.8 clocks, a tick 7.47.
+  4. Read the registers at each NR44/NR14 trigger and between them (the scripts in this round's
+     transcript are the pattern: group writes within 0.3 clocks, pair NR13/NR14 by burst).
+  5. Put the rule in `LsdjModel` (a field the converter switches on), the conversion in
+     `LsdjSong.cpp`, a case in `Tests/LsdjImportTests.cpp` on a synthetic song, the finding in
+     §56 and `plan-lsdj-import.md` §3; then import a real song, `--trace-song` it and compare.
 - **Adding an LSDj version** when the user supplies its ROM (the steps also head
   `Source/core/Import/LsdjModel.h`): put the ROM beside the others outside the tree
   (`/root/lsdj/` here), copy the 9.3.9 entry in `LsdjModel.cpp`, set the format it writes
@@ -135,6 +191,19 @@ design-log section the change touches. Update this file at the end of every chan
 - §7's envelope-speed numbers (6, 11, 15, 20, 27 for speeds 1–5) were the hardware
   envelope's, measured on version-0 saves; §51 has the 9.x software table. `LSDJ_PARITY.md`
   should be re-read against it when the harness writes format 22 (below).
+- From round 13, measured and left for a later switch: **8.4.x's table timing on pulse** (the
+  note-on does not carry row 0's transpose; a `G` in row 0 sets row 0's own length; GOAL ACH's
+  arpeggio and SPACE TI's PU2 show it) — ChipBoy keeps the 9.x rule; **P on noise** (nibble sweep
+  every tick before 9, a map walk of `v/4` entries a tick on 9.x whose table past the keyboard is
+  unmeasured) — dropped with a note; **drum mode's own note table on 5.7–6.0** (C-4 is period 458);
+  the **nibble wrap** in long S sweeps (`7F`→`80`) that ChipBoy's semitone steps cannot follow; a
+  **table that wraps naturally** resets LSDj's S accumulation where ChipBoy's S keeps adding (a hop
+  does not reset: measured on ASTEROID's `H02`); the harness's tables loop after six rows for a
+  reason still unknown (`LSDJ_PARITY.md`); noise **chain transposes before 9** are folded into the
+  note's octave, unmeasured whether LSDj subtracts them from NR43 like a table's column; wave
+  instruments' PLAY/SPEED/LENGTH and the old formats' vibrato-shape bits; the comparator's pitch
+  sequences drift on vibrato phase, so pulse/wave parity on the old songs is judged by ear and
+  spot checks, not by the match count.
 - From the LSDj recreation, open by decision: an **LSDj-shaped noise map** as an
   instrument option (its map runs into 7-bit values above A-6 and retriggers on such a
   row; ChipBoy's transposed noise rows land near LSDj's pitches, not on them); the table

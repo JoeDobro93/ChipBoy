@@ -1,6 +1,8 @@
 // ChipBoy -- reading an LSDj .sav (docs/plan-lsdj-import.md section 1).
 #include "core/Import/LsdjSave.h"
 
+#include <cstring>
+
 #include <algorithm>
 #include <array>
 
@@ -54,17 +56,21 @@ bool indexSave(const uint8_t* data, size_t size, SaveIndex& out, std::string& er
     return true;
 }
 
-bool decompressFile(const uint8_t* data, size_t size, int file, std::vector<uint8_t>& song, std::string& error)
+/// The run-length stream shared by a save's file and a project file. `block`
+/// is the first block's index; `blockAt(b)` its offset in `data`, or a size
+/// beyond `size` when `b` is not a block; `sequential` reads a jump code as
+/// "the next block" (a project file), else as the block it names (a save).
+namespace {
+
+template <typename BlockAt>
+bool decodeStream(const uint8_t* data, size_t size, int block, int blockLimit, bool sequential, BlockAt blockAt,
+                  std::vector<uint8_t>& song, std::string& error)
 {
     song.clear();
-    if (data == nullptr || size < kSaveSize) { error = "not an LSDj save"; return false; }
-    if (file < 0 || file >= kFileSlots) { error = "no such file"; return false; }
-    int first = -1;
-    for (int b = 0; b < kBlockCount && first < 0; ++b) if (data[kAllocAt + size_t(b)] == file) first = b + 1;
-    if (first < 0) { error = "the file has no blocks"; return false; }
     song.reserve(kSongSize);
-    int block = first, visited = 0;
-    size_t i = kBlock0 + size_t(block) * kBlockSize, end = i + kBlockSize;
+    int visited = 0;
+    size_t i = blockAt(block), end = i + kBlockSize;
+    if (end > size) { error = "block " + std::to_string(block) + " is past the end of the file"; return false; }
     for (;;) {
         if (i >= end) { error = "the stream ran past block " + std::to_string(block); return false; }
         if (song.size() > kSongSize) { error = "the file is longer than a song"; return false; }
@@ -87,14 +93,50 @@ bool decompressFile(const uint8_t* data, size_t size, int file, std::vector<uint
             else if (v == 0xFF) break;
             else if (v >= 0xF2) { error = "unknown code E0 " + std::to_string(int(v)) + " in block " + std::to_string(block); return false; }
             else {
-                block = v;
-                if (block <= 0 || block > kBlockCount || ++visited > kBlockCount) { error = "a jump to block " + std::to_string(int(v)) + " leaves the save"; return false; }
-                i = kBlock0 + size_t(block) * kBlockSize; end = i + kBlockSize;
+                block = sequential ? block + 1 : int(v);
+                if (block < 0 || block > blockLimit || ++visited > blockLimit + 1) { error = "a jump to block " + std::to_string(block) + " leaves the file"; return false; }
+                i = blockAt(block); end = i + kBlockSize;
+                if (end > size) { error = "block " + std::to_string(block) + " is past the end of the file"; return false; }
             }
         } else song.push_back(c);
     }
     if (song.size() != kSongSize) { error = "the file decompressed to " + std::to_string(song.size()) + " bytes, not 32768"; return false; }
     return true;
+}
+
+} // namespace
+
+bool decompressFile(const uint8_t* data, size_t size, int file, std::vector<uint8_t>& song, std::string& error)
+{
+    song.clear();
+    if (data == nullptr || size < kSaveSize) { error = "not an LSDj save"; return false; }
+    if (file < 0 || file >= kFileSlots) { error = "no such file"; return false; }
+    int first = -1;
+    for (int b = 0; b < kBlockCount && first < 0; ++b) if (data[kAllocAt + size_t(b)] == file) first = b + 1;
+    if (first < 0) { error = "the file has no blocks"; return false; }
+    return decodeStream(data, size, first, kBlockCount, false,
+                        [](int b) { return b <= 0 ? size_t(kSaveSize) : kBlock0 + size_t(b) * kBlockSize; }, song, error);
+}
+
+constexpr size_t kProjectHead = 9;   // 8 bytes of name, one version byte
+
+bool looksLikeProject(const uint8_t* data, size_t size)
+{
+    if (data == nullptr || size < kProjectHead + kBlockSize || size == kSaveSize) return false;
+    if ((size - kProjectHead) % kBlockSize != 0) return false;
+    for (size_t k = 0; k < 8; ++k) { const uint8_t c = data[k]; if (c != 0 && (c < 32 || c > 126)) return false; }
+    return true;
+}
+
+bool decompressProject(const uint8_t* data, size_t size, std::string& name, int& version, std::vector<uint8_t>& song, std::string& error)
+{
+    song.clear(); name.clear(); version = -1;
+    if (!looksLikeProject(data, size)) { error = "not an LSDj project file (a name, a version byte, whole blocks)"; return false; }
+    for (size_t k = 0; k < 8; ++k) { const uint8_t c = data[k]; if (c == 0) break; name += char(c); }
+    while (!name.empty() && name.back() == ' ') name.pop_back();
+    version = int(data[8]);
+    const int blocks = int((size - kProjectHead) / kBlockSize);
+    return decodeStream(data, size, 0, blocks - 1, true, [](int b) { return kProjectHead + size_t(b) * kBlockSize; }, song, error);
 }
 
 bool workingSong(const uint8_t* data, size_t size, std::vector<uint8_t>& song)
@@ -124,10 +166,25 @@ std::string romVersion(const uint8_t* rom, size_t size)
     std::string title;
     for (size_t k = 0x134; k < 0x144; ++k) { if (rom[k] == 0) break; title += char(rom[k]); }
     const std::string tag = "LSDj-v";
-    if (title.compare(0, tag.size(), tag) != 0) return {};
-    std::string v = title.substr(tag.size());
-    while (!v.empty() && (v.back() == ' ' || uint8_t(v.back()) > 127)) v.pop_back();
-    return v;
+    if (title.compare(0, tag.size(), tag) == 0) {
+        std::string v = title.substr(tag.size());
+        while (!v.empty() && (v.back() == ' ' || uint8_t(v.back()) > 127)) v.pop_back();
+        return v;
+    }
+    // Before 4.3 the title is "LSDJ" alone and the version sits in the welcome
+    // line, "WELCOME TO LITTLE SOUND DJ V3.5.1!", within the first bank.
+    const char* key = "LITTLE SOUND DJ V";
+    const size_t keyLen = std::strlen(key), limit = std::min<size_t>(size, 0x10000);
+    for (size_t i = 0; i + keyLen < limit; ++i) {
+        if (std::memcmp(rom + i, key, keyLen) != 0) continue;
+        std::string v;
+        for (size_t k = i + keyLen; k < limit && v.size() < 8; ++k) {
+            const char c = char(rom[k]);
+            if ((c >= '0' && c <= '9') || c == '.' || (c >= 'A' && c <= 'Z')) v += c; else break;
+        }
+        if (v.size() >= 5 && v[1] == '.') return v;
+    }
+    return {};
 }
 
 } // namespace chipboy::lsdj

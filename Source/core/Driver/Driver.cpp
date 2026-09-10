@@ -213,7 +213,7 @@ void Driver::noisePairForNote(int note, uint8_t& shift, uint8_t& divisor)
 
 Driver::Driver()
 {
-    for (int n = 0; n < 128; ++n) { uint8_t s, d; noisePairForNote(n, s, d); noiseShiftMap_[size_t(n)] = int8_t(s); noiseDivMap_[size_t(n)] = int8_t(d); }
+    for (int n = -kNoiseMapBelow; n < 128; ++n) { uint8_t s, d; noisePairForNote(n, s, d); noiseShiftMap_[size_t(n + kNoiseMapBelow)] = int8_t(s); noiseDivMap_[size_t(n + kNoiseMapBelow)] = int8_t(d); }
     reset();
 }
 
@@ -619,6 +619,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // second pulse (section 49). The note itself stays what the cell said.
     v.noteTsp = core.transpose ? v.cellTranspose : int8_t(0);
     v.instTranspose = (ch == 1 && core.type == InstrumentType::Pulse) ? core.pu2Transpose : int8_t(0);
+    v.noiseTsp = 0;                                                                        // S on NOI starts over (section 55)
     v.instKey = instrumentKey(ch, vel);
     v.ticks = 0; v.vibPhase9 = 0; v.pitchCount = 0;
     v.fineOffset = 0; v.fineQueued = 0; v.drumOffset = 0.0; v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0;
@@ -994,8 +995,11 @@ void Driver::writePeriod(int ch, bool trigger)
         else {
             // The note, the chain row's and the channel's transposes, and the
             // table row's column (section 45), through the map (section 9.4).
-            const int n = std::clamp(int(v.note) + v.noteTsp + v.p.transpose + tableTransposeOf(v), 0, 127);
-            s = uint8_t(noiseShiftMap_[size_t(n)]); d = uint8_t(noiseDivMap_[size_t(n)]); s = uint8_t(std::clamp(int(s) + int(v.noiseShift) - 5, 0, 13));
+            const int n = std::clamp(int(v.note) + v.noteTsp + v.p.transpose + tableTransposeOf(v) + v.noiseTsp, -kNoiseMapBelow, 127);
+            // The instrument's Shift is an offset from the map's pair (5 is
+            // none); it is read from the instrument, not from the pair the last
+            // write left in `v.noiseShift`, or a second write would compound it.
+            s = uint8_t(noiseShiftMap_[size_t(n + kNoiseMapBelow)]); d = uint8_t(noiseDivMap_[size_t(n + kNoiseMapBelow)]); s = uint8_t(std::clamp(int(s) + int(v.inst.noiseShift) - 5, 0, 13));
         }
         v.noiseShift = s; v.noiseDiv = d;
         emit(regAddr(3, 3), uint8_t((s << 4) | (v.lfsr7 ? 8 : 0) | (d & 7)), true);
@@ -1465,8 +1469,14 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable)
             v.retrigCount = 0;
             break;
         case Cmd::S: {
-            // PU1's sweep. The direction is the instrument's unless x asks for
-            // down; on WAV and NOI there is no sweep unit, so S is inert.
+            // PU1's sweep; on NOI a transpose through the map that adds up
+            // until the next note-on, the byte two's complement (section 55);
+            // on PU2 and WAV there is no sweep unit, so S is inert.
+            if (noise) {
+                v.noiseTsp = int16_t(std::clamp(int(v.noiseTsp) + int(int8_t(uint8_t(((c.a & 15) << 4) | (c.b & 15)))), -256, 256));
+                if (live) writePeriod(ch, false);                            // NR43 alone: the LFSR keeps running
+                break;
+            }
             if (ch == 0 && pulse) {
                 // `x` is the sweep rate and `y` is **NR10's low nibble**
                 // (section 34): 0-7 sweep up at that shift, 8-15 sweep down.
@@ -1542,6 +1552,7 @@ void Driver::revertCommand(int ch, Cmd cmd)
         case Cmd::O: v.pan = v.p.pan != 255 ? Pan(v.p.pan & 3) : i.pan; writeNr51(); break;
         case Cmd::P: v.fineOffset = 0; v.fineQueued = 0; v.drumOffset = 0.0; v.bendSpeed = 0; if (live) writePeriod(ch, false); break;
         case Cmd::S:
+            if (i.type == InstrumentType::Noise) { v.noiseTsp = 0; if (live) writePeriod(ch, false); }   // the transpose back to zero (section 55)
             if (ch == 0 && pulse) {
                 v.sweepRate = i.sweepRate; v.sweepDown = i.sweepDown; v.sweepShift = i.sweepShift;
                 emit(0xFF10, uint8_t((v.sweepRate << 4) | (v.sweepDown ? 8 : 0) | v.sweepShift), true);

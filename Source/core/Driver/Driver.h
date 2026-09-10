@@ -183,6 +183,10 @@ public:
     /// P's step per pitch update in 1/256 of a semitone, for a magnitude 0-127
     /// (docs/LSDJ_PARITY.md section 5). Public so a test can pin the table.
     static int  bendStepFor(int magnitude);
+    /// How far below note 0 the noise map goes on for transposes: a table's
+    /// column or an S can take the noise below the keyboard, where the deeper
+    /// shifts live (section 55); a cell's own note stays 12-127.
+    static constexpr int kNoiseMapBelow = 72;
     static void noisePairForNote(int note, uint8_t& shift, uint8_t& divisor);
     static double noiseClockHz(uint8_t shift, uint8_t divisor);
 
@@ -260,6 +264,7 @@ private:
         bool     retrigFast = false;       ///< R x = 8: the retrigger runs on the pitch clock
         uint8_t  sweepRate = 0, sweepShift = 0; bool sweepDown = false;
         uint8_t  noiseShift = 5, noiseDiv = 1; bool lfsr7 = false; int8_t noiseSweep = 0;
+        int16_t  noiseTsp = 0;             ///< S on NOI: semitones added to the note, adding up until the next note-on (section 55)
         bank::Pan pan = bank::Pan::Both;
         uint16_t lengthCode = 0;
         // wave
@@ -462,7 +467,8 @@ private:
     std::array<NoteEvent*, 256> pendingFrom_{};
     /// The row lengths a table's G asks for, per channel (setTableGroove).
     std::array<std::array<uint8_t, 16>, 4> tableGroove_{};
-    std::array<int8_t, 128> noiseShiftMap_{}, noiseDivMap_{};
+    /// The noise map for notes -kNoiseMapBelow..127 (index note + kNoiseMapBelow).
+    std::array<int8_t, 128 + kNoiseMapBelow> noiseShiftMap_{}, noiseDivMap_{};
 };
 
 } // namespace chipboy::driver

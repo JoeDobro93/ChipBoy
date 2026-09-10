@@ -146,7 +146,7 @@ constexpr CommandInfo kCmdInfo[bank::kCmdCount] = {
     { 'O', "Pan",           "off / L / R / LR",          1, { 0, 0 }, { 3, 0 },    { 1, 0 },   CmdShape::Small },
     { 'P', "Pitch bend",    "speed, signed; 0 holds",    1, { 0, 0 }, { 255, 0 },  { 244, 0 }, CmdShape::Byte },
     { 'R', "Retrigger",     "vol 1-7 up / 9-15 down, every y", 2, { 0, 0 }, { 15, 15 }, { 0, 3 }, CmdShape::Nibbles },
-    { 'S', "Sweep",         "rate 0-7, NR10's low nibble (8-15 down)", 2, { 0, 0 }, { 7, 15 }, { 2, 2 }, CmdShape::Nibbles },
+    { 'S', "Sweep",         "PU1: rate 0-7, NR10's low nibble (8-15 down); NOI: transpose, two's complement", 2, { 0, 0 }, { 15, 15 }, { 2, 2 }, CmdShape::Nibbles },
     { 'T', "Tempo",         "BPM 40-295",                1, { 40, 0 }, { 295, 0 }, { 120, 0 }, CmdShape::Byte },
     { 'V', "Vibrato",       "speed 1-15, depth in semitones", 2, { 0, 0 }, { 15, 15 }, { 8, 4 }, CmdShape::Nibbles },
     { 'W', "Wave",          "duty 0-3, or wave 1-64",    1, { 0, 0 }, { 64, 0 },   { 1, 0 },   CmdShape::Small },

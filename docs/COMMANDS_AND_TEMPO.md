@@ -34,7 +34,7 @@ packed byte.
 | O | pan | 0 off, 1 L, 2 R, 3 both | – | yes | yes | yes | until cleared or a new instrument loads |
 | P | bend speed | two's complement −128…127; the measured step table per update — the note (Fast/Tick), one offset of x/32 of a semitone (Step), the period register wrapping at 2048 (Drum) | – | yes | yes | – | until cleared |
 | R | retrigger | a signed nibble of volume: 0 none, 1–7 up, 9–15 down by 16 − x; 8 resyncs to the pitch clock | interval y × (rate + 1) + 1 ticks; 0 is every tick | yes | yes | yes | no (per note) |
-| S | sweep | rate 0–7 | NR10's low nibble: 0–7 sweep up at that shift, 8–15 down | PU1 | – | – | until cleared or a new instrument loads |
+| S | sweep / noise transpose | PU1: rate 0–7; NOI: the high digit of a two's-complement byte | PU1: NR10's low nibble, 0–7 sweep up at that shift, 8–15 down; NOI: the low digit | PU1 | – | yes (§55) | until cleared or a new instrument loads; on NOI until the next note-on |
 | T | tempo | LSDj's byte: `28`–`FF` is 40–255 BPM, `00`–`27` is 256–295 | – | song tempo (Song source only) | | | until the next T |
 | V | vibrato | speed 0–15: one cycle every 64/(x + 1) updates, 0 the slowest | depth 0–15: ⅛ to 8 semitones either side of the note | yes | yes | – | until cleared or a new instrument loads |
 | W | wave | pulse: duty 0–3 (12.5/25/50/75 %); wave: wave slot 1–64 | – | duty | wave slot | – | until cleared or a new instrument loads |
@@ -1528,13 +1528,14 @@ and the plan). The rules are the ones the recreation established, §45–§52, n
   bytes are read — the command letter table, the envelope (three stages or the NRx2 byte),
   the noise map, the wave octave, PU2 TSP; the LSDj versions known to write a format are
   its label. Measured on the user's ROMs (`plan-lsdj-import.md` §3): format **22** is
-  9.2.J and 9.3.9, identical on every table traced; **15** (8.8.6) already has the three-
-  stage envelope and reads the noise column as a raw NR43, `FF − n`; **11** (8.4.0) has the
-  hardware envelope and an octave-only noise map. Every ROM from 8.4.0 up carries the
-  letter table with `B`; a model for formats 0–10 keeps the tables the 9.3.9 ROM applied to
-  version-0 saves and is marked assumed. A format no model knows takes the nearest below;
-  an unknown one takes the ROM found beside the save when its title names a version, else
-  the newest. `LsdjModel.h` says how to add a version when a ROM arrives; `HANDOFF.md`
+  9.2.J to 9.4.2, identical on every table traced; **15** (8.8.6) already has the three-
+  stage envelope and reads the noise column as a raw NR43, `FF − n`; **11** (8.4.x, 8.5.1)
+  has the hardware envelope and the SHAPE noise rule; **0–7** (3.1.5 to 7.0.2) the same
+  with the letter table without `B`, and before 5.7 the register-unit pitch laws — all of
+  it measured on the 31 archived releases and converted as §56 says. A format no model
+  knows takes the nearest below; an unknown one takes the ROM found beside the save when
+  it names a version (the cartridge title from 4.3, the welcome string before), else the
+  newest. `LsdjModel.h` says how to add a version when a ROM arrives; `HANDOFF.md`
   repeats it.
 - **The song** (`LsdjSong`): instruments by slot with the envelope of §51, wave frames per
   LSDj synth, tables with the noise rows converted through the map (§45), one phrase per
@@ -1548,3 +1549,125 @@ and the plan). The rules are the ones the recreation established, §45–§52, n
   one line each; the dialog shows them after the import.
 
 The song file this produces is a plain `.cbsong` once saved; nothing of LSDj's stays in it.
+
+## 55. S on the noise channel: a transpose that adds up
+
+Measured on LSDj 9.3.9 and 9.4.2 (the probe of round 13, `/root/lsdj/archive`): `S xy` on
+the noise channel moves the note **by the two's-complement byte `xy` in semitones** through
+the noise map — `S01` one up, `SFF` one down, `S10` sixteen up, `S80` eight down (`x` is a
+signed nibble, `y` unsigned: `x × 16 + y` is the byte) — and **each S adds to the last**:
+`S01` on three rows in a row is +1, +2, +3. A note-on puts the transpose back to zero. LSDj
+writes NR43 alone, no retrigger, so the LFSR keeps running.
+
+ChipBoy does the same, and it is the first pitch effect the noise channel takes (§45 still
+holds for P, V and L): `S xy` on NOI adds `int8(xy)` to the channel's noise transpose, the
+note goes through the map again (`noisePairForNote`) and NR43 is rewritten without a
+trigger; the revert form (a table's `S` with no argument, an instrument load) clears it. The
+palette lets `x` run 0–15 now; PU1 keeps reading it as the rate 0–7 and the low digit as
+NR10's low nibble, so no PU1 song changes.
+
+An S in the note's own cell lands in the note-on's write: ChipBoy writes NR43 once, for the
+transposed note, where LSDj writes the note and then the S a tenth of a pitch clock later.
+The map continues **below the keyboard** for transposes: a table's column or an S may take
+the effective note down to −72 (`Driver::kNoiseMapBelow`), where the deeper shifts live,
+while a cell's own note stays 12–127. And the instrument's **Shift** (5 is none) moves the
+whole map by octaves: LSDj's noise clocks run from 16 Hz up, ChipBoy's notes from about
+2 kHz, so an imported noise instrument takes the Shift that puts the clocks its notes ask
+for onto the keyboard (§56).
+
+Before 9.0 the same letter did something else on noise, and the importer converts it (§56).
+
+## 56. Importing the older LSDj formats
+
+All 31 stable releases from the LSDj archive were booted with `lsdjref_trace --init-sav`
+and probed with the same saves (round 13; the ROMs stay at `/root/lsdj/archive`, outside
+the tree). The **format a version writes** and what changed, measured:
+
+| format | LSDj versions | noise note | S on noise | envelope | P, L | V | letters |
+|---|---|---|---|---|---|---|---|
+| 0 | 3.1.5, 3.1.9, 3.4.4, 3.5.1 | shape | nibbles | NRx2 | register units | one-sided, register units | no B (3.1: no Z) |
+| 2 | 3.6.8 – 4.3.0 | shape | nibbles | NRx2 | register units | 9.x's | no B |
+| 3 | 4.4.0 – 5.0.3 | shape | nibbles | NRx2 | register units | 9.x's | no B |
+| 4 | 5.7.8 – 6.0.1 | shape | nibbles | NRx2 | 9.x's, pitch modes | 9.x's | no B |
+| 5 | 6.4.5 | shape | nibbles | NRx2 | 9.x's | 9.x's | no B |
+| 7 | 6.8.2 – 7.0.2 | shape | nibbles | NRx2 | 9.x's | 9.x's | no B |
+| 11 | 8.4.0, 8.4.4, 8.5.1 | shape | nibbles | NRx2 | 9.x's | 9.x's | B |
+| 15 | 8.8.6 | raw `FF − n` | nibbles | three stages | 9.x's | 9.x's | B |
+| 22 | 9.2.J, 9.2.L, 9.3.9, 9.4.2 | the musical map | semitones (§55) | three stages | 9.x's | 9.x's | B |
+
+Formats 1, 6, 8–10, 12–14 and 16–21 were never written by a stable release; a song that
+carries one takes the nearest model below. The tick, the table row (one tick), the wave
+octave, PU2's byte-2 transpose and the chain's transposes are the same everywhere.
+
+**The noise note before 9** (formats 0–11): the instrument's fourth byte is its **SHAPE**
+and the note's octave is all that counts of the note — `NR43 = ~SHAPE + 16 × (5 − octave)`,
+saturating at `00` and `FF`, C-2 to B-2 being octave 2. The default SHAPE `FF` puts C-5 at
+`00`. The importer reads each noise note with its instrument's shape and takes the ChipBoy
+note whose LFSR clock is nearest, as it does for every other format (§45).
+
+**S on noise before 9** (formats 0–15): `S xy` **subtracts `x` from NR43's high nibble and
+`y` from its low nibble, each modulo 16 with no borrow between them**, once per command, and
+they add up until the next note-on (`SF1` on three rows: `2C`, `3B`, `4A`, `59`). ChipBoy
+has no register arithmetic on NR43, so the importer resolves each S to the note it lands
+on: it walks the phrases in chain order keeping the channel's NR43, applies the nibble rule
+at each S, and writes ChipBoy's S (§55) with the semitone difference between the notes
+nearest the two clocks. Inside a table used by noise the rows are resolved from the lowest
+note the table is used with and **folded into the transpose column** (the first pass of the
+loop; the accumulation past it is not carried), the S itself dropped. A 7-bit toggle (bit 3)
+along the way is lost, as §45 says. Format 22's S goes through unchanged: it is §55.
+
+**P and L before 5.7 (formats 0–3)** work in the period register: `P xx` adds `xx` units
+every pitch clock, whatever the instrument's byte 5 says (there were no pitch modes yet);
+`L xx` slides to the next note at `xx` units per pitch clock. ChipBoy's **Drum** pitch mode
+is the register domain on the same clock, so the importer puts every pulse and wave
+instrument of these formats in Drum and converts: a `P v` takes the ChipBoy speed whose
+measured step (`bendStep256`, 1/256 semitone at 19.11 units a semitone) is nearest `v`
+units a clock; an `L v` becomes the **duration** ChipBoy's L wants — the register distance
+between the note before and the note after, divided by `v`, less one — from the two notes
+around it (a slide whose start is in another phrase takes the channel's last note in chain
+order; with no note before it, it is dropped with a note). **V before 3.6 (format 0)** is a
+triangle **below** the note, `8 × y` units a clock for `x + 1` clocks and back: it becomes
+speed `round(32 / (x + 1)) − 1` and depth `round(8 y (x + 1) / 2 / 19.11)` semitones, centred
+— the one-sidedness is lost, noted.
+
+**Any instrument on any channel.** LSDj plays an instrument as the channel's kind — a
+pulse on NOI is a noise instrument with the same bytes (its byte 4 the SHAPE), a wave on
+PU1 a pulse whose envelope is the wave's byte 1 — and the songs do it often. ChipBoy's
+instruments have a type, so such a use gets a **variant** of the channel's kind built from
+the same bytes, in the slots above LSDj's 64 (named after the original with the channel).
+A note before any cell names an instrument plays LSDj's instrument 00, as the machine does.
+
+**Inside a table on noise before 9**, the transpose column is **subtracted from NR43
+byte-wise** (a −2 is +2 on the register; measured on the format-3 songs) and an S row
+follows the nibble rule from where the row before left the register; a hop keeps the
+accumulation (an `H02` loop sweeps on for ever, measured on 4.x). The importer resolves the
+rows for the lowest note the table runs with: the column into ChipBoy's transpose column,
+each S into ChipBoy's S with the semitones from the row before. Tables are imported when
+they hold anything, allocated or not: LSDj 9's allocation bytes miss tables its instruments
+name. A `G` in a table names LSDj's groove 0-based; ChipBoy's slot is one more.
+
+**Left alone, with the reason:**
+
+- **P on noise.** Before 9 it is the S rule every tick (`P01`: `88 87 86 … 80 8F …`); on 9.x it
+  walks the noise map by `v / 4` entries a tick with wraps past its ends whose table is not
+  measured. Neither is a semitone bend ChipBoy could carry; the command is noted and dropped.
+- **Drum mode on 5.7 – 6.0** plays its own note table (C-4 is period 458); not modelled.
+- **The kill after the hardware envelope** (a `08` trigger when NRx2's envelope has run
+  out, 8.4.x) changes nothing audible.
+- **8.4.x's table timing on pulse**: the note-on there does not carry row 0's transpose,
+  and a `G` in row 0 already sets row 0's own length; ChipBoy keeps the 9.x rule (§31: row
+  0 in the note-on, the groove from the next row). Heard as the arpeggio starting one row
+  early. Not modelled until a version rule is worth its own switch.
+- **A nibble that wraps** in a long S sweep (`7F` → `80` on the register) is a different
+  sound from the semitone step ChipBoy adds; the sweep's first pass is exact, later passes
+  of a hopping table drift from it.
+- The instrument bytes that pick a pitch mode (byte 5) carry other meanings before 5.7; the
+  importer ignores them there.
+
+**.lsdprj / .lsdsng files** (`LsdjSave::decompressProject`) are one song each: an 8-byte
+name, a version byte, then the same compressed blocks a save holds, in order — a block-jump
+code means "the next block", whatever number it names. *Import .sav…* takes them beside
+saves, several at once, and lists them in the same dialog; `--import-sav` on the command
+line takes one too. Confirmed on the user's eight projects against the save they were
+loaded into: byte-identical songs but for the kit numbers in the kit instruments, which
+LSDj renumbers to its ROM's kit list on loading a project.
