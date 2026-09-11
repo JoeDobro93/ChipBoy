@@ -398,6 +398,10 @@ public:
     void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override;
     void mouseDown(const juce::MouseEvent&) override; void mouseDrag(const juce::MouseEvent&) override; void mouseUp(const juce::MouseEvent&) override;
+    /// D-UI-24: the arrows move the sample last clicked -- left and right between
+    /// samples, up and down on its level. Everything else passes through.
+    bool keyPressed(const juce::KeyPress&) override;
+    void focusGained(FocusChangeType) override; void focusLost(FocusChangeType) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };

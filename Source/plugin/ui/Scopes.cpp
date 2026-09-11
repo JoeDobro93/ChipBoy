@@ -267,7 +267,10 @@ struct ScopeView::Impl : juce::Timer {
         const int W = area.getWidth(), H = area.getHeight();
         if (W < 8 || H < 8) return;
         const float top = float(area.getY()) + 4.0f, span = float(H) - 8.0f;
-        auto toY = [top, span](double level) { return top + span * float(1.0 - level / 16.0); };
+        // D-UI-25: level 0 at the top, 15 at the bottom, because the DMG's DACs
+        // invert (section 106) -- the scope traces the digital levels, so drawn
+        // this way round it is the shape that comes out of the plugin.
+        auto toY = [top, span](double level) { return top + span * float(level / 16.0); };
 
         // the DAC's own scale, not dB: a line every four levels, the rest faint on tall scopes
         for (int lv = 0; lv <= 16; ++lv) {
@@ -278,9 +281,12 @@ struct ScopeView::Impl : juce::Timer {
 
         if (n > 0 && audible) buildAndDraw(g, area, toY);
         else if (n > 0) {
-            // Silenced by the mix: the off baseline, as a channel with its DAC off draws.
+            // Silenced by the mix: the off baseline, as a channel with its DAC off
+            // draws. D-UI-25: at level 7.5, the DAC's own zero -- a channel that
+            // is not sounding sits in the middle, which is where the analog trace
+            // already puts a DAC-off sample (`xOf` returns 0 for one).
             const float dashes[2] = { 3.0f, 3.0f };
-            const float yBase = std::round(toY(0.0)) - 0.5f;
+            const float yBase = std::round(toY(7.5)) - 0.5f;
             g.setColour(colours::channel(ch).withAlpha(0.4f));
             g.drawDashedLine({ float(area.getX()), yBase, float(area.getRight()), yBase }, dashes, 2, 1.0f);
         }
@@ -378,7 +384,7 @@ struct ScopeView::Impl : juce::Timer {
         g.reduceClipRegion(area);
         if (!offSpans.empty()) {
             const float dashes[2] = { 3.0f, 3.0f };
-            const float yBase = std::round(toY(0.0)) - 0.5f;
+            const float yBase = std::round(toY(7.5)) - 0.5f;   // the DAC's zero (D-UI-25)
             g.setColour(colour.withAlpha(0.4f));
             for (const auto& sp : offSpans)
                 g.drawDashedLine({ x0 + float(sp.first), yBase, x0 + float(sp.second), yBase }, dashes, 2, 1.0f);

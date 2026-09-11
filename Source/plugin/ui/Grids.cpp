@@ -2526,6 +2526,7 @@ struct WaveGrid::Impl {
     View view = View::Bars;
     int lastI = -1, lastV = -1;
     int hoverI = -1, hoverV = -1;       ///< the cell under the pointer, -1 outside
+    int sel = 0;                        ///< the sample last clicked, which the arrow keys move (D-UI-24)
     static constexpr int kPad = 6;
 
     static juce::Rectangle<int> inner(const juce::Component& c) { return c.getLocalBounds().reduced(kPad); }
@@ -2559,8 +2560,24 @@ struct WaveGrid::Impl {
             }
         }
         if (frame.s[size_t(i)] != uint8_t(v)) { frame.s[size_t(i)] = uint8_t(v); changed = true; }
-        lastI = i; lastV = v;
+        lastI = i; lastV = v; sel = i;
         return changed;
+    }
+
+    /// D-UI-24: the arrows. Left and right walk the samples, up and down move
+    /// the one that is selected. Up is a *smaller* level, because the grid is
+    /// drawn the way the DAC puts it out (section 107) and up is louder.
+    /// Returns whether the frame changed; the caller repaints either way.
+    bool arrow(int dx, int dy)
+    {
+        sel = juce::jlimit(0, 31, sel + dx);
+        if (dy == 0) return false;
+        const int was = frame.s[size_t(sel)];
+        const int now = juce::jlimit(0, 15, was - dy);
+        if (now == was) return false;
+        frame.s[size_t(sel)] = uint8_t(now);
+        lastI = sel; lastV = now;
+        return true;
     }
 
     bool hover(const juce::Component& c, juce::Point<int> p)
@@ -2576,6 +2593,7 @@ struct WaveGrid::Impl {
 WaveGrid::WaveGrid() : impl_(std::make_unique<Impl>())
 {
     setMouseCursor(juce::MouseCursor::CrosshairCursor);
+    setWantsKeyboardFocus(true);   // D-UI-24: the arrows move the selected sample
     setSize(640, 200);
 }
 WaveGrid::~WaveGrid() = default;
@@ -2622,23 +2640,53 @@ void WaveGrid::paint(juce::Graphics& g)
         const float colW = (float(in.getWidth()) - 31.0f) / 32.0f;
         for (int i = 0; i < 32; ++i) {
             const float x = float(in.getX()) + float(i) * (colW + 1.0f);
-            // Section 107: the bar hangs from the top, because level 15 is the
-            // bottom of the output and level 0 the top of it.
-            const float h = float(im.frame.s[size_t(i)] + 1) / 16.0f * float(in.getHeight());
+            // Section 107 puts level 0 at the top and 15 at the bottom, and the
+            // bar still grows **up** from the floor: it fills from the sample's
+            // own row down, so a quiet sample is a short bar and a loud one a
+            // tall one, as a level meter reads.
+            const float y = float(in.getY()) + float(im.frame.s[size_t(i)]) * levelH;
             g.setColour(i == im.hoverI ? wav : wav.withAlpha(0.9f));
-            g.fillRect(x + 1.0f, float(in.getY()), colW - 2.0f, h);
+            g.fillRect(x + 1.0f, y, colW - 2.0f, float(in.getBottom()) - y);
         }
     }
+    // D-UI-23: the middle of each axis, so a shape can be drawn against a centre
+    // -- between levels 7 and 8, which is the DAC's own zero, and between samples
+    // 15 and 16. Over the trace, or the Bars view would bury the level line.
+    g.setColour(lcd.withAlpha(0.55f));
+    g.fillRect(float(in.getX()), std::round(float(in.getY()) + 8.0f * levelH) - 1.0f, float(in.getWidth()), 2.0f);
+    g.fillRect(std::round(float(in.getX()) + 16.0f * cellW) - 1.0f, float(in.getY()), 2.0f, float(in.getHeight()));
+    g.setColour(textDim.withAlpha(0.55f));
+    g.fillRect(float(in.getX()), std::round(float(in.getY()) + 8.0f * levelH) - 0.5f, float(in.getWidth()), 1.0f);
+    g.fillRect(std::round(float(in.getX()) + 16.0f * cellW) - 0.5f, float(in.getY()), 1.0f, float(in.getHeight()));
+
+    // D-UI-24: the sample last clicked, which the arrows move. Its column is
+    // tinted, its own cell ringed; brighter while the grid has the keyboard, so
+    // it is clear the arrows will land here.
+    {
+        const bool focused = hasKeyboardFocus(false);
+        const int sv = im.frame.s[size_t(im.sel)];
+        const float x = float(in.getX()) + float(im.sel) * cellW;
+        const float y = float(in.getY()) + float(sv) * levelH;
+        // An outline, not a tint: in the Bars view the selected column is filled
+        // solid, and a tint over it would not read.
+        g.setColour(text.withAlpha(focused ? 0.85f : 0.40f));
+        g.drawRect(juce::Rectangle<float>(x, float(in.getY()), cellW, float(in.getHeight())).reduced(0.5f), 1.0f);
+        g.setColour(focused ? text : text.withAlpha(0.75f));
+        g.drawRect(juce::Rectangle<float>(x, y, cellW, levelH).reduced(0.5f), 2.0f);
+    }
+
     // The coordinates, the way LSDj's wave screen shows them: the sample
     // under the pointer and its level, in a corner, out of the way. The number
     // is the **stored** level, 0-15, whichever way up the grid draws it.
-    if (im.hoverI >= 0) {
-        const juce::String text = "sample " + ValueFormat::number(im.hoverI) + "  level " + ValueFormat::number(im.hoverV)
-                                + "  (" + ValueFormat::number(im.frame.s[size_t(im.hoverI)]) + ")";
+    if (im.hoverI >= 0 || hasKeyboardFocus(false)) {
+        const int ri = im.hoverI >= 0 ? im.hoverI : im.sel;
+        const int rv = im.hoverI >= 0 ? im.hoverV : int(im.frame.s[size_t(im.sel)]);
+        const juce::String text = "sample " + ValueFormat::number(ri) + "  level " + ValueFormat::number(rv)
+                                + "  (" + ValueFormat::number(im.frame.s[size_t(ri)]) + ")";
         g.setFont(Fonts::mono(10.0f));
         const int w = juce::roundToInt(draw::textWidth(Fonts::mono(10.0f), text)) + 10;
         // In the corner away from the pointer, so it never sits under the hand.
-        const bool left = im.hoverI >= 16;
+        const bool left = ri >= 16;
         const juce::Rectangle<int> r(left ? in.getX() + 2 : in.getRight() - 2 - w, in.getY() + 2, w, 16);
         g.setColour(lcd.withAlpha(0.85f));
         g.fillRoundedRectangle(r.toFloat(), 3.0f);
@@ -2648,10 +2696,28 @@ void WaveGrid::paint(juce::Graphics& g)
         g.drawText(text, r, juce::Justification::centred, false);
     }
 }
+bool WaveGrid::keyPressed(const juce::KeyPress& k)
+{
+    // D-UI-24. Up and down move the selected sample's level -- up is a smaller
+    // level, because section 107 draws level 0 at the top -- and left and right
+    // walk the samples. Nothing else is taken, so Tab still leaves the grid.
+    int dx = 0, dy = 0;
+    if (k.isKeyCode(juce::KeyPress::leftKey))       dx = -1;
+    else if (k.isKeyCode(juce::KeyPress::rightKey)) dx = 1;
+    else if (k.isKeyCode(juce::KeyPress::upKey))    dy = 1;
+    else if (k.isKeyCode(juce::KeyPress::downKey))  dy = -1;
+    else return false;
+    if (impl_->arrow(dx, dy) && onChange) onChange(impl_->frame);
+    repaint();
+    return true;
+}
+void WaveGrid::focusGained(FocusChangeType) { repaint(); }
+void WaveGrid::focusLost(FocusChangeType) { repaint(); }
 void WaveGrid::mouseMove(const juce::MouseEvent& e) { if (impl_->hover(*this, e.getPosition())) repaint(); }
 void WaveGrid::mouseExit(const juce::MouseEvent&) { impl_->hoverI = impl_->hoverV = -1; repaint(); }
 void WaveGrid::mouseDown(const juce::MouseEvent& e)
 {
+    grabKeyboardFocus();
     impl_->lastI = -1;
     impl_->hover(*this, e.getPosition());
     if (impl_->paintAt(*this, e.getPosition(), false)) { if (onChange) onChange(impl_->frame); }

@@ -432,6 +432,15 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 24 (D-UI-23-25): the Waves grid gains a **centre line on each axis**, drawn over the trace so
+  the Bars view cannot bury the level line, and the Bars view's bars grow **up** from the floor again
+  (turning the axis over in §107 had left them filling from the top down, so they appeared to hang);
+  the frame strip and the synth previews follow. The sample last clicked is a **selection** the
+  arrows move -- left and right between samples, up and down on its level, up being a smaller number
+  -- through the same `onChange` a click uses, so undo covers it. And the **per-channel scopes turn
+  over**: they trace digital levels, not rendered audio, so they were drawing level 15 at the top
+  where the DAC puts it at the bottom; the silenced baseline moves to level 7.5, the DAC's zero. The
+  master scope is untouched, since it already plots the rendered output.
 - Round 23 (§103-§107): **the wave bank is one flat table**, the user's call between the two shapes
   §100 left open -- wave slots laid out in synth order with the driver carrying between them,
   rather than one 256-frame wave. `kWaveSlots` is **16**, a slot is **always `kMaxFrames`**, and a

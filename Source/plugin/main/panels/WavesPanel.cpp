@@ -38,11 +38,14 @@ void paintFrame(Graphics& g, Rectangle<int> r, const bank::Frame& f, Colour trac
     g.fillRect(r);
     const float cw = float(r.getWidth() - 4) / 32.0f;
     g.setColour(trace);
-    // Section 107: hanging from the top, like the grid and like the output --
-    // level 0 is the positive rail, 15 the negative one.
+    // Section 107 and D-UI-23: level 0 at the top, 15 at the bottom, and the bar
+    // still grows up from the floor -- it fills from the sample's own row down,
+    // the same way round as the grid's Bars view.
     for (int i = 0; i < 32; ++i) {
-        const float h = float(r.getHeight() - 6) * float(f.s[size_t(i)] + 1) / 16.0f;
-        g.fillRect(float(r.getX()) + 2.0f + cw * float(i), float(r.getY()) + 3.0f, std::max(1.0f, cw - 0.5f), h);
+        const float span = float(r.getHeight() - 6);
+        const float y = float(r.getY()) + 3.0f + span * float(f.s[size_t(i)]) / 16.0f;
+        g.fillRect(float(r.getX()) + 2.0f + cw * float(i), y, std::max(1.0f, cw - 0.5f),
+                   float(r.getBottom()) - 3.0f - y);
     }
     g.setColour(colours::scopeBorder);
     g.drawRect(r, 1);
@@ -86,8 +89,9 @@ public:
                 const auto& f = frames_[size_t(k)];
                 const float cw = (r.getWidth() - 6.0f) / 32.0f;
                 for (int i = 0; i < 32; ++i) {
-                    const float h = (r.getHeight() - 8.0f) * (f.s[size_t(i)] + 1) / 16.0f;
-                    g.fillRect(r.getX() + 3.0f + cw * float(i), r.getY() + 4.0f, std::max(1.0f, cw - 0.5f), h);
+                    const float y = r.getY() + 4.0f + (r.getHeight() - 8.0f) * float(f.s[size_t(i)]) / 16.0f;
+                    g.fillRect(r.getX() + 3.0f + cw * float(i), y, std::max(1.0f, cw - 0.5f),
+                               r.getBottom() - 4.0f - y);
                 }
                 // The frame's number in its corner, so the strip reads as the run
                 // it is and From / To can be read off it (section 36).

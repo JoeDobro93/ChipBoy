@@ -26,6 +26,35 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-11 — The wave grid gains centre lines and the arrows, and the channel scopes turn over
+
+`docs/UI_DESIGN.md` D-UI-23, D-UI-24, D-UI-25, after the previous entry turned the Waves grid over.
+
+**The Bars view's colours were inverted, not its bars.** Turning the axis over had left the bar
+filling from the top down to the sample's row, so every bar appeared to hang. It now fills from the
+sample's own row down to the floor -- level 0 a full-height bar, level 15 a single cell -- so a bar
+grows up the way a level meter does while level 0 stays at the top. The frame strip's thumbnails and
+the synth previews are the same drawing and follow.
+
+**A centre line on each axis** (D-UI-23), to draw against: between levels 7 and 8, which is the
+DAC's own zero, and between samples 15 and 16. Both are drawn *over* the trace with a dark underlay,
+or the Bars view would bury the level line under a solid column.
+
+**The arrows** (D-UI-24). The sample last clicked is now a selection: its column outlined faintly,
+its own cell outlined in full, brighter while the grid holds the keyboard. Left and right walk the
+samples; up and down move the selected sample's level, up being a *smaller* number because level 0
+is at the top. An arrow edit goes through the same `onChange` a click does, so undo covers it. The
+grid takes keyboard focus on a click and claims only those four keys, so Tab still leaves it. The
+corner readout follows the selection when the pointer is away.
+
+**The per-channel scopes turn over** (D-UI-25). A scope traces the channel's *digital* levels, not
+the rendered audio, so it was drawing level 15 at the top while the DAC puts that at the bottom
+(§106). `toY` is inverted and the grid lines, the trace and the analog capacitor trace all follow.
+The dashed baseline for a channel the mix has silenced moves from level 0 to **level 7.5**, the
+DAC's zero -- at level 0 it would now sit at the top and read as a rail, and 7.5 is where the analog
+trace already puts a DAC-off sample. The **master** scope is untouched: it plots the rendered
+output, which already carries the DAC.
+
 ### 2026-09-11 — The Waves grid draws the output, and §106's claim about ChipBoy's DAC is corrected
 
 `docs/COMMANDS_AND_TEMPO.md` §107. The user asked for two things: that ChipBoy's DAC reflect a real
