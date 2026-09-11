@@ -432,6 +432,21 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 26 (§111, correcting §110): **`L` on a note that carries its own instrument.** §110 had
+  subtracted the *live* table column from a cell `L`'s source, which is zero at a note-on because the
+  new instrument's table has already restarted on row 0 -- so `SAMESONG`'s phrase 23, whose `L`s ride
+  on note-ons, still bent an octave high and downward. The voice now records how much of each pitch
+  it writes is transpose (`pitchNowTspFine`) and the slide subtracts that. **§111**: the update an
+  `L` fires on keeps the pitch the channel was already on, column and all, and the slide starts on
+  the next one -- the ROM *triggers* on that value at a note-on. The column to hold is the one the
+  table had at the last pitch write (`pitchNowColFine`), which is neither the live column nor the
+  folded transpose. Phrases 21 and 23 now agree register for register from the note through the bend.
+- **Open, and §110 is corrected for claiming otherwise:** how a table's transpose column interleaves
+  with a slide **already running**. §110 read twenty updates of phrase 21, saw no blip, and wrote
+  "suppressed for the whole run". A longer window of phrase 23 blips throughout its bend, so the
+  column does reach a running slide there; phrase 21's shorter bend still shows none. The source and
+  the target are settled and implemented; this is not. Measure a slide long enough to cross several
+  table loops, on a bare note and on a note-on, before writing a rule.
 - Round 25 (§108-§110), three faults the user heard in `SAMESONG` and all three measured against the
   ROM first: **a table's volume column on the wave channel** is the `NR32` level by `amplitude & 3`
   (0 mute, 1 25 %, 2 50 %, 3 100 %, wrapping every four), where ChipBoy had `vol / 4` and muted every

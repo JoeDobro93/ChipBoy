@@ -3170,7 +3170,21 @@ TEST_CASE("a cell's L slides the bare note under a table transpose", "[driver][c
     // A bare note two semitones up with an L, while the column is in force.
     NoteEvent bare = cellOn(0, 62, 0);
     bare.cmd1 = { Cmd::L, 16, 0, 0 };
-    r.block({ bare }, 480);
+    const auto atL = r.block({ bare }, 480);
+    // Section 111: the first period written on that update keeps the pitch the
+    // channel was already on, column and all -- it does not drop to the bare
+    // note a pitch update early. A whole block is too coarse for `view()` to
+    // show it, so read the writes.
+    int firstPer = -1;
+    {
+        int lo = -1;
+        for (const auto& x : atL) {
+            if (x.addr == 0xFF13) lo = x.value;
+            else if (x.addr == 0xFF14 && lo >= 0) { firstPer = ((x.value & 7) << 8) | lo; break; }
+        }
+    }
+    INFO("first period on the L's update " << firstPer);
+    CHECK(firstPer == blipped);
     // The slide runs on the note, not on the blip: every period it walks
     // through stays below the octave the table was holding.
     int highest = 0;

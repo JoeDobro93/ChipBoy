@@ -3139,8 +3139,48 @@ blip for the whole run, then puts the column back the moment the slide ends (`19
 `1812 / 1930` alternating after). ChipBoy slid from `1915`, the transposed pitch it happened to be
 on, so the bend sat an octave up from beginning to end.
 
-So: **the source and the target of a cell's `L` are the note's own pitch, and the table's transpose
-column is suppressed for the run**, exactly as §71 already holds a column for a slide a *table* row
-started. A table's `L` keeps §68's rule -- the note sounds plain and slides *to* the transposed one,
-which is the wave kick's `TSP C4` beside `L 20` -- so the two cases differ and the driver has to know
-which one it is in.
+So: **the source and the target of a cell's `L` are the note's own pitch**, not the pitch the column
+has just put it on. A table's `L` keeps §68's rule -- the note sounds plain and slides *to* the
+transposed one, which is the wave kick's `TSP C4` beside `L 20` -- so the two cases differ and the
+driver has to know which one it is in.
+
+**Corrected.** This section first read the trace above as "the column is suppressed for the whole
+run", because twenty updates of `SAMESONG`'s phrase 21 show no blip. Over a longer window that is
+too strong: phrase 23, where the `L` rides on a note-on rather than a bare note, blips all the way
+through --
+
+```
+1871T 1871 1959 1871 1959 1959T 1871 1872 … 1878 1963 1963 1963 1963 1963 1964 1964 1881 1882 …
+                                                 ^ the column, on top of the sliding base
+```
+
+-- so the column clearly reaches a running slide there. What is settled, and is what §111 implements,
+is the **source and the target**: both are the bare note, which is what put phrase 23's bend an
+octave up and sliding the wrong way. How the column interleaves with a slide already running, and
+why phrase 21's shorter bend shows none of it, is **not settled** and is in `docs/HANDOFF.md`.
+
+## 111. A cell's `L` does not move the pitch on its own update
+
+Measured on 9.2.L while fixing §110. The update an `L` is processed on keeps the pitch the channel
+was already sitting on, column and all; the slide begins on the **next** pitch update.
+
+| | the L's own update | then |
+|---|---|---|
+| phrase 21, bare note + `L 10` | ROM `1915` (the base 1783 under the table's octave) | `1785 1787 1788 …` |
+| phrase 23, note-on + `L 27` | ROM `1959T` -- it *triggers* on that value | `1871 1872 1872 …` |
+
+Both are the same rule and neither is the note's own pitch: `1915` is the old note plus the column,
+`1959` the old note plus the column at a trigger. ChipBoy wrote the bare base on that update (`1783`,
+`1871T`), one pitch update ahead of the ROM and, on the note-on, triggering the wrong period.
+
+The column to hold is the one the **table actually had at the last pitch write**, which is neither
+of the two obvious candidates. The live column is no use: inside a note-on the table has already
+restarted on row 0, which transposes nothing. Nor is the transpose that was folded into the pitch,
+because a slide already running has had that suppressed -- phrase 23's second `L`, arriving
+mid-slide, still holds an octave. So the voice records the column at every pitch write
+(`pitchNowColFine`) alongside how much of the pitch was transpose (`pitchNowTspFine`, which is what
+§110's source subtraction needs), and a cell's `L` carries the column in `slideTspFine` for exactly
+one update before the slide advance drops it.
+
+With this, `SAMESONG`'s phrase 21 and phrase 23 agree with the ROM register for register from the
+note through the whole bend.

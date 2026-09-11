@@ -575,7 +575,7 @@ void Driver::noteOff(int ch, uint8_t note)
 void Driver::beginRelease(int ch)
 {
     Voice& v = v_[size_t(ch)];
-    v.active = false; v.tableOn = false; v.sliding = false; v.slideTspFine = 0; v.slideTspHeld = false; v.chordN = 0;
+    v.active = false; v.tableOn = false; v.sliding = false; v.slideTspFine = 0; v.slideTspHeld = false; v.slideTspDrop = false; v.chordN = 0;
     v.pitchClockOn = false; v.retrigEvery = 0; v.retrigOn = false; v.retrigOnce = false; v.retrigFast = false; v.retrigFastCount = 0; v.bendSpeed = 0;
     // A shaped envelope has its own release: from the level the note-off found
     // to silence, one level per tick, over its own curve (section 27). A level
@@ -669,7 +669,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     v.instKey = instrumentKey(ch, vel);
     v.ticks = 0; v.vibPhase9 = 0; v.pitchCount = 0;
     v.fineOffset = 0; v.fineTune = 0; v.fineQueued = 0; v.drumOffset = 0.0; v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0;
-    v.slideTspFine = 0; v.slideTspHeld = false;      // a note starts on its own pitch (section 71)
+    v.slideTspFine = 0; v.slideTspHeld = false; v.slideTspDrop = false;   // a note starts on its own pitch (section 71)
     v.drumSlideStep = 0.0; v.drumSlideLeft = 0; v.drumSlideHold = false;   // section 99
     v.chordN = 0; v.chordIdx = 0; v.chordCount = 0;
     v.dutyIdx = 0; v.kill = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigOnce = false; v.retrigFast = false; v.retrigFastCount = 0; v.envCount = 0; v.lastCellCmd = {}; v.frameStep = 0; v.frameIdx = 0;   // the run starts at its first step (section 65)
@@ -739,7 +739,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     if (base < 0 && core.type != InstrumentType::Noise && core.type != InstrumentType::Kit) {
         // Below the chip's range: does not sound (C4). The key is still held,
         // so the held stack stays as it is.
-        v.basePeriod = 0; v.tableOn = false; v.sliding = false; v.slideTspFine = 0; v.slideTspHeld = false; v.chordN = 0; v.pitchClockOn = false;
+        v.basePeriod = 0; v.tableOn = false; v.sliding = false; v.slideTspFine = 0; v.slideTspHeld = false; v.slideTspDrop = false; v.chordN = 0; v.pitchClockOn = false;
         killDac(ch);
         v.active = true; view_[size_t(ch)].outOfRange = true;
         return;
@@ -838,7 +838,7 @@ void Driver::killDac(int ch)
 void Driver::stopVoice(int ch, bool kill)
 {
     Voice& v = v_[size_t(ch)];
-    v.active = false; v.tableOn = false; v.sliding = false; v.slideTspFine = 0; v.slideTspHeld = false; v.chordN = 0; v.kitOn = false; v.streamActive = false; v.pendingOn = false;
+    v.active = false; v.tableOn = false; v.sliding = false; v.slideTspFine = 0; v.slideTspHeld = false; v.slideTspDrop = false; v.chordN = 0; v.kitOn = false; v.streamActive = false; v.pendingOn = false;
     v.pitchClockOn = false; v.releasing = false; v.pulseReleasing = false;
     v.shapedOn = false; v.shapedRelease = false; v.tableJustStarted = false;
     // A kill or a stop ends the phrase: a key released afterwards must not
@@ -1041,6 +1041,10 @@ void Driver::pitchStep(int ch, bool onTick)
         moving = true;
     }
     if (v.sliding) {
+        // Section 111: the update the L was processed on kept the pitch the
+        // channel was already on; from this one the slide owns it and the
+        // table's column stays out of the way.
+        if (v.slideTspDrop) { v.slideTspDrop = false; v.slideTspFine = 0; }
         if (v.slideLeft > 0) {
             v.slideOff256 += v.slideStep256;
             if (--v.slideLeft == 0 && v.slideOff256 == 0) v.sliding = false;
@@ -1164,6 +1168,12 @@ void Driver::writePeriod(int ch, bool trigger)
     // included.
     {
         v.pitchNowFine = int32_t(std::lround(noteOfVoice(ch) * 256.0));
+        // Section 110: and how much of it is transpose rather than note, the
+        // same two terms noteOfVoice() added.
+        v.pitchNowTspFine = v.slideTspFine;
+        if (!((v.sliding && v.slideTspHeld) || v.drumSlideHold))
+            v.pitchNowTspFine += int32_t(tableTransposeOf(v)) * 256;
+        v.pitchNowColFine = int32_t(tableTransposeOf(v)) * 256;
         v.pitchValid = true;
     }
     const uint16_t f = uint16_t(per);
@@ -1703,9 +1713,16 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
             // sliding from the blip put the whole bend an octave up.
             const int32_t aimFine = fromTable ? liveFine : 0;
             const int32_t target = std::max(floorFine, baseFine + aimFine);
-            // A cell's L starts from where the note is, not from where the
-            // column has just put it.
-            if (!fromTable) fromFine -= liveFine;
+            // A cell's L starts from where the *note* is, not from where the
+            // column has just put it -- and the amount to take off is what was
+            // folded into that pitch when it was written, not the column as it
+            // reads now. At a note-on they differ: the new instrument's table
+            // has already restarted on row 0, which transposes nothing, while
+            // the pitch the channel is sitting on still carries the old table's
+            // column. `SAMESONG`'s phrase 23 is that -- a note that brings its
+            // own instrument *and* an L -- and reading the live column there
+            // left the bend an octave up, sliding the wrong way.
+            if (!fromTable) fromFine -= v.pitchNowTspFine;
             const int32_t from = fromFine - target;
             if (from != 0) {
                 v.slideOff256 = from;
@@ -1716,9 +1733,21 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
                 // is aimed however the table steps under it.
                 v.slideTspHeld = true;
                 v.slideTspFine = target - baseFine;
+                // Section 111: a cell's L does not move the pitch on its own
+                // update -- measured on 9.2.L, the ROM writes the value the
+                // channel was already on, column and all, and the ramp starts
+                // one pitch update later. Carrying that column in slideTspFine
+                // for exactly one update is what holds it there; the slide
+                // advance drops it. A table's L has no column of its own to
+                // hold, and aims through the live one (section 68).
+                if (!fromTable && v.pitchNowColFine != 0) {
+                    v.slideTspFine = v.pitchNowColFine;
+                    v.slideTspDrop = true;
+                }
             } else {
                 v.slideTspFine = target - baseFine;      // L 00: it is simply there
                 v.slideTspHeld = false;
+                v.slideTspDrop = false;
             }
             if (live) writePeriod(ch, false);
             break;

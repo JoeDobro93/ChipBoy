@@ -223,7 +223,26 @@ private:
         /// holds one.
         int32_t  slideTspFine = 0;
         bool     slideTspHeld = false;
+        /// Section 111: a cell's `L` keeps the pitch the channel is already on
+        /// for its own update -- the column it was sitting under and all -- and
+        /// the slide and the suppression begin on the **next** one. The column
+        /// rides in `slideTspFine` for that one update and this drops it.
+        bool     slideTspDrop = false;
         int32_t  pitchNowFine = 0;    ///< where the channel is, as of the last write, 1/256 semitones
+        /// Section 110: how much of `pitchNowFine` is a transpose rather than
+        /// the note -- the table's column, plus whatever a held slide stands in
+        /// for it. A cell's `L` slides the note alone, so this is what it takes
+        /// off the pitch it starts from, and reading the *live* column instead
+        /// is wrong at a note-on, where the new instrument's table has already
+        /// restarted on a row that transposes nothing.
+        int32_t  pitchNowTspFine = 0;
+        /// Section 111: the table's transpose column as it stood at that same
+        /// write, whether or not a slide was suppressing it. A cell's `L` holds
+        /// the channel where it is for one update *with this column on top*, and
+        /// the live column is no use for it: inside a note-on the table has
+        /// already restarted on a row that transposes nothing, and during a
+        /// slide `pitchNowTspFine` has been zeroed by the suppression.
+        int32_t  pitchNowColFine = 0;
         bool     pitchValid = false;  ///< something has sounded, so a slide has somewhere to come from
         bool     pitchClockOn = false;
         bool     pitchWrite = false;  ///< something moved the pitch last update: write it once more

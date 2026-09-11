@@ -26,6 +26,37 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-11 — L on a note that brings its own instrument, and the update the L fires on
+
+`docs/COMMANDS_AND_TEMPO.md` §111, and a correction to §110.
+
+**§110's source fix did not reach phrase 23.** That phrase's `L`s sit on notes that carry an
+instrument, so they are note-ons; §110 had subtracted the **live** table column from the pitch the
+slide starts on, and at a note-on the live column is zero because the new instrument's table has
+already restarted on row 0. The pitch the channel is sitting on still carries the *old* table's
+column, so nothing was subtracted and the bend ran from the octave blip -- downward, an octave
+high, which is what the user heard. The voice now records how much of the pitch it just wrote was
+transpose (`pitchNowTspFine`) and the slide subtracts that instead. Phrase 23 now runs the right
+way from the right base.
+
+**§111 -- the L's own update.** The update an `L` is processed on keeps the pitch the channel was
+already on, column and all; the slide starts on the next pitch update. The ROM writes `1915` in
+phrase 21 and *triggers on* `1959` in phrase 23, where ChipBoy wrote the bare base (`1783`,
+`1871T`) a pitch update early. The column to hold is the one the table had at the last pitch write
+-- neither the live column (zero inside a note-on) nor the transpose folded into the pitch (zeroed
+by a slide already suppressing it) -- so the voice records that too (`pitchNowColFine`) and a cell's
+`L` carries it in `slideTspFine` for exactly one update.
+
+**§110 is corrected where it overreached.** It claimed the table's transpose column is suppressed
+for the whole run of a cell's `L`, which was read off twenty updates of phrase 21. Over a longer
+window phrase 23 blips all the way through its bend, so the column plainly does reach a running
+slide there. What is settled is the **source and the target** -- both the bare note -- and that is
+what is implemented. How the column interleaves with a slide already running, and why phrase 21's
+shorter bend shows none of it, is recorded as open rather than guessed at.
+
+`SAMESONG` is unchanged on the windowed pitch metric (84/91/79/96); phrases 21 and 23 now agree with
+the ROM register for register from the note through the bend.
+
 ### 2026-09-11 — Three SAMESONG faults: the wave table's volume, E after a kill, and L under a transpose
 
 `docs/COMMANDS_AND_TEMPO.md` §108, §109, §110, each measured on 9.2.L against the ROM and each
