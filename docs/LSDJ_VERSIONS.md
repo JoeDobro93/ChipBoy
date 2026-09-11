@@ -66,7 +66,7 @@ was a candidate for change:
 |---|---|---|---|
 | 3.1.5 – 3.5.1 | 0 | command letters have no `B`; envelope is the chip's own `NRx2`; noise is `~SHAPE + 16 × (5 − octave)`, saturating; **a wave instrument has no frame run** (§89); `P`/`L` are period-register units (§88); `V` is a one-sided triangle **below** the note; `C` and `V` do nothing on noise; no pitch change ever restarts the noise channel; `R x y` retriggers every **y + 1** ticks and `R x 0` once; `T` below 40 clamps to 40 BPM; a cell with a blank instrument column still sounds | the letter table, `EnvelopeLaw::Chip`, `NoiseRule::Shape`, `PitchLaw::Register`, `VibratoLaw::RegisterOneSided`, `NoisePitch::Never`, `retrigPlus = 1`, `retrigZeroOnce`, `bareNoteSounds`, `waveFrameRun = false`, and `pitchRegisterUnits` so `P`'s byte moves exactly that many units a clock. `C`/`V` on noise are dropped with a note |
 | 3.6.8 – 3.9.2 | 2 | as above but `V` is already 9.x's centred vibrato | `VibratoLaw::Semitone`; the rest as format 0 |
-| 4.0.4 – 4.3.0 | 2 | **a cell whose instrument column is blank now sounds nothing at all**; the noise table's transpose changes law (it stepped `NR43` in uneven jumps before, one step per row after) | `bareNoteSounds = false`: such a note is dropped with a note at import. **Ambiguous** — 3.9.2 and 4.0.4 write the same format byte |
+| 4.0.4 – 4.3.0 | 2 | **a cell whose instrument column is blank stops triggering** -- it bends the channel to that note instead (§101); the noise table's transpose changes law (it stepped `NR43` in uneven jumps before, one step per row after) | `bareNoteSounds = false`: the cell keeps its blank column and becomes ChipBoy's own bare note. **Ambiguous** — 3.9.2 and 4.0.4 write the same format byte |
 | 4.4.0 – 4.7.3 | 3 | `P` and `L` still register units; everything else as 4.3.0 | the format-3 model with `retrigZeroOnce` |
 | 4.8.0 – 5.0.3 | 3 | **`R x 0` retriggers every tick instead of once** (changed back in 8.8.1) | `retrigZeroOnce = false`, so `R x 0` imports as ChipBoy's `R x 1`. **Ambiguous** — 4.7.3 and 4.8.0 write the same format byte |
 | 5.7.8 – 6.0.1 | 4 | `P` and `L` become the 9.x semitone laws; **`C` starts working on the noise channel**; still no wave frame run; 5.7.8's vibrato is a little slower than 5.8.8's | `PitchLaw::Semitone`, `noiseChord`. 5.7.8's vibrato is **not** mapped: it differs from its format-mates by about one period unit a clock |
@@ -117,45 +117,52 @@ sounding the same semitone, sampled every 2 ms in six second windows each with i
 
 | song | version | PU1 | PU2 | WAV | NOI |
 |---|---|---|---|---|---|
-| `SUNRISE` | 9.3.9 | **276 / 276** | **170 / 170** | 440 / 440 | **740 / 740** |
-| `CASTSHDW` | 9.2.L | **399 / 399**, 90% | **177 / 176**, 90% | 4264 / 3075, 40% | 637 / 655, 92% |
-| `DELIVERY` | 9.2.L | **99 / 99**, 67% | **89 / 89**, 75% | 5104 / 4209, 65% | 1067 / 1031, 90% |
-| `SAMESONG` | 9.2.L | 225 / 224, 85% | 160 / 159, **94%** | 1596 / 1587, 73% | 1678 / 1708, **94%** |
-| `READROOM` | 9.2.L | 577 / 487, 4% | 199 / 138, 5% | 12971 / 8650, 51% | 1032 / 3093, 5% |
-| `CLUCK` | 3.6.5 | 277 / 279 | 139 / 135 | 303 / 270 | 288 / 286 |
-| `BUS` | 3.6.5 | 67 / 49 | **307 / 307** | 22 / 22 | 476 / 404 |
-| `DISPATCH` | 3.6.5 | 128 / 131 | 96 / 82 | 346 / 376 | 213 / 216 |
-| `SPACE TI` | 8.4.4 | 359 / 299, 57% | 846 / 797, 39% | 1135 / 1136, 44% | 437 / 373, 81% |
+| `SUNRISE` | 9.3.9 | **213 / 213**, 99% | **130 / 130**, 97% | **309 / 309**, 65% | **498 / 498**, 99% |
+| `CASTSHDW` | 9.2.L | **399 / 399**, 95% | 177 / 176, 90% | 4264 / 3075, 44% | 637 / 655, 94% |
+| `SAMESONG` | 9.2.L | 225 / 224, 85% | 160 / 159, 91% | 1596 / 1586, 80% | 1678 / 1716, 96% |
+| `DELIVERY` | 9.2.L | **99 / 99**, 90% | **89 / 89**, 98% | 5104 / 4209, 68% | 1067 / 1054, 97% |
+| `READROOM` | 9.2.L | 577 / 487, 6% | 199 / 190, 3% | 12971 / 8650, 50% | 1032 / 3101, 6% |
+| `SPACE TI` | 8.4.4 | 359 / 299, 60% | 846 / 797, 72% | 1135 / 1136, 44% | 437 / 373, 81% |
+| `BUS` | 3.6.5 | 162 / 137, 30% | **417 / 417**, 98% | 66 / 33, 99% | 752 / 640, 96% |
+| `CLUCK` | 3.6.5 | 397 / 395, 75% | 196 / 192, 97% | 1465 / 1058, 53% | 439 / 427, 93% |
+| `DISPATCH` | 3.6.5 | 187 / 183, 22% | 171 / 129, 98% | 1022 / 480, 32% | 292 / 288, 76% |
 
-`SAMESONG`, `CASTSHDW` and `DELIVERY` are the three that the rounds behind §93-§97 were fixed
-against, and they agree with the ROM for most of their length now. What moved them:
+`SUNRISE` is the reference: every channel's note-on count exact, and three of the four sounding the
+ROM's note 97-99% of the time. Its wave column is the metric's own limit rather than a fault -- the
+channel is swept drums whose pitch moves every 2.8 ms, and a one-tick offset halves the score.
 
-- **`REPEAT` off the right byte** (§93). Every wave instrument in `SAMESONG` stores `REPEAT = F`,
-  which makes its frame run a one-shot; read off the synth byte it came through as zero and every
-  run looped for as long as the note held. 2866 wave note-ons became 1587 against the ROM's 1596.
-- **A table's `H` costing no tick** (§95). Every arpeggio in every song ran a fifth slow before
-  this. `SAMESONG`'s pulse channels went from 47% and 30% agreement to 85% and 94%.
-- **The kit `LENGTH` byte and `LOOP` bit** (§96) and **`P` on a kit** (§97), which is
-  `CASTSHDW`'s wave channel: it is kit drums from end to end, each hit tuned by a `P` in its cell.
+What the last rounds moved, in order of how much:
+
+- **A table's `H` costing no tick** (§95). Every arpeggio in every song ran a fifth slow before it.
+  `SAMESONG`'s pulse channels went from 47% and 30% to 85% and 94%.
+- **The ROM beside the save deciding the model** (§98). Every *Computer Savvy* song was being read
+  under the 4.0.4 model with no kit ROM at all.
+- **A blank instrument column keeping its note** (§101). Twenty cells in `SAMESONG`, including the
+  `L 10` bend in phrase 1C that ChipBoy played as silence and now matches the ROM period for period.
+- **`REPEAT` off the right byte** (§93) and **`L` replacing `P`** (§99), which are the wave run and
+  the wave kick: `SAMESONG`'s kick used to run off the bottom of the register and wrap round three
+  times a note -- the machine gun the user heard -- and now follows the ROM within a unit or two.
+- **The kit `LENGTH` byte, `LOOP` bit and `P` law** (§96, §97), which is `CASTSHDW`'s wave channel.
 
 **What is still wrong, in the order it is worth taking up:**
 
-1. `CASTSHDW`'s **kit notes**: 1142 note-level hits on the ROM against 326, and the ones that do
-   play land on the ROM's period 77% of the time (43% before §97). ChipBoy is missing whole notes,
-   among them every one whose note byte names a sample one of the two kits does not have -- the
-   ROM plays the other kit's, the importer gives up on both.
-2. `DELIVERY` and `READROOM` **come apart part way through**: `DELIVERY` agrees on every channel
-   until about 50 s and on none after, `READROOM` never agrees on three channels at all. Both are
-   structure, not a command: something ends a phrase or a chain in the wrong place. `READROOM`'s
-   noise channel triples its note count (1032 against 3093), which is the clearer thread to pull.
-3. `SPACE TI` (8.4.4) starts at 20% and climbs to 98% by the end, which reads like a structural
-   difference early rather than a wrong law.
+1. `READROOM` **never lines up**: three channels at 3-6% and a noise channel that triples the ROM's
+   note count (1032 against 3101). Its phrase or chain structure is being read differently. It is
+   the one song of the nine that is wrong from the start rather than drifting.
+2. **A tick appears from nowhere every ten seconds or so.** `DELIVERY`'s and `CASTSHDW`'s per-window
+   offsets walk from +28 ms to -96 ms in steps of one tick with long plateaus between. The tempo is
+   not the cause: the ROM's tick for every tempo byte measured (85 to 190) is within 0.016% of
+   `1 / (0.4 x bpm)`, and both songs' grooves are 6/6 throughout with no `G` or `T`. One row in
+   about a hundred is a tick longer in ChipBoy. `SAMESONG` and `SUNRISE` barely drift at all.
+3. `CASTSHDW`'s **kit notes**: 1142 note-level hits on the ROM against 326. The ones that do play
+   land on the ROM's period 77% of the time (43% before §97), so it is missing whole notes.
+4. `DISPATCH` and `BUS` on **PU1**, and the three format-2 songs' **wave** channels.
+5. **LSDj's flat 256-frame wave table** (§100), which ChipBoy's sixteen-frame wave cannot express.
+   It is a bank-model decision, not a fix; `docs/HANDOFF.md` has the two ways out.
 
 (The wave column counts the ROM's note-ons once: LSDj triggers that channel twice, with a stale
-period and then the real one.) The three format-2 songs are from the *Computer Savvy* source
-files, written in LSDj 3.6.5 and read here on 3.6.8. `BUS`'s PU2 is 307 of 307 with a longest
-common run of 304; the rest is close in count and diverges in value, for the two reasons in §4
-and §5 -- the bend's phase at a note-on, and the noise table transpose before 4.0.4.
+period and then the real one.) The three format-2 songs are from the *Computer Savvy* source files,
+written in LSDj 3.6.5 and read on 3.6.5 now that the importer finds an old ROM at all.
 
 ## 7. Still to measure on the new ROMs
 
@@ -202,9 +209,11 @@ Two traps worth repeating, because both produced a confident wrong answer first:
 
 - **The wave channel is triggered with a stale period.** Reading `NR33`/`NR34` *at* the trigger
   says every note has the same period. Take the last pair written within a few milliseconds of it.
-- **A note with no instrument column does not sound from 4.0.4.** A probe that relies on one
-  measures the *next pass* of the phrase instead, which reads as a tempo that is half what it
-  should be. Give every probe note an instrument column.
+- **A note with no instrument column does not *trigger* from 4.0.4** (§101). A probe that relies on
+  one measures the *next pass* of the phrase instead, which reads as a tempo that is half what it
+  should be. Give every probe note an instrument column. It does still move the channel's pitch,
+  which the first probe of this missed because nothing was sounding when it ran -- a rule about a
+  channel's running state has to be measured with the channel running.
 - **Counting triggers is not a comparison** on a channel that retriggers inside a note. A kit
   plays by rewriting wave RAM once a wave cycle and both sides trigger on every rewrite, so the
   count is a count of refills. `/root/lsdj/probe/agree.py` samples the pitch both sides are
@@ -212,3 +221,64 @@ Two traps worth repeating, because both produced a confident wrong answer first:
   each with its own offset (the ROM's playback drifts a few ms against ChipBoy's over a song);
   `runs.py` groups the triggers into notes and compares those. Both are better rulers than
   `cmp.py`'s longest common run, which one row's difference in timing can halve.
+
+## 10. What has changed since a song was last verified
+
+Every finding that changes what the importer or the driver produces, newest first, with the
+formats it can move. A song measured before a row here has to be measured again before its numbers
+mean anything -- that is what this list is for. `/root/lsdj/probe/song.py SAV IDX ROM TAG [sec]`
+re-runs one song end to end; `agreew.py` and `runs.py` are the rulers (§9).
+
+| § | what changed | formats it moves | measured on |
+|---|---|---|---|
+| 101 | a cell with a blank instrument column keeps its note: a bare note from 4.0.4, a trigger before | 2 and up (it was dropped outright) | 3.6.5, 4.0.4, 9.2.L |
+| 100 | `F` on the wave channel takes the **whole byte**, and LSDj walks a flat 256-frame wave table (ChipBoy's sixteen-frame wave wraps: noted at import, not modelled) | **all** | 9.2.L |
+| 99 | `L` and `P` replace one another; in Drum a slide is linear in the **period register** | **all** | 9.2.L |
+| 98 | the ROM beside the save decides the model, a pre-4.3 ROM is recognised at all, and 3.6.5 reads as 3.6.8 | 0-3 above all (every old ROM was invisible) | 3.6.5 |
+| 97 | a kit reads `PITCH` from byte 5; `P` on a kit is period-register units (1 a clock FAST/DRUM, 1 a tick TICK, 3x once STEP) | every format with kits | 9.2.L |
+| 96 | a kit's one `LENGTH` is byte 11 (not byte 3); `LOOP` is byte 5 bit 5 | every format with kits | 9.2.L |
+| 95 | a table's `H` costs no tick: the row it lands on plays in the same tick | **all** | 3.6.5, 8.4.4, 9.2.L, 9.3.9 |
+| 94 | the tick a note starts on belongs to the first frame of the run | 7 and up | 9.2.L |
+| 93 | the frame run's `REPEAT` is byte 3 on formats 7-8, byte 2 from 9; the synth number moves to byte 3 at 17 | 7 and up | every ROM from 6.8.2 |
+| 92.1 | a table's commands are converted for the kind of instrument that runs the table | **all** | -- (a code fault, not a law) |
+| 92 | `F` on the wave channel **advances** the frame by `y`; it does not name one | **all** | 8.4.4, 8.8.6, 9.2.L, 9.3.9 |
+| 91 | the wave instrument's `SPEED` (byte 11) is a **signed** byte, `s + 4` ticks a frame | 7 and up | 9.3.9 |
+| 90 | `R 8 y` is a fast retrigger every `y + 1` pitch clocks; `R 8 F` stops one | **all** | 9.2.L |
+| 89 | a wave instrument has no frame run at all before format 7 | 0-5 | 6.4.5 and below |
+| 88 | `P` (and `L`) move the period register by whole units before 5.7.8 | 0-3 | 4.x, 5.0.3 |
+| 87 | the instrument's `LENGTH` is latent: it reaches `NR41` but only a pitch restart enables it | **all** | 9.3.9 |
+| 86 | the noise instrument's `PITCH` byte (FREE / SAFE); before 9.2 the byte is `S MODE` instead | 22 (and 15 and below read as `S MODE`) | 9.2.L, 9.3.9, 8.8.6 |
+| 85 | a mapped noise note reads and is entered as **LSDj's entry number** (`note - 1`) | 22 | 9.3.9 |
+| 84 | a note-on triggers at the **plain** note; the table's transpose reaches the channel one update later | **all** | 9.3.9 |
+| 83 | LSDj's noise table is 120 entries and its index **wraps**; a bank with that map has no command octave on noise | 22 | 9.3.9 |
+| 82 | a pitch change that turns the 7-bit LFSR on retriggers the noise channel | 22 | 9.3.9, older ROMs |
+| 81 | an imported noise instrument carries LSDj's own note map | 22 | 9.3.9 |
+| 80 | a phrase `H` is two commands and ChipBoy expresses one | **all** | 9.3.9 |
+| 79 | `E` on the wave channel reads `y` | **all** | 9.3.9 |
+| 78 | `F` on PU1 is a fine offset, on PU2 a transpose plus a fine offset | **all** | 9.3.9 |
+| 77 | `C` reaches noise from format 4, `V` from format 22 | 4 and up / 22 | the version sweep |
+| 76 | `R`'s interval is `y` ticks from 9.2 and `y + 1` before; `R x 0` fires once or every tick by version | **all** | the version sweep |
+| 75 | `M`'s two halves | **all** | 9.3.9 |
+| 74 | `Z` re-runs its **own lane** | **all** | 9.3.9 |
+| 73 | `B`'s two laws: the phrase roll is `n/15`, the table hop `x/16` | 11 and up | 9.3.9 |
+| 72 | `S` on PU1 is a running sweep byte | **all** | 9.3.9 |
+
+Model fields added over the same rounds, each of which changes a format's reading:
+`bareNoteSounds` (a note with a blank instrument column stops sounding at 4.0.4), `waveFrameRun`
+(§89), `envHopCostsTick` (a table `ENV` hop stops costing a tick at 8.9.3), `tableGrooveWalks`,
+`tempoLowIsHigh` (`T` bytes 0-39 mean 256-295 BPM from format 11), `retrigPlus` /
+`retrigZeroOnce` (§76), `noiseChord` / `noiseVibrato` (§77), `noisePitchByte` (§86), `waveByte`
+and `waveRepeatByte` (§93), `pitchLaw` (§88), `noiseS`, and the `NoiseRule` the map is read under.
+
+**Where each song was last measured**, so it is clear what is stale:
+
+| song | version | last run | carries |
+|---|---|---|---|
+| `SAMESONG` | 9.2.L | after §100 | everything |
+| `CASTSHDW`, `DELIVERY`, `READROOM` | 9.2.L | after §97 | not §98-§100 |
+| `SPACE TI` | 8.4.4 | after §97 | not §98-§100 |
+| `SUNRISE` | 9.3.9 | before §93 | not §93-§100 |
+| `CLUCK`, `BUS`, `DISPATCH` | 3.6.5 | after §98 | not §99-§100 |
+| `GOAL ACH`, `STARWAY` | 8.4.4 | never | -- |
+| the other 22 *Computer Savvy* songs | 3.6.5 | never | -- |
+

@@ -2645,8 +2645,9 @@ TEST_CASE("PingPong turns at the run's loop step, not at its first", "[driver][w
 TEST_CASE("F advances a wave frame, past the ones the run skips", "[driver][wave]")
 {
     // Section 92: measured on 8.4.4, 8.8.6, 9.2.L and 9.3.9 alike, F **advances**
-    // the frame by its argument every time it runs, through the synth's frames
-    // rather than through the run, and wraps at the end.
+    // the frame by its argument every time it runs, through the wave's frames
+    // rather than through the run. Section 100: the argument is the whole byte,
+    // `x * 16 + y`, so the step here is given as its two nibbles.
     const auto rig = [](int step) {
         auto r = std::make_unique<Rig>();
         r->tickHz = 100.0;
@@ -2654,7 +2655,7 @@ TEST_CASE("F advances a wave frame, past the ones the run skips", "[driver][wave
         w.used = true; w.frames.clear();
         for (int f = 0; f < 16; ++f) { bank::Frame fr; fr.s.fill(uint8_t(f)); w.frames.push_back(fr); }
         Table t; t.used = true; t.name = "Frame";
-        for (int k = 0; k < 16; ++k) t.steps[size_t(k)].cmd1 = { Cmd::F, int16_t(step), 0, 0 };
+        for (int k = 0; k < 16; ++k) t.steps[size_t(k)].cmd1 = { Cmd::F, int16_t((step >> 4) & 15), int16_t(step & 15), 0 };
         r->bank.tables[7] = t;
         auto& i = r->bank.instruments[1];
         i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Manual");
@@ -2680,6 +2681,10 @@ TEST_CASE("F advances a wave frame, past the ones the run skips", "[driver][wave
     // Frames the run skips (the run is 0, 5, 10, 15) are reached all the same.
     CHECK(std::find(one.begin(), one.end(), 3) != one.end());
     CHECK(std::find(six.begin(), six.end(), 12) != six.end());
+    // Section 100: the high nibble counts. `F 11` is seventeen frames on, which
+    // over sixteen frames is one -- LSDj would reach the next synth's second.
+    for (int d : stepsOf(rig(0x11))) CHECK(d == 1);
+    for (int d : stepsOf(rig(0x12))) CHECK(d == 2);
 }
 
 TEST_CASE("S and P on noise work on NR43 in the Register domain", "[driver][noise]")
@@ -2959,4 +2964,54 @@ TEST_CASE("P on a kit moves the period register, not the note", "[driver][kit]")
     const int after = per(r.block({ e2 }, 480));
     CHECK(after > base);                                    // a unit a pitch clock
     CHECK(per(r.block({}, 480)) > after);                   // and it keeps going
+}
+
+
+TEST_CASE("a slide replaces a running bend, and in Drum it walks the register", "[driver][commands]")
+{
+    // Section 99: `P A0` then `L 30` a tick later is SAMESONG's wave kick. The
+    // bend must stop when the slide starts -- left running it takes the period
+    // off the bottom of the register and wraps it round, which is heard as a
+    // second kick -- and in Drum the slide moves a fixed number of period
+    // **units** an update rather than a fixed number of semitones.
+    Rig r;
+    r.tickHz = 100.0;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    auto& w = r.bank.waves[0];
+    w.used = true; w.frames.clear();
+    for (int f = 0; f < 16; ++f) { bank::Frame fr; fr.s.fill(uint8_t(f)); w.frames.push_back(fr); }
+    Table t; t.used = true; t.name = "Kick";
+    t.steps[0].cmd1 = { Cmd::P, int16_t(0xA0), 0, 0 };                 // -96: a steep drop
+    t.steps[1].hasTranspose = true; t.steps[1].transpose = int8_t(-128);
+    t.steps[1].cmd1 = { Cmd::L, 0x30, 0, 0 };
+    r.bank.tables[7] = t;
+    auto& i = r.bank.instruments[1];
+    i = Instrument::defaults(InstrumentType::Wave, "Kick");
+    i.used = true; i.wave = 1; i.table = 8; i.pitchSpeed = PitchSpeed::Drum;
+    i.frameLength = 1; i.frameAdvance = 0; i.vib.depth = 0;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(2, p);
+    std::vector<int> per; int lo = 0;
+    auto collect = [&](const std::vector<RegWrite>& ws) {
+        for (const auto& x : ws) {
+            if (x.addr == 0xFF1D) lo = x.value;
+            else if (x.addr == 0xFF1E && !(x.value & 0x80)) {
+                const int q = ((x.value & 7) << 8) | lo;
+                if (per.empty() || per.back() != q) per.push_back(q);
+            }
+        }
+    };
+    collect(r.block({ cellOn(2, 96, 2) }, 480));
+    for (int k = 0; k < 12; ++k) collect(r.block({}, 480));
+    REQUIRE(per.size() > 10);
+    // Every step down, never back up: a wrap would show as a jump to the top.
+    for (size_t k = 1; k < per.size(); ++k) { INFO("step " << k << " of " << per.size()); CHECK(per[k] <= per[k - 1]); }
+    // The bend's own steps are the steep ones; after the slide takes over the
+    // steps are smaller and all the same size, which is what "in the register"
+    // means -- a semitone slide's steps grow as the period falls.
+    std::vector<int> d;
+    for (size_t k = 1; k < per.size(); ++k) d.push_back(per[k - 1] - per[k]);
+    const int late = int(d.size()) - 4;
+    REQUIRE(late > 2);
+    for (int k = late; k < int(d.size()); ++k) { INFO("late step " << k); CHECK(std::abs(d[size_t(k)] - d[size_t(late)]) <= 1); }
+    CHECK(d[size_t(late)] < d[0]);                       // and slower than the bend was
 }

@@ -26,6 +26,52 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-11 — The ROM decides the model, `L` replaces `P`, and a bare note keeps its note
+
+Three rounds' worth, from the user's report that `SAMESONG`'s kick "machine guns rather than
+sounding like a kick" and from re-running the *Computer Savvy* songs.
+
+**The importer never used the ROM beside the save** (spec section 98). Three faults at once:
+`autoModel` asked `lsdjModelForFormat` first, which always answers, so the version-keyed table was
+unreachable; a ROM older than 4.3 keeps its version in the welcome line inside bank 0 and the
+caller handed `romVersion()` only the first 0x150 bytes, so every old ROM read as "not LSDj" --
+no version, **no kits**, and the format's default model; and 3.6.5, the version the *Computer
+Savvy* songs were written in, was in neither the format nor the model table. The three together
+read every one of those songs under the **4.0.4** model, which drops a note whose instrument
+column is blank -- a rule that does not apply before 4.0.4 at all.
+
+**`L` and `P` replace one another** (section 99). LSDj has one pitch mechanism and the later
+command owns it; ChipBoy ran both. `SAMESONG`'s `WKICK` is `P A0` on table row 0 and `L 30` on row
+1, so the bend kept running under the slide, took the period past the bottom of the register and
+**wrapped at 2048** -- a second kick a few milliseconds later, and another. That is the machine gun.
+
+**In Drum a slide is linear in the period register**, not in semitones (section 99). Measured on
+9.2.L: `L vv` lands in `vv + 1` pitch updates with the register walking in a straight line. The
+same table on a Fast pulse gives a growing step, which is the semitone law section 71 measured, so
+only Drum changes. The kick's sweep now follows the ROM's within a unit or two for its whole length.
+
+**`F` on the wave channel takes the whole byte and walks a flat 256-frame table** (section 100).
+Section 92 had it as the low nibble, wrapping inside the synth's sixteen frames. Measured with
+three synths tagged: `F 10` moves sixteen frames on, into the **next synth**. That matters through
+`Z`, whose randomisation is per nibble: `SAMESONG`'s `SLAPB` runs `F 01` with `Z 1E` beside it, a
+random 0 to 31 frames on, and the importer kept only the low nibble so ChipBoy's advance was 1 or 2
+where the ROM's was 7 to 24. Both nibbles go through now. **The flat table itself is not modelled**
+-- a ChipBoy wave is sixteen frames and wraps -- and that is a bank-model decision for the user,
+noted per command at import and in `docs/HANDOFF.md`.
+
+**A cell with a blank instrument column keeps its note** (section 101). The importer dropped the
+whole cell from format 2 on -- the note *and* the command beside it -- on a reading of "from 4.0.4
+it sounds nothing at all". Re-measured with a note already sounding, which the first probe did not
+have: from 4.0.4 such a cell does not **trigger**, it moves the channel's pitch to that note, which
+is ChipBoy's own bare note; before 4.0.4 it triggers with the channel's last instrument. The user
+found it in `SAMESONG`'s phrase 1C, where step 9 is `D#4` with no instrument and `L 10` beside it:
+a bend ChipBoy played as nothing at all. It is now the ROM's period for period, and twenty cells in
+that song come back.
+
+`docs/LSDJ_VERSIONS.md` section 10 is new: every finding that changes what the importer produces,
+with the formats it moves and where each test song was last measured, so the older versions can be
+re-verified against a list rather than from memory.
+
 ### 2026-09-11 — The wave run's REPEAT, a table's free hop, and how a kit is played
 
 Five measured corrections, from the three songs in the user's 9.2.L save. The middle one moves

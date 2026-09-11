@@ -92,7 +92,7 @@ constexpr LsdjModel kLsdj57  { "LSDj 5.7.8 - 6.4.5 (formats 4-5)",  4,  4,  6, k
 constexpr LsdjModel kLsdj48  { "LSDj 4.8.0 - 5.0.3 (format 3)",     3,  3,  3, kLettersLegacy, EnvelopeLaw::Chip,           nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Register, VibratoLaw::Semitone,         2, 2, -12, true, -1, 1, false, false, false, false, false, false, false, true, true };
 constexpr LsdjModel kLsdj44  { "LSDj 4.4.0 - 4.7.3 (format 3)",     3,  3,  3, kLettersLegacy, EnvelopeLaw::Chip,           nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Register, VibratoLaw::Semitone,         2, 2, -12, true, -1, 1, true,  false, false, false, false, false, false, true, true };
 constexpr LsdjModel kLsdj404  { "LSDj 4.0.4 - 4.3.0 (format 2)",     2,  2,  2, kLettersLegacy, EnvelopeLaw::Chip,           nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Register, VibratoLaw::Semitone,         2, 2, -12, true, -1, 1, true,  false, false, false, false, false, false, true, true };
-constexpr LsdjModel kLsdj36  { "LSDj 3.6.8 - 3.9.2 (format 2)",     2,  2,  2, kLettersLegacy, EnvelopeLaw::Chip,           nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Register, VibratoLaw::Semitone,         2, 2, -12, true, -1, 1, true,  false, false, false, true, false, false, true, true };
+constexpr LsdjModel kLsdj36  { "LSDj 3.6.5 - 3.9.2 (format 2)",     2,  2,  2, kLettersLegacy, EnvelopeLaw::Chip,           nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Register, VibratoLaw::Semitone,         2, 2, -12, true, -1, 1, true,  false, false, false, true, false, false, true, true };
 constexpr LsdjModel kLsdj31  { "LSDj 3.1.5 - 3.5.1 (format 0)",     0,  0,  1, kLettersLegacy, EnvelopeLaw::Chip,           nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Register, VibratoLaw::RegisterOneSided, 2, 2, -12, true, -1, 1, true,  false, false, false, true, false, false, true, true };
 
 constexpr const LsdjModel* kModels[] = { &kLsdj9, &kLsdj886, &kLsdj84, &kLsdj75, &kLsdj68, &kLsdj57, &kLsdj48, &kLsdj44, &kLsdj404, &kLsdj36, &kLsdj31 };   // newest first
@@ -106,7 +106,7 @@ struct VersionModel { int major, minor, patch; const LsdjModel* model; };
 constexpr VersionModel kVersionModels[] = {
     { 9, 2, 0, &kLsdj9 }, { 8, 8, 6, &kLsdj886 }, { 8, 4, 0, &kLsdj84 }, { 7, 5, 4, &kLsdj75 }, { 6, 8, 2, &kLsdj68 }, { 5, 7, 8, &kLsdj57 },
     { 4, 8, 0, &kLsdj48 }, { 4, 4, 0, &kLsdj44 }, { 4, 0, 4, &kLsdj404 },
-    { 3, 6, 8, &kLsdj36 }, { 3, 1, 5, &kLsdj31 },
+    { 3, 6, 5, &kLsdj36 }, { 3, 1, 5, &kLsdj31 },
 };
 
 // The format each measured release writes, newest first (section 56). A
@@ -120,7 +120,7 @@ constexpr VersionFormat kVersionFormats[] = {
     { 6, 4, 5, 5 },
     { 6, 0, 1, 4 }, { 5, 9, 9, 4 }, { 5, 8, 8, 4 }, { 5, 7, 8, 4 },
     { 5, 0, 3, 3 }, { 4, 9, 4, 3 }, { 4, 8, 0, 3 }, { 4, 7, 3, 3 }, { 4, 6, 9, 3 }, { 4, 6, 2, 3 }, { 4, 6, 0, 3 }, { 4, 5, 4, 3 }, { 4, 4, 0, 3 },
-    { 4, 3, 0, 2 }, { 4, 1, 0, 2 }, { 4, 0, 4, 2 }, { 3, 9, 2, 2 }, { 3, 8, 9, 2 }, { 3, 8, 7, 2 }, { 3, 7, 5, 2 }, { 3, 6, 8, 2 },
+    { 4, 3, 0, 2 }, { 4, 1, 0, 2 }, { 4, 0, 4, 2 }, { 3, 9, 2, 2 }, { 3, 8, 9, 2 }, { 3, 8, 7, 2 }, { 3, 7, 5, 2 }, { 3, 6, 8, 2 }, { 3, 6, 5, 2 },
     { 3, 5, 1, 0 }, { 3, 4, 4, 0 }, { 3, 1, 9, 0 }, { 3, 1, 5, 0 },
 };
 

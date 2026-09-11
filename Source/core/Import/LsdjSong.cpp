@@ -73,7 +73,6 @@ struct Reader {
     std::map<int, int> waveSlotOfSynth;                  // LSDj synth -> ChipBoy wave slot
     std::map<int, std::set<bool>> noiseWidths;           // ChipBoy slot -> the LFSR widths its notes take
     std::map<int, int> pu2Top;                          // ChipBoy slot -> the highest note it plays on PU2 (section 49)
-    bool bareDropped = false;                           // a blank instrument column silenced a note (docs/LSDJ_VERSIONS.md)
     // LSDj's noise clocks run from 16 Hz to 524 kHz; ChipBoy's notes 12-127
     // reach 2 kHz and up (section 9.4). The instrument's Shift parameter moves
     // the whole map by octaves, so each noise slot takes the offset that puts
@@ -678,12 +677,14 @@ struct Reader {
             case 'F':
                 // Section 78. WAV: the frame. PU1: a downward finetune of y/32 of a
                 // semitone, x ignored. PU2: x semitones up plus y/32. NOI: inert.
-                // Section 92: on the wave channel F advances the frame by `y`,
-                // measured on 8.4.4, 8.8.6, 9.2.L and 9.3.9 alike. `x` does
-                // something else that is not worked out; it is not used here.
+                // Sections 92 and 100: on the wave channel F advances the frame
+                // by the **whole byte** -- `F 10` moves sixteen frames on, into
+                // the next synth -- so both nibbles go through and the driver
+                // reads them as `x * 16 + y`. Keeping them apart is what lets a
+                // `Z` randomise each of them as LSDj does (section 74).
                 if (instKind == 1) {
-                    if (x) notes.add("F" + hex2(v) + " at " + where + " on a wave instrument: only the low nibble advances the frame, and what the high nibble does is not mapped");
-                    out = { Cmd::F, int16_t(y), 0, 0 }; return true;
+                    if (x) notes.add("F" + hex2(v) + " at " + where + " on a wave instrument advances " + std::to_string(v) + " frames, which in LSDj reaches the next synth's; ChipBoy's wave is sixteen frames and wraps (section 100)");
+                    out = { Cmd::F, int16_t(x), int16_t(y), 0 }; return true;
                 }
                 if (channel == 0 || channel == 1) { out = { Cmd::F, int16_t(x), int16_t(y), 0 }; return true; }
                 notes.add("F" + hex2(v) + " at " + where + " on the noise channel does nothing on the ROM either; dropped"); return false;
@@ -806,15 +807,17 @@ struct Reader {
             const int cur = state.inst;
             const int kind = kindFor(cur, channel);
             const int lsdjMidi = n ? int(n) + 35 : -1;
-            if (n && ins == 0xFF && !m.bareNoteSounds) {
-                // docs/LSDJ_VERSIONS.md: from 4.0.4 a cell whose instrument
-                // column is blank sounds nothing at all, however many notes
-                // came before it. Measured on every release either side.
-                notes.add("a note at phrase " + hex2(p) + " step " + std::to_string(st) + " has no instrument column: this version plays nothing there, so the step is left empty");
-                bareDropped = true;
-                continue;
+            if (n && ins == 0xFF && m.bareNoteSounds) {
+                // Section 101: before 4.0.4 a cell whose instrument column is
+                // blank still **triggers**, with the channel's last instrument.
+                // ChipBoy's bare note does not, so the column is filled in.
+                c.inst = uint8_t(slotFor(cur, channel)); state.instSeen = true;
             }
-            if (n && !state.instSeen) {
+            // From 4.0.4 such a cell keeps its blank column, which is ChipBoy's
+            // own bare note: it moves the channel's pitch without a trigger and
+            // an `L` on the row slides to it, exactly as the ROM does. It used
+            // to be dropped outright, which lost both the note and its command.
+            if (n && !state.instSeen && m.bareNoteSounds) {
                 // A note before any instrument column: LSDj plays the channel's instrument, 00 at the start.
                 c.inst = uint8_t(slotFor(cur, channel)); state.instSeen = true;
                 notes.add(std::string(channelName(channel)) + " plays notes before any cell names an instrument: LSDj's instrument 00 is used for them");

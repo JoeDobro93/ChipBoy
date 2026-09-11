@@ -106,9 +106,10 @@ struct LsdjModel {
     bool           noiseChord;       ///< C reaches the noise channel (format 4 and up)
     bool           noiseVibrato;     ///< V reaches the noise channel (format 22)
     bool           tempoLowIsHigh;   ///< T bytes 0-39 mean 256-295 BPM (formats 11 and 22)
-    /// A cell whose instrument column is blank (`FF`) still sounds its note
-    /// before 4.0.4; from 4.0.4 the ROM plays nothing at all
-    /// (docs/LSDJ_VERSIONS.md).
+    /// A cell whose instrument column is blank (`FF`) **triggers** before
+    /// 4.0.4, with the channel's last instrument; from 4.0.4 it moves the
+    /// channel's pitch to that note without triggering, which is ChipBoy's own
+    /// bare note (section 101).
     bool           bareNoteSounds;
     /// A wave instrument walks a **run** of its synth's frames while a note
     /// sounds. Before format 7 it does not: it loads frame 0 and holds it, and

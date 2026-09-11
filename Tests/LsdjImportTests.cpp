@@ -66,8 +66,8 @@ std::vector<uint8_t> testSong(int format)
     auto alloc = [&](int p) { s[kPhraseAlloc + size_t(p / 8)] |= uint8_t(1 << (p % 8)); };
     alloc(0); alloc(1); alloc(2);
     // Every note names its instrument, as LSDj's own editor writes them: from
-    // 4.0.4 a cell whose instrument column is blank sounds nothing at all
-    // (docs/LSDJ_VERSIONS.md).
+    // 4.0.4 a cell whose instrument column is blank does not trigger, it bends
+    // the channel to its note (section 101).
     s[kNotes + 0] = 60 - 35; s[kPhraseInst + 0] = 0;
     s[kNotes + 4] = 62 - 35; s[kPhraseInst + 4] = 0; s[kCmd + 4] = uint8_t(format >= 20 ? 13 : 12); s[kCmdV + 4] = 0xFD;   // P -3
     s[kNotes + 8] = 64 - 35; s[kPhraseInst + 8] = 0; s[kCmd + 8] = 1; s[kCmdV + 8] = 0;                                      // A00: table 0
@@ -212,6 +212,7 @@ TEST_CASE("a model is chosen by format, by ROM title, by name, or the newest", "
     CHECK(lsdjFormatForVersion("8.8.6") == 15); CHECK(lsdjFormatForVersion("8.4.4") == 11); CHECK(lsdjFormatForVersion("8.6.0") == 11);
     CHECK(lsdjFormatForVersion("7.0.2") == 7); CHECK(lsdjFormatForVersion("6.4.5") == 5); CHECK(lsdjFormatForVersion("6.2.0") == 4);
     CHECK(lsdjFormatForVersion("5.0.3") == 3); CHECK(lsdjFormatForVersion("4.7.3") == 3); CHECK(lsdjFormatForVersion("4.3.0") == 2);
+    CHECK(lsdjFormatForVersion("3.6.5") == 2);                   // the version the Computer Savvy songs were written in
     CHECK(lsdjFormatForVersion("3.5.1") == 0); CHECK(lsdjFormatForVersion("3.1.5") == 0); CHECK(lsdjFormatForVersion("2.0.0") == 0);
     CHECK(lsdjFormatForVersion("nonsense") == -1);
     CHECK(lsdjModelForRomVersion("9.3.9") == models[0]);
@@ -221,6 +222,13 @@ TEST_CASE("a model is chosen by format, by ROM title, by name, or the newest", "
     // still read a song differently, and then only the ROM's version tells them
     // apart. Format 3 is the case: 4.8.0 changed `R x 0` from a single
     // retrigger to one every tick, and 8.8.1 changed it back.
+    // 3.6.5 writes format 2 and reads it as 3.6.8 does, one release below the
+    // model's old floor: it was taking the format-0 model and then the format's
+    // default, which is 4.0.4's.
+    CHECK(lsdjModelForRomVersion("3.6.5")->formatVersion == 2);
+    CHECK(lsdjModelForRomVersion("3.6.5")->vibratoLaw == VibratoLaw::Semitone);
+    CHECK(lsdjModelForRomVersion("3.6.5")->bareNoteSounds);
+    CHECK(lsdjModelForRomVersion("3.5.1")->vibratoLaw == VibratoLaw::RegisterOneSided);
     CHECK(lsdjModelForRomVersion("4.7.3")->retrigZeroOnce);
     CHECK_FALSE(lsdjModelForRomVersion("5.0.3")->retrigZeroOnce);
     CHECK(lsdjModelForRomVersion("4.7.3") != lsdjModelForRomVersion("5.0.3"));
@@ -981,4 +989,43 @@ TEST_CASE("before LSDj 9 a table's G holds the groove's first step", "[lsdj]")
     bool told = false;
     for (const auto& l : oldNotes.lines) if (l.find("one step groove") != std::string::npos) told = true;
     CHECK(told);
+}
+
+TEST_CASE("a cell with a blank instrument column keeps its note", "[lsdj]")
+{
+    // Section 101, measured on 3.6.5, 4.0.4 and 9.2.L. From 4.0.4 such a cell
+    // does not trigger -- it moves the channel to that note, which is ChipBoy's
+    // own bare note -- and an `L` on the same row slides to it. Before 4.0.4 it
+    // triggers with the channel's last instrument. It used to be dropped, which
+    // lost the note and the row's command with it.
+    const auto build = [](int format) {
+        auto song = blankSong(format);
+        song[kInstAlloc + 0] = 1;
+        uint8_t* i0 = song.data() + kInst; i0[0] = 0; i0[1] = 0xF0; i0[7] = 0xC3;
+        song[kPhraseAlloc] |= 1;
+        song[kNotes + 0] = 60 - 35; song[kPhraseInst + 0] = 0;                  // a note with its instrument
+        song[kNotes + 4] = 67 - 35; song[kPhraseInst + 4] = 0xFF;               // and one without
+        song[kChainPhrases + 0] = 0;
+        song[kRows + 0] = 0; song[kRows + 1] = 0xFF; song[kRows + 2] = 0xFF; song[kRows + 3] = 0xFF;
+        return song;
+    };
+    {   // format 22: the note stands, the instrument column stays blank
+        auto song = build(22);
+        auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+        ImportSummary sum; ImportNotes notes;
+        REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes));
+        const auto* p = out->phrase(1);
+        REQUIRE(p != nullptr);
+        CHECK(int(p->cells[0].note) == 60); CHECK(int(p->cells[0].inst) != 0);
+        CHECK(int(p->cells[4].note) == 67); CHECK(int(p->cells[4].inst) == 0);   // bare: no trigger
+    }
+    {   // format 0: the same cell sounds, so the column is filled in
+        auto song = build(0);
+        auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+        ImportSummary sum; ImportNotes notes;
+        REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(0), *bank, *out, sum, notes));
+        const auto* p = out->phrase(1);
+        REQUIRE(p != nullptr);
+        CHECK(int(p->cells[4].note) == 67); CHECK(int(p->cells[4].inst) != 0);
+    }
 }

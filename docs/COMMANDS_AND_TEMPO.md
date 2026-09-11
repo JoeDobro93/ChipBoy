@@ -2571,13 +2571,12 @@ reading the wave RAM back, with the command on a table row so it runs every tick
 |---|---|---|---|---|---|
 | frames loaded | 0 1 2 | 0 2 4 | 0 4 8 | 0 6 12 | 0 2 3 5 6 |
 
-**The frame advances by `y` every time the command runs**, through the synth's sixteen frames --
-not through the instrument's run, so `F 02` on a run of 0, 5, 10, 15 still reaches frame 2 -- and
-it wraps at the end. Identical on every version measured; the old reading was off by one and
-mistook a single step for an absolute index.
+**The frame advances by the command's argument every time it runs**, not through the instrument's
+run -- so `F 02` on a run of 0, 5, 10, 15 still reaches frame 2. Identical on every version
+measured; the old reading was off by one and mistook a single step for an absolute index.
 
-`x` is not zero in any table of the user's songs and does something else: any non-zero high nibble
-parks the frame and holds it there. Not worked out, and noted at import rather than guessed.
+§100 corrects two things said here: the argument is the **whole byte**, not `y`, and the index
+does not wrap at the synth's sixteen frames.
 
 A table whose rows carry `F` is how LSDj walks a synth: the user's `SAMESONG` drives every one of
 its wave instruments that way, and its `GUITR` is `PLAY = MANUAL` with nothing but `F` rows.
@@ -2708,3 +2707,118 @@ The user's `CASTSHDW` drives its kit drums this way: `DSAMP` is `PITCH = STEP` a
 carries a different `P`, which is what tunes each hit. ChipBoy played all of them at the
 instrument's `SPEED` and nothing else; with this the kit notes it does play land on the ROM's
 period 77% of the time against 43%.
+
+## 98. The ROM beside the save decides the model, and old ROMs have to be found first
+
+§54 gives the importer a ROM beside the save so a song can be read the way the version that wrote
+it read it -- §4 of `docs/LSDJ_VERSIONS.md` is two format bytes that mean two different things, and
+only the ROM tells them apart. Three faults meant that never happened for anything older than 4.3:
+
+1. **`autoModel` asked the format first.** `lsdjModelForFormat(formatVersion)` always answers for a
+   known format, so `lsdjModelForRomVersion` was reached only for a format no model claims -- the
+   version-keyed table was dead code on the path that matters. The ROM's own version now wins
+   whenever its model reads the song's format, and the format's default is the fallback.
+2. **A pre-4.3 ROM has no version in its header.** The cartridge title is `LSDJ` with no number;
+   the version sits in the welcome line, `WELCOME TO LITTLE SOUND DJ V3.6.5!`, inside bank 0.
+   `romVersion()` knows that, but the caller handed it the first **0x150 bytes** of the file, so
+   every ROM before 4.3 read as "not LSDj": no version, no kits, and the format's default model.
+   It reads a whole bank now.
+3. **3.6.5 was in neither table.** It writes format 2 -- measured, and its `V` is already the
+   centred vibrato of 3.6.8, not 3.5.1's one-sided one -- so it sat in the gap between the
+   3.1.5-3.5.1 model and the 3.6.8 one and took the older. `kLsdj36` starts at 3.6.5 now.
+
+Together these three read every *Computer Savvy* song (format 2, written in 3.6.5) under the
+**4.0.4** model with no kit ROM at all: a blank instrument column silently dropped every note that
+used one, and every kit instrument was skipped.
+
+## 99. `L` and `P` replace one another, and in Drum a slide runs in period units
+
+Two measured corrections, both from `SAMESONG`'s `WKICK` -- the kick the user heard machine-gunning.
+Its table is `P A0` on row 0, `TSP 80` with `L 30` on row 1, and `K 00` on row 6.
+
+**A slide replaces a running bend and a bend replaces a running slide.** LSDj has one pitch
+mechanism and the later command owns it. Measured on 9.2.L, the period register after each command:
+
+| table | first tick | after |
+|---|---|---|
+| `P A0` alone | −89.5 units a pitch clock | −89.5, for ever |
+| `P A0` then `L 30` | −89.5 | the slide's own rate, the bend gone |
+| `TSP 80` + `L 30` then `P A0` | the slide's −40 | −89.5, the slide gone |
+
+ChipBoy ran both at once, so the kick's sweep kept the bend on top of the slide, fell off the
+bottom of the register and **wrapped at 2048** -- a second kick a few milliseconds later, and
+another, which is the machine gun. `Cmd::L` clears `bendSpeed` now; `Cmd::P` folds a running
+slide's offset into the channel's so the pitch carries on from where it had reached, and drops it.
+
+**In Drum the slide is linear in the period register, not in semitones.** Drum's whole pitch is the
+register (§7, §88) and so is its slide. Measured on 9.2.L with a table transpose of −24 semitones,
+94 register units down from period 2017:
+
+| `L vv` | `04` | `08` | `10` | `20` | `30` | `40` | `60` |
+|---|---|---|---|---|---|---|---|
+| updates to land | 5 | 9 | 17 | 33 | 49 | 65 | 97 |
+| register step | −18.8 | −10.4 | −5.5 | −2.85 | −1.92 | −1.45 | −0.97 |
+
+`vv + 1` pitch updates, the register walking in a straight line with the fractional part carried,
+landing exactly on the transposed note (or on the bottom of the range when the transpose names
+something unreachable). The same table on a **Fast** pulse gives −56, −74, −97, −129: that one is
+linear in **semitones**, which is what §71 measured and what ChipBoy already does. So the law is
+per pitch mode, and only Drum changes.
+
+`Voice::drumSlideStep` / `drumSlideLeft` carry it, on `drumOffset` beside `P`'s own bend, and
+`drumSlideHold` keeps the table's transpose column out of the note once it has been folded into
+that offset -- until the next note-on, because the column *is* the aim. A Drum instrument whose
+table carries an `L` and then a transpose on a later row would lose that later one; none of the
+user's songs has one, and it is noted here rather than guessed at. On the user's `SAMESONG` the kick's sweep is now the ROM's within a unit or two for
+its whole length instead of wrapping round three times.
+
+## 100. `F` on the wave channel takes the whole byte, and walks the **flat** wave table
+
+§92 read the argument as `y` and said the index wrapped at the synth's sixteen frames. Both are
+wrong. Measured on 9.2.L with synths 1, 2 and 3 tagged so the wave RAM says which synth a frame
+came from, an instrument on synth 1 and `F` on every table row:
+
+| `F` | frames loaded |
+|---|---|
+| `01` | s1/0 s1/1 … s1/15 **s2/0** |
+| `04` | s1/0 s1/4 s1/8 s1/12 **s2/0** s2/4 s2/8 s2/12 **s3/0** … |
+| `08` | s1/0 s1/8 **s2/0** s2/8 **s3/0** s3/8 … |
+| `10` | s1/0 **s2/0** **s3/0** … |
+| `11` | s1/0 **s2/1** **s3/2** … |
+| `1E` | s1/0 **s2/14** … |
+
+So the argument is `x * 16 + y`, and LSDj's wave RAM is one **256-frame table**: sixteen synths of
+sixteen frames laid end to end, which `F` walks straight through.
+
+That matters because of `Z`. `SAMESONG`'s `SLAPB` runs a table with `F 01` on one row and `Z 1E` on
+the next, and §74's randomisation is per **nibble** -- `0..x` on the high one and `0..y` on the low
+-- so the advance is a random 0 to 31 frames and lands in the next synth about half the time. The
+importer kept only the low nibble, so ChipBoy's advance was 1 or 2 where the ROM's was 7 to 24.
+Both nibbles go through now and the driver reads them as one number, which puts `Z`'s range right.
+
+**The flat table itself is not modelled.** A ChipBoy wave is sixteen frames and the index wraps
+inside it, so an advance that reaches past the synth's sixteen lands on a frame of the same synth
+where LSDj would sound the next synth's. The import says so per command. Closing it means a wave
+of 256 frames, or wave slots the importer lays out in synth order with the driver carrying from
+one into the next -- a bank-model decision, not a driver fix, and it is in `docs/HANDOFF.md`.
+
+## 101. A blank instrument column is a bare note, not an empty cell
+
+`docs/LSDJ_VERSIONS.md` §4 had "a note whose instrument column is blank sounds on 3.6.8-3.9.2 and
+nothing at all from 4.0.4", and the importer dropped the whole cell for every format from 2 on --
+the note **and** the command beside it. Measured again with a note sounding first, which the
+original probe did not have:
+
+| version | a cell with a note and a blank instrument column |
+|---|---|
+| 3.6.5, 4.0.4 (the row alone) | 3.6.5 **triggers** at the new note; 4.0.4 moves the period to it with **no trigger** |
+| with `L 10` on the same row | both slide to that note; 3.6.5 triggers first, 4.0.4 does not |
+| the row with no note at all | nothing on 9.2.L; on 3.6.5 and 4.0.4 the `L` slides in register units (§88) |
+
+So from 4.0.4 the cell is exactly **ChipBoy's own bare note** -- it moves the channel's pitch and
+does not trigger -- and before 4.0.4 it triggers with the channel's last instrument. The importer
+keeps the note either way now: blank from 4.0.4, the column filled in before it.
+
+The user found this in `SAMESONG`'s phrase 1C, where step 9 is `D#4` with no instrument and `L 10`
+beside it: a bend up to D#4 that ChipBoy played as nothing at all, because both the note and the
+`L` went with the dropped cell. Twenty cells in that song are of this kind.

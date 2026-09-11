@@ -670,6 +670,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     v.ticks = 0; v.vibPhase9 = 0; v.pitchCount = 0;
     v.fineOffset = 0; v.fineTune = 0; v.fineQueued = 0; v.drumOffset = 0.0; v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0;
     v.slideTspFine = 0; v.slideTspHeld = false;      // a note starts on its own pitch (section 71)
+    v.drumSlideStep = 0.0; v.drumSlideLeft = 0; v.drumSlideHold = false;   // section 99
     v.chordN = 0; v.chordIdx = 0; v.chordCount = 0;
     v.dutyIdx = 0; v.kill = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigOnce = false; v.retrigFast = false; v.retrigFastCount = 0; v.envCount = 0; v.lastCellCmd = {}; v.frameStep = 0; v.frameIdx = 0;   // the run starts at its first step (section 65)
     v.rng = v.rng * 1664525u + 1013904223u + note;
@@ -931,7 +932,7 @@ double Driver::noteOfVoice(int ch) const
     // aimed it cannot drag the pitch; once it lands the channel keeps the note
     // it reached and the column applies on top of that again.
     note += double(v.slideTspFine) / 256.0;
-    if (!(v.sliding && v.slideTspHeld)) note += double(tableTransposeOf(v));
+    if (!((v.sliding && v.slideTspHeld) || v.drumSlideHold)) note += double(tableTransposeOf(v));
     const int32_t fine = v.fineOffset + v.fineTune + slideResidual(v);
     return note + double(fine) / 256.0;
 }
@@ -1032,6 +1033,11 @@ void Driver::pitchStep(int ch, bool onTick)
     // pitch onto the note exactly. When the step divides the distance -- L 00,
     // whose one step is the whole of it -- there is nothing left and no extra
     // update, which is why L 00 writes the period once (measured).
+    if (advance && v.drumSlideLeft) {
+        v.drumOffset += v.drumSlideStep;                    // section 99
+        --v.drumSlideLeft;
+        moving = true;
+    }
     if (v.sliding) {
         if (v.slideLeft > 0) {
             v.slideOff256 += v.slideStep256;
@@ -1556,14 +1562,16 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
             if (v.inst.type == InstrumentType::Wave) {
                 // Section 92: F **advances** the frame by its argument, and does
                 // it every time it runs -- a table row holding `F 01` walks the
-                // synth one frame a tick. It steps through the synth's frames,
-                // not through the run, and wraps at the end. The run step goes
-                // to the nearest, so a later advance carries on from about
-                // there (section 65).
+                // synth one frame a tick. It steps through the wave's frames,
+                // not through the run. Section 100: the argument is the whole
+                // byte, `x * 16 + y`; LSDj walks its 256-frame wave table flat
+                // and an advance past the synth's sixteen reaches the next
+                // synth's frames, while ChipBoy's wave is sixteen and wraps.
                 const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr;
                 if (w && !w->frames.empty()) {
                     const int n = int(w->frames.size());
-                    const int want = int((int(v.frameIdx) + int(c.a)) % n);
+                    const int step = (int(c.a) & 15) * 16 + (int(c.b) & 15);
+                    const int want = int((int(v.frameIdx) + step) % n);
                     uint8_t run[16]; const int len = waveRunOf(ch, run);
                     int best = 0, bestD = 256;
                     for (int k = 0; k < len; ++k) { const int d = std::abs(int(run[size_t(k)]) - want); if (d < bestD) { bestD = d; best = k; } }
@@ -1623,6 +1631,35 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
             // x = 0 is instant. It is the pitch update in Fast/Step/Drum and
             // the tracker tick in Tick.
             if (noise) break;
+            // Section 99: a slide **replaces** a running `P`. LSDj has one
+            // pitch mechanism and the later command owns it; leaving the bend
+            // on top ran the wave kick's sweep off the bottom of the register
+            // and wrapped it round, which is the machine-gun in `SAMESONG`.
+            v.bendSpeed = 0;
+            if (pitchSpeed(v) == PitchSpeed::Drum && v.inst.type != InstrumentType::Kit) {
+                // Section 99: Drum's whole pitch is the period register, and so
+                // is its slide -- a fixed number of **units** an update, not a
+                // fixed number of semitones. Measured on 9.2.L: `L vv` lands in
+                // `vv + 1` updates with the register walking in a straight line,
+                // which is what the wave kick's sweep is.
+                const bool waveCh = v.inst.type == InstrumentType::Wave;
+                const int tsp = tableTransposeOf(v);
+                const double baseNote = noteOfVoice(ch) - double(tsp);
+                const int floorPer = periodForNote(double(lowestNote(waveCh)), waveCh);
+                const int basePer = periodForNote(baseNote, waveCh);
+                if (basePer < 0) { if (live) writePeriod(ch, false); break; }
+                const int curPer = basePer + int(std::lround(v.drumOffset));
+                int tgtPer = periodForNote(baseNote + double(tsp), waveCh);
+                if (tgtPer < 0) tgtPer = floorPer;                     // out of range: the bottom
+                tgtPer = std::clamp(tgtPer, floorPer, 2047);
+                const int steps = std::clamp<int>(c.a, 0, 255) + 1;
+                v.drumSlideHold = true;         // the column is the aim now, not the base
+                if (steps <= 1) { v.drumOffset += double(tgtPer - curPer); v.drumSlideLeft = 0; v.drumSlideStep = 0.0; }
+                else { v.drumSlideStep = double(tgtPer - curPer) / double(steps); v.drumSlideLeft = uint16_t(steps); }
+                v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0; v.slideStep256 = 0;
+                if (live) writePeriod(ch, false);
+                break;
+            }
             int32_t fromFine = v.pitchNowFine;
             bool have = v.pitchValid;
             // Section 68: a table row that carries a transpose *and* an L means
@@ -1692,6 +1729,14 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
                 break;
             }
             const int speed = int(int8_t(uint8_t(std::clamp<int>(c.a, 0, 255))));
+            // Section 99, the other way round: a `P` takes a running slide over.
+            // The slide's own offset is folded into the channel's so the pitch
+            // carries on from where the slide had reached rather than jumping.
+            if (v.sliding) {
+                v.fineOffset = std::clamp<int32_t>(v.fineOffset + v.slideOff256, -1 << 20, 1 << 20);
+                v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0; v.slideStep256 = 0;
+            }
+            v.drumSlideLeft = 0; v.drumSlideStep = 0.0;     // section 99: and the Drum one
             if (v.inst.type == InstrumentType::Kit && pitchSpeed(v) == PitchSpeed::Step) {
                 // Section 97: one offset of three period-register units per unit
                 // of the byte, and no bend after it.

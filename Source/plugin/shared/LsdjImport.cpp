@@ -81,12 +81,22 @@ juce::String romVersionIn(const juce::File& folder, int preferFormat, juce::File
     for (const auto& f : folder.findChildFiles(juce::File::findFiles, false, "*.gb")) {
         juce::FileInputStream in(f);
         if (!in.openedOk()) continue;
-        std::vector<uint8_t> head(0x150, 0);
+        // A whole bank, not just the header: before 4.3 the cartridge title is
+        // "LSDJ" with no version in it and the number sits in the welcome line
+        // inside bank 0, so reading 0x150 bytes left every old ROM nameless --
+        // no kits, and the format's default model instead of the ROM's own.
+        std::vector<uint8_t> head(0x8000, 0);
         const int n = in.read(head.data(), int(head.size()));
         if (n < 0x150) continue;
-        const std::string v = lsdj::romVersion(head.data(), head.size());
+        const std::string v = lsdj::romVersion(head.data(), size_t(n));
         if (v.empty()) continue;
-        const bool fits = want != nullptr && lsdj::lsdjModelForRomVersion(v.c_str()) == want;
+        // "Fits" is whether this ROM's own version reads the song's format at
+        // all, not whether it is the format's default model: the whole point of
+        // a ROM beside the save is to settle the two formats the byte cannot
+        // (docs/LSDJ_VERSIONS.md section 4), and there the default is wrong.
+        const auto* rm = lsdj::lsdjModelForRomVersion(v.c_str());
+        const bool fits = rm != nullptr && preferFormat >= rm->formatMin && preferFormat <= rm->formatMax;
+        (void)want;
         // The ROM that reads the song's format wins; among equals, the newer.
         if (bestFile == juce::File() || (fits && !bestFits) || (fits == bestFits && juce::String(v).compareNatural(best) > 0)) { best = v; bestFile = f; bestFits = fits; }
     }
@@ -96,8 +106,13 @@ juce::String romVersionIn(const juce::File& folder, int preferFormat, juce::File
 
 const lsdj::LsdjModel& autoModel(int formatVersion, const juce::String& romVersion)
 {
+    // The ROM beside the save comes first, whenever its version reads this
+    // format: format 2 splits at 4.0.4 and format 3 at 4.8.0, and only the ROM
+    // tells those apart (docs/LSDJ_VERSIONS.md section 4). Reading the format's
+    // default model instead made the version-keyed table dead code here.
+    if (const auto* m = lsdj::lsdjModelForRomVersion(romVersion.toRawUTF8()))
+        if (formatVersion >= m->formatMin && formatVersion <= m->formatMax) return *m;
     if (const auto* m = lsdj::lsdjModelForFormat(formatVersion)) return *m;
-    if (const auto* m = lsdj::lsdjModelForRomVersion(romVersion.toRawUTF8())) return *m;
     return lsdj::lsdjLatestModel();
 }
 

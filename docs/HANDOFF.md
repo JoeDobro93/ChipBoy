@@ -432,6 +432,20 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 21 (§98-§101): the **ROM beside the save decides the model** -- `autoModel` asked the
+  format first, so the version-keyed table was dead code; a pre-4.3 ROM has its version in the
+  welcome line inside bank 0 and the caller only handed `romVersion()` the first 0x150 bytes, so
+  every old ROM read as "not LSDj"; and 3.6.5, which is what the *Computer Savvy* songs were
+  written in, was in neither table. Together those read every format-2 song under the **4.0.4**
+  model with no kit ROM. Then **`L` and `P` replace one another** and **in Drum a slide is linear
+  in the period register**, which is `SAMESONG`'s wave kick: ChipBoy ran the bend under the slide,
+  took the period off the bottom and wrapped it at 2048 -- the machine gun the user heard. And
+  **`F` on the wave channel takes the whole byte** and walks LSDj's flat 256-frame wave table,
+  which §92 had as the low nibble wrapping inside one synth. And **a cell with a blank instrument
+  column keeps its note** (§101): it was dropped outright, taking the row's command with it, where
+  from 4.0.4 it is ChipBoy's own bare note -- a pitch change with no trigger, and an `L`'s target.
+  `SAMESONG`'s phrase 1C step 9 is that: a `D#4` with `L 10` beside it, now the ROM's period for
+  period where ChipBoy had played nothing.
 - Round 20 (§93-§97), from the three songs in the user's 9.2.L save: the wave run's **`REPEAT`**
   comes off its own byte (byte 3 on formats 7-8, byte 2 from 9, while the synth moves to byte 3 at
   17), so formats 9-10 get their own model `kLsdj75`; the tick a note starts on belongs to its
@@ -488,6 +502,11 @@ design-log section the change touches. Update this file at the end of every chan
   song needs 0x16 and the B-shifted letter table.
 - **The kit instrument's byte 3** and **a wave instrument's byte 3 low nibble** hold values in
   real songs and change nothing a trace can hear (§93, §96). Neither is mapped, neither is noted.
+- **The Waves tab draws a frame the other way up from LSDj's `WAVE` screen**, and rotated by one,
+  the user reports. The **data is not**: the bytes ChipBoy writes to `FF30`-`FF3F` for every frame
+  of `SAMESONG`'s phrase 0B are identical to the ROM's, measured in the register traces, so the
+  sound is right and this is a drawing convention. `Grids.cpp` puts sample 0 at the left with 0 at
+  the bottom; matching LSDj is a one-line change if the user wants the editors to agree.
 - **The kit `DIST` modes** are the one gap left of the four. Narrowed to **byte 13's bit 6** of
   the kit instrument, which changes the mixed stream with its length unchanged, while bytes 4,
   5, 6, 7, 10, 12, 14, 15 and the top bits of 2 and 9 do not (5 and 6 are length, 10 an offset
@@ -513,11 +532,23 @@ design-log section the change touches. Update this file at the end of every chan
   the whole noise overhaul at 9.0. A model for 17-21 wants the noise map measured on 9.0.0 first.
   Run the batteries in `/root/lsdj/probe/vs_*.py` on them -- they take a version name and need
   nothing else.
+- **LSDj's wave RAM is one flat 256-frame table** and ChipBoy's wave is sixteen frames (§100).
+  `F` walks that table straight through, so an advance past a synth's sixteen sounds the next
+  synth's frames; ChipBoy wraps inside the wave and says so at import. `SAMESONG`'s `SLAPB` does
+  exactly this -- `F 01` with a `Z 1E` beside it, a random 0-31 frames on -- so its tone is not the
+  ROM's. Closing it is a **bank-model decision for the user**: a wave of up to 256 frames, or wave
+  slots the importer lays out in synth order with the driver carrying from one into the next.
+  Neither is a driver fix; both change the song file.
 - **`CASTSHDW`'s kit notes** are the largest thing left on the 9.2.L songs: 1142 note-level hits
   on the ROM against ChipBoy's 326, though the ones that do play now land on the ROM's period 77%
   of the time (§97). Whole notes are missing, among them every one whose note byte names a sample
   one of its two kits does not have -- the ROM plays the other kit's, `kitNote()` gives up on both
   and returns silence. Start there; it is a few lines.
+- **`DELIVERY` gains a tick about every ten seconds.** Its PU2 note-ons run +17, +16, +11, +13 ms
+  later than the ROM's in steps, with long plateaus between -- each step is one tick at its tempo
+  (16.78 ms), not a drift. The tempo itself is right: the ROM's tick for every tempo byte measured
+  (85 to 190) is within 0.016% of `1 / (0.4 x bpm)`, and DELIVERY's grooves are all 6/6 with no `G`
+  or `T` anywhere. So one row in about a hundred is taking a tick longer in ChipBoy. Find which.
 - **`DELIVERY` and `READROOM` come apart part way through.** `DELIVERY` agrees with the ROM on
   every channel until about 50 s and on none after; `READROOM` never agrees on three channels at
   all and its noise channel triples the ROM's note count (1032 against 3093). Neither is a

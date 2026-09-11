@@ -307,6 +307,13 @@ private:
         /// `frameStep` walks the run section 65 builds, not the wave's frames:
         /// `frameIdx` is the frame that step lands on, kept for the writers.
         uint8_t  waveSlot = 1, frameStep = 0, frameIdx = 0, frameCount = 0; int8_t frameDir = 1;
+        /// Section 99: in Drum the slide is linear in the **period register**,
+        /// not in semitones, so it runs on `drumOffset`. `drumSlideHold` keeps
+        /// the table's transpose column out of the note once it has been folded
+        /// into that offset, as `slideTspHeld` does for the semitone slide.
+        double   drumSlideStep = 0.0;
+        uint16_t drumSlideLeft = 0;
+        bool     drumSlideHold = false;
         /// Section 94: the tick a note starts on is the first frame's own tick,
         /// so the run does not advance on it -- the note-on happens inside that
         /// tick and the counter would otherwise spend it twice.
