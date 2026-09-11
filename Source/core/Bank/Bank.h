@@ -166,6 +166,11 @@ struct InstrumentCore {
     InstrumentType type = InstrumentType::Pulse;
     Pan      pan = Pan::Both;
     uint16_t length = 0;             ///< 0 off; 1-64 (PU/NOI), 1-256 (WAV/KIT)
+    /// Section 87: LSDj writes its LENGTH into NRx1 but never turns the length
+    /// counter on at a note-on. The value sits there until something else does
+    /// -- on the noise channel, a pitch restart (section 86) -- and only then
+    /// cuts the note. An imported instrument carries its length this way.
+    bool     lengthLatent = false;
     uint8_t  table = 0;              ///< 0 none, 1-64
     bool     transpose = true;       ///< whether table transpose applies
     bool     envRetrig = false;      ///< E re-attacks the note (section 59): LSDj's own rule before 8.8
@@ -212,6 +217,12 @@ struct InstrumentCore {
     /// lands on the entry of LSDj's own table that the ROM lands on.
     bool     noiseLsdjMap = false;
     bool     noiseManual = false;
+    /// Section 86: LSDj's noise PITCH. FREE restarts the channel only when a
+    /// pitch change turns the **7-bit** LFSR on; SAFE restarts it on every
+    /// pitch change, which is what stops a DMG muting itself on some of them.
+    /// Either restart re-arms `NRx2` at the level the note is at, so the
+    /// envelope carries on rather than jumping back to the note's own.
+    bool     noisePitchSafe = false;
     uint8_t  noiseShift = 5;
     uint8_t  noiseDivisor = 1;
     int8_t   noiseSweep = 0;         ///< shift steps per tick
@@ -335,11 +346,13 @@ struct Bank {
     /// from a save. One per bank -- an import comes from one version -- and used
     /// only by instruments whose `noiseLsdjMap` is set. `noiseMapLen` is how
     /// many of the bytes are the table (120 on 9.x) and `noiseMapNote0` which
-    /// ChipBoy note entry 0 plays; the index **wraps** modulo the length, which
-    /// is what the ROM does and is why the table cannot simply be clamped.
+    /// ChipBoy note entry 0 plays -- 1, so that a cell's note is LSDj's own
+    /// note byte and the grid prints the entry number LSDj prints (section 85).
+    /// The index **wraps** modulo the length, which is what the ROM does and is
+    /// why the table cannot simply be clamped.
     std::array<uint8_t, 128> noiseMap{};
     uint8_t                  noiseMapLen = 0;
-    uint8_t                  noiseMapNote0 = 8;
+    uint8_t                  noiseMapNote0 = 1;
     bool                     noiseMapSet = false;
 
     /// Slot access, 1-based; nullptr for 0 or an unused slot.

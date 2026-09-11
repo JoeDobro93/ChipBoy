@@ -406,14 +406,15 @@ bool parseNoteText(const juce::String& text, uint8_t& out, bool numeric = false)
     if (t.isEmpty()) { out = tracker::kNoteOff; return true; }          // "-" and "---"
     if (t == "off" || t == "o") { out = tracker::kNoteOff; return true; }
     // Section 85: on the noise channel the column is a number, so a number is
-    // what it takes -- in the grid's base. A note name still works, because
-    // refusing one would only puzzle a keyboard-minded edit.
+    // what it takes -- in the grid's base, counted from zero as the column
+    // prints it. A note name still works, because refusing one would only
+    // puzzle a keyboard-minded edit.
     if (numeric) {
         const int v = ValueFormat::hex() ? t.getHexValue32() : t.getIntValue();
         bool digits = t.isNotEmpty();
         for (int k = 0; k < t.length() && digits; ++k)
             digits = juce::CharacterFunctions::isDigit(t[k]) || (ValueFormat::hex() && t[k] >= 'a' && t[k] <= 'f');
-        if (digits && v >= 1 && v <= 127) { out = uint8_t(v); return true; }
+        if (digits && v >= 0 && v <= 126) { out = uint8_t(v + 1); return true; }
     }
     static const int base[7] = { 9, 11, 0, 2, 4, 5, 7 };                // a b c d e f g
     const auto letter = t[0];

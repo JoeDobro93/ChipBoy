@@ -2730,3 +2730,82 @@ TEST_CASE("S and P on noise work on NR43 in the Register domain", "[driver][nois
         for (int v : seen) CHECK(v == base);               // nothing moves it without a command
     }
 }
+
+TEST_CASE("noise PITCH decides which pitch change restarts the channel", "[driver][noise]")
+{
+    // Sections 82, 86 and 87, measured on 9.3.9. A three-entry map: entry 0 is
+    // 15-bit, entry 1 is 7-bit and entry 2 is 15-bit again, so a table walking
+    // the transpose crosses the width both ways.
+    const auto rig = [](bool safe, uint8_t length) {
+        auto r = std::make_unique<Rig>();
+        r->tickHz = 100.0;
+        for (auto& src : r->song.noteSource) src = tracker::NoteSource::Tracker;
+        r->bank.noiseMap[0] = 0x00; r->bank.noiseMap[1] = 0x08; r->bank.noiseMap[2] = 0x10;
+        r->bank.noiseMapLen = 3; r->bank.noiseMapNote0 = 1; r->bank.noiseMapSet = true;
+        auto& t = r->bank.tables[9]; t = Table{}; t.used = true; t.end = TableEnd::Stop;
+        for (int k = 0; k < 4; ++k) { t.steps[size_t(k)].hasTranspose = true; t.steps[size_t(k)].transpose = int8_t(k); }
+        auto& i = r->bank.instruments[20];
+        i = Instrument::defaults(InstrumentType::Noise, "drum");
+        i.used = true;
+        i.noiseLsdjMap = true; i.noiseShift = 5; i.table = 10;
+        i.noisePitchSafe = safe;
+        if (length) { i.length = length; i.lengthLatent = true; }
+        ChannelParams p; p.instrument = 21; for (int ch = 0; ch < 4; ++ch) r->drv.setParams(ch, p);
+        return r;
+    };
+    const auto walk = [](Rig& r) {
+        // The note, then the table's rows one tick apart: (NR43, did it trigger).
+        std::vector<std::pair<int, bool>> out;
+        auto w = r.block({ cellOn(3, 1, 21) }, 480);
+        for (int k = 0; k < 4; ++k) {
+            const RegWrite* nr = last(w, 0xFF22);
+            if (nr != nullptr) out.push_back({ int(nr->value), anyTrigger(w, 0xFF23) });
+            w = r.block({}, 480);
+        }
+        return out;
+    };
+    {   // FREE: only the step that turns the 7-bit LFSR **on** restarts it.
+        auto r = rig(false, 0);
+        const auto seen = walk(*r);
+        REQUIRE(seen.size() >= 3);
+        CHECK(seen[0] == std::pair<int, bool>{ 0x00, true });    // the note-on
+        CHECK(seen[1] == std::pair<int, bool>{ 0x08, true });    // 15 -> 7: a restart
+        CHECK(seen[2] == std::pair<int, bool>{ 0x10, false });   // 7 -> 15: none
+    }
+    {   // SAFE: every pitch change restarts it.
+        auto r = rig(true, 0);
+        const auto seen = walk(*r);
+        REQUIRE(seen.size() >= 3);
+        CHECK(seen[0] == std::pair<int, bool>{ 0x00, true });
+        CHECK(seen[1] == std::pair<int, bool>{ 0x08, true });
+        CHECK(seen[2] == std::pair<int, bool>{ 0x10, true });
+    }
+    {   // The restart is not a note-on: NRx2 is re-armed at the level the note
+        // has reached, so the envelope carries on, and NR44 = BF turns the
+        // length counter on -- which is the only thing a latent LENGTH does.
+        auto r = rig(true, 0);
+        auto& i = r->bank.instruments[20];
+        i.env.mode = EnvMode::Shaped; i.env.start = 15; i.env.peak = 0; i.env.attackTicks = 40;
+        i.envVol = 15;
+        r->block({ cellOn(3, 1, 21) }, 480);
+        for (int k = 0; k < 6; ++k) r->block({}, 480);            // let the ramp fall a few levels
+        const int level = int(r->drv.view(3).volume);
+        auto w = r->block({}, 480);
+        const RegWrite* nr4 = last(w, 0xFF23);
+        if (nr4 != nullptr && (nr4->value & 0x80)) {
+            CHECK(int(nr4->value) == 0xBF);                       // trigger + length enable
+            const RegWrite* nr2 = last(w, 0xFF21);
+            REQUIRE(nr2 != nullptr);
+            CHECK(int(nr2->value & 0x0F) == 0x08);                // a hold, not the instrument's rate
+            CHECK(int(nr2->value >> 4) == level);                 // at the level it had reached
+        }
+    }
+    {   // A note-on never enables the counter, however long the LENGTH.
+        auto r = rig(false, 1);
+        auto w = r->block({ cellOn(3, 1, 21) }, 480);
+        const RegWrite* nr4 = last(w, 0xFF23);
+        REQUIRE(nr4 != nullptr);
+        CHECK(int(nr4->value) == 0x80);
+        CHECK(has(w, 0xFF20, 0x3F));                              // 64 - 1, the value LSDj writes
+    }
+}

@@ -470,6 +470,43 @@ TEST_CASE("the formats before 9 read the noise SHAPE and resolve S to the note i
     CHECK(noiseByteMatches(*bank, *noi9, 0, 0x77));                          // C-4 on the 9.x map, byte for byte (section 81)
 }
 
+TEST_CASE("a 9.x noise instrument brings its PITCH, its LENGTH and LSDj's own note numbers", "[lsdj]")
+{
+    // Sections 85, 86 and 87, measured on 9.3.9: instrument byte 2 is PITCH
+    // (0 FREE, anything else SAFE), byte 3 goes straight into NR41 without the
+    // note-on ever enabling the counter, and a phrase's noise note is LSDj's
+    // own note byte -- the table's entry number plus one.
+    auto song = testSong(22);
+    uint8_t* i1 = song.data() + kInst + 16;
+    i1[2] = 0x04;                                     // PITCH = SAFE, as SUNRISE's own kick has it
+    i1[3] = 0x3F;                                     // LENGTH: NR41 = 3F
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes));
+    const auto& noi = bank->instruments[1];
+    CHECK(noi.noiseLsdjMap);
+    CHECK(noi.noisePitchSafe);
+    CHECK(noi.lengthLatent);
+    CHECK(int(noi.length) == 64 - 0x3F);
+    // The cell carries LSDj's note byte, so the grid prints what LSDj prints.
+    const auto* p = out->phrase(out->chain[3].at(0));
+    REQUIRE(p != nullptr);
+    CHECK(int(p->cells[0].note) == 93 - 35);
+    CHECK(int(bank->noiseMapNote0) == 1);
+    CHECK(noiseByteMatches(*bank, *p, 0, 0x20));
+    // PITCH = 0 is FREE.
+    i1[2] = 0x00;
+    auto bank2 = std::make_unique<bank::Bank>(); auto out2 = std::make_unique<tracker::Song>();
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(22), *bank2, *out2, sum, notes));
+    CHECK_FALSE(bank2->instruments[1].noisePitchSafe);
+    // Before 9.2.J the byte is not PITCH, so nothing reads it.
+    auto old = testSong(11);
+    old[kInst + 16 + 2] = 0x04;
+    auto bank3 = std::make_unique<bank::Bank>(); auto out3 = std::make_unique<tracker::Song>();
+    REQUIRE(importSong(old.data(), old.size(), *lsdjModelForFormat(11), *bank3, *out3, sum, notes));
+    CHECK_FALSE(bank3->instruments[1].noisePitchSafe);
+}
+
 TEST_CASE("the formats before 5.7 convert P, L and V from the period register", "[lsdj]")
 {
     const auto song = oldSong(3);

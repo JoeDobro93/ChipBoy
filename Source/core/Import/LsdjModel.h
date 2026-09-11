@@ -92,6 +92,7 @@ struct LsdjModel {
     int            waveByte;         ///< the instrument byte holding synth << 4 | frame: 2 before 9.x, 3 after (section 60)
     int            waveOctave;       ///< semitones added to a wave note (section 45)
     bool           pu2Transpose;     ///< instrument byte 2 applies on PU2 (section 49)
+    int            noisePitchByte;   ///< the noise instrument byte holding PITCH (0 FREE, else SAFE); -1 when the version has none (section 86)
     bool           tableGrooveWalks; ///< a table's G walks the groove (9.x) or holds its first step (section 63)
     bool           envHopCostsTick;  ///< a table ENV hop spends a tick before 8.9.3, none after (section 64)
     bool           measured;         ///< traced on that ROM, or assumed from another model

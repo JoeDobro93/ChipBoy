@@ -53,7 +53,10 @@ def playStart(path):
         if v == 0x00: last00 = c
         elif v & 0x80 and last00 is not None: cands.append(c)
     if not cands: raise SystemExit('%s: no playback reset (NR52 00 -> 80) found' % path)
-    return cands[-1]
+    # The **first** such write, not the last: from 9.x LSDj powers the APU once
+    # and leaves it, so there is only one -- but 4.x and 5.x write `NR52 = 80`
+    # every frame, and taking the last would anchor at the end of the trace.
+    return cands[0]
 
 def events(path, ch, skip_key=None):
     """Writes for one channel from playback start, with t=0 at its first trigger."""

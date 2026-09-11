@@ -2367,22 +2367,25 @@ out: a transpose of −58 from index 57 lands on index 119, which is `08`.
 
 **What ChipBoy has to change.** A cell's note is 0-127, and LSDj's table spans MIDI 36-155, so
 it cannot be carried as a MIDI note. It does not need to be: for a mapped noise instrument the
-note is an **index into that table**, not a pitch, so the importer re-bases it -- note byte `n`
-becomes ChipBoy note `n + 7`, so the whole table sits at notes 8-127 with room underneath for a
-transpose to walk.
+note is an **index into that table**, not a pitch, so the importer carries **LSDj's own note
+byte** -- entry 0 at note 1, the whole 120-entry table at notes 1-120.
 
 - `Bank::noiseMap` keeps its 128 bytes; `Bank::noiseMapLen` says how many are the table (120 on
-  9.x) and `Bank::noiseMapNote0` which ChipBoy note entry 0 plays (8). A version whose table is
+  9.x) and `Bank::noiseMapNote0` which ChipBoy note entry 0 plays (1). A version whose table is
   a different length needs no new field.
 - The driver wraps: `idx = ((note + transposes) - noiseMapNote0) mod noiseMapLen`, the modulo
   taken so a negative walks to the top. It **replaces** the clamp into `-kNoiseMapBelow..127`
   for a mapped instrument, because a clamp is exactly the wrong answer here.
-- The importer emits `noteByte + 7` and drops the octave folding, which only existed because the
-  table it knew about had holes at both ends.
+- The importer emits the note byte unchanged and drops the octave folding, which only existed
+  because the table it knew about had holes at both ends.
 
-The note the tracker shows for such an instrument is therefore not the note LSDj names. That is
-already true of every imported noise instrument -- the channel has no pitch, only a clock -- and
-the alternative is losing a fifth of the table.
+> **Superseded.** The first version of this section re-based the table to note 8 (`n + 7`), to
+> leave room underneath for a transpose to walk. The wrap makes that room unnecessary, and the
+> offset put ChipBoy's Note column seven out from LSDj's phrase screen, which is the one place a
+> reader checks an import against the original. Note 1 makes the two read the same (§85). The
+> cost is that the table's first eleven entries would fall in ChipBoy's command octave (notes
+> 0-11, §13), so a bank that carries LSDj's map has **no command octave on the noise channel**:
+> there a note is an entry number, not a pitch, and there is no octave below it to spare.
 
 ## 84. A note-on triggers at the plain note; the table's transpose follows one update later
 
@@ -2421,10 +2424,58 @@ the channel has a clock, not a frequency, and the map's entries are not a twelve
 Drawing that index as `C#4` invites exactly the confusion it caused -- a note name that does not
 name the note, beside a transpose column whose semitones are really table steps.
 
-**On the noise channel the Note column shows the byte**, in the same base the rest of the grid
-uses (§52): `3A` in Hex, `58` in Decimal. `OFF` and the blank stay as they are, because they mean
-the same thing on every channel. The entry box takes a number there too, and still takes a note
-name, so a keyboard-minded edit is not refused; on the other three channels nothing changes.
+**On the noise channel the Note column shows the entry number**, in the same base the rest of the
+grid uses (§52). LSDj's own phrase screen counts that number **from zero** -- a phrase holding
+note bytes `01`..`10` prints `00`..`0F`, measured by walking 9.3.9 to the phrase screen and
+reading the LCD -- so ChipBoy prints `note - 1`: a cell holding LSDj's note byte `3A` reads `39`,
+exactly as it reads in LSDj. `OFF` and the blank stay as they are, because they mean the same
+thing on every channel. The entry box takes the same number back, and still takes a note name,
+so a keyboard-minded edit is not refused; on the other three channels nothing changes.
 
 This is the display only. Nothing in the song file, the bank or the driver moves: a cell's note
-is the same byte it always was.
+is the same byte it always was -- and after §83's re-base to note 1, that byte **is** LSDj's.
+
+## 86. The noise channel's `PITCH`: which pitch change restarts it
+
+LSDj 9.2.H revived the old `S MODE` setting under the name `PITCH`, with two values. Measured on
+9.3.9 by walking a table's transpose across the table's width boundary and counting `NR44`
+triggers, and located by sweeping the noise instrument's bytes one at a time:
+
+**Instrument byte 2 is `PITCH`: zero is `FREE`, anything else is `SAFE`.** (`SUNRISE`'s own kick
+stores `04`, so the byte is not a flag LSDj keeps at 1.)
+
+| | a pitch change that turns the 7-bit LFSR **on** | one that turns it **off** | any other |
+|---|---|---|---|
+| `FREE` | restarts | no | no |
+| `SAFE` | restarts | restarts | restarts |
+
+`FREE` is what §82 measured, and it is the default. `SAFE` is the setting that stops a DMG muting
+itself on a noise pitch change, at the price of a retrigger on every one of them.
+
+**A restart is not a note-on.** The ROM writes, in this order: the new `NR43`, then
+`NRx2 = (current level << 4) | 8` -- a hold at the level the note has *reached*, not the level the
+instrument starts at -- then `NR44 = BF`. Re-arming `NRx2` is what keeps the envelope going: a
+trigger reloads the chip's volume from `NRx2`, so without it every restart would throw the note
+back to full and the software envelope would claw its way down again. That was audible on an
+imported `SUNRISE` as a noise part that kept jumping back up.
+
+`Instrument::noisePitchSafe` carries the setting; the importer reads it from byte 2 for format
+22 (`LsdjModel::noisePitchByte`), and leaves it clear for every older model until that version's
+ROM is measured.
+
+## 87. LSDj's `LENGTH` is latent: the note-on never enables the counter
+
+Measured on 9.3.9 with a noise instrument whose byte 3 runs `00`, `01`, `20`, `3F`: the byte goes
+straight into `NR41`, and the note-on always writes `NR44 = 80`. **Bit 6 -- the length enable --
+is clear.** So `LENGTH` does nothing at all by itself; the value sits in the counter's reload
+register until something turns the counter on, and the only thing that does is §86's pitch
+restart (`NR44 = BF`). An instrument with `LENGTH = 3F` and `PITCH = SAFE` is therefore a click:
+the first pitch change after the attack cuts it one 256th of a second later.
+
+The pulse channel stores its `LENGTH` in byte 3 too, written into `NR11`'s low six bits, but LSDj
+rewrites `NR11` with the duty alone an instruction later, so the counter ends up reloaded to 64
+either way and ChipBoy's `0` reaches the same place. Only the noise channel keeps the value.
+
+`InstrumentCore::lengthLatent` says an instrument carries its length this way: `NRx1` gets the
+value, `NRx4`'s enable bit stays clear, and only a §86 restart turns the counter on. The importer
+sets it with `length = 64 - byte 3` on every noise instrument whose byte 3 is not zero.

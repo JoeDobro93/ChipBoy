@@ -344,9 +344,11 @@ design-log section the change touches. Update this file at the end of every chan
     instrument plays **LSDj's own note map** off the bank (§81) instead of crossing into
     ChipBoy's nearest-clock one and back.
   - **The acceptance test is the user's SUNRISE** (`/root/lsdj/lsdj9_3_9.sav`, song 6, format
-    22). ROM against ChipBoy over 27 s, comparing the period or `NR43` each trigger sounds at:
-    **PU1 63/63, PU2 53/53 and NOI 70/70 with zero values differing**; WAV 61/61 note-ons with
-    27 of them starting about 1.3 semitones high for one pitch update and identical thereafter.
+    22). ROM against ChipBoy over the whole song (113 s, `--frames 7000`), comparing the period
+    or `NR43` each trigger sounds at: **PU1 276/276, PU2 170/170 and NOI 740/740 with zero values
+    differing**; WAV 440/440 note-ons with the swept drums starting about 1.3 semitones high for
+    one pitch update and identical thereafter. On noise the whole **register stream** matches,
+    not only the triggers: `NR41`, `NR43` and `NR44` byte for byte in the ROM's own order.
     That last one is §10.1 of the matrix: the table's `P CF` bend, whose *phase at the note-on*
     is not measured -- the ROM's first period is half a bend step below the plain note.
     Rebuild the comparison with `chipboy_recordtest --import-sav` then `--trace-song`, and
@@ -354,14 +356,26 @@ design-log section the change touches. Update this file at the end of every chan
     lines the two note streams up. Compare the value **at** the trigger on noise and a few
     milliseconds after it on the pitched channels, because LSDj triggers the wave channel with a
     stale period and writes the real one immediately after.
-  - **Section 85**: on the **noise channel** the Note column shows the byte, in the grid's own
-    base (`3A` in Hex, `58` in Decimal), because §83 made that note an index into a clock map
-    rather than a pitch. The entry box takes a number there and still takes a note name. Display
-    only -- nothing in the song file, the bank or the driver moves.
+  - **Section 85**: on the **noise channel** the Note column shows the entry number in the grid's
+    own base, because §83 made that note an index into a clock map rather than a pitch. LSDj's
+    phrase screen counts it **from zero** (measured by scripting the joypad to the phrase screen
+    and reading the LCD -- `lsdjref_trace --screen FILE.pgm` and `/root/lsdj/probe/ocr.py`), so
+    ChipBoy prints `note - 1` and the two read the same. The entry box takes that number back and
+    still takes a note name.
+  - **Sections 86 and 87 finished the noise channel** (round 21, and they are what the user heard
+    as "the noise sounds way off"): the noise instrument's **byte 2 is `PITCH`** -- 0 is `FREE`
+    (restart only when a pitch change turns the 7-bit LFSR on, which is what §82 measured) and
+    anything else is `SAFE` (restart on every pitch change); a restart **re-arms `NRx2` at the
+    level the note has reached** and writes `NR44 = BF`, so the envelope carries on instead of
+    jumping back to the instrument's own level; and byte 3's **`LENGTH` is latent** -- it reaches
+    `NR41` but the note-on never sets `NR44`'s enable bit, so only a restart makes it cut. Found
+    by sweeping the instrument's bytes one at a time against a table that walked the transpose
+    across the map's width boundary (`/root/lsdj/probe/pitchmode.py`, `pm3.py`, `noiselen.py`).
   - **Sections 83 and 84** finished the noise: LSDj's table is **120 entries** (note byte 1-120)
     and its index **wraps** modulo 120, measured in both directions, so a mapped noise
-    instrument's cell carries the table's entry number re-based onto notes 8-127 and the driver
-    wraps rather than clamps. The table entry's own **width bit** is the note, not a property of
+    instrument's cell carries **LSDj's own note byte** (entry 0 at note 1) and the driver
+    wraps rather than clamps. Because entries 0-10 would then fall in ChipBoy's command octave, a
+    bank carrying LSDj's map has **no command octave on the noise channel**. The table entry's own **width bit** is the note, not a property of
     the instrument, which is what had been turning the table's 7-bit half into its 15-bit one.
     And a note-on triggers at the **plain** note: the table's transpose column reaches the
     channel on the next pitch update, which for noise means the channel has to join the pitch
@@ -469,6 +483,20 @@ design-log section the change touches. Update this file at the end of every chan
 
 ## Next steps
 
+- **The version sweep is the round in flight** (`docs/plan-lsdj-version-sweep.md`, stage 2). The
+  archive is unpacked at `/root/lsdj/archive` (31 ROMs) with the changelog at
+  `/root/lsdj/changelog_full.txt`; each ROM's format is confirmed from its own `--init-sav` save.
+  Measured so far across versions: `M`'s command code (10 for formats 0-7, 11 for 11 and 22, so
+  `B` enters at format 11), `NR12` at a plain note (`F0` before 9.x, `F8` at format 22), the wave
+  octave (period 1280 for formats 0-11, 2016 for 22) and `R00` (retrigger once on formats 0-3,
+  every tick from 5.0.3 to 8.5.1, once again on 22). Still to do: build
+  `docs/LSDJ_VERSIONS.md` -- a row per ROM with what differs from 9.3.9, how the importer remaps
+  it, and what cannot map -- implement the remaps in `LsdjModel`, and import the user's 8.4.4 and
+  9.2.L saves with attention to the wave frame/synth handling. `LsdjModel::noisePitchByte` is
+  -1 for every pre-9.2.J model and wants measuring: the changelog has `S MODE FREE/STABLE` added
+  around 5.x, removed in 9.1.0 and revived as `PITCH` in 9.2.H.
+- The software envelope's ramp steps are quantised to the tick (matrix §10 item 7). Not specific
+  to noise; fixing it moves every instrument, so it wants its own round.
 - The playback-ROM exporter: `HARDWARE_DRIVER_AUDIT.md` ends with the binary layout a
   playback ROM needs; nothing is built. Start with `docs/plan-exporter.md`.
 - Windows and macOS builds are the user's; fix what they report.

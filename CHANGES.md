@@ -26,6 +26,46 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-11 — the noise channel's `PITCH`, its latent `LENGTH`, and note numbers that read like LSDj's
+
+Three findings on 9.3.9, all of them audible on an imported `SUNRISE` and all of them measured
+rather than reasoned about. `docs/COMMANDS_AND_TEMPO.md` §85-§87 carry the design.
+
+1. **Instrument byte 2 is the noise `PITCH`.** Found by sweeping every byte of a noise instrument
+   one at a time and counting `NR44` triggers while a table walked the transpose: zero is `FREE`
+   (the channel restarts only when a pitch change turns the 7-bit LFSR on, which is what §82
+   measured) and anything else is `SAFE` (every pitch change restarts it). `SUNRISE`'s kick
+   stores `04`, so it is not a flag LSDj keeps at 1. ChipBoy played every noise instrument as
+   `FREE`.
+2. **A pitch restart re-arms `NRx2` at the level the note has reached**, then writes
+   `NR44 = BF`. ChipBoy triggered without the re-arm, so the chip reloaded its volume from the
+   instrument's own level and the software envelope clawed back down — an imported noise part
+   jumped back to full on every width change. This was the regression the previous round
+   introduced along with §82, and it is what "the noise sounds way off" was.
+3. **`LENGTH` is latent.** Byte 3 goes into `NR41` and the note-on writes `NR44 = 80` with bit 6
+   clear, so the value does nothing until a pitch restart turns the counter on. Carried as
+   `InstrumentCore::lengthLatent`; the pulse channel's own `LENGTH` is overwritten by LSDj an
+   instruction later and needs nothing.
+
+**Changed, and a departure worth stating:** §83 re-based a mapped noise instrument's note to
+ChipBoy note 8 (`n + 7`). It is now LSDj's own note byte (entry 0 at note 1), because the Note
+column is the one place a reader checks an import against the original and it was seven out.
+LSDj's phrase screen counts a noise note **from zero** — measured by scripting the joypad to
+LSDj's phrase screen and reading the LCD, with note bytes `01`..`10` in the phrase printing
+`00`..`0F` — so ChipBoy's noise Note column now prints `note - 1` and the two read the same.
+The cost: the table's first eleven entries would land in ChipBoy's **command octave** (notes
+0-11, §13), so **a bank carrying LSDj's noise map has no command octave on the noise channel**.
+Considered instead: keeping the offset at 8 and printing `note - 8` (the display would have to
+know a bank property, and four entries still fall in the command octave), and leaving the
+command octave in place (eleven of the table's 120 entries would never sound).
+
+**Result.** Over the whole of `SUNRISE` — 113 seconds against the ROM — ChipBoy now writes
+`NR41`, `NR43` and `NR44` byte for byte in the ROM's own order: 582, 1074 and 740 writes, no
+difference in any of them. `NR42` still differs in 5836 of 12917 writes, all of them the ramp
+steps of the software envelope, which ChipBoy quantises to the tick while LSDj steps it on its
+own tempo-independent clock. That one is listed as open in the matrix §10 rather than fixed
+here: it is not specific to the noise channel and changing it moves every instrument.
+
 ### 2026-09-10 — L3 allows deriving behaviour from the LSDj ROM
 
 **Spec §3.3, rule L3** said "**No LSDj-derived content** in the repository or in any binary.

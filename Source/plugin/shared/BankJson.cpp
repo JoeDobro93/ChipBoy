@@ -67,6 +67,7 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     o->setProperty("name", String(i.name));
     o->setProperty("type", int(i.type));
     o->setProperty("pan", int(i.pan)); o->setProperty("length", int(i.length)); o->setProperty("table", int(i.table));
+    if (i.lengthLatent) o->setProperty("lengthLatent", true);           // section 87
     o->setProperty("transpose", i.transpose); o->setProperty("noteOff", int(i.noteOff)); o->setProperty("overlap", int(i.overlap));
     if (i.envRetrig) o->setProperty("envRetrig", true);        // section 59; absent reads as false, so old files are unchanged
     // Section 65; both absent read as every frame, looping from the first.
@@ -96,6 +97,7 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     }
     o->setProperty("sweepRate", int(i.sweepRate)); o->setProperty("sweepDown", i.sweepDown); o->setProperty("sweepShift", int(i.sweepShift));
     if (i.noiseLsdjMap) o->setProperty("noiseLsdjMap", true);          // section 81
+    if (i.noisePitchSafe) o->setProperty("noisePitchSafe", true);      // section 86
     o->setProperty("wave", int(i.wave)); o->setProperty("frameAdvance", int(i.frameAdvance)); o->setProperty("frameLoop", int(i.frameLoop)); o->setProperty("waveLevel", int(i.waveLevel));
     o->setProperty("kit", int(i.kit)); o->setProperty("kitLoop", int(i.kitLoop));
     o->setProperty("lfsr7", i.lfsr7); o->setProperty("noiseManual", i.noiseManual); o->setProperty("noiseShift", int(i.noiseShift)); o->setProperty("noiseDivisor", int(i.noiseDivisor)); o->setProperty("noiseSweep", int(i.noiseSweep));
@@ -108,6 +110,7 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.name = o->getProperty("name").toString().toStdString();
     i.type = InstrumentType(std::clamp(getOr(o, "type", 0), 0, 3));
     i.pan = Pan(std::clamp(getOr(o, "pan", 3), 0, 3)); i.length = uint16_t(std::clamp(getOr(o, "length", 0), 0, 256)); i.table = uint8_t(std::clamp(getOr(o, "table", 0), 0, 64));
+    i.lengthLatent = bool(o->getProperty("lengthLatent"));              // section 87
     i.transpose = bool(o->getProperty("transpose")); i.noteOff = NoteOff(std::clamp(getOr(o, "noteOff", 0), 0, 2));
     i.envRetrig = bool(o->getProperty("envRetrig"));
     i.noiseDomain = bank::NoiseSweepDomain(std::clamp(getOr(o, "noiseSweep", 0), 0, 1));
@@ -157,6 +160,7 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.env.releaseCurve = EnvCurve(std::clamp(getOr(o, "envReleaseCurve", 0), 0, 2));
     i.sweepRate = uint8_t(std::clamp(getOr(o, "sweepRate", 0), 0, 7)); i.sweepDown = bool(o->getProperty("sweepDown")); i.sweepShift = uint8_t(std::clamp(getOr(o, "sweepShift", 0), 0, 7));
     i.noiseLsdjMap = bool(o->getProperty("noiseLsdjMap"));             // section 81
+    i.noisePitchSafe = bool(o->getProperty("noisePitchSafe"));         // section 86
     i.wave = uint8_t(std::clamp(getOr(o, "wave", 1), 1, 64)); i.frameAdvance = uint8_t(std::clamp(getOr(o, "frameAdvance", 0), 0, 15)); i.frameLoop = FrameLoop(std::clamp(getOr(o, "frameLoop", 0), 0, 2)); i.waveLevel = uint8_t(std::clamp(getOr(o, "waveLevel", 3), 0, 3));
     i.kit = uint8_t(std::clamp(getOr(o, "kit", 1), 1, 32)); i.kitLoop = KitLoop(std::clamp(getOr(o, "kitLoop", 0), 0, 2));
     i.lfsr7 = bool(o->getProperty("lfsr7")); i.noiseManual = bool(o->getProperty("noiseManual")); i.noiseShift = uint8_t(std::clamp(getOr(o, "noiseShift", 5), 0, 13)); i.noiseDivisor = uint8_t(std::clamp(getOr(o, "noiseDivisor", 1), 0, 7)); i.noiseSweep = int8_t(std::clamp(getOr(o, "noiseSweep", 0), -7, 7));
@@ -387,7 +391,7 @@ bool bankFromVar(const var& v, Bank& out)
         const int len = std::min(128, nm->size());
         for (int i = 0; i < len; ++i) out.noiseMap[size_t(i)] = uint8_t(std::clamp(int((*nm)[i]), 0, 255));
         out.noiseMapLen = uint8_t(len);
-        out.noiseMapNote0 = uint8_t(std::clamp(getOr(o, "noiseMapNote0", 8), 0, 127));
+        out.noiseMapNote0 = uint8_t(std::clamp(getOr(o, "noiseMapNote0", 1), 0, 127));
         out.noiseMapSet = len > 0;
     }
     return true;

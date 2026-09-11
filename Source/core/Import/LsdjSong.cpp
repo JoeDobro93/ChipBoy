@@ -229,12 +229,14 @@ struct Reader {
         const int k = ((midi - m.noiseLo) % len + len) % len;
         return m.noiseMap[size_t(k)];
     }
-    /// Sections 81 and 83: a mapped noise instrument's note is an **index into
-    /// LSDj's table**, not a pitch, so the cell carries the table's entry number
-    /// re-based onto ChipBoy's keyboard -- entry 0 at note `kNoiseMapNote0`, the
-    /// whole 120-entry table at notes 8-127, with room underneath for a
-    /// transpose to walk. No clock is ever crossed into ChipBoy's own map.
-    static constexpr int kNoiseMapNote0 = 8;
+    /// Sections 81, 83 and 85: a mapped noise instrument's note is an **index
+    /// into LSDj's table**, not a pitch, so the cell carries LSDj's own note
+    /// byte -- entry 0 at note 1, the whole 120-entry table at notes 1-120. The
+    /// grid prints a noise note one lower, which is the entry number LSDj's own
+    /// phrase screen prints, so the two read the same. Nothing needs room
+    /// underneath: the index wraps (section 83). No clock is ever crossed into
+    /// ChipBoy's own map.
+    static constexpr int kNoiseMapNote0 = 1;
     bool mappedNoise() const { return m.noiseRule == NoiseRule::Map && m.noiseMap != nullptr; }
     int noiseMapLen() const { return std::max(1, m.noiseHi - m.noiseLo + 1); }
     int noiseNoteInMap(int midi)
@@ -446,6 +448,14 @@ struct Reader {
                 o.lfsr7 = false; o.noiseManual = false; o.noiseShift = 5; o.noiseDivisor = 1; o.noiseSweep = 0;
                 // Section 66: before 9 the noise commands work on the NR43 byte.
                 o.noiseDomain = m.noiseS == NoiseS::Semitones ? bank::NoiseSweepDomain::Notes : bank::NoiseSweepDomain::Register;
+                // Section 86: PITCH. Zero is FREE -- the channel restarts only
+                // when a pitch change turns the 7-bit LFSR on -- and anything
+                // else is SAFE, which restarts it on every pitch change.
+                o.noisePitchSafe = m.noisePitchByte >= 0 && b[size_t(m.noisePitchByte)] != 0;
+                // Section 87: LENGTH goes into NR41 and stays there, but the
+                // note-on never enables the counter -- only a pitch restart
+                // does, and then the note is cut that many steps later.
+                if (b[3]) { o.length = uint16_t(64 - int(b[3] & 63)); o.lengthLatent = true; }
             }
             o.used = true;
             return true;
@@ -745,7 +755,10 @@ struct Reader {
                     }
                     state.nr43 = nr43; state.chipNote = midi;             // an S on this row moves on from here
                 }
-                c.note = uint8_t(std::clamp(midi, kind == 3 ? 12 : 1, 127));
+                // A mapped noise note is a table index and its lowest entry is
+                // note 1; an unmapped one is a pitch on ChipBoy's own keyboard,
+                // whose lowest noise note is 12.
+                c.note = uint8_t(std::clamp(midi, kind == 3 && !mappedNoise() ? 12 : 1, 127));
             }
             const char letter = letterOf(at(kPhraseCmd + i));
             if (letter == 'H' && hopStep < 0) {

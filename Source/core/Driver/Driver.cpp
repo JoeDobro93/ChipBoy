@@ -143,6 +143,10 @@ uint8_t zombieVolume(uint8_t vol, uint8_t oldPeriod, bool oldUp, bool running, b
 /// because it leaves the DAC on at level zero.
 uint8_t nrx2Hold(int level) { return uint8_t((uint8_t(level & 15) << 4) | 0x08); }
 
+/// Section 87: the length-enable bit of NRx4. A latent length is written into
+/// NRx1 but never enabled by a note-on, which is what LSDj does.
+uint8_t lengthBit(const InstrumentCore& i) { return uint8_t(i.length && !i.lengthLatent ? 0x40 : 0); }
+
 /// The two zombie-mode steps, byte for byte as the ROM writes them: one step
 /// **down** is `09 11 18` and one step **up** is `08` (measured on both
 /// consoles). Under the APU's own rule, from a holding envelope, the triple
@@ -441,7 +445,13 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
     // the held stack. They fire the channel's slots on whatever it is playing,
     // without a trigger, so a held note can be shaped after its attack; with
     // nothing sounding the persistent letters still land in the running state.
-    if (note < 12) {
+    //
+    // Section 85: not on a noise channel reading LSDj's own table. There a note
+    // is an entry number, not a pitch, and the table's first eleven entries
+    // would be the ones that never sounded -- so a bank that carries the map
+    // has no command octave on the noise channel.
+    const bool numbered = ch == 3 && bank_ != nullptr && bank_->noiseMapSet;
+    if (note < 12 && !numbered) {
         // On a Hybrid channel the command octave is inert: the cells carry the
         // commands, and the slots it would fire are empty (section 20).
         if (hy) return;
@@ -1102,15 +1112,26 @@ void Driver::writePeriod(int ch, bool trigger)
         v.noiseShift = s; v.noiseDiv = d;
         uint8_t nr = uint8_t((s << 4) | (v.lfsr7 ? 8 : 0) | (d & 7));
         if (v.inst.noiseDomain == bank::NoiseSweepDomain::Register && v.noiseReg) nr = bank::noiseNibbleSub(nr, v.noiseReg);
-        // Section 82: turning the **7-bit** LFSR on mid-note triggers the channel;
-        // turning it off does not. Measured over every NR43 write of a real song,
-        // fifteen of each and no exception either way.
+        // Sections 82 and 86: a pitch change can restart the channel. Under
+        // PITCH = FREE only one that turns the **7-bit** LFSR on does (turning
+        // it off does not); under PITCH = SAFE every change does, which is the
+        // setting that keeps a DMG from muting itself.
+        const bool changed = int16_t(nr) != v.lastPeriod;
         const bool wasWide = v.lastPeriod >= 0 && (v.lastPeriod & 8) == 0;
-        const bool widthOn = !trigger && v.active && (nr & 8) != 0 && wasWide;
+        const bool restart = !trigger && v.active && changed
+                          && (v.inst.noisePitchSafe || ((nr & 8) != 0 && wasWide));
         // Section 84: LSDj writes NR43 when the value changes, and a note-on
         // always writes it. A forced repeat is a write the ROM does not make.
-        if (trigger || widthOn || int16_t(nr) != v.lastPeriod) emit(regAddr(3, 3), nr, true);
-        if (trigger || widthOn) { emit(regAddr(3, 4), uint8_t(0x80 | (v.inst.length ? 0x40 : 0)), true); markTrigger(ch); }
+        if (trigger || changed) emit(regAddr(3, 3), nr, true);
+        // Section 86: a restart is not a note-on. The ROM re-arms NRx2 at the
+        // level the note has reached -- a hold, low nibble 8 -- so the envelope
+        // carries on from there instead of jumping back to the note's own
+        // level, and its trigger enables the length counter (NR44 = BF).
+        if (restart) emitNrx2(ch, nrx2Hold(v.volume));
+        if (trigger || restart) {
+            emit(regAddr(3, 4), uint8_t(restart ? 0xBF : (0x80 | lengthBit(v.inst))), true);
+            markTrigger(ch);
+        }
         v.lastPeriod = int16_t(nr);
         return;
     }
@@ -1130,7 +1151,7 @@ void Driver::writePeriod(int ch, bool trigger)
     // trigger bit in it, so it changes nothing but the log -- and the log is
     // what a parity harness can line up.
     emit(regAddr(ch, 3), uint8_t(f & 0xFF), true);
-    const uint8_t hi = uint8_t((f >> 8) | (trigger ? 0x80 : 0) | (v.inst.length ? 0x40 : 0));
+    const uint8_t hi = uint8_t((f >> 8) | (trigger ? 0x80 : 0) | lengthBit(v.inst));
     emit(regAddr(ch, 4), hi, true);
     if (trigger && v.inst.type == InstrumentType::Pulse) markTrigger(ch);
     if (ch == 2) updateWaveTimer(ch, f, trigger);
@@ -1181,8 +1202,8 @@ void Driver::writeEnvelope(int ch, bool trigger)
     v.envCount = 0;
     if (trigger) {
         const uint16_t f = uint16_t(std::max<int16_t>(0, v.lastPeriod));
-        if (v.inst.type == InstrumentType::Noise) emit(regAddr(3, 4), uint8_t(0x80 | (v.inst.length ? 0x40 : 0)), true);
-        else emit(regAddr(ch, 4), uint8_t((f >> 8) | 0x80 | (v.inst.length ? 0x40 : 0)), true);
+        if (v.inst.type == InstrumentType::Noise) emit(regAddr(3, 4), uint8_t(0x80 | lengthBit(v.inst)), true);
+        else emit(regAddr(ch, 4), uint8_t((f >> 8) | 0x80 | lengthBit(v.inst)), true);
         markTrigger(ch);
     }
 }
@@ -1406,7 +1427,7 @@ void Driver::scheduleStreams(uint64_t cycleStart, uint64_t cycleEnd)
             v.ram = chunk;
             emitAt(c, 0xFF1A, 0x80); c += kBurstSpacing;
             const uint16_t f = uint16_t(std::max<int16_t>(0, v.lastPeriod));
-            emitAt(c, 0xFF1E, uint8_t((f >> 8) | 0x80 | (v.inst.length ? 0x40 : 0)));
+            emitAt(c, 0xFF1E, uint8_t((f >> 8) | 0x80 | lengthBit(v.inst)));
             v.nextFetch = c + v.fetchPeriod + 6; v.fetchIndex = 1;
             ++v.kitLoopsStreamed;
             continue;
@@ -2220,7 +2241,7 @@ void Driver::retrigger(int ch, bool full)
         // the level and the trigger, not the whole note-on (measured).
         if (pulse || noise) writeEnvelope(ch, true);
         else { const uint16_t f = uint16_t(std::max<int16_t>(0, v.lastPeriod));
-               emit(regAddr(ch, 4), uint8_t((f >> 8) | 0x80 | (v.inst.length ? 0x40 : 0)), true); markTrigger(ch); }
+               emit(regAddr(ch, 4), uint8_t((f >> 8) | 0x80 | lengthBit(v.inst)), true); markTrigger(ch); }
         return;
     }
     // `x` is a signed nibble of volume change: 1-7 up by that much, 9-15 down

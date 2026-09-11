@@ -121,9 +121,10 @@ juce::String ValueFormat::noteValue(int n, bool numeric)
     if (!numeric) return noteName(n);
     if (n == 255) return "OFF";
     if (n <= 0 || n > 127) return "---";
-    // Section 85: the byte, in the grid's own base -- padded either way so the
-    // column keeps its width.
-    return gHex ? byte(n) : juce::String(n).paddedLeft('0', 2);
+    // Section 85: the entry number, counted from zero as LSDj's phrase screen
+    // counts it, so an imported song reads the same on both -- padded either
+    // way so the column keeps its width.
+    return gHex ? byte(n - 1) : juce::String(n - 1).paddedLeft('0', 2);
 }
 
 // ---------------------------------------------------------------------------

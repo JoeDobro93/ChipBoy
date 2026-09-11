@@ -44,6 +44,7 @@ ROM still runs the suite clean.
 | `trace/` | `lsdjref_trace`: the ROM in SameBoy's core, with a write log |
 | `compare/` | `lsdjref_compare`: the same songs through ChipBoy's driver, diffed |
 | `lsdjref_measure.py` | turns traces into the tables `docs/LSDJ_PARITY.md` quotes |
+| `lsdjref_ocr.py` | reads LSDj's 8x8 tile text off a `--screen` dump |
 | `run.sh.in` | configured into the build tree as `lsdjref-run` |
 | `cmake/SameBoy.cmake` | fetches SameBoy and assembles its boot ROMs |
 
@@ -128,3 +129,23 @@ python3 tools/lsdjref/lsdjref_dis.py /root/lsdj/lsdj9_3_9.gb 2 4828 14
 2. Disassemble there. If it is a refresh routine rather than the handler, it will read a work-RAM
    address — watch that address instead and trace again.
 3. Disassemble where the watch points. That is the handler.
+
+## Reading the screen: `--screen` and `lsdjref_ocr.py`
+
+Some questions are about what the **editor shows**, not what the ROM plays — what number LSDj
+prints for a noise note, say. `lsdjref_trace --screen FILE.pgm` writes the LCD as it stands at the
+end of the run, and `--keys F:KEY[:HOLD],...` walks LSDj there; two keys at the same frame are
+held together, which is how `SELECT+RIGHT` is pressed. LSDj draws nothing before about frame 150
+here, so press no earlier than 200.
+
+```
+lsdjref_trace --rom ROM --sav PROBE.sav --frames 400   --keys 200:right:4,215:right:4,230:right:4,260:select:8,262:right:4,300:select:8,302:right:4   --out /dev/null --screen shot.pgm
+python3 lsdjref_ocr.py shot.pgm learn
+```
+
+That script is: song screen, three columns right to `NOI`, then `SELECT+RIGHT` twice — the
+phrase screen of the noise channel's first phrase. `lsdjref_ocr.py` learns the hex digits from
+that screen's own row labels and prints the rest as `?`.
+
+This is how §85 of `docs/COMMANDS_AND_TEMPO.md` was settled: a phrase holding note bytes `01`
+through `10` prints `00` through `0F`, so LSDj counts a noise note from zero.

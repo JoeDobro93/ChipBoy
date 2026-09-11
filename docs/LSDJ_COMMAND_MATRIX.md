@@ -1021,14 +1021,15 @@ register writes in order) still stands.
 
 ## 10. What is still open in ChipBoy
 
-**Most of this list is now done.** Sections 72-84 of `COMMANDS_AND_TEMPO.md` carry the design and
+**Most of this list is now done.** Sections 72-87 of `COMMANDS_AND_TEMPO.md` carry the design and
 the code is in: `S` accumulates onto a running sweep byte, `B` exists in both its forms, `Z`
 re-runs its own lane, `M`'s down half is right, `R`'s interval is `y` ticks with `y = 0` firing
 once, `C` and `V` reach the noise channel, `F` is a finetune on PU1 and two nibbles on PU2, `E`
 on WAV reads `y`, an imported noise instrument plays LSDj's own 120-entry table with its index
-**wrapping** as the ROM's does, and a note-on triggers at the plain note with the table's
-transpose following one update later. The importer converts `T`'s low bytes and masks `W` to two
-bits.
+**wrapping** as the ROM's does, carries LSDj's own note byte so the Note column reads the same on
+both (§85), honours the instrument's `PITCH` (§86) and its latent `LENGTH` (§87), and a note-on
+triggers at the plain note with the table's transpose following one update later. The importer
+converts `T`'s low bytes and masks `W` to two bits.
 
 What is left, in the order it costs a real song:
 
@@ -1050,23 +1051,33 @@ What is left, in the order it costs a real song:
 6. **`LSDJ_PARITY.md` was measured on 9.2.J** with generated probe saves. §7 has been superseded
    twice over — by a real-save measurement (§70) and by the ROM's own rate table (§6.5) — and the
    rest has not been re-read for the same problem.
+7. **The software envelope is quantised to the tick.** LSDj steps it on its own clock --
+   `envPeriods[speed]` units of 11712 cycles, tempo-independent -- while ChipBoy's `Shaped`
+   envelope steps on ticks, so a stage reaches the same level in the same total time but its
+   individual steps jitter by up to one tick. On `SUNRISE` that is 5836 of 12917 `NR42` writes,
+   every one of them a ramp step that is early or late rather than a different level.
 
 ### Where the user's SUNRISE stands (LSDj 9.3.9, format 22)
 
 The acceptance test for a format-22 import: the ROM playing the song, against ChipBoy playing
-what the importer made of it, note-on for note-on over twenty-seven seconds, comparing the
-period (or `NR43`) each trigger actually sounds at.
+what the importer made of it, note-on for note-on over the whole song (113 seconds, 7000 frames),
+comparing the period (or `NR43`) each trigger actually sounds at.
 
 | | ROM | ChipBoy | longest common run | values differing |
 |---|---|---|---|---|
-| PU1 | 63 | 63 | **63** | **0** |
-| PU2 | 53 | 53 | **53** | **0** |
-| WAV | 61 | 61 | 7 | 28 |
-| NOI | 70 | 70 | **70** | **0** |
+| PU1 | 276 | 276 | **276** | **0** |
+| PU2 | 170 | 170 | **170** | **0** |
+| WAV | 440 | 440 | 7 | (the `P CF` phase, below) |
+| NOI | 740 | 740 | **740** | **0** |
 
 **Three channels of four are exact** — every note-on, in order, at the byte or period the ROM
 writes. The import prints one note, and it is about a PU2 transpose it kept rather than
 anything it lost.
+
+The noise channel is exact register for register, not only at its triggers: over the whole song
+ChipBoy writes `NR41`, `NR43` and `NR44` **byte for byte in the same order as the ROM** -- 582,
+1074 and 740 writes, no difference in any of them. Only `NR42` differs, and only in the timing of
+the envelope's ramp steps (item 7 above).
 
 **What is left is the wave channel's swept drums**, and only their first update. The table's row
 0 carries `P CF`, a downward bend; the ROM's note-on writes a period already part of the way
