@@ -279,13 +279,48 @@ TEST_CASE("a model is chosen by format, by ROM title, by name, or the newest", "
     CHECK(romVersion(old.data(), old.size()) == "3.5.1");
 }
 
+TEST_CASE("every synth is imported, in order, into its own wave slot", "[lsdj]")
+{
+    // Section 103: ChipBoy's bank is one flat 256-frame table and F walks
+    // straight out of one slot into the next, so the slot next door has to hold
+    // what the save's wave RAM held there -- whether or not an instrument names
+    // it. LSDj synth k goes into wave slot k + 1, all sixteen, in order.
+    auto song = testSong(22);
+    // Tag every synth's every frame with its own number, in both nibbles.
+    for (int synth = 0; synth < 16; ++synth)
+        for (int f = 0; f < 16; ++f)
+            for (int k = 0; k < 16; ++k)
+                song[kWaves + size_t(synth * 16 + f) * 16 + size_t(k)] = uint8_t((synth << 4) | synth);
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    REQUIRE(importSong(song.data(), song.size(), lsdjLatestModel(), *bank, *out, sum, notes));
+    CHECK(sum.waves == bank::kWaveSlots);
+    for (int synth = 0; synth < bank::kWaveSlots; ++synth) {
+        const auto& w = bank->waves[size_t(synth)];
+        INFO("synth " << synth);
+        REQUIRE(w.used);
+        REQUIRE(w.frames.size() == size_t(bank::kMaxFrames));
+        for (const auto& f : w.frames)
+            for (auto v : f.s) CHECK(int(v) == synth);
+    }
+    // The song's only wave instrument names synth 0, and that is still slot 1:
+    // the slots are the synths' own numbers, not the order they are referenced.
+    const auto& bass = bank->instruments[2];
+    REQUIRE(bass.type == bank::InstrumentType::Wave);
+    CHECK(int(bass.wave) == 1);
+}
+
 TEST_CASE("a format-22 song imports its instruments, tables, phrases and chains", "[lsdj]")
 {
     const auto song = testSong(22);
     auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
     ImportSummary sum; ImportNotes notes;
     REQUIRE(importSong(song.data(), song.size(), lsdjLatestModel(), *bank, *out, sum, notes));
-    CHECK(sum.instruments == 3); CHECK(sum.tables == 1); CHECK(sum.waves == 1); CHECK(sum.rows == 2);
+    CHECK(sum.instruments == 3); CHECK(sum.tables == 1); CHECK(sum.rows == 2);
+    // Section 103: all sixteen synths come in, in order, whether or not an
+    // instrument names them -- the bank is one flat table.
+    CHECK(sum.waves == bank::kWaveSlots);
+    for (int k = 0; k < bank::kWaveSlots; ++k) CHECK(bank->waves[size_t(k)].used);
     CHECK(out->tempoBpm == 165.0);
     // The lead: a staged envelope A -> 0 at speed 5 is 10 levels x 6 periods x 2.79 ms
     // = 167 ms = 11 ticks at 165 BPM (section 51); PU2 TSP is the instrument's.

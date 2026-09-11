@@ -163,7 +163,7 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.sweepRate = uint8_t(std::clamp(getOr(o, "sweepRate", 0), 0, 7)); i.sweepDown = bool(o->getProperty("sweepDown")); i.sweepShift = uint8_t(std::clamp(getOr(o, "sweepShift", 0), 0, 7));
     i.noiseLsdjMap = bool(o->getProperty("noiseLsdjMap"));             // section 81
     i.noisePitch = NoisePitch(std::clamp(getOr(o, "noisePitch", 0), 0, 2));                 // section 86
-    i.wave = uint8_t(std::clamp(getOr(o, "wave", 1), 1, 64)); i.frameAdvance = uint8_t(std::clamp(getOr(o, "frameAdvance", 0), 0, 15)); i.frameLoop = FrameLoop(std::clamp(getOr(o, "frameLoop", 0), 0, 2)); i.waveLevel = uint8_t(std::clamp(getOr(o, "waveLevel", 3), 0, 3));
+    i.wave = uint8_t(std::clamp(getOr(o, "wave", 1), 1, kWaveSlots));   /* section 103 */ i.frameAdvance = uint8_t(std::clamp(getOr(o, "frameAdvance", 0), 0, 15)); i.frameLoop = FrameLoop(std::clamp(getOr(o, "frameLoop", 0), 0, 2)); i.waveLevel = uint8_t(std::clamp(getOr(o, "waveLevel", 3), 0, 3));
     i.kit = uint8_t(std::clamp(getOr(o, "kit", 1), 1, 32)); i.kitLoop = KitLoop(std::clamp(getOr(o, "kitLoop", 0), 0, 2));
     i.lfsr7 = bool(o->getProperty("lfsr7")); i.noiseManual = bool(o->getProperty("noiseManual")); i.noiseShift = uint8_t(std::clamp(getOr(o, "noiseShift", 5), 0, 13)); i.noiseDivisor = uint8_t(std::clamp(getOr(o, "noiseDivisor", 1), 0, 7)); i.noiseSweep = int8_t(std::clamp(getOr(o, "noiseSweep", 0), -7, 7));
 }
@@ -284,7 +284,12 @@ void waveFromVarImpl(const var& v, Wave& w)
             Frame f; if (auto* s = fv.getArray()) for (int k = 0; k < std::min(32, s->size()); ++k) f.s[size_t(k)] = uint8_t(std::clamp(int((*s)[k]), 0, 15));
             w.frames.push_back(f);
         }
+    // Section 103: a slot is always kMaxFrames. A wave saved before that had
+    // between one and sixteen, and is held at its last frame rather than
+    // stretched -- stretching would move the frames an F names by number.
     if (w.frames.empty()) w.frames.push_back(Frame{});
+    while (w.frames.size() < size_t(kMaxFrames)) w.frames.push_back(w.frames.back());
+    w.frames.resize(size_t(kMaxFrames));
     if (o->hasProperty("synth")) synthFromVar(o->getProperty("synth"), w.synth);
 }
 

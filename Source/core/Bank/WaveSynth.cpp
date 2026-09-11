@@ -332,15 +332,13 @@ void synthWriteRun(const Synth& s, const std::vector<Frame>& run, Wave& w)
     if (run.empty()) return;
     const int first = synthFirstFrame(s);
     const int count = std::min<int>(int(run.size()), kMaxFrames - first);
-    // Grow to reach the run: the frames before it that did not exist yet
-    // copy the run's last frame, so nothing blank sits in the wave.
-    while (int(w.frames.size()) < first) w.frames.push_back(run.back());
-    for (int k = 0; k < count; ++k) {
-        const size_t at = size_t(first + k);
-        if (at < w.frames.size()) w.frames[at] = run[size_t(k)];
-        else w.frames.push_back(run[size_t(k)]);
-    }
+    // Section 103: a wave is kMaxFrames. One that arrives short -- a bank from
+    // before that section, or a test's -- is filled out with the run's last
+    // frame first, so nothing blank sits in it and the write lands where From
+    // says it does.
+    while (int(w.frames.size()) < kMaxFrames) w.frames.push_back(run.back());
     if (w.frames.size() > size_t(kMaxFrames)) w.frames.resize(size_t(kMaxFrames));
+    for (int k = 0; k < count; ++k) w.frames[size_t(first + k)] = run[size_t(k)];
 }
 
 const char* synthSourceName(SynthSource s)

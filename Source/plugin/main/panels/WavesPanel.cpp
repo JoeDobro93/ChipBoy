@@ -58,10 +58,11 @@ public:
         selected_ = selected;
         repaint();
     }
-    std::function<void(int)> onSelect, onExtendTo;
-    std::function<void()> onAdd, onRemove;
+    std::function<void(int)> onSelect;
 
-    static constexpr int kCells = bank::kMaxFrames + 2;
+    // Section 103: a wave is sixteen frames, always, so the strip is those
+    // sixteen -- there is nothing to add or remove.
+    static constexpr int kCells = bank::kMaxFrames;
     static int rows() { return (kCells + kThumbsPerRow - 1) / kThumbsPerRow; }
     int preferredHeight(int) override { return rows() * (kThumbH + kThumbGap) - kThumbGap; }
     int thumbW() const { return std::max(24, (getWidth() - (kThumbsPerRow - 1) * kThumbGap) / kThumbsPerRow); }
@@ -100,27 +101,12 @@ public:
             if (has) g.drawRoundedRectangle(r, 3.0f, 1.0f);
             else { const float d[] = { 3.0f, 3.0f }; Path p; p.addRoundedRectangle(r, 3.0f); Path dashed; PathStrokeType(1.0f).createDashedStroke(dashed, p, d, 2); g.fillPath(dashed); }
         }
-        g.setFont(Fonts::sans(14.0f));
-        for (int b = 0; b < 2; ++b) {
-            const auto r = cell(bank::kMaxFrames + b);
-            const bool enabled = b == 0 ? n < bank::kMaxFrames : n > 1;
-            g.setColour(colours::raised.withAlpha(enabled ? 1.0f : 0.5f));
-            g.fillRoundedRectangle(r.toFloat().reduced(0.5f), 3.0f);
-            g.setColour(colours::line);
-            g.drawRoundedRectangle(r.toFloat().reduced(0.5f), 3.0f, 1.0f);
-            g.setColour(enabled ? colours::text : colours::textDim);
-            g.drawText(b == 0 ? "+" : String(CharPointer_UTF8("\xe2\x88\x92")), r, Justification::centred, false);
-        }
     }
     void mouseDown(const MouseEvent& e) override
     {
         for (int k = 0; k < kCells; ++k) {
             if (!cell(k).contains(e.getPosition())) continue;
-            const int n = int(frames_.size());
-            if (k == bank::kMaxFrames) { if (onAdd) onAdd(); }
-            else if (k == bank::kMaxFrames + 1) { if (onRemove) onRemove(); }
-            else if (k < n) { if (onSelect) onSelect(k); }
-            else if (onExtendTo) onExtendTo(k);
+            if (onSelect) onSelect(k);
             return;
         }
     }
@@ -305,7 +291,7 @@ WavesPanel::WavesPanel(ChipBoyProcessor& p)
       frameLabel_("Frame", Fonts::caption(10.0f), colours::textDim),
       frameText_({}, Fonts::mono(12.0f), colours::text),
       shape_({ "Sine", "Triangle", "Saw", "Pulse" }),
-      view_({ "Bars", "Points" }),
+      view_({ "Points", "Bars" }),
       interp_("Interpolate"),
       import_("Import" + String(CharPointer_UTF8("\xe2\x80\xa6")))
 {
@@ -321,14 +307,14 @@ WavesPanel::WavesPanel(ChipBoyProcessor& p)
         rebuildList();
         contextChanged();
     };
-    newBtn_.setTooltip("New wave in the first empty slot: one triangle frame");
+    newBtn_.setTooltip("New wave in the first empty slot: sixteen triangle frames");
     newBtn_.onClick = [this] {
         const auto b = processor.bank();
         if (!b) return;
         int slot = 0;
         for (int k = 0; k < bank::kWaveSlots; ++k) if (!b->waves[size_t(k)].used) { slot = k + 1; break; }
         if (slot == 0) return;
-        processor.editBank("New wave " + ValueFormat::slot(slot), [slot](bank::Bank& bk) { auto& w = bk.waves[size_t(slot - 1)]; w.used = true; w.name = ("Wave " + String(slot)).toStdString(); w.frames = { bank::frameTriangle() }; });
+        processor.editBank("New wave " + ValueFormat::slot(slot), [slot](bank::Bank& bk) { auto& w = bk.waves[size_t(slot - 1)]; w.used = true; w.name = ("Wave " + String(slot)).toStdString(); w.frames.assign(size_t(bank::kMaxFrames), bank::frameTriangle()); });
         selfBank_ = processor.bank().get();
         rebuildList();
         showSlot(slot);
@@ -342,9 +328,10 @@ WavesPanel::WavesPanel(ChipBoyProcessor& p)
     import_.setTooltip("An audio file -- a single-cycle waveform -- read as one cycle into the frame on show: mono, 32 samples, 16 levels.");
     import_.onClick = [this] { importWave(); };
     view_.setMini(true);
-    view_.setTooltip("Bars, or each sample as a point on the 32 by 16 grid. Either way the pointer's column and row are lit and the corner reads the coordinates.");
-    view_.setSelected(0, dontSendNotification);
-    view_.onChange = [this](int i) { grid_.setView(i == 1 ? WaveGrid::View::Points : WaveGrid::View::Bars); };
+    view_.setTooltip("Each sample as a point on the 32 by 16 grid, or bars. Either way the pointer's column and row are lit and the corner reads the coordinates.");
+    view_.setSelected(0, dontSendNotification);   // Points, the default
+    grid_.setView(WaveGrid::View::Points);
+    view_.onChange = [this](int i) { grid_.setView(i == 1 ? WaveGrid::View::Bars : WaveGrid::View::Points); };
 
     auto stack = std::make_unique<Stack>(8);
     stack->add(std::make_unique<Hold>(grid_, kGridHeight));
@@ -352,25 +339,6 @@ WavesPanel::WavesPanel(ChipBoyProcessor& p)
     auto frames = std::make_unique<FrameStrip>();
     frames_ = frames.get();
     frames->onSelect = [this](int k) { frame_ = k; syncFromBank(true); contextChanged(); };
-    frames->onExtendTo = [this](int k) {
-        editWave("frame count", [k](bank::Wave& w) { const bank::Frame last = w.frames.empty() ? bank::Frame{} : w.frames.back(); while (int(w.frames.size()) <= k && int(w.frames.size()) < bank::kMaxFrames) w.frames.push_back(last); }, false);
-        frame_ = k;
-        syncFromBank(true);
-    };
-    frames->onAdd = [this] {
-        const int cur = frame_;
-        editWave("frame inserted", [cur](bank::Wave& w) { if (int(w.frames.size()) >= bank::kMaxFrames) return; const bank::Frame f = w.frames.empty() ? bank::Frame{} : w.frames[size_t(std::clamp(cur, 0, int(w.frames.size()) - 1))]; w.frames.insert(w.frames.begin() + std::min<long>(long(cur) + 1, long(w.frames.size())), f); }, false);
-        const auto b = processor.bank();
-        if (b) frame_ = std::min(frame_ + 1, int(b->waves[size_t(slot_ - 1)].frames.size()) - 1);
-        syncFromBank(true);
-    };
-    frames->onRemove = [this] {
-        const int cur = frame_;
-        editWave("frame deleted", [cur](bank::Wave& w) { if (w.frames.size() > 1 && cur >= 0 && cur < int(w.frames.size())) w.frames.erase(w.frames.begin() + cur); }, false);
-        const auto b = processor.bank();
-        if (b) frame_ = std::clamp(frame_, 0, std::max(0, int(b->waves[size_t(slot_ - 1)].frames.size()) - 1));
-        syncFromBank(true);
-    };
     stack->add(std::move(frames));
     RichText help;
     help.plain("Each frame is one load of wave RAM. ").bold("A frame change costs a click on a DMG").plain(", not on a CGB.");
@@ -424,7 +392,9 @@ void WavesPanel::rebuildList()
         r.slot = k + 1;
         r.used = w.used;
         r.name = w.used ? String(w.name) : String();
-        r.note = w.used ? String(int(w.frames.size())) + " fr" : String();
+        // Section 103: every slot is the same sixteen frames, so what is worth
+        // reading off the list is where they sit in the flat table.
+        r.note = String(bank::waveFlatOf(k + 1, 0)) + "-" + String(bank::waveFlatOf(k + 1, bank::kMaxFrames - 1));
     }
     bool same = rows.size() == lastRows_.size();
     for (size_t k = 0; same && k < rows.size(); ++k)
@@ -450,16 +420,14 @@ void WavesPanel::syncFromBank(bool pushToGrid)
     const bank::Wave& w = b->waves[size_t(slot_ - 1)];
     const String n = w.used ? String(w.name) : String();
     if (name_.text() != n) name_.setText(n);
-    const int count = std::max(1, int(w.frames.size()));
-    frame_ = std::clamp(frame_, 0, count - 1);
-    frameText_.setText(String(frame_ + 1) + " of " + String(count));
+    frame_ = std::clamp(frame_, 0, bank::kMaxFrames - 1);
+    frameText_.setText(String(frame_ + 1) + " of " + String(bank::kMaxFrames));
     const bank::Frame f = frame_ < int(w.frames.size()) ? w.frames[size_t(frame_)] : bank::Frame{};
     if (pushToGrid) grid_.setFrame(f);
     if (frames_) {
-        frames_->set(w.frames.empty() ? std::vector<bank::Frame>{ f } : w.frames, frame_);
+        frames_->set(w.frames, frame_);
         scroll_.relayout();
     }
-    interp_.setEnabled(w.frames.size() >= 3);
     syncSynth();
 }
 

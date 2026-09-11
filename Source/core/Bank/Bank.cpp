@@ -55,6 +55,7 @@ Instrument Instrument::defaults(InstrumentType t, const char* name)
 const Instrument* Bank::instrument(int slot) const { return slot >= 1 && slot <= kInstrumentSlots && instruments[size_t(slot - 1)].used ? &instruments[size_t(slot - 1)] : nullptr; }
 const Table*      Bank::table(int slot) const      { return slot >= 1 && slot <= kTableSlots && tables[size_t(slot - 1)].used ? &tables[size_t(slot - 1)] : nullptr; }
 const Wave*       Bank::wave(int slot) const       { return slot >= 1 && slot <= kWaveSlots && waves[size_t(slot - 1)].used ? &waves[size_t(slot - 1)] : nullptr; }
+const Wave*       Bank::waveAt(int slot) const     { return slot >= 1 && slot <= kWaveSlots ? &waves[size_t(slot - 1)] : nullptr; }
 const Kit*        Bank::kit(int slot) const        { return slot >= 1 && slot <= kKitSlots && kits[size_t(slot - 1)].used ? &kits[size_t(slot - 1)] : nullptr; }
 
 Frame frameSine()     { Frame f; for (int i = 0; i < 32; ++i) f.s[size_t(i)] = q4(std::sin(2.0 * kPi * (i + 0.5) / 32.0)); return f; }
@@ -175,13 +176,15 @@ Bank Bank::factory()
     auto* arp = pulse(5, "Chord arp", 0, 12, EnvDir::Down, 1);      arp->table = 1;
     auto* dutyseq = pulse(6, "Duty cycler", 2, 13, EnvDir::Down, 0); dutyseq->dutySeqLen = 8; dutyseq->dutySeq = { 2, 2, 1, 1, 0, 0, 1, 1 };
 
-    auto wave = [&](int slot, const char* name, uint8_t w, uint8_t adv, FrameLoop loop) {
+    auto wave = [&](int slot, const char* name, uint8_t w, uint8_t adv, FrameLoop loop, uint8_t len = 0) {
         auto& i = I[size_t(slot - 1)]; i = Instrument::defaults(InstrumentType::Wave, name);
-        i.wave = w; i.frameAdvance = adv; i.frameLoop = loop; i.waveLevel = 3; return &i; };
+        i.wave = w; i.frameAdvance = adv; i.frameLoop = loop; i.frameLength = len; i.waveLevel = 3; return &i; };
     wave(7, "Triangle bass", 1, 0, FrameLoop::Loop);
     wave(8, "Saw", 2, 0, FrameLoop::Loop);
-    wave(9, "Organ frames", 5, 3, FrameLoop::PingPong);
-    wave(10, "Tri to saw", 6, 4, FrameLoop::Once);
+    // The morphs are sixteen frames now, so the run keeps its old length and
+    // section 65 spreads it across them: the same sweep, the same number of steps.
+    wave(9, "Organ frames", 5, 3, FrameLoop::PingPong, 4);
+    wave(10, "Tri to saw", 6, 4, FrameLoop::Once, 6);
 
     auto noise = [&](int slot, const char* name, uint8_t vol, uint8_t rate, bool lfsr7, uint8_t shift, uint8_t div) {
         auto& i = I[size_t(slot - 1)]; i = Instrument::defaults(InstrumentType::Noise, name);
@@ -225,13 +228,22 @@ Bank Bank::factory()
       t.end = TableEnd::Stop; b.tables[6] = t; }
 
     // Waves
-    auto W = [&](int slot, const char* name, std::vector<Frame> frames) { auto& w = b.waves[size_t(slot - 1)]; w.used = true; w.name = name; w.frames = std::move(frames); };
-    W(1, "Triangle", { frameTriangle() });
-    W(2, "Saw", { frameSaw() });
-    W(3, "Sine", { frameSine() });
-    W(4, "Pulse 25", { framePulse(8) });
-    { std::vector<Frame> fr; Frame a = frameSine(), c = frameSaw(); for (int k = 0; k < 4; ++k) fr.push_back(frameInterpolate(a, c, k / 3.0)); W(5, "Organ", fr); }
-    { std::vector<Frame> fr; Frame a = frameTriangle(), c = frameSaw(); for (int k = 0; k < 6; ++k) fr.push_back(frameInterpolate(a, c, k / 5.0)); W(6, "Tri to saw", fr); }
+    // Section 103: a slot is sixteen frames. A still wave is that shape sixteen
+    // times; a morph runs across all sixteen and the instrument's Frames picks
+    // how many of them its run visits.
+    auto W = [&](int slot, const char* name, const Frame& f) {
+        auto& w = b.waves[size_t(slot - 1)]; w.used = true; w.name = name;
+        w.frames.assign(size_t(kMaxFrames), f); };
+    auto M = [&](int slot, const char* name, const Frame& a, const Frame& c) {
+        auto& w = b.waves[size_t(slot - 1)]; w.used = true; w.name = name;
+        w.frames.clear();
+        for (int k = 0; k < kMaxFrames; ++k) w.frames.push_back(frameInterpolate(a, c, k / double(kMaxFrames - 1))); };
+    W(1, "Triangle", frameTriangle());
+    W(2, "Saw", frameSaw());
+    W(3, "Sine", frameSine());
+    W(4, "Pulse 25", framePulse(8));
+    M(5, "Organ", frameSine(), frameSaw());
+    M(6, "Tri to saw", frameTriangle(), frameSaw());
 
     // Kit: synthesized drums at 11 468 Hz, the conventional rate.
     Kit k; k.used = true; k.name = "909-ish"; k.period = periodForSampleRate(11468.0);

@@ -843,12 +843,12 @@ int main()
             into.instruments[39] = chipboy::bank::Instrument::defaults(chipboy::bank::InstrumentType::Wave, "Preset lead");
             into.instruments[39].used = true;
             into.instruments[39].table = 20;
-            into.instruments[39].wave = 30;
+            into.instruments[39].wave = 12;   // section 103: sixteen wave slots
             into.tables[19].used = true; into.tables[19].name = "preset table";
             into.tables[19].steps[0].cmd1 = { chipboy::bank::Cmd::A, 21, 0, 0 };
             into.tables[20].used = true; into.tables[20].name = "chained table";
-            into.waves[29].used = true; into.waves[29].name = "preset wave";
-            into.waves[29].frames.assign(1, chipboy::bank::frameSaw());
+            into.waves[11].used = true; into.waves[11].name = "preset wave";
+            into.waves[11].frames.assign(size_t(chipboy::bank::kMaxFrames), chipboy::bank::frameSaw());
         });
         const auto srcBank = src.bank();
         const auto preset = chipboy::bank::collectPreset(*srcBank, 40);
@@ -857,7 +857,7 @@ int main()
         chipboy::bank::Preset back;
         check(presetFromJson(text, back), "a preset writes and reads as JSON");
         check(back.instrument.name == "Preset lead" && back.tables.size() == 2 && back.waves.size() == 1
-              && back.tables[0].first == 20 && back.waves[0].first == 30, "and comes back with its slots");
+              && back.tables[0].first == 20 && back.waves[0].first == 12, "and comes back with its slots");
         const auto emptyBank = std::unique_ptr<chipboy::bank::Bank>(new chipboy::bank::Bank(chipboy::bank::Bank::empty()));
         chipboy::bank::PlaceReport placed;
         const bool ok = chipboy::bank::placePreset(*emptyBank, back, 5, placed);

@@ -2682,9 +2682,68 @@ TEST_CASE("F advances a wave frame, past the ones the run skips", "[driver][wave
     CHECK(std::find(one.begin(), one.end(), 3) != one.end());
     CHECK(std::find(six.begin(), six.end(), 12) != six.end());
     // Section 100: the high nibble counts. `F 11` is seventeen frames on, which
-    // over sixteen frames is one -- LSDj would reach the next synth's second.
+    // over sixteen frames is one -- and section 103 puts that one in the next
+    // slot, as it is on the ROM. The frame within the slot still steps by one.
     for (int d : stepsOf(rig(0x11))) CHECK(d == 1);
     for (int d : stepsOf(rig(0x12))) CHECK(d == 2);
+}
+
+TEST_CASE("F walks out of one wave slot into the next and wraps at the last", "[driver][wave]")
+{
+    // Section 103: the bank is one flat table of kWaveSlots slots of kMaxFrames
+    // frames, and the jump moves the flat index. Each slot here is filled with
+    // its own sample value -- slot s is all `s - 1` -- so the first wave-RAM byte
+    // of a tick names the slot the voice is on.
+    const auto run = [](int step, int ticks) {
+        auto r = std::make_unique<Rig>();
+        r->tickHz = 100.0;
+        for (int sl = 0; sl < bank::kWaveSlots; ++sl) {
+            auto& w = r->bank.waves[size_t(sl)];
+            w.used = true; w.frames.assign(size_t(bank::kMaxFrames), bank::Frame{});
+            for (auto& f : w.frames) f.s.fill(uint8_t(sl));
+        }
+        Table t; t.used = true; t.name = "Jump";
+        for (int k = 0; k < 16; ++k) t.steps[size_t(k)].cmd1 = { Cmd::F, int16_t((step >> 4) & 15), int16_t(step & 15), 0 };
+        r->bank.tables[7] = t;
+        auto& i = r->bank.instruments[1];
+        i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Flat");
+        i.used = true; i.wave = 1; i.frameAdvance = 0; i.table = 8;   // no run of its own; only F moves it
+        ChannelParams p; p.instrument = 2; p.velocityMode = 2; r->drv.setParams(2, p);
+        std::vector<std::pair<int, int>> seen;   // slot, frame
+        auto slotOf = [](const std::vector<RegWrite>& w) {
+            for (const auto& x : w) if (x.addr >= 0xFF30 && x.addr <= 0xFF3F) return int(x.value & 15) + 1;
+            return 0;
+        };
+        auto writes = r->block({ Rig::on(2, 60, 100) }, 480);
+        seen.push_back({ slotOf(writes), int(r->drv.view(2).frame) - 1 });
+        for (int k = 0; k < ticks; ++k) {
+            writes = r->block({}, 480);
+            const int sl = slotOf(writes);
+            seen.push_back({ sl ? sl : seen.back().first, int(r->drv.view(2).frame) - 1 });
+        }
+        return seen;
+    };
+
+    // `F 10` is a whole slot a tick. The note-on fires the table's row 0 in its
+    // own tick (section 84), so the first sample is already on slot 2.
+    const auto whole = run(0x10, 17);
+    for (size_t k = 0; k < whole.size(); ++k) {
+        INFO("tick " << k << " slot " << whole[k].first << " frame " << whole[k].second);
+        CHECK(whole[k].first == int((k + 1) % size_t(bank::kWaveSlots)) + 1);
+        CHECK(whole[k].second == 0);         // the frame within the slot never moves
+    }
+    // Sixteen jumps of a whole slot come back to where they started: the flat
+    // index wraps at kWaveFrames, not at the slot.
+    CHECK(whole.front() == whole[size_t(bank::kWaveSlots)]);
+
+    // Half a slot a tick: the frame alternates 0 and 8 and the slot advances on
+    // every second jump.
+    const auto half = run(0x08, 5);
+    CHECK(half[0] == std::make_pair(1, 8));
+    CHECK(half[1] == std::make_pair(2, 0));
+    CHECK(half[2] == std::make_pair(2, 8));
+    CHECK(half[3] == std::make_pair(3, 0));
+    CHECK(half[4] == std::make_pair(3, 8));
 }
 
 TEST_CASE("S and P on noise work on NR43 in the Register domain", "[driver][noise]")

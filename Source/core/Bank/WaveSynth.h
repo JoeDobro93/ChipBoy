@@ -38,9 +38,9 @@ Frame synthesizeFrame(const Synth& s, const Frame& drawn, int index);
 void synthesize(const Synth& s, const Frame& drawn, std::vector<Frame>& out);
 
 /// Generate's write (section 36): the run goes into the wave's frames from
-/// `synthFirstFrame(s)` on, the wave grows to reach the run's last frame when
-/// it is shorter (the new frames before the run copy its last frame), and
-/// every frame outside the run stays as it was. Never more than kMaxFrames.
+/// `synthFirstFrame(s)` on and every frame outside it stays as it was. A wave
+/// is always kMaxFrames (section 103); one that arrives shorter is filled out
+/// with the run's last frame first, so nothing blank sits in it.
 void synthWriteRun(const Synth& s, const std::vector<Frame>& run, Wave& w);
 
 /// The letters a panel puts on the controls. Never null.

@@ -84,6 +84,10 @@ def note_name(value):
 # ---------------------------------------------------------------------------
 
 # letter: (arguments, x range, y range, where it means something)
+# Section 103: the wave bank is WAVE_SLOTS slots of WAVE_FRAMES frames, one flat
+# table, and every slot is all sixteen whether or not anything was drawn in it.
+WAVE_SLOTS, WAVE_FRAMES = 16, 16
+
 #   P  pulse channels        W  the wave channel        N  the noise channel
 #   1  PU1 only              *  every channel (the timeline or the master)
 CMD_SPEC = {
@@ -103,7 +107,7 @@ CMD_SPEC = {
     "S": (2, (0, 7), (0, 15), "1"),          # sweep, PU1 only: rate, NR10's low nibble
     "T": (1, (40, 295), None, "*"),          # tempo in BPM; stored as LSDj's byte (34)
     "V": (2, (0, 15), (0, 15), "PW"),        # vibrato: 64/(x+1) updates a cycle, depth
-    "W": (1, (0, 64), None, "PW"),           # duty (pulse) / wave slot (WAV)
+    "W": (1, (0, WAVE_SLOTS), None, "PW"),   # duty (pulse) / wave slot (WAV), section 103
     "Z": (2, (0, 15), (0, 15), "PWN"),       # random (nibbles, section 34)
 }
 
@@ -237,6 +241,27 @@ def morph(a, b, count):
     return [frame_mix(a, b, k / float(count - 1)) for k in range(count)]
 
 
+def wave_run(length):
+    """Section 65: the frames a run of `length` visits on a WAVE_FRAMES wave."""
+    if length <= 0 or length > WAVE_FRAMES:
+        length = WAVE_FRAMES
+    if length == 1:
+        return [0]
+    return [min(WAVE_FRAMES - 1, (i * WAVE_FRAMES) // (length - 1)) for i in range(length)]
+
+
+def spread_frames(frames):
+    """Section 103: lay `frames` on the sixteen at the positions a run of that
+    many visits, holding each shape until the next, so a run of `len(frames)`
+    walks exactly the shapes given, in order."""
+    out = [frames[0]] * WAVE_FRAMES
+    at = wave_run(len(frames))
+    for k, f in enumerate(frames):
+        for i in range(at[k], WAVE_FRAMES):
+            out[i] = f
+    return out
+
+
 # ---------------------------------------------------------------------------
 # the bank
 # ---------------------------------------------------------------------------
@@ -266,6 +291,7 @@ class Bank:
         self.instrument_slot = {}
         self.table_slot = {}
         self.wave_slot = {}
+        self.wave_frames = {}
 
     # -- instruments ------------------------------------------------------
     def _add_instrument(self, name, fields):
@@ -282,8 +308,14 @@ class Bank:
         f = dict(type=PULSE, duty=duty, envVol=vol, envRate=rate, envDir=ENV_UP if up else ENV_DOWN)
         return self._add_instrument(name, self._common(f, **kw))
 
-    def wave(self, name, wave="", level=3, advance=0, loop=FRAME_LOOP, **kw):
-        f = dict(type=WAVE, wave=wave, waveLevel=level, frameAdvance=advance, frameLoop=loop)
+    def wave(self, name, wave="", level=3, advance=0, loop=FRAME_LOOP, frames=None, **kw):
+        # Section 103: every slot is WAVE_FRAMES frames, so the run has to say how
+        # many of them to visit. Left out, it is the count the wave was given --
+        # the shapes `wav()` was called with, in order.
+        if frames is None:
+            frames = self.wave_frames.get(wave, 0) if wave else 0
+        f = dict(type=WAVE, wave=wave, waveLevel=level, frameAdvance=advance, frameLoop=loop,
+                 frameLength=frames)
         return self._add_instrument(name, self._common(f, **kw))
 
     def noise(self, name, vol=15, rate=0, lfsr7=False, shift=5, div=1, sweep=0, manual=True, **kw):
@@ -320,15 +352,21 @@ class Bank:
         return slot
 
     def wav(self, name, frames):
+        """A wave slot.  Section 103: a slot is always WAVE_FRAMES frames, so the
+        shapes given are laid on the sixteen at the positions a run of that many
+        visits (section 65) and each is held until the next.  An instrument
+        playing this wave then walks exactly the shapes given, in order, by
+        taking `frames = len(frames)` -- which `wave()` does by itself."""
         if name in self.wave_slot:
             raise ValueError("wave %r twice" % name)
         slot = len(self.waves) + 1
-        if slot > 64:
-            raise ValueError("more than 64 waves")
-        if not 1 <= len(frames) <= 16:
-            raise ValueError("wave %r: %d frames (1-16)" % (name, len(frames)))
+        if slot > WAVE_SLOTS:
+            raise ValueError("more than %d waves" % WAVE_SLOTS)
+        if not 1 <= len(frames) <= WAVE_FRAMES:
+            raise ValueError("wave %r: %d frames (1-%d)" % (name, len(frames), WAVE_FRAMES))
         self.wave_slot[name] = slot
-        self.waves.append((name, frames))
+        self.wave_frames[name] = len(frames)
+        self.waves.append((name, spread_frames(frames)))
         return slot
 
     # -- resolution -------------------------------------------------------

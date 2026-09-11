@@ -26,6 +26,71 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-11 — The Waves tab opens in Points, and two measurements about wave frames
+
+The Waves tab's view switch reads **Points, Bars** and starts on Points, at the user's request --
+the points view is the one that reads like LSDj's own wave screen. The grid is put into Points
+explicitly as well, since selecting a segment without notification does not reach it.
+
+`docs/COMMANDS_AND_TEMPO.md` §104: the user reported, twice, that a frame in ChipBoy's wave grid
+looks vertically mirrored against the same frame on LSDj's WAVE screen. It is a drawing convention.
+`READROOM`'s synth 2 frame 0 is stored as `8F FF FF FC FE A9 AA 88 75 46 41 32 00 00 00 00`, which
+is ChipBoy's picture of it; LSDj draws the mirror. Of 850 distinct sixteen-byte loads the ROM made
+into `FF30-FF3F` over that song, 35 are a stored synth frame byte for byte and **none** is the
+vertical inverse of one -- so the bytes ChipBoy imports are the bytes the APU sounds, and nothing
+in the import or the driver changes. Whether the **grid** should draw LSDj's way so the two editors
+read side by side is a UI question and is left open rather than decided here; a mirror is a
+polarity flip and inaudible either way.
+
+§105: **some songs' synths are generated as they play.** 85.7% of the ROM's wave-RAM loads on
+`SAMESONG` are frames the save stores; on `READROOM` only 3.7%, and it loads 841 distinct frames
+where a save holds 256. So §103's "read all sixteen synths out of the save" is the whole story only
+for a song whose synths stand still. Reading LSDj's synth parameters onto `bank::Synth` is not done
+here -- it is a separate change, recorded in `docs/HANDOFF.md`.
+
+### 2026-09-11 — The wave bank is one flat 256-frame table
+
+`docs/COMMANDS_AND_TEMPO.md` §103. §100 measured that LSDj's wave RAM is a single 256-frame
+table -- sixteen synths of sixteen frames laid end to end -- and that `F` walks it straight
+through, so an advance past a synth's last frame sounds the next synth's. ChipBoy's wave was one
+to sixteen frames and the index wrapped inside its own slot, so `SAMESONG`'s accent notes
+(`SLAPB`: `F 01` then `Z 1E`, a random 0-31 frames on) came out duller than the ROM's. §100 named
+two ways to close it and left the choice to the user; the user chose the second, and this is it.
+
+**A wave slot is sixteen frames, always, and there are sixteen slots.** `kWaveSlots` goes from 64
+to 16, `Wave::frames` is `kMaxFrames` long whether or not anyone has drawn it, and the bank is
+`kWaveFrames = 256` frames with no holes. A frame jump moves the flat index
+`(slot - 1) * 16 + frame` and wraps at 256, so past slot 16's frame 15 it is on slot 1 frame 0.
+Only the jump walks flat: the instrument's own run -- LENGTH, LOOP POS, PLAY, SPEED (§65) -- stays
+inside the slot the voice is on, which is what §65 traced on 8.4.4.
+
+**Considered and rejected:** one wave of up to 256 frames, which is what the ROM literally has. It
+makes the whole table one editable object and needs no carrying in the driver, but it throws away
+the slot as a unit -- an instrument names a slot, `W` selects one, a preset carries one -- and it
+would have moved the song file's wave layout wholesale rather than widening it. Sixteen slots of
+sixteen keep every one of those and put the flat table on top.
+
+**What it costs.** 64 wave slots become 16: a bank that had waves past slot 16 loses them, and a
+preset carrying waves can now fail to place where it would once have found room. A wave saved
+before this is padded to sixteen with its **last** frame rather than stretched, because stretching
+would move the frames an `F` in the song names by number; a one-frame wave is unchanged in sound.
+The factory bank's two morphs (Organ, Tri to saw) are generated across all sixteen frames now and
+their instruments carry the old run lengths (4 and 6), which §65 spreads across the sixteen -- the
+same sweep, the same number of steps. In the editor a wave no longer has a frame count, so the
+frame strip's `+` and `-` and the click-past-the-end that grew a wave are gone and the list reads
+each slot's flat range (`0-15`, `16-31`, ...) instead of `n fr`; the synth keeps its **From** and
+**To** (§36), which is the part LSDj does not have.
+
+**The importer owes this all sixteen synths.** A flat table is only faithful if the slot next door
+holds what the ROM had there, so the importer no longer allocates slots in the order instruments
+happen to reference synths: it reads all sixteen in order, LSDj synth `k` into slot `k + 1`, from
+the save's wave RAM. An unreferenced synth costs 512 bytes and buys a frame jump that lands where
+the ROM's does. The per-command import warning about ChipBoy wrapping inside the synth is gone.
+
+Sixteen slots for now. Further blocks of sixteen -- a second 256-frame table a song can reach --
+are a later change; the arithmetic here is written against `kMaxFrames` and `kWaveFrames`, not
+against 16.
+
 ### 2026-09-11 — A phrase's `H` loops, and the timeline counts the loop
 
 The user: "READROOM however is a mess and a big part of that has to do with the H command not

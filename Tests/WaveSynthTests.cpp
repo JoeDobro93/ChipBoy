@@ -380,24 +380,26 @@ TEST_CASE("the run is written from its first frame and the rest of the wave stay
     synthesize(s, Frame{}, run);
     REQUIRE(run.size() == 3);
 
-    // A two-frame wave grows to seven: the gap copies the run's last frame.
+    // Section 103: a two-frame wave is filled out to the sixteen first, with the
+    // run's last frame, and the run then lands at From.
     Wave w;
     w.frames = { rampFrame(), frameSine() };
     synthWriteRun(s, run, w);
-    REQUIRE(w.frames.size() == 7);
+    REQUIRE(w.frames.size() == size_t(kMaxFrames));
     CHECK(w.frames[0].s == rampFrame().s);
     CHECK(w.frames[1].s == frameSine().s);
     CHECK(w.frames[2].s == frameSaw().s);
     CHECK(w.frames[3].s == frameSaw().s);
     for (int k = 4; k < 7; ++k) CHECK(w.frames[size_t(k)].s == run[size_t(k - 4)].s);
+    for (int k = 7; k < kMaxFrames; ++k) CHECK(w.frames[size_t(k)].s == frameSaw().s);
 
-    // A longer wave keeps what lies past the run.
+    // A wave that is already the sixteen keeps every frame outside the run.
     Wave big;
-    for (int k = 0; k < 10; ++k) big.frames.push_back(k % 2 ? frameSine() : rampFrame());
+    for (int k = 0; k < kMaxFrames; ++k) big.frames[size_t(k)] = k % 2 ? frameSine() : rampFrame();
     synthWriteRun(s, run, big);
-    REQUIRE(big.frames.size() == 10);
+    REQUIRE(big.frames.size() == size_t(kMaxFrames));
     for (int k = 0; k < 4; ++k) CHECK(big.frames[size_t(k)].s == (k % 2 ? frameSine() : rampFrame()).s);
-    for (int k = 7; k < 10; ++k) CHECK(big.frames[size_t(k)].s == (k % 2 ? frameSine() : rampFrame()).s);
+    for (int k = 7; k < kMaxFrames; ++k) CHECK(big.frames[size_t(k)].s == (k % 2 ? frameSine() : rampFrame()).s);
 
     // The count is clamped to what fits after the first frame.
     Synth tail = plain(SynthSource::Sine);

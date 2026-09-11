@@ -756,7 +756,9 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
             break;
         }
         case InstrumentType::Wave: {
-            const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr;
+            // waveAt, not wave: every one of the sixteen slots holds frames and
+            // sounds, drawn or not, because the bank is one flat table (section 103).
+            const Wave* w = bank_ ? bank_->waveAt(v.waveSlot) : nullptr;
             const Frame* f = w && !w->frames.empty() ? &w->frames[0] : nullptr;
             v.frameCount = 0; v.frameDir = 1; v.frameFresh = true; v.kitOn = false; v.streamActive = false;
             // The run starts at its first step, which is always frame 0
@@ -1564,19 +1566,23 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
                 // it every time it runs -- a table row holding `F 01` walks the
                 // synth one frame a tick. It steps through the wave's frames,
                 // not through the run. Section 100: the argument is the whole
-                // byte, `x * 16 + y`; LSDj walks its 256-frame wave table flat
-                // and an advance past the synth's sixteen reaches the next
-                // synth's frames, while ChipBoy's wave is sixteen and wraps.
-                const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr;
-                if (w && !w->frames.empty()) {
-                    const int n = int(w->frames.size());
-                    const int step = (int(c.a) & 15) * 16 + (int(c.b) & 15);
-                    const int want = int((int(v.frameIdx) + step) % n);
+                // byte, `x * 16 + y`. Section 103: the bank is one flat table of
+                // sixteen slots of sixteen, so the advance is on the flat index
+                // -- past this slot's last frame it lands in the next slot's,
+                // and past the last slot's it wraps to slot 1 frame 0.
+                const int step = (int(c.a) & 15) * 16 + (int(c.b) & 15);
+                const int to = waveFlatWrap(waveFlatOf(v.waveSlot, v.frameIdx) + step);
+                const uint8_t slot = uint8_t(waveSlotOfFlat(to)), want = uint8_t(waveFrameOfFlat(to));
+                if (const Wave* w = bank_ ? bank_->waveAt(slot) : nullptr) {
+                    v.waveSlot = slot; v.frameIdx = want;
+                    // The run is the new slot's -- every slot is sixteen frames,
+                    // so it has the same shape -- and the step goes to the one
+                    // nearest the frame we landed on, as section 65 says.
                     uint8_t run[16]; const int len = waveRunOf(ch, run);
                     int best = 0, bestD = 256;
-                    for (int k = 0; k < len; ++k) { const int d = std::abs(int(run[size_t(k)]) - want); if (d < bestD) { bestD = d; best = k; } }
-                    v.frameStep = uint8_t(best); v.frameCount = 0; v.frameIdx = uint8_t(want);
-                    if (live) loadFrame(ch, w->frames[size_t(want)], model_ == Console::DMG);
+                    for (int k = 0; k < len; ++k) { const int d = std::abs(int(run[size_t(k)]) - int(want)); if (d < bestD) { bestD = d; best = k; } }
+                    v.frameStep = uint8_t(best); v.frameCount = 0;
+                    if (live && !w->frames.empty()) loadFrame(ch, w->frames[size_t(std::min<int>(want, int(w->frames.size()) - 1))], model_ == Console::DMG);
                 }
             }
             // Section 78, measured on 9.3.9. On **PU1** it is a downward finetune
@@ -1821,7 +1827,7 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
             // Duty on the pulses, wave slot on WAV: one letter, the thing the
             // channel's waveform actually is.
             if (wave) {
-                const Wave* w = bank_ ? bank_->wave(uint8_t(std::clamp<int>(c.a, 1, kWaveSlots))) : nullptr;
+                const Wave* w = bank_ ? bank_->waveAt(uint8_t(std::clamp<int>(c.a, 1, kWaveSlots))) : nullptr;
                 if (w && !w->frames.empty()) { v.waveSlot = uint8_t(std::clamp<int>(c.a, 1, kWaveSlots)); v.frameIdx = 0; v.frameCount = 0; if (live) loadFrame(ch, w->frames[0], model_ == Console::DMG); }
             } else if (pulse) {
                 v.duty = uint8_t(c.a & 3);
@@ -2055,7 +2061,7 @@ void Driver::beginTableRun(int ch, uint8_t slot)
 int Driver::waveRunOf(int ch, uint8_t* out) const
 {
     const Voice& v = v_[size_t(ch)];
-    const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr;
+    const Wave* w = bank_ ? bank_->waveAt(v.waveSlot) : nullptr;
     const int n = w ? int(w->frames.size()) : 0;
     if (n <= 0) { out[0] = 0; return 1; }
     return bank::waveRun(n, int(v.inst.frameLength), out);
@@ -2065,7 +2071,7 @@ int Driver::waveRunOf(int ch, uint8_t* out) const
 void Driver::setFrameStep(int ch, int step, bool live)
 {
     Voice& v = v_[size_t(ch)];
-    const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr;
+    const Wave* w = bank_ ? bank_->waveAt(v.waveSlot) : nullptr;
     if (w == nullptr || w->frames.empty()) { v.frameStep = 0; v.frameIdx = 0; return; }
     uint8_t run[16]; const int len = waveRunOf(ch, run);
     const int st = step < 0 ? 0 : (step >= len ? len - 1 : step);
@@ -2279,7 +2285,7 @@ void Driver::tick(int ch)
         if (v.frameFresh) { v.frameFresh = false; }
         else if (++v.frameCount >= v.inst.frameAdvance) {
             v.frameCount = 0;
-            const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr;
+            const Wave* w = bank_ ? bank_->waveAt(v.waveSlot) : nullptr;
             if (w && w->frames.size() > 1) {
                 uint8_t run[16]; const int len = waveRunOf(ch, run);
                 if (len > 1) {

@@ -14,11 +14,15 @@ namespace chipboy::bank {
 
 constexpr int kInstrumentSlots = 128;
 constexpr int kTableSlots = 64;
-constexpr int kWaveSlots = 64;
+constexpr int kWaveSlots = 16;
 constexpr int kKitSlots = 32;
 constexpr int kTableSteps = 16;
 constexpr int kMaxFrames = 16;
 constexpr int kMaxKitSamples = 32;
+/// Section 103: the wave bank is one flat table -- kWaveSlots slots of
+/// kMaxFrames frames laid end to end -- and a frame jump walks it straight
+/// through, out of one slot and into the next, wrapping at the end.
+constexpr int kWaveFrames = kWaveSlots * kMaxFrames;
 
 enum class InstrumentType : uint8_t { Pulse = 0, Wave = 1, Kit = 2, Noise = 3 };
 enum class Pan : uint8_t { Off = 0, Left = 1, Right = 2, Both = 3 };
@@ -202,7 +206,7 @@ struct InstrumentCore {
     bool     sweepDown = false;
     uint8_t  sweepShift = 0;
     // wave
-    uint8_t  wave = 1;               ///< wave slot 1-64
+    uint8_t  wave = 1;               ///< wave slot 1-16 (section 103)
     /// The run a note walks (section 65): `frameLength` frames spread across the
     /// wave's own, 0 meaning every one of them; Loop and PingPong turn at
     /// `frameLoopStep`, which is a step of that run and not a frame number.
@@ -311,11 +315,21 @@ struct Synth {
 
 struct Frame { std::array<uint8_t, 32> s{}; };   ///< 32 samples, 0-15
 struct Wave {
-    bool        used = false;
+    bool        used = false;        ///< false = nobody has drawn or generated it; it still sounds
     std::string name;
-    std::vector<Frame> frames;       ///< 1-16
+    /// Always kMaxFrames of them (section 103). A slot is sixteen frames whether
+    /// or not anyone has made them theirs, because the bank is one flat table
+    /// and a frame jump walks out of one slot into the next.
+    std::vector<Frame> frames = std::vector<Frame>(size_t(kMaxFrames));
     Synth       synth;               ///< what generated the run, when it was generated (section 33)
 };
+
+/// Section 103, the flat wave table. `flat` is 0 .. kWaveFrames-1; a slot is
+/// 1-based and a frame 0-based, as everywhere else.
+inline int waveFlatOf(int slot, int frame) { return (slot - 1) * kMaxFrames + frame; }
+inline int waveFlatWrap(int flat)          { const int n = kWaveFrames; return ((flat % n) + n) % n; }
+inline int waveSlotOfFlat(int flat)        { return flat / kMaxFrames + 1; }
+inline int waveFrameOfFlat(int flat)       { return flat % kMaxFrames; }
 
 /// The run a wave instrument walks (section 65): `frameLength` frames spread
 /// evenly across the wave's own, 0 (or a length past them) meaning every one.
@@ -370,6 +384,11 @@ struct Bank {
     const Table*      table(int slot) const;
     const Wave*       wave(int slot) const;
     const Kit*        kit(int slot) const;
+
+    /// The wave slot itself, `used` or not: every slot holds frames and sounds,
+    /// because a frame jump can walk into one nobody has touched (section 103).
+    /// nullptr only outside 1 .. kWaveSlots.
+    const Wave*       waveAt(int slot) const;
 
     static Bank factory();
     static Bank empty();

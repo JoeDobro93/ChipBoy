@@ -70,7 +70,6 @@ struct Reader {
     double tickMs = 0.0;
     std::array<int, kLsdjInstruments> instType{};        // -1 none, 0 pulse, 1 wave, 2 kit, 3 noise
     std::array<bool, kLsdjInstruments> instTranspose{};
-    std::map<int, int> waveSlotOfSynth;                  // LSDj synth -> ChipBoy wave slot
     std::map<int, std::set<bool>> noiseWidths;           // ChipBoy slot -> the LFSR widths its notes take
     std::map<int, int> pu2Top;                          // ChipBoy slot -> the highest note it plays on PU2 (section 49)
     // LSDj's noise clocks run from 16 Hz to 524 kHz; ChipBoy's notes 12-127
@@ -328,24 +327,27 @@ struct Reader {
     {
         return (b5 & 0x80) ? bank::PitchSpeed::Step : (b5 & 0x40) ? bank::PitchSpeed::Drum : (b5 & 0x10) ? bank::PitchSpeed::Tick : bank::PitchSpeed::Fast;
     }
-    int waveSlotFor(int synth)
+    /// Section 103: all sixteen synths, in order, LSDj synth k into ChipBoy wave
+    /// slot k + 1. The bank is one flat 256-frame table and `F` walks straight
+    /// out of one slot into the next, so the slot next door has to hold what the
+    /// save's wave RAM held there -- whether or not an instrument names it.
+    void waves()
     {
-        auto it = waveSlotOfSynth.find(synth);
-        if (it != waveSlotOfSynth.end()) return it->second;
-        const int slot = int(waveSlotOfSynth.size()) + 1;
-        waveSlotOfSynth[synth] = slot;
-        auto& w = bank.waves[size_t(slot - 1)];
-        w = bank::Wave{};
-        w.used = true; w.name = "LSDj synth " + hex2(synth).substr(1);
-        w.frames.resize(16);
-        for (int f = 0; f < 16; ++f)
-            for (int k = 0; k < 16; ++k) {
-                const uint8_t x = at(kWaves + size_t(synth * 16 + f) * 16 + size_t(k));
-                w.frames[size_t(f)].s[size_t(2 * k)] = uint8_t(x >> 4);
-                w.frames[size_t(f)].s[size_t(2 * k + 1)] = uint8_t(x & 15);
-            }
-        return slot;
+        static_assert(bank::kWaveSlots == 16, "section 103: one ChipBoy wave slot per LSDj synth");
+        for (int synth = 0; synth < bank::kWaveSlots; ++synth) {
+            auto& w = bank.waves[size_t(synth)];
+            w = bank::Wave{};
+            w.used = true; w.name = "LSDj synth " + hex2(synth).substr(1);
+            w.frames.assign(size_t(bank::kMaxFrames), bank::Frame{});
+            for (int f = 0; f < bank::kMaxFrames; ++f)
+                for (int k = 0; k < 16; ++k) {
+                    const uint8_t x = at(kWaves + size_t(synth * 16 + f) * 16 + size_t(k));
+                    w.frames[size_t(f)].s[size_t(2 * k)] = uint8_t(x >> 4);
+                    w.frames[size_t(f)].s[size_t(2 * k + 1)] = uint8_t(x & 15);
+                }
+        }
     }
+    static int waveSlotFor(int synth) { return (synth & (bank::kWaveSlots - 1)) + 1; }
     void instruments(ImportSummary& sum)
     {
         for (int i = 0; i < kLsdjInstruments; ++i) {
@@ -682,10 +684,10 @@ struct Reader {
                 // the next synth -- so both nibbles go through and the driver
                 // reads them as `x * 16 + y`. Keeping them apart is what lets a
                 // `Z` randomise each of them as LSDj does (section 74).
-                if (instKind == 1) {
-                    if (x) notes.add("F" + hex2(v) + " at " + where + " on a wave instrument advances " + std::to_string(v) + " frames, which in LSDj reaches the next synth's; ChipBoy's wave is sixteen frames and wraps (section 100)");
-                    out = { Cmd::F, int16_t(x), int16_t(y), 0 }; return true;
-                }
+                // Section 103: the advance walks ChipBoy's flat table too, so an
+                // `F 10` lands on the next slot's frame as it does on the ROM
+                // and there is nothing left to warn about.
+                if (instKind == 1) { out = { Cmd::F, int16_t(x), int16_t(y), 0 }; return true; }
                 if (channel == 0 || channel == 1) { out = { Cmd::F, int16_t(x), int16_t(y), 0 }; return true; }
                 notes.add("F" + hex2(v) + " at " + where + " on the noise channel does nothing on the ROM either; dropped"); return false;
             case 'B':
@@ -1073,6 +1075,7 @@ bool importSong(const uint8_t* bytes, size_t size, const LsdjModel& model,
     r.tickMs = 60000.0 / (double(tempo) * 24.0);
     r.usage();
     r.chooseNoiseOffsets();
+    r.waves();
     r.instruments(summary);
     r.tables(summary);
     r.chains(summary);
@@ -1080,7 +1083,7 @@ bool importSong(const uint8_t* bytes, size_t size, const LsdjModel& model,
     r.pu2TransposeRange();
     r.grooves();
     r.flattenTableGrooves();
-    summary.waves = int(r.waveSlotOfSynth.size());
+    summary.waves = bank::kWaveSlots;   // section 103: all sixteen, always
     summary.kits = r.kitSlots;
     for (auto& src : out.noteSource) src = tracker::NoteSource::Tracker;
     for (auto& arm : out.recordArm) arm = false;
