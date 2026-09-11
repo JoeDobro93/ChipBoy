@@ -3065,3 +3065,82 @@ first cycle of a note starts at sample 1, every cycle after it runs 0 to 31 like
 drawing it would be a phase choice, not the output, and it would make column 0 edit sample 1. The
 grid stays honest about which sample is which. If a pixel-exact LSDj view is wanted later it is one
 index rotation in the same three places.
+
+## 108. A table's volume column on the wave channel is the NR32 level, `amplitude & 3`
+
+`SAMESONG`'s phrase 24 runs table `0F` on a wave note. The table's volume column is `13 23 31` --
+amplitudes 1, 2, 3 -- and it swells on the ROM while ChipBoy plays it silent.
+
+Measured on 9.2.L by putting every amplitude `0`-`F` on its own table row at one tick and reading
+`NR32`:
+
+| amplitude | `NR32` | bits 6-5 | level |
+|---|---|---|---|
+| 0, 4, 8, C | `00` | 00 | **mute** |
+| 1, 5, 9, D | `E0` | 11 | **25 %** |
+| 2, 6, A, E | `C0` | 10 | **50 %** |
+| 3, 7, B, F | `A0` | 01 | **100 %** |
+
+So the column's amplitude selects the wave level by `amplitude & 3`, and the order is ChipBoy's own
+`Instrument::waveLevel` numbering -- 0 mute, 1 25 %, 2 50 %, 3 100 % -- not the raw `NR32` bits,
+which run the other way. Table `0F`'s `1 2 3` is therefore 25 % → 50 % → 100 %, the swell the user
+hears. (Bit 7 of the byte LSDj writes is set and means nothing.)
+
+ChipBoy had `waveLevel = vol / 4`, which is 0 for every amplitude 1-3: the whole swell muted. It is
+`vol & 3`. The four-level wrap is the ROM's and cannot be a clamp.
+
+## 109. `E` on a killed channel is a new envelope, and it runs to zero
+
+`SAMESONG`'s phrase 10 plays a hat with `K 03` and puts a bare `E 21` on the row after -- no note,
+no instrument, just the command. On the ROM that is a soft ghost hit; in ChipBoy the channel sat at
+one level and hissed.
+
+Measured on 9.2.L, reading the channel's volume rather than the zombie bytes (the tracer records the
+volume after each write, so a `09 11 18` triple reads as the level it leaves):
+
+| what plays | the ROM's noise volume, every 20 ms |
+|---|---|
+| `E 6 7` on the note itself | `6 6 6 6 6 6 5 5 5 5 5 4 4 4 4 4 3 3 3 3 3 2 2 2 2 2 1 1` |
+| note + `K 03`, then bare `E 4 1` | `4 3 2 1 0` |
+| note + `K 03`, then bare `E 2 1` | `2 1 0` |
+| note, then bare `E 2 1` two rows on | `2 1 0` |
+
+So `E x y` is the plain `NRx2` byte and it is a whole envelope, not a level: the volume goes **to x**
+and then runs **to zero** at rate y -- `1` about 16 ms a step, `7` about 109 ms, the hardware's
+`rate / 64` seconds. It does this whether or not a `K` has been through, and it never triggers
+(no `NR44` write goes with it). A killed channel answering an `E` is what makes the ghost hit: the
+level comes back up to x and falls away again over a few tens of milliseconds.
+
+ChipBoy did the first half and not the second. `Cmd::E` set `envVol`, `envRate` and `envDir`
+correctly and `setLevel` walked the volume to x, but after a `K` the voice had been torn down --
+`stopVoice` had cleared `active` -- so the per-tick envelope never ran again and the level stayed
+where the walk left it. Without a `K` the same phrase decayed properly, which is why this only shows
+up on the hats.
+
+## 110. An `L` in a cell slides the bare note; a table's transpose column plays no part in it
+
+`SAMESONG`'s phrase 21 on PU1 is a note with instrument `0B` and, on the row after, a bare note two
+semitones up with `L 10`. Instrument `0B` runs table `07`, which has `TSP 0C` on row 2 and `H 01` on
+row 4, so the table loops rows 1-3 and blips an octave up every third tick. ChipBoy put the whole
+bend an octave up.
+
+The `L` itself was never wrong. Traced on 9.2.L against ChipBoy, six cases of a note and a bare note
+two semitones up -- plain, `L 00`, `L 10`, `L 40` -- agree register for register, and `L 00` is
+instant (`1783`, `1783`, `1812`) while `L 10` walks `1783 → 1812` in twenty updates. With the table
+running they come apart:
+
+```
+ROM      1783T 1783 1915 1783 1915 1915 1785 1787 1788 1790 ... 1807 1928 1929 1930
+ChipBoy  1783T 1783 1915 1783 1915 1915 1916 1917 1918 1919 ... 1927 1928 1929
+```
+
+The ROM slides the **base** -- `1785 1787 … 1807`, the note without the column -- and shows no octave
+blip for the whole run, then puts the column back the moment the slide ends (`1928 1929 1930`, and
+`1812 / 1930` alternating after). ChipBoy slid from `1915`, the transposed pitch it happened to be
+on, so the bend sat an octave up from beginning to end.
+
+So: **the source and the target of a cell's `L` are the note's own pitch, and the table's transpose
+column is suppressed for the run**, exactly as §71 already holds a column for a slide a *table* row
+started. A table's `L` keeps §68's rule -- the note sounds plain and slides *to* the transposed one,
+which is the wave kick's `TSP C4` beside `L 20` -- so the two cases differ and the driver has to know
+which one it is in.

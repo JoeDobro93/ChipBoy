@@ -3074,3 +3074,107 @@ TEST_CASE("a slide replaces a running bend, and in Drum it walks the register", 
     for (int k = late; k < int(d.size()); ++k) { INFO("late step " << k); CHECK(std::abs(d[size_t(k)] - d[size_t(late)]) <= 1); }
     CHECK(d[size_t(late)] < d[0]);                       // and slower than the bend was
 }
+
+TEST_CASE("a table's volume column on the wave channel is the NR32 level", "[driver][wave]")
+{
+    // Section 108, measured on 9.2.L across all sixteen amplitudes: the column's
+    // amplitude selects the level by `amplitude & 3` -- 0 mute, 1 25 %, 2 50 %,
+    // 3 100 % -- and wraps every four. `SAMESONG`'s table 0F is 1, 2, 3, a
+    // swell, and `vol / 4` had made every one of them mute.
+    const auto levels = [](int a, int b, int c) {
+        auto r = std::make_unique<Rig>();
+        r->tickHz = 100.0;
+        auto& w = r->bank.waves[0];
+        w.used = true;
+        for (auto& f : w.frames) f.s.fill(8);
+        Table t; t.used = true; t.name = "Swell";
+        t.steps[0].vol = int8_t(a); t.steps[0].volTicks = 1;
+        t.steps[1].vol = int8_t(b); t.steps[1].volTicks = 1;
+        t.steps[2].vol = int8_t(c); t.steps[2].volTicks = 1;
+        r->bank.tables[5] = t;
+        auto& i = r->bank.instruments[1];
+        i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Bass");
+        i.used = true; i.wave = 1; i.waveLevel = 3; i.table = 6; i.frameAdvance = 0;
+        ChannelParams p; p.instrument = 2; p.velocityMode = 2; r->drv.setParams(2, p);
+        std::vector<int> out;
+        auto take = [&out](const std::vector<RegWrite>& ws) {
+            for (const auto& x : ws) if (x.addr == 0xFF1C) out.push_back((x.value >> 5) & 3);
+        };
+        take(r->block({ Rig::on(2, 60, 100) }, 480));
+        for (int k = 0; k < 6; ++k) take(r->block({}, 480));
+        return out;
+    };
+    // NR32's own bits run the other way round from LSDj's numbering: level 1 is
+    // 25 %, which is the bit pattern 3. The note's own level comes first.
+    const auto swell = levels(1, 2, 3);
+    INFO("swell " << swell.size() << " writes");
+    REQUIRE(swell.size() >= 3);
+    const std::vector<int> wantSwell{ 3, 2, 1 };
+    CHECK(std::vector<int>(swell.end() - 3, swell.end()) == wantSwell);
+    // And it wraps every four rather than clamping.
+    const auto wrapped = levels(4, 5, 7);
+    REQUIRE(wrapped.size() >= 3);
+    const std::vector<int> wantWrap{ 0, 3, 1 };
+    CHECK(std::vector<int>(wrapped.end() - 3, wrapped.end()) == wantWrap);
+}
+
+TEST_CASE("E on a channel a K has killed runs a whole envelope", "[driver][noise]")
+{
+    // Section 109, measured on 9.2.L: `E x y` is the plain NRx2 byte and a whole
+    // envelope -- the level goes to x and then to **zero** at rate y -- and a
+    // channel a K has killed answers it just the same. That is how `SAMESONG`'s
+    // hats get their ghost notes; ChipBoy walked the level to x and stopped,
+    // because the kill had torn the voice down and the envelope stopped running.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[3] = tracker::NoteSource::Tracker;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Noise, "Hat");
+    i.used = true; i.envVol = 15; i.envRate = 0; i.envDir = bank::EnvDir::Up;
+    ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(3, p);
+    NoteEvent hit = cellOn(3, 60, 2);
+    hit.cmd1 = { Cmd::K, 1, 0, 0 };
+    r.block({ hit }, 480);
+    r.block({}, 480);                                   // the kill falls due
+    r.block({ cellCmd(3, { Cmd::E, 4, 1, 0 }) }, 480);  // the ghost hit
+    CHECK(int(r.drv.view(3).envVol) == 4);
+    // It does not sit there: at rate 1 the envelope takes it to zero inside a
+    // hundred milliseconds.
+    for (int k = 0; k < 12; ++k) r.block({}, 480);
+    CHECK(int(r.drv.view(3).envVol) == 0);
+}
+
+TEST_CASE("a cell's L slides the bare note under a table transpose", "[driver][commands]")
+{
+    // Section 110, measured on 9.2.L. `SAMESONG`'s phrase 21: the instrument's
+    // table blips an octave up every third tick, and a bare note with `L 10` on
+    // the row after. The ROM slides the note's own pitch and suppresses the
+    // column for the run; ChipBoy slid from the blip, an octave up.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    Table t; t.used = true; t.name = "Octave";
+    t.steps[1].hasTranspose = true; t.steps[1].transpose = 12;
+    r.bank.tables[6] = t;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Lead");
+    i.used = true; i.table = 7;
+    ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(0, p);
+    r.block({ cellOn(0, 60, 2) }, 480);
+    const int plain = int(r.drv.view(0).period);
+    r.block({}, 480);
+    const int blipped = int(r.drv.view(0).period);
+    INFO("plain " << plain << " blipped " << blipped);
+    REQUIRE(plain > 0);
+    REQUIRE(blipped > plain);                            // the table's octave is in force
+    // A bare note two semitones up with an L, while the column is in force.
+    NoteEvent bare = cellOn(0, 62, 0);
+    bare.cmd1 = { Cmd::L, 16, 0, 0 };
+    r.block({ bare }, 480);
+    // The slide runs on the note, not on the blip: every period it walks
+    // through stays below the octave the table was holding.
+    int highest = 0;
+    for (int k = 0; k < 8; ++k) { r.block({}, 480); highest = std::max(highest, int(r.drv.view(0).period)); }
+    INFO("highest while sliding " << highest);
+    CHECK(highest < blipped);
+}

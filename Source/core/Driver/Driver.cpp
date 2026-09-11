@@ -1693,7 +1693,19 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
             // from the note, so that is what this one aims from too.
             const int32_t baseFine = int32_t(std::lround(noteOfVoice(ch) * 256.0)) - v.slideTspFine - liveFine;
             const int32_t floorFine = int32_t(lowestNote(wave)) * 256;
-            const int32_t target = std::max(floorFine, baseFine + liveFine);
+            // Section 110: a **table**'s L aims through the column -- the note
+            // sounds plain and slides to the transposed one, which is the wave
+            // kick's `TSP C4` beside `L 20` (section 68). A **cell**'s L has
+            // nothing to do with the column: measured on 9.2.L, it slides the
+            // bare note and the column is suppressed for the whole run, coming
+            // back the moment the slide ends. `SAMESONG`'s phrase 21 is that --
+            // instrument 0B's table blips an octave every third tick, and
+            // sliding from the blip put the whole bend an octave up.
+            const int32_t aimFine = fromTable ? liveFine : 0;
+            const int32_t target = std::max(floorFine, baseFine + aimFine);
+            // A cell's L starts from where the note is, not from where the
+            // column has just put it.
+            if (!fromTable) fromFine -= liveFine;
             const int32_t from = fromFine - target;
             if (from != 0) {
                 v.slideOff256 = from;
@@ -2120,7 +2132,11 @@ void Driver::stepTableLane(int ch, int lane)
                 // It takes a shaped envelope over: the segments left stop until the
                 // next plain note-on (section 27).
                 v.shapedTaken = true;
-                if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) v.waveLevel = uint8_t(std::clamp<int>(s.vol / 4, 0, 3));
+                // Section 108: on the wave channel the column's amplitude **is** the
+                // level, `amplitude & 3` -- 0 mute, 1 25 %, 2 50 %, 3 100 %, wrapping
+                // every four, measured on 9.2.L across all sixteen. `vol / 4` made
+                // every amplitude 1-3 mute, which silenced `SAMESONG`'s bass swell.
+                if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) v.waveLevel = uint8_t(s.vol & 3);
                 else v.envVol = uint8_t(std::clamp<int>(s.vol, 0, 15));
                 setLevel(ch);
                 // The same rule an E follows (section 59): before 8.8 the new level
@@ -2498,7 +2514,13 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
                 if (v.active && v.pitchClockOn) pitchStep(ch, false);
                 // The instrument's own envelope and R's resync run on the same
                 // clock, whatever the pitch speed is (sections 7 and 8).
-                if (v.active || v.releasing || v.pulseReleasing) stepSoftEnvelope(ch);
+                // Section 109: a channel a K has killed still answers a later E --
+                // the level comes back to x and falls away to zero, which is how
+                // `SAMESONG`'s hats get their ghost notes. So the envelope runs
+                // while the DAC is on, not only while a voice is active;
+                // stepSoftEnvelope's own guards (a rate of zero, a dead DAC, a
+                // shaped envelope nobody has taken over) stop it otherwise.
+                if (v.active || v.releasing || v.pulseReleasing || v.dacOn) stepSoftEnvelope(ch);
                 // Section 90: `R 8 y` retriggers every **y + 1** pitch clocks,
                 // not every one, and `R 8 F` stops instead of starting.
                 if (v.active && v.retrigFast && ++v.retrigFastCount > uint16_t(v.retrigEvery)) {

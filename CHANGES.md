@@ -26,6 +26,41 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-11 — Three SAMESONG faults: the wave table's volume, E after a kill, and L under a transpose
+
+`docs/COMMANDS_AND_TEMPO.md` §108, §109, §110, each measured on 9.2.L against the ROM and each
+reproduced side by side before it was changed.
+
+**§108 -- a table's volume column on the wave channel.** `SAMESONG`'s phrase 24 runs table `0F` on a
+wave note; its volume column is `13 23 31` and it swells on the ROM while ChipBoy played it silent.
+Putting every amplitude `0`-`F` on its own row and reading `NR32` gives `00 E0 C0 A0` repeating: the
+amplitude selects the level by `amplitude & 3`, in ChipBoy's own `waveLevel` numbering -- 0 mute,
+1 25 %, 2 50 %, 3 100 % -- wrapping every four. ChipBoy had `vol / 4`, which is 0 for every amplitude
+1-3, so the whole swell muted. It is `vol & 3`; the wrap is the ROM's and cannot be a clamp.
+
+**§109 -- `E` on a killed channel.** Phrase 10 plays a hat with `K 03` and puts a bare `E 21` on the
+row after. Reading the ROM's *volume* rather than its zombie bytes: `E x y` is the plain `NRx2` byte
+and a whole envelope -- the level goes to x and then to **zero** at rate y, about 16 ms a step at 1
+and 109 ms at 7 -- and a channel a `K` has been through answers it the same way, which is the ghost
+hit. ChipBoy did the first half: `Cmd::E` set the level and `setLevel` walked to it, but the kill had
+called `stopVoice`, and the software envelope only ran for a voice that was `active`, `releasing` or
+`pulseReleasing`. It now runs while the **DAC is on**; `stepSoftEnvelope`'s own guards keep it from
+doing anything otherwise.
+
+**§110 -- `L` in a cell against `L` in a table.** Phrase 21 on PU1 is a note with instrument `0B`,
+which runs a table that blips an octave up every third tick, and a bare note two semitones up with
+`L 10` on the row after. ChipBoy put the whole bend an octave up. The `L` itself was never wrong --
+six isolated cases (`L 00`, `L 10`, `L 40`, plain) agree with the ROM register for register -- but
+with the table running the ROM slides the **base** (`1785 1787 … 1807`, no blip for the whole run)
+and puts the column back the moment the slide ends, while ChipBoy slid from the blip. So a **cell**'s
+`L` takes its source and its target from the note alone and the column is suppressed for the run; a
+**table**'s `L` keeps §68's rule, where the note sounds plain and slides *to* the transposed one (the
+wave kick's `TSP C4` beside `L 20`). The driver now distinguishes the two.
+
+`SAMESONG` is unchanged on the windowed pitch metric (84/91/79/96) -- none of these three is a pitch
+error the metric scores, which is why they survived it. Three regression tests in
+`Tests/DriverTests.cpp`.
+
 ### 2026-09-11 — The wave grid gains centre lines and the arrows, and the channel scopes turn over
 
 `docs/UI_DESIGN.md` D-UI-23, D-UI-24, D-UI-25, after the previous entry turned the Waves grid over.

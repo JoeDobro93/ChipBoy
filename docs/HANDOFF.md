@@ -432,6 +432,16 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 25 (§108-§110), three faults the user heard in `SAMESONG` and all three measured against the
+  ROM first: **a table's volume column on the wave channel** is the `NR32` level by `amplitude & 3`
+  (0 mute, 1 25 %, 2 50 %, 3 100 %, wrapping every four), where ChipBoy had `vol / 4` and muted every
+  amplitude 1-3 -- phrase 24's bass swell was silent. **`E` is a whole envelope, not a level**: it
+  takes the volume to x and then to zero at rate y, and a channel a `K` has killed answers it the
+  same, which is how phrase 10's hats get their ghost notes; ChipBoy stopped the software envelope
+  with the voice, so the level sat where the walk left it. And **a cell's `L` slides the bare note**
+  with the table's transpose column suppressed for the run, where a table's `L` still aims *through*
+  the column (§68): phrase 21's bend had been sliding from the table's octave blip, an octave high.
+  The `L` command itself was never wrong -- six isolated cases agree register for register.
 - Round 24 (D-UI-23-25): the Waves grid gains a **centre line on each axis**, drawn over the trace so
   the Bars view cannot bury the level line, and the Bars view's bars grow **up** from the floor again
   (turning the axis over in §107 had left them filling from the top down, so they appeared to hang);
