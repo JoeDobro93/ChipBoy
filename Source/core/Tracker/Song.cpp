@@ -16,16 +16,59 @@ Groove grooveFor(const Song& s, const Phrase* p, uint8_t slot)
     return Groove{};                        // slot 0 is straight and not editable
 }
 
-void stepStartTicks(const Song& s, const Phrase* p, uint8_t groove, int* start)
+namespace {
+/// The cell's `H`, if it has one: `x` times, hop to step `y`. Either command
+/// column carries it; column 1 first, as the ROM reads them.
+const bank::Command* cellHop(const Cell& c)
 {
-    // A step is the groove's entry for it, in ticks: six at the straight
-    // groove, always (section 25). The entries past the phrase's length hold
-    // where the grid ends.
+    if (c.cmd1.cmd == bank::Cmd::H) return &c.cmd1;
+    if (c.cmd2.cmd == bank::Cmd::H) return &c.cmd2;
+    return nullptr;
+}
+} // namespace
+
+int phrasePlayOrder(const Phrase* p, uint8_t* order, int cap)
+{
     const int steps = p ? p->length() : kEmptyRowTicks / kTicksPerStep;
+    if (!p) { const int n = std::min(steps, cap); for (int i = 0; i < n; ++i) order[i] = uint8_t(i); return n; }
+    // Section 102: the hop is taken before the step sounds, and its count is
+    // per step and per phrase run -- so the order is fixed and can be laid out
+    // once. `taken` is how many times each step's hop has fired.
+    uint8_t taken[kMaxSteps] = {};
+    int n = 0, at = 0;
+    while (at >= 0 && at < steps && n < cap) {
+        const bank::Command* h = cellHop(p->cells[size_t(at)]);
+        if (h != nullptr) {
+            const int times = std::clamp<int>(h->a, 0, 255);
+            const int to = std::clamp<int>(h->b, 0, kMaxSteps - 1);
+            if (times == 0) break;                       // section 80: the chain hop ends the order
+            if (taken[at] < times && taken[at] < 255) { ++taken[at]; at = to; continue; }
+        }
+        order[n++] = uint8_t(at);
+        ++at;
+    }
+    if (n == 0) { order[0] = 0; return 1; }              // a phrase that plays nothing still has a row
+    return n;
+}
+
+int stepStartTicks(const Song& s, const Phrase* p, uint8_t groove, int* start, uint8_t* step)
+{
+    // A position is the groove's entry for it, in ticks: six at the straight
+    // groove, always (section 25), and the groove walks with the playing
+    // rather than with the step number (section 102). The entry past the last
+    // position holds where the grid ends.
+    uint8_t order[kMaxPlaySteps];
+    const int n = phrasePlayOrder(p, order, kMaxPlaySteps);
     const Groove g = grooveFor(s, p, groove);
     int acc = 0;
-    for (int i = 0; i < steps; ++i) { start[i] = acc; acc += g.at(i); }
-    for (int i = steps; i <= kMaxSteps; ++i) start[i] = acc;
+    for (int i = 0; i < n; ++i) {
+        start[i] = acc;
+        if (step != nullptr) step[i] = order[i];
+        acc += g.at(i);
+    }
+    start[n] = acc;
+    if (step != nullptr) step[n] = order[n - 1];
+    return n;
 }
 
 int phraseTicks(const Song& s, const Phrase* p)
@@ -35,9 +78,12 @@ int phraseTicks(const Song& s, const Phrase* p)
     // end to end on a table built when the song was published, so a command
     // cannot move them. A G re-lays the steps inside the row instead, exactly
     // as a groove that does not fill a row leaves its last note sustaining
-    // (section 9.2).
+    // (section 9.2). The length is the groove's total over the phrase's play
+    // order, so a cell's `H` makes the row longer (section 102).
+    uint8_t order[kMaxPlaySteps];
+    const int n = phrasePlayOrder(p, order, kMaxPlaySteps);
     const Groove g = grooveFor(s, p, kGrooveNone);
-    return std::max(1, g.total(p->length()));
+    return std::max(1, g.total(n));
 }
 
 int rowTicks(const Song& s, int ch, int row)
@@ -123,21 +169,23 @@ void buildTempoMap(Song& s, double baseBpm)
     buildRowTables(s);
     s.tempoMap.clear();
     const double base = std::clamp(baseBpm, 40.0, 255.0);
-    std::vector<int> starts(size_t(kMaxSteps) + 1, 0);
+    std::vector<int> starts(size_t(kMaxPlaySteps) + 1, 0);
+    std::vector<uint8_t> stepOf(size_t(kMaxPlaySteps) + 1, 0);
     for (int ch = 0; ch < 4; ++ch) {
         const int rows = s.rows(ch);
         for (int row = 0; row < rows; ++row) {
             const Phrase* p = s.phrase(s.phraseAt(ch, row));
             if (!p) continue;
             const int length = phraseTicks(s, p);
-            const int steps = p->length();
-            stepStartTicks(s, p, kGrooveNone, starts.data());
-            for (int step = 0; step < steps; ++step) {
-                if (starts[size_t(step)] >= length) break;                     // that step never plays
-                const Cell& cell = p->cells[size_t(step)];
+            // Positions, not steps (section 102): a `T` on a step an `H` plays
+            // twice is two points on the timeline, and both belong to it.
+            const int n = stepStartTicks(s, p, kGrooveNone, starts.data(), stepOf.data());
+            for (int pos = 0; pos < n; ++pos) {
+                if (starts[size_t(pos)] >= length) break;                      // that position never plays
+                const Cell& cell = p->cells[size_t(stepOf[size_t(pos)])];
                 const bank::Command* t = cell.cmd1.cmd == bank::Cmd::T ? &cell.cmd1 : cell.cmd2.cmd == bank::Cmd::T ? &cell.cmd2 : nullptr;
                 if (!t) continue;
-                s.tempoMap.push_back({ rowStartTick(s, ch, row) + starts[size_t(step)],
+                s.tempoMap.push_back({ rowStartTick(s, ch, row) + starts[size_t(pos)],
                                        bank::isRevert(*t) ? base : double(bank::tempoBpmOfByte(t->a)) });
             }
         }

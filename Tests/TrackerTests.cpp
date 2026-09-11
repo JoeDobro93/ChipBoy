@@ -307,18 +307,18 @@ TEST_CASE("the groove in force is the slot, then the last cell, then the phrase"
     ph.cells[0].cmd1 = { bank::Cmd::G, 2, 0, 0 };
     s.chain[0] = { 1, 1 };
     Player p; p.prepare(48000.0); p.setSong(&s); CHECK(p.groove(0) == kGrooveNone);                 // the phrase's own, straight
-    int st[kMaxSteps + 1];
-    p.stepTicks(&ph, st, p.groove(0));
+    int st[kMaxPlaySteps + 1];
+    p.stepTicks(&ph, st, nullptr, p.groove(0));
     CHECK(st[1] == 6);
 
     ticks(p, 0, 1);                                     // the G cell at step 0 plays
     CHECK(p.groove(0) == 2);
-    p.stepTicks(&ph, st, p.groove(0));
+    p.stepTicks(&ph, st, nullptr, p.groove(0));
     CHECK(st[1] == 4);
 
     p.setGrooveSlot(0, 1);                              // a G slot wins over the cell
     CHECK(p.groove(0) == 1);
-    p.stepTicks(&ph, st, p.groove(0));
+    p.stepTicks(&ph, st, nullptr, p.groove(0));
     CHECK(st[1] == 8);
 
     p.setGrooveSlot(0, kGrooveNone);                    // the slot goes to none
@@ -818,4 +818,76 @@ TEST_CASE("the SPSC ring survives a corrupted head", "[link]")
     q.head.store(1000000);          // garbage from another process
     CHECK_FALSE(q.pop(v));          // resynced rather than reading out of range
     CHECK(q.size() == 0);
+}
+
+/* ------------------------------------------------------ the phrase's H loop */
+
+TEST_CASE("a cell's H loops inside the phrase, and the row grows to fit", "[tracker][hop]")
+{
+    // Section 102, measured on 9.2.L: `H x y` hops to step y, x times, and the
+    // step carrying it does not play on a hopping pass.
+    Phrase ph; ph.used = true; ph.steps = 6;
+    uint8_t order[kMaxPlaySteps];
+    CHECK(phrasePlayOrder(&ph, order, kMaxPlaySteps) == 6);
+    CHECK(order[0] == 0); CHECK(order[5] == 5);
+
+    ph.cells[2].cmd1 = { bank::Cmd::H, 1, 0, 0 };            // once, back to step 0
+    REQUIRE(phrasePlayOrder(&ph, order, kMaxPlaySteps) == 8);
+    const uint8_t want[8] = { 0, 1, 0, 1, 2, 3, 4, 5 };
+    for (int i = 0; i < 8; ++i) { INFO("position " << i); CHECK(order[i] == want[i]); }
+
+    ph.cells[2].cmd1 = { bank::Cmd::H, 2, 0, 0 };            // twice
+    CHECK(phrasePlayOrder(&ph, order, kMaxPlaySteps) == 10);
+
+    ph.cells[2].cmd1 = {};
+    ph.cells[5].cmd1 = { bank::Cmd::H, 1, 2, 0 };            // once, back to step 2
+    REQUIRE(phrasePlayOrder(&ph, order, kMaxPlaySteps) == 9);
+    const uint8_t want2[9] = { 0, 1, 2, 3, 4, 2, 3, 4, 5 };
+    for (int i = 0; i < 9; ++i) { INFO("position " << i); CHECK(order[i] == want2[i]); }
+
+    // x = 0 is section 80's chain hop: the order ends there.
+    ph.cells[5].cmd1 = {};
+    ph.cells[4].cmd1 = { bank::Cmd::H, 0, 0, 0 };
+    CHECK(phrasePlayOrder(&ph, order, kMaxPlaySteps) == 4);
+
+    // A hop that cannot terminate stops at the cap rather than hanging.
+    ph.cells[4].cmd1 = { bank::Cmd::H, 200, 0, 0 };
+    CHECK(phrasePlayOrder(&ph, order, kMaxPlaySteps) == kMaxPlaySteps);
+}
+
+TEST_CASE("an H loop makes the row longer and the next row start later", "[tracker][hop]")
+{
+    // Section 102: the order is fixed, so the schedule the host scrubs against
+    // still maps a tick to one (row, step) and back. Four straight steps with a
+    // one-pass hop on step 2 is six steps -- 36 ticks, not 24.
+    const auto owned = std::make_unique<Song>(); Song& s = *owned;
+    s.noteSource[0] = NoteSource::Tracker;
+    auto& ph = s.phrases[0]; ph.used = true; ph.steps = 4;
+    for (int i = 0; i < 4; ++i) { ph.cells[size_t(i)].note = uint8_t(60 + i); ph.cells[size_t(i)].inst = 1; }
+    s.chain[0] = { 1, 1 };
+    buildRowTables(s);
+    CHECK(phraseTicks(s, &ph) == 24);
+    CHECK(rowStartTick(s, 0, 1) == 24);
+
+    ph.cells[2].cmd1 = { bank::Cmd::H, 1, 0, 0 };
+    buildRowTables(s);
+    CHECK(phraseTicks(s, &ph) == 36);                        // six positions of six ticks
+    CHECK(rowStartTick(s, 0, 1) == 36);                      // and the next row moved
+
+    // The notes come out in the order the hop makes, each pass sounding.
+    Player p; p.prepare(48000.0); p.setSong(&s);
+    const auto ev = ticks(p, 0, 36);
+    std::vector<int> notes;
+    for (const auto& e : ev) if (e.kind == NoteEvent::NoteOn) notes.push_back(int(e.a));
+    REQUIRE(notes.size() >= 6);
+    const int want[6] = { 60, 61, 60, 61, 62, 63 };
+    for (int i = 0; i < 6; ++i) { INFO("note " << i); CHECK(notes[size_t(i)] == want[i]); }
+
+    // A tick inside the row still names exactly one step: 12 ticks in is the
+    // second pass of step 0, which is where a scrub to that time lands.
+    int row = 0, step = -1;
+    REQUIRE(p.stepAt(0, 12, row, step));
+    CHECK(row == 0); CHECK(step == 0);
+    REQUIRE(p.stepAt(0, 24, row, step));
+    CHECK(row == 0); CHECK(step == 2);
 }

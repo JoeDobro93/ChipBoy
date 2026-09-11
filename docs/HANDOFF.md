@@ -432,6 +432,16 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 22 (§102): **a phrase's `H` loops**. `H x y` with x > 0 hops inside the phrase x times and
+  the step carrying it stays silent on a hopping pass; the groove walks with the play order, not
+  with the step number, both measured. §80 had called this engine work the Player could not do,
+  "a hop whose count survives across passes has no place in a schedule that is built once" -- but
+  the count is fixed, so the order is, so the schedule can hold it. A phrase now has a **play
+  order** and everything downstream is indexed by position in it, which is what keeps a host's
+  timeline honest: a row is as long as its order makes it and a tick still names one (row, step).
+  `READROOM` went from 3-6% agreement on three channels to 66/52/64/58, its first thirty seconds
+  89-99% throughout. `H F F` is the one exception and stays unexplained: re-measured over
+  thirty-five seconds it stops the channel outright, where every other `H x F` is a plain hop.
 - Round 21 (§98-§101): the **ROM beside the save decides the model** -- `autoModel` asked the
   format first, so the version-keyed table was dead code; a pre-4.3 ROM has its version in the
   welcome line inside bank 0 and the caller only handed `romVersion()` the first 0x150 bytes, so
@@ -556,6 +566,9 @@ design-log section the change touches. Update this file at the end of every chan
   (16.78 ms), not a drift. The tempo itself is right: the ROM's tick for every tempo byte measured
   (85 to 190) is within 0.016% of `1 / (0.4 x bpm)`, and DELIVERY's grooves are all 6/6 with no `G`
   or `T` anywhere. So one row in about a hundred is taking a tick longer in ChipBoy. Find which.
+- **`READROOM` comes apart at about thirty seconds.** Its first five windows are 89-99% on every
+  channel since §102 gave a phrase's `H` its loop; before that it was 3-6% from the first bar. What
+  goes wrong at 30 s has not been looked at.
 - **`DELIVERY` and `READROOM` come apart part way through.** `DELIVERY` agrees with the ROM on
   every channel until about 50 s and on none after; `READROOM` never agrees on three channels at
   all and its noise channel triples the ROM's note count (1032 against 3093). Neither is a

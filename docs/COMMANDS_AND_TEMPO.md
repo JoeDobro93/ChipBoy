@@ -2281,17 +2281,21 @@ the first two attempts at this entry wrong.
   `y`**. This is the chain hop §56 recorded on 8.4.4.
 - **`H x y`, `x > 0`** hops **inside** the phrase to step `y`, one hop a pass, `x` passes, and
   then lets the phrase run through. A hop to the `H`'s own step is a no-op that still spends a
-  pass. `HFF` triggers nothing at all afterwards and stays unexplained.
+  pass. A hop to a step past the phrase's sixteen ends it, which is why `H 1 F` reads as a chain
+  hop taken once.
+- **`H F F`** is the exception and still unexplained: it **stops the channel**. Re-measured over
+  thirty-five seconds -- two note-ons and then nothing at all, where `H 2 F` on the same phrase
+  hops to step 15 twice and runs on, and `H F 0` loops happily sixteen times.
 
-ChipBoy expresses the first form and only with `y = 0`: the importer sets the phrase's **length**
-to the `H`'s step, so the phrase ends there and the chain moves on. `y > 0` and the counted form
-are **engine work** and are noted at import instead, because the Player lays a chain row's steps
-out ahead of the row rather than interpreting them one at a time -- a hop whose count survives
-across passes has no place in a schedule that is built once.
+ChipBoy expresses the first form with `y = 0`: the importer sets the phrase's **length** to the
+`H`'s step, so the phrase ends there and the chain moves on. `y > 0` -- where the *next* phrase
+starts -- still has nowhere to go and is noted at import.
 
-Until that changes the importer's job is to be accurate about what was lost, which means saying
-the right thing: a `H x y` with `x > 0` is a hop **within** the phrase, not "ends the phrase `x`
-times".
+**The counted form is §102's now.** This entry said it was engine work "because the Player lays a
+chain row's steps out ahead of the row rather than interpreting them one at a time -- a hop whose
+count survives across passes has no place in a schedule that is built once". The count is fixed, so
+the order is fixed, so it does: §102 is the schedule, and the importer hands the hop through as the
+cell's own command.
 
 ## 81. An imported noise instrument plays LSDj's own note map
 
@@ -2822,3 +2826,54 @@ keeps the note either way now: blank from 4.0.4, the column filled in before it.
 The user found this in `SAMESONG`'s phrase 1C, where step 9 is `D#4` with no instrument and `L 10`
 beside it: a bend up to D#4 that ChipBoy played as nothing at all, because both the note and the
 `L` went with the dropped cell. Twenty cells in that song are of this kind.
+
+## 102. A phrase's `H` loops inside the phrase, and the groove walks with it
+
+§80 measured what `H x y` does and then said the counted form was engine work, "because the Player
+lays a chain row's steps out ahead of the row rather than interpreting them one at a time -- a hop
+whose count survives across passes has no place in a schedule that is built once". That was the
+wrong conclusion: the count is **fixed**, so the order a phrase plays is fixed too, and a schedule
+built once can hold it. This section is that schedule.
+
+Measured on 9.2.L with a six-row phrase whose notes rise a semitone a row, so the order reads off
+the pitch:
+
+| the `H` | the steps that play |
+|---|---|
+| none | 0 1 2 3 4 5 |
+| `H 1 0` on row 2 | 0 1 **0 1** 2 3 4 5 |
+| `H 2 0` on row 2 | 0 1 **0 1 0 1** 2 3 4 5 |
+| `H 1 2` on row 5 | 0 1 2 3 4 **2 3 4** 5 |
+| `H 0 0` on row 2 | 0 1 0 1 0 1 ... (§80's chain hop; one phrase in the chain cannot tell it from a loop) |
+
+Two things that were not in §80:
+
+- **The step carrying the `H` does not play on a hopping pass.** `H 1 0` on row 2 gives `0 1 0 1 2`,
+  not `0 1 2 0 1 2`: the hop is taken before the row sounds. It plays once the count is spent, which
+  is why step 2 is there at the end.
+- **The groove entry comes from the position in the play order, not from the step's own index.**
+  With the 7/5 swing and `H 1 0` on row 3 the gaps are `137 98 137 98 137 98 137 98` ms; by the
+  step's own index the fourth would be 137 again. The groove walks with the playing.
+
+### 102.1 What ChipBoy does with it
+
+A phrase now has a **play order**: the list of steps it plays, in the order it plays them,
+`tracker::phrasePlayOrder()`. Without an `H` it is `0 .. length-1` and nothing changes anywhere. With
+one it is the expansion above, capped at `kMaxPlaySteps` (256) so a hop that cannot terminate stops
+being a hang. A cell's `H` with `x = 0` ends the order there, which is §80's chain hop and what the
+importer already expressed as the phrase's length.
+
+Everything downstream is indexed by **position in that order** rather than by step:
+`stepStartTicks()` fills a start tick and a step number per position and returns how many there are;
+`phraseTicks()` is the groove's total over the order, so the row lasts longer and the prefix table
+`buildRowTables()` builds puts the following rows where they belong.
+
+**That is what keeps the host's timeline honest.** A row is as long as its order makes it, and the
+order is deterministic, so a tick still maps to exactly one (row, step) and back. A phrase of four
+straight steps at 120 BPM whose row 2 carries `H 1 0` lasts six steps: the row still starts where it
+did, 2.0 s into it is the second pass of step 0 rather than the next row, and the next row starts at
+3.0 s. Scrubbing the DAW to 2.0 s puts the playhead on step 0 of that row, on its second pass, which
+is what LSDj is doing there too.
+
+The editor shows the phrase's cells as they are -- the order is not a thing to edit -- and the play
+position lands on the step that is sounding, whichever pass it is on.

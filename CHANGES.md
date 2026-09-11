@@ -26,6 +26,50 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-11 — A phrase's `H` loops, and the timeline counts the loop
+
+The user: "READROOM however is a mess and a big part of that has to do with the H command not
+looping on individual phrases", with the example of a phrase that plays rows 0-7 twice before
+going on.
+
+**`H x y` with `x > 0` now loops inside the phrase** (spec section 102). Section 80 had measured
+what it does and then declined to implement it, "because the Player lays a chain row's steps out
+ahead of the row rather than interpreting them one at a time -- a hop whose count survives across
+passes has no place in a schedule that is built once". That was the wrong conclusion: the count is
+fixed, so the order the phrase plays is fixed, so a schedule built once can hold it.
+
+Two things measured on 9.2.L that section 80 did not have:
+
+- **The step carrying the `H` does not sound on a hopping pass.** `H 1 0` on row 2 plays
+  `0 1 0 1 2 3 4 5`, not `0 1 2 0 1 2`. It sounds once the count is spent.
+- **The groove entry comes from the position in the play order, not the step's own index.** With
+  the 7/5 swing and `H 1 0` on row 3 the gaps are `137 98 137 98 137 98 137 98` ms; by the step's
+  index the fourth would be 137 again.
+
+A phrase now has a **play order** -- the steps it plays, in the order it plays them -- and
+`stepStartTicks()`, `phraseTicks()` and the Player are indexed by position in it rather than by
+step. That is what keeps a host's timeline honest, which is what the user asked for: the row is as
+long as its order makes it, the rows after it move accordingly, and a tick still names exactly one
+(row, step) and back. Four straight steps at 120 BPM whose row 2 carries `H 1 0` last six steps, so
+scrubbing to 2.0 s lands on the second pass of step 0 and the next row starts at 3.0 s.
+
+The importer hands the counted hop through as the cell's own command instead of cutting the phrase
+short and noting the loss. `H 0 y` is unchanged -- it still becomes the phrase's length.
+
+`H F F` is the exception and stays unexplained. Re-measured over thirty-five seconds it **stops the
+channel**: two note-ons and then nothing, where `H 2 F` on the same phrase hops to step 15 twice
+and runs on and `H F 0` loops happily. The importer ends the phrase there and says so.
+
+`READROOM` went from 6%, 3%, 50% and 6% agreement with the ROM to **66, 52, 64 and 58**, its first
+thirty seconds 89-99% on every channel. `SAMESONG` is unchanged, which is the point.
+
+Also measured, for the user's report that `SAMESONG`'s accent notes sound less bright than the
+ROM's: **`Z`'s randomisation is already right.** `Z 10` on an `F 01` gives advances of exactly 1 or
+17, so the high nibble really is `0..x` as section 74 has it, and `Z 0F` gives 1 to 16. What is
+missing is section 100's flat wave table -- `Z 1E` makes a random advance of 0 to 31 frames, which
+in LSDj reaches the next synth's frames and in ChipBoy wraps inside sixteen. That is the bank-model
+decision in `docs/HANDOFF.md`, and this is the second symptom of it.
+
 ### 2026-09-11 — The ROM decides the model, `L` replaces `P`, and a bare note keeps its note
 
 Three rounds' worth, from the user's report that `SAMESONG`'s kick "machine guns rather than

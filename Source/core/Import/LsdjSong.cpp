@@ -857,20 +857,38 @@ struct Reader {
                 c.note = uint8_t(std::clamp(midi, kind == 3 && !mappedNoise() ? 12 : 1, 127));
             }
             const char letter = letterOf(at(kPhraseCmd + i));
-            if (letter == 'H' && hopStep < 0) {
-                // H in a phrase is a chain hop, not a table hop (section 56):
-                // `H 0 y` ends the phrase here and starts the next at its row y,
-                // which is ChipBoy's phrase length when y is 0.
-                const uint8_t v = at(kPhraseCmdV + i);
-                hopStep = st;
-                const std::string where = " at phrase " + hex2(p) + " step " + std::to_string(st);
+            if (letter == 'H') {
                 // Section 80, measured on 9.3.9 with two phrases in the chain:
                 // `H 0 y` ends the phrase and the **next** one starts at step y,
                 // while `H x y` with x > 0 hops *inside* this phrase to step y,
-                // one hop a pass, x passes, and then lets it run through. ChipBoy
-                // expresses the first form with y = 0 and nothing else.
-                if (v >> 4) notes.add("H" + hex2(v) + where + " hops back to step " + std::to_string(v & 15) + " inside the phrase, " + std::to_string(v >> 4) + " passes running, and then lets it play in full; ChipBoy ends the phrase here every time (section 80)");
-                else if (v & 15) notes.add("H" + hex2(v) + where + " ends the phrase and starts the next one at step " + std::to_string(v & 15) + "; ChipBoy's phrases always start at step 0, so it starts there");
+                // one hop a pass, x passes, and then lets it run through.
+                const uint8_t v = at(kPhraseCmdV + i);
+                const int x = v >> 4, y = v & 15;
+                const std::string where = " at phrase " + hex2(p) + " step " + std::to_string(st);
+                if (x > 0 && !(x == 15 && y == 15)) {
+                    // Section 102: the counted hop is the engine's now. It goes
+                    // through as the cell's own command and the phrase's play
+                    // order expands it, so the row lasts as long as it really
+                    // does and the host's timeline follows.
+                    c.cmd1 = { Cmd::H, int16_t(x), int16_t(y), 0 };
+                    continue;
+                }
+                if (x == 15 && y == 15) {
+                    // Section 80: `H F F` alone stops the channel outright --
+                    // measured again over 35 seconds, two note-ons and then
+                    // nothing, where every other `H x F` is an ordinary hop to
+                    // step 15. ChipBoy ends the phrase and the chain runs on.
+                    if (hopStep < 0) hopStep = st;
+                    notes.add("HFF" + where + " stops the channel on the ROM and nothing plays there again; ChipBoy ends the phrase and the chain carries on (section 80)");
+                    continue;
+                }
+                if (hopStep < 0) {
+                    // `H 0 y`: the phrase ends here, which is ChipBoy's phrase
+                    // length. `y` moves where the *next* phrase starts and has
+                    // nowhere to go yet.
+                    hopStep = st;
+                    if (y) notes.add("H" + hex2(v) + where + " ends the phrase and starts the next one at step " + std::to_string(y) + "; ChipBoy's phrases always start at step 0, so it starts there");
+                }
                 continue;
             }
             if (letter) {

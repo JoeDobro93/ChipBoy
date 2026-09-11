@@ -33,10 +33,14 @@ uint8_t Player::groove(int ch) const
     return grooveParam_[c] != kGrooveNone ? grooveParam_[c] : grooveCell_[c];
 }
 
-void Player::stepTicks(const Phrase* p, int* start, uint8_t grooveSlot) const
+int Player::stepTicks(const Phrase* p, int* start, uint8_t* stepOf, uint8_t grooveSlot) const
 {
-    if (!song_) { for (int i = 0; i <= kMaxSteps; ++i) start[i] = i * kTicksPerStep; return; }
-    stepStartTicks(*song_, p, grooveSlot, start);
+    if (!song_) {
+        const int n = kEmptyRowTicks / kTicksPerStep;
+        for (int i = 0; i <= n; ++i) { start[i] = i * kTicksPerStep; if (stepOf) stepOf[i] = uint8_t(std::min(i, n - 1)); }
+        return n;
+    }
+    return stepStartTicks(*song_, p, grooveSlot, start, stepOf);
 }
 
 void Player::allNotesOff(int ch, uint32_t offset, std::vector<NoteEvent>& out)
@@ -121,7 +125,9 @@ void Player::process(const TickPoint* ticks, size_t nTicks, bool playing, std::v
         ownedNotes_[size_t(ch)] = owned;
     }
 
-    int starts[4][kMaxSteps + 1];
+    int starts[4][kMaxPlaySteps + 1];
+    uint8_t stepOf[4][kMaxPlaySteps + 1];
+    int builtCount[4] = { 0, 0, 0, 0 };
     int builtRow[4] = { -1, -1, -1, -1 };
     uint8_t builtGroove[4] = { kGrooveNone, kGrooveNone, kGrooveNone, kGrooveNone };
     for (size_t k = 0; k < nTicks; ++k) {
@@ -162,22 +168,24 @@ void Player::process(const TickPoint* ticks, size_t nTicks, bool playing, std::v
             }
             const uint8_t g = groove(ch);
             if (builtRow[ch] != row || builtGroove[ch] != g) {
-                stepTicks(ph, starts[ch], g);
+                builtCount[ch] = stepTicks(ph, starts[ch], stepOf[ch], g);
                 builtRow[ch] = row; builtGroove[ch] = g;
             }
-            const int steps = ph->length();
+            // Positions in the phrase's play order, not steps (section 102):
+            // an `H` puts one step in it more than once and every pass sounds.
+            const int steps = builtCount[ch];
             for (int s = 0; s < steps; ++s) {
                 if (starts[ch][s] >= length) break;     // a groove that ends early: that step never fires
-                // The step at this tick; after a jump, the latest step at or
+                // The position at this tick; after a jump, the latest at or
                 // before it (section 47).
                 const bool lastBefore = late && starts[ch][s] < inRow && (s + 1 >= steps || starts[ch][s + 1] >= length || starts[ch][s + 1] > inRow);
                 if (starts[ch][s] == inRow || lastBefore) {
-                    // A groove that changes mid-row re-lays the steps after
-                    // it; a step already played in this row is not played
-                    // again because the new grid puts it later.
+                    // A groove that changes mid-row re-lays the positions after
+                    // it; one already played in this row is not played again
+                    // because the new grid puts it later.
                     if (row != firedRow_[ch] || s > firedStep_[ch]) {
                         firedRow_[ch] = row; firedStep_[ch] = s;
-                        fireStep(ch, row, s, slot, ticks[k].offset, out);
+                        fireStep(ch, row, int(stepOf[ch][s]), slot, ticks[k].offset, out);
                     }
                     break;
                 }
@@ -198,25 +206,25 @@ bool Player::quantise(int ch, double tick, int& row, int& step, int64_t& stepTic
     const Phrase* p = song_->phrase(song_->phraseAt(ch, row));
     const double rowStart = double(rowStartTick(*song_, ch, row));
     const int length = phraseTicks(*song_, p);
-    const int steps = p ? p->length() : kEmptyRowTicks / kTicksPerStep;
     const double inRow = tick - rowStart;
-    int starts[kMaxSteps + 1];
-    stepTicks(p, starts, groove(ch));
+    int starts[kMaxPlaySteps + 1];
+    uint8_t stepOf[kMaxPlaySteps + 1];
+    const int steps = stepTicks(p, starts, stepOf, groove(ch));
     int best = -1; double bestD = 1e18;
     for (int s = 0; s < steps; ++s) {
-        if (starts[s] >= length) break;                 // that step never fires
+        if (starts[s] >= length) break;                 // that position never fires
         const double d = std::fabs(double(starts[s]) - inRow);
         if (d < bestD) { bestD = d; best = s; }
     }
     if (best < 0 || double(length) - inRow < bestD) {
         // Nearer the row's end: that is the next row's first step.
         ++row;
-        step = 0;
-        stepTicks(song_->phrase(song_->phraseAt(ch, row)), starts, groove(ch));
+        const int n = stepTicks(song_->phrase(song_->phraseAt(ch, row)), starts, stepOf, groove(ch));
+        step = n > 0 ? int(stepOf[0]) : 0;
         stepTick = rowStartTick(*song_, ch, row) + starts[0];
         return true;
     }
-    step = best;
+    step = int(stepOf[best]);
     stepTick = rowStartTick(*song_, ch, row) + starts[best];
     return true;
 }
@@ -228,12 +236,12 @@ bool Player::stepAt(int ch, int64_t tick, int& row, int& step) const
     rowAtTick(*song_, ch, tick, row, inRow);
     const Phrase* p = song_->phrase(song_->phraseAt(ch, row));
     const int length = phraseTicks(*song_, p);
-    const int steps = p ? p->length() : kEmptyRowTicks / kTicksPerStep;
-    int starts[kMaxSteps + 1];
-    stepTicks(p, starts, groove(ch));
+    int starts[kMaxPlaySteps + 1];
+    uint8_t stepOf[kMaxPlaySteps + 1];
+    const int steps = stepTicks(p, starts, stepOf, groove(ch));
     for (int s = 0; s < steps; ++s) {
         if (starts[s] >= length) break;
-        if (starts[s] == inRow) { step = s; return true; }
+        if (starts[s] == inRow) { step = int(stepOf[s]); return true; }
     }
     return false;
 }
@@ -241,20 +249,24 @@ bool Player::stepAt(int ch, int64_t tick, int& row, int& step) const
 bool Player::nextStep(int ch, int& row, int& step, int64_t& stepTick) const
 {
     if (!song_) return false;
-    int starts[kMaxSteps + 1];
+    int starts[kMaxPlaySteps + 1];
+    uint8_t stepOf[kMaxPlaySteps + 1];
     const Phrase* p = song_->phrase(song_->phraseAt(ch, row));
-    const int steps = p ? p->length() : kEmptyRowTicks / kTicksPerStep;
-    if (step + 1 < steps) {
-        stepTicks(p, starts, groove(ch));
-        if (starts[step + 1] < phraseTicks(*song_, p)) {
-            ++step;
-            stepTick = rowStartTick(*song_, ch, row) + starts[step];
+    const int steps = stepTicks(p, starts, stepOf, groove(ch));
+    // The **first** position that plays this step, so stepping through an `H`
+    // loop in the editor walks the order rather than sticking (section 102).
+    int pos = -1;
+    for (int s = 0; s < steps; ++s) if (int(stepOf[s]) == step) { pos = s; break; }
+    if (pos >= 0 && pos + 1 < steps) {
+        if (starts[pos + 1] < phraseTicks(*song_, p)) {
+            step = int(stepOf[pos + 1]);
+            stepTick = rowStartTick(*song_, ch, row) + starts[pos + 1];
             return true;
         }
     }
     ++row;
-    step = 0;
-    stepTicks(song_->phrase(song_->phraseAt(ch, row)), starts, groove(ch));
+    const int n = stepTicks(song_->phrase(song_->phraseAt(ch, row)), starts, stepOf, groove(ch));
+    step = n > 0 ? int(stepOf[0]) : 0;
     stepTick = rowStartTick(*song_, ch, row) + starts[0];
     return true;
 }

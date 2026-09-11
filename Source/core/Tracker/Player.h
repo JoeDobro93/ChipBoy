@@ -78,7 +78,10 @@ public:
 
     /// Step boundaries of a phrase in ticks from its row's start (kMaxSteps + 1
     /// entries), under the groove in force.
-    void stepTicks(const Phrase* p, int* startTicks, uint8_t grooveSlot = kGrooveNone) const;
+    /// The row's grid: a start tick per **position in the phrase's play order**
+    /// and the step each position plays (section 102). Returns how many
+    /// positions there are; both arrays must hold kMaxPlaySteps + 1.
+    int  stepTicks(const Phrase* p, int* startTicks, uint8_t* stepOf = nullptr, uint8_t grooveSlot = kGrooveNone) const;
 
 private:
     void fireStep(int ch, int row, int step, uint8_t phraseSlot, uint32_t offset, std::vector<driver::NoteEvent>& out);
@@ -114,6 +117,9 @@ private:
     // The last step each channel fired, so a groove change mid-row moves the
     // steps that follow without playing one twice.
     int     firedRow_[4] = { -1, -1, -1, -1 };
+    /// The **position** in the row's play order that last fired, not the step:
+    /// an `H` can play one step twice in a row and both times must sound
+    /// (section 102).
     int     firedStep_[4] = { -1, -1, -1, -1 };
     uint8_t grooveParam_[4] = { kGrooveNone, kGrooveNone, kGrooveNone, kGrooveNone };  ///< from a G slot
     uint8_t grooveCell_[4] = { kGrooveNone, kGrooveNone, kGrooveNone, kGrooveNone };   ///< from the last G cell

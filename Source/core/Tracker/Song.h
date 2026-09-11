@@ -25,6 +25,9 @@ namespace chipboy::tracker {
 constexpr int kPhraseSlots = 255;
 /// The cells a phrase holds; its own `steps` says how many of them play.
 constexpr int kMaxSteps = 64;
+/// The most positions a phrase's play order can have (section 102): a cell's
+/// `H` can play a step many times over, and this is where that stops.
+constexpr int kMaxPlaySteps = 256;
 /// A groove is sixteen tick counts, whatever the phrase's length (section 9.2).
 constexpr int kGrooveSteps = 16;
 /// A step at the straight groove, always (section 25). Sixteen of them are
@@ -185,13 +188,26 @@ constexpr uint8_t kGrooveNone = 255;
 /// The groove that slot resolves to on a phrase.
 Groove grooveFor(const Song& s, const Phrase* p, uint8_t slot);
 
-/// Step start ticks inside a row, per the groove: kMaxSteps + 1 entries, in
-/// ticks from the row's own start. Step i starts at the groove's ticks for the
-/// steps before it -- six each at the straight groove (section 25). The
-/// entries from the phrase's length on hold where the grid ends; a step at or
+/// The steps a phrase plays, in the order it plays them (section 102). Without
+/// an `H` in a cell that is 0 .. length-1; an `H x y` with x > 0 hops to step
+/// y, x times, and the step carrying it does not play on a hopping pass. An
+/// `H 0 y` ends the order there, which is section 80's chain hop. Writes at
+/// most `cap` step numbers into `order` and returns how many; the cap is what
+/// stops a hop that cannot terminate from hanging the build.
+int phrasePlayOrder(const Phrase* p, uint8_t* order, int cap);
+
+/// Step start ticks inside a row, per the groove: one entry per **position in
+/// the play order** (section 102), in ticks from the row's own start, plus a
+/// last entry holding where the grid ends. `step` takes the step number each
+/// position plays; either pointer may be null. Returns how many positions
+/// there are, so both arrays must hold kMaxPlaySteps + 1.
+///
+/// A position starts at the groove's ticks for the positions before it -- six
+/// each at the straight groove (section 25), and the groove walks with the
+/// playing rather than with the step number (section 102). A position at or
 /// past the row's own ticks does not fire, which is how a groove that does not
 /// fill the row leaves its last note sustaining (section 9.2).
-void stepStartTicks(const Song& s, const Phrase* p, uint8_t groove, int* start);
+int stepStartTicks(const Song& s, const Phrase* p, uint8_t groove, int* start, uint8_t* step = nullptr);
 
 /// How long a row of this phrase lasts: its groove's ticks over its length,
 /// or kEmptyRowTicks for a row with no phrase (section 25). This is the

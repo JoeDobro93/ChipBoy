@@ -121,7 +121,7 @@ sounding the same semitone, sampled every 2 ms in six second windows each with i
 | `CASTSHDW` | 9.2.L | **399 / 399**, 95% | 177 / 176, 90% | 4264 / 3075, 44% | 637 / 655, 94% |
 | `SAMESONG` | 9.2.L | 225 / 224, 85% | 160 / 159, 91% | 1596 / 1586, 80% | 1678 / 1716, 96% |
 | `DELIVERY` | 9.2.L | **99 / 99**, 90% | **89 / 89**, 98% | 5104 / 4209, 68% | 1067 / 1054, 97% |
-| `READROOM` | 9.2.L | 577 / 487, 6% | 199 / 190, 3% | 12971 / 8650, 50% | 1032 / 3101, 6% |
+| `READROOM` | 9.2.L | 577 / 561, 66% | 199 / 156, 52% | 12921 / 8641, 64% | 926 / 1852, 58% |
 | `SPACE TI` | 8.4.4 | 359 / 299, 60% | 846 / 797, 72% | 1135 / 1136, 44% | 437 / 373, 81% |
 | `BUS` | 3.6.5 | 162 / 137, 30% | **417 / 417**, 98% | 66 / 33, 99% | 752 / 640, 96% |
 | `CLUCK` | 3.6.5 | 397 / 395, 75% | 196 / 192, 97% | 1465 / 1058, 53% | 439 / 427, 93% |
@@ -146,9 +146,10 @@ What the last rounds moved, in order of how much:
 
 **What is still wrong, in the order it is worth taking up:**
 
-1. `READROOM` **never lines up**: three channels at 3-6% and a noise channel that triples the ROM's
-   note count (1032 against 3101). Its phrase or chain structure is being read differently. It is
-   the one song of the nine that is wrong from the start rather than drifting.
+1. `READROOM` **comes apart at about thirty seconds**. Its first five windows are 89-99% on every
+   channel now that a phrase's `H` loops (§102) -- it used to be 3-6% from the first bar, because
+   every phrase with a counted hop was cut short and the channel ran away from the ROM
+   immediately. What happens at 30 s is a second thing and unlooked at.
 2. **A tick appears from nowhere every ten seconds or so.** `DELIVERY`'s and `CASTSHDW`'s per-window
    offsets walk from +28 ms to -96 ms in steps of one tick with long plateaus between. The tempo is
    not the cause: the ROM's tick for every tempo byte measured (85 to 190) is within 0.016% of
@@ -231,6 +232,7 @@ re-runs one song end to end; `agreew.py` and `runs.py` are the rulers (§9).
 
 | § | what changed | formats it moves | measured on |
 |---|---|---|---|
+| 102 | a phrase's `H x y` with x > 0 **loops inside the phrase**, the step carrying it silent on a hopping pass, and the groove walks with the play order | **all** | 9.2.L |
 | 101 | a cell with a blank instrument column keeps its note: a bare note from 4.0.4, a trigger before | 2 and up (it was dropped outright) | seventeen releases, §10.1 |
 | 100 | `F` on the wave channel takes the **whole byte**, and LSDj walks a flat 256-frame wave table (ChipBoy's sixteen-frame wave wraps: noted at import, not modelled) | **all**, confirmed from 3.1.5 up | seventeen releases, §10.1 |
 | 99 | `L` and `P` replace one another; in Drum a slide is linear in the **period register** | 4 and up (formats 0-3 unmeasured, §10.1) | seventeen releases, §10.1 |

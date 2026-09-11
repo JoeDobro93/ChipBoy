@@ -675,20 +675,26 @@ TEST_CASE("an H that ends a phrase becomes the phrase's length", "[lsdj]")
     CHECK(int(p0->steps) == 3);                                     // rows 0, 1, 2 play; row 3 does not
     CHECK(p0->cells[0].note == 60); CHECK(p0->cells[2].note == 62);
     CHECK(p0->cells[3].cmd1.cmd == bank::Cmd::None);
-    // Section 80, measured on 9.3.9 with two phrases in the chain: a **counted**
-    // H is a different command -- it hops back inside the phrase rather than
-    // ending it -- so the importer still ends the phrase there, and says so.
+    // Section 102: a **counted** H is a different command -- it hops back inside
+    // the phrase rather than ending it -- and the engine plays it now, so it
+    // goes through as the cell's own command and the phrase keeps its length.
     song[kCmdV + 3] = 0x21;
     ImportNotes counted;
     REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(22), *bank, *out, sum, counted));
     const auto* p1 = out->phrase(out->chain[0].at(0));
     REQUIRE(p1 != nullptr);
-    CHECK(int(p1->steps) == 3);
-    CHECK(p1->cells[3].cmd1.cmd == bank::Cmd::None);
-    bool told = false;
-    for (const auto& l : counted.lines)
-        if (l.find("hops back to step 1 inside the phrase") != std::string::npos) told = true;
-    CHECK(told);
+    CHECK(int(p1->steps) == 16);                                    // not cut short
+    CHECK(p1->cells[3].cmd1.cmd == bank::Cmd::H);
+    CHECK(int(p1->cells[3].cmd1.a) == 2);                           // twice
+    CHECK(int(p1->cells[3].cmd1.b) == 1);                           // back to step 1
+    {   // and the order it makes: 0 1 2 | 1 2 | 1 2 | 3 4 ... 15
+        uint8_t order[tracker::kMaxPlaySteps];
+        const int n = tracker::phrasePlayOrder(p1, order, tracker::kMaxPlaySteps);
+        REQUIRE(n == 20);
+        const uint8_t want[8] = { 0, 1, 2, 1, 2, 1, 2, 3 };
+        for (int i = 0; i < 8; ++i) { INFO("position " << i); CHECK(order[i] == want[i]); }
+        CHECK(order[19] == 15);
+    }
     // And `H 0 y`, which really does end the phrase, says where the next one
     // would have started.
     song[kCmdV + 3] = 0x01;
