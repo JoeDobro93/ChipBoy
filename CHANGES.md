@@ -26,6 +26,35 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-11 — F on the wave channel advances the frame, and a table's commands know their channel
+
+Two more from `SAMESONG`, and the second is the bigger one.
+
+1. **`F` on the wave channel advances the frame by its argument** (spec section 92); it does not
+   name a frame. Section 65 had it naming one, from a reading of 8.4.4 where "`F 06` loaded frame
+   5". Re-measured by tagging each of a synth's sixteen frames and reading the wave RAM back:
+   `F 01` walks 0, 1, 2; `F 02` walks 0, 2, 4; `F 06` walks 0, 6, 12, wrapping at the end and
+   reaching frames the instrument's run skips. Identical on 8.4.4, 8.8.6, 9.2.L and 9.3.9 -- the
+   old reading was off by one and mistook a single step for an absolute index. ChipBoy's own demo
+   uses `F 1` repeatedly on wave instruments, which under the old rule always meant frame 0.
+2. **A table's commands were converted with no instrument kind at all** (section 92.1), so every
+   one that reads the kind fell through to the channel-less branch: on the wave channel `F` was
+   **dropped**, with a note about the noise channel that was not even true. `tables()` now takes
+   the kind from the instruments that name the table. On `SAMESONG` this is the difference
+   between 47 wave note-ons in the first ten seconds and the ROM's 197, which ChipBoy now matches
+   exactly.
+
+**Validated on two more songs from the same save**, which is what these fixes were for.
+`CASTSHDW`'s PU1 is **399 note-ons in a row** at the period the ROM sounds and its PU2 176 of
+177; `DELIVERY`'s PU2 is **89 of 89**, and its noise channel has a longest common run of 511 of
+1067. The pulse and noise channels of a format-22 song are now where `SUNRISE`'s already were.
+
+**The wave channel is what is left**, and it is not one error: ChipBoy triggers it too often on
+`SAMESONG` and `DELIVERY` and not often enough on `CASTSHDW`. On `SAMESONG` 268 of its triggers
+land within two milliseconds of the one before, where the ROM has five in the whole song -- a
+frame loaded twice in one tick -- and the rate doubles after about thirteen seconds. That is a
+table-timing question rather than a command's law, and `docs/LSDJ_VERSIONS.md` section 6 says so.
+
 ### 2026-09-11 — SAMESONG: the fast retrigger reads its argument, and wave SPEED is signed
 
 Two defects found by comparing the user's `SAMESONG` (LSDj 9.2.L, format 22) against its own ROM,

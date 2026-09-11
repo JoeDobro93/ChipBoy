@@ -1548,13 +1548,16 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
         }
         case Cmd::F:
             if (v.inst.type == InstrumentType::Wave) {
-                // F names the frame itself, whether or not the run visits it
-                // (measured on 8.4.4 with a run of eight: F 06 loaded frame 5).
-                // The run step goes to the nearest, so an advance carries on
-                // from about there (section 65).
+                // Section 92: F **advances** the frame by its argument, and does
+                // it every time it runs -- a table row holding `F 01` walks the
+                // synth one frame a tick. It steps through the synth's frames,
+                // not through the run, and wraps at the end. The run step goes
+                // to the nearest, so a later advance carries on from about
+                // there (section 65).
                 const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr;
                 if (w && !w->frames.empty()) {
-                    const int want = std::clamp<int>(c.a - 1, 0, int(w->frames.size()) - 1);
+                    const int n = int(w->frames.size());
+                    const int want = int((int(v.frameIdx) + int(c.a)) % n);
                     uint8_t run[16]; const int len = waveRunOf(ch, run);
                     int best = 0, bestD = 256;
                     for (int k = 0; k < len; ++k) { const int d = std::abs(int(run[size_t(k)]) - want); if (d < bestD) { bestD = d; best = k; } }

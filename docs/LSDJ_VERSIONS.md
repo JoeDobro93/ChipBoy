@@ -115,11 +115,26 @@ The user's own saves, against their own ROMs, over eighty seconds, note-on for n
 | song | version | PU1 | PU2 | WAV | NOI |
 |---|---|---|---|---|---|
 | `SUNRISE` | 9.3.9 | **276 / 276** | **170 / 170** | 440 / 440 | **740 / 740** |
+| `CASTSHDW` | 9.2.L | **399 / 399** (run 399) | **177 / 176** (run 176) | 4264 / 2248 | 637 / 655 (run 260) |
+| `DELIVERY` | 9.2.L | **99 / 99** | **89 / 89** (run 89) | 5104 / 5735 | 1067 / 1031 (run 511) |
+| `SAMESONG` | 9.2.L | 225 / 224 | 160 / 159 | 1596 / 3073 | 1678 / 1708 (run 56) |
 | `CLUCK` | 3.6.5 | 277 / 279 | 139 / 135 | 303 / 270 | 288 / 286 |
 | `BUS` | 3.6.5 | 67 / 49 | **307 / 307** | 22 / 22 | 476 / 404 |
 | `DISPATCH` | 3.6.5 | 128 / 131 | 96 / 82 | 346 / 376 | 213 / 216 |
 | `SPACE TI` | 8.4.4 | 359 / 299 | 846 / 797 | 1135 / 1151 | 437 / 373 |
-| `SAMESONG` | 9.2.L | 225 / 224 | 160 / 159 | 1596 / 745 | 1678 / 5191 |
+
+**Three songs from the user's 9.2.L save**, which is the format ChipBoy models directly, put the
+pulse channels where `SUNRISE` already was: `CASTSHDW`'s PU1 is 399 note-ons in a row at the
+period the ROM sounds and its PU2 176 of 177, and `DELIVERY`'s PU2 is 89 of 89. The noise channel
+is close behind -- a longest common run of 511 on `DELIVERY`, 260 on `CASTSHDW`.
+
+**The wave channel is the one left**, and it is not one error: ChipBoy triggers it too often on
+`SAMESONG` (3073 against 1596) and `DELIVERY` (5735 against 5104) and not often enough on
+`CASTSHDW` (2248 against 4264). On `SAMESONG` the first ten seconds are exact (197 against 197)
+and the rate doubles after about thirteen, and 268 of its triggers land within two milliseconds
+of the one before where the ROM has five in the whole song -- a frame loaded twice in one tick.
+That is a table-timing question (§64's three lanes), not a command's law, and it is the next
+thing to take up.
 
 (The wave column counts the ROM's note-ons once: LSDj triggers that channel twice, with a stale
 period and then the real one.) The three format-2 songs are from the *Computer Savvy* source
@@ -130,9 +145,12 @@ and §5 -- the bend's phase at a note-on, and the noise table transpose before 4
 `SUNRISE` is exact on three channels of four (the wave channel's swept drums differ only in the
 first update of each, matrix section 10.1). The other two are not, and they are the next round:
 the trigger *counts* are close on `SPACE TI` but the values diverge within a few notes, and
-`SAMESONG`'s wave and noise channels are out by a factor. They want the same treatment `SUNRISE`
-had: diff the register streams and read the ROM where they disagree. `SAMESONG` also uses instrument finetune (byte 11) on four pulse instruments, which the
-importer drops with a note and the driver could carry (section 78 gives `F` the same law).
+the three 9.2.L songs' wave channels are. They want the same treatment `SUNRISE` had: diff the
+register streams and read the ROM where they disagree. `SAMESONG` also uses instrument finetune
+(byte 11) on four pulse instruments, which the importer drops with a note and the driver could
+carry (section 78 gives `F` the same law), and its pulse channels are the weakest of the three
+9.2.L songs -- a longest run of 13 and 2 where `CASTSHDW` manages 399 and 176 -- so it is using
+something the other two are not.
 
 ## 7. Still to measure on the new ROMs
 

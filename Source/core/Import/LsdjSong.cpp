@@ -664,7 +664,13 @@ struct Reader {
             case 'F':
                 // Section 78. WAV: the frame. PU1: a downward finetune of y/32 of a
                 // semitone, x ignored. PU2: x semitones up plus y/32. NOI: inert.
-                if (instKind == 1) { out = { Cmd::F, int16_t(std::min(16, y + 1)), 0, 0 }; return true; }
+                // Section 92: on the wave channel F advances the frame by `y`,
+                // measured on 8.4.4, 8.8.6, 9.2.L and 9.3.9 alike. `x` does
+                // something else that is not worked out; it is not used here.
+                if (instKind == 1) {
+                    if (x) notes.add("F" + hex2(v) + " at " + where + " on a wave instrument: only the low nibble advances the frame, and what the high nibble does is not mapped");
+                    out = { Cmd::F, int16_t(y), 0, 0 }; return true;
+                }
                 if (channel == 0 || channel == 1) { out = { Cmd::F, int16_t(x), int16_t(y), 0 }; return true; }
                 notes.add("F" + hex2(v) + " at " + where + " on the noise channel does nothing on the ROM either; dropped"); return false;
             case 'B':
@@ -688,8 +694,20 @@ struct Reader {
             for (int r = 0; r < 16 && !content; ++r) { const size_t i = size_t(t) * 16 + size_t(r); content = at(kTableEnv + i) || at(kTableTsp + i) || at(kTableCmd1 + i) || at(kTableCmd2 + i); }
             if (!content) continue;
             int noiseBase = -1, noiseInst = -1; bool others = false; std::set<int> bases;
+            // The kind of instrument the table runs under, so a command that
+            // reads it -- F on a wave instrument names a frame, on a pulse a
+            // finetune -- is converted as the channel it will play on and not
+            // dropped. One kind only: a table shared between kinds cannot have
+            // both readings, and says so.
+            int useKind = -1, useChan = -1; bool mixedKind = false;
             if (auto it = users.find(t); it != users.end())
-                for (const auto& [ins, ch, midi] : it->second) { if (kindFor(ins, ch) == 3) { if (bases.empty() || midi < *bases.begin()) noiseInst = ins; bases.insert(midi); } else others = true; }
+                for (const auto& [ins, ch, midi] : it->second) {
+                    const int k = kindFor(ins, ch);
+                    if (useKind < 0) { useKind = k; useChan = ch; }
+                    else if (useKind != k) mixedKind = true;
+                    if (k == 3) { if (bases.empty() || midi < *bases.begin()) noiseInst = ins; bases.insert(midi); } else others = true;
+                }
+            if (mixedKind) { useKind = -1; useChan = -1; }
             if (!bases.empty()) {
                 noiseBase = *bases.begin();
                 // Under LSDj's own table (section 81) the column is semitones and
@@ -740,7 +758,9 @@ struct Reader {
                     const char letter = letterOf(cmds[k].first);
                     if (!letter) continue;
                     Command c;
-                    if (command(letter, cmds[k].second, "table " + hex2(t) + " row " + std::to_string(r), -1, noiseBase >= 0 ? 3 : -1, nullptr, c)) (k == 0 ? st.cmd1 : st.cmd2) = c;
+                    const int kind = noiseBase >= 0 ? 3 : useKind;
+                    const int chan = noiseBase >= 0 ? 3 : useChan;
+                    if (command(letter, cmds[k].second, "table " + hex2(t) + " row " + std::to_string(r), kind, chan, nullptr, c)) (k == 0 ? st.cmd1 : st.cmd2) = c;
                 }
             }
             ++sum.tables;

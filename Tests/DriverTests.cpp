@@ -2641,28 +2641,44 @@ TEST_CASE("PingPong turns at the run's loop step, not at its first", "[driver][w
     CHECK(std::find(f.begin(), f.end(), 5) != f.end());    // and comes back to the loop step
 }
 
-TEST_CASE("F names a wave frame the run skips", "[driver][wave]")
+TEST_CASE("F advances a wave frame, past the ones the run skips", "[driver][wave]")
 {
-    // Section 65: measured on 8.4.4, F loads the frame it names whether or not
-    // the instrument's LENGTH leaves that frame in the run.
-    Rig r;
-    r.tickHz = 100.0;
-    auto& w = r.bank.waves[0];
-    w.used = true; w.frames.clear();
-    for (int f = 0; f < 16; ++f) { bank::Frame fr; fr.s.fill(uint8_t(f)); w.frames.push_back(fr); }
-    Table t; t.used = true; t.name = "Frame";
-    t.steps[1].cmd1 = { Cmd::F, 7, 0, 0 };
-    t.end = TableEnd::Stop;
-    r.bank.tables[7] = t;
-    auto& i = r.bank.instruments[1];
-    i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Manual");
-    i.used = true; i.wave = 1; i.frameLength = 4; i.frameAdvance = 0; i.table = 8;   // the run is 0, 5, 10, 15
-    ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(2, p);
-    r.block({ Rig::on(2, 60, 100) }, 480);
-    CHECK(int(r.drv.view(2).frame) == 0 + 1);             // the run's first step
-    std::vector<int> seen;
-    for (int k = 0; k < 4; ++k) { r.block({}, 480); seen.push_back(int(r.drv.view(2).frame)); }
-    CHECK(std::find(seen.begin(), seen.end(), 6 + 1) != seen.end());   // frame 6, which that run skips
+    // Section 92: measured on 8.4.4, 8.8.6, 9.2.L and 9.3.9 alike, F **advances**
+    // the frame by its argument every time it runs, through the synth's frames
+    // rather than through the run, and wraps at the end.
+    const auto rig = [](int step) {
+        auto r = std::make_unique<Rig>();
+        r->tickHz = 100.0;
+        auto& w = r->bank.waves[0];
+        w.used = true; w.frames.clear();
+        for (int f = 0; f < 16; ++f) { bank::Frame fr; fr.s.fill(uint8_t(f)); w.frames.push_back(fr); }
+        Table t; t.used = true; t.name = "Frame";
+        for (int k = 0; k < 16; ++k) t.steps[size_t(k)].cmd1 = { Cmd::F, int16_t(step), 0, 0 };
+        r->bank.tables[7] = t;
+        auto& i = r->bank.instruments[1];
+        i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Manual");
+        i.used = true; i.wave = 1; i.frameLength = 4; i.frameAdvance = 0; i.table = 8;   // the run is 0, 5, 10, 15
+        ChannelParams p; p.instrument = 2; p.velocityMode = 2; r->drv.setParams(2, p);
+        r->block({ Rig::on(2, 60, 100) }, 480);
+        std::vector<int> seen{ int(r->drv.view(2).frame) - 1 };
+        for (int k = 0; k < 5; ++k) { r->block({}, 480); seen.push_back(int(r->drv.view(2).frame) - 1); }
+        return seen;
+    };
+    // The note-on fires row 0 in its own tick (section 84), so the first sample
+    // already carries one step; what the rule says is the distance between them.
+    const auto one = rig(1), two = rig(2), six = rig(6);
+    const auto stepsOf = [](const std::vector<int>& v) {
+        std::vector<int> d;
+        for (size_t k = 1; k < v.size(); ++k) d.push_back(((v[k] - v[k - 1]) % 16 + 16) % 16);
+        return d;
+    };
+    INFO("one " << one[0] << " " << one[1] << " " << one[2] << " " << one[3]);
+    for (int d : stepsOf(one)) CHECK(d == 1);
+    for (int d : stepsOf(two)) CHECK(d == 2);
+    for (int d : stepsOf(six)) CHECK(d == 6);
+    // Frames the run skips (the run is 0, 5, 10, 15) are reached all the same.
+    CHECK(std::find(one.begin(), one.end(), 3) != one.end());
+    CHECK(std::find(six.begin(), six.end(), 12) != six.end());
 }
 
 TEST_CASE("S and P on noise work on NR43 in the Register domain", "[driver][noise]")

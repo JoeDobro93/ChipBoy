@@ -2560,3 +2560,35 @@ The run's *content* was already right: `LENGTH` picks N frames spread evenly ove
 sixteen -- `LENGTH = 4` is frames 0, 5, 10, 15 and `LENGTH = 8` is 0, 2, 4, 6, 9, 11, 13, 15 --
 which is what `bank::waveRun` builds, and `PLAY` 0/1/2/3 are MANUAL, ONCE, LOOP and PINGPONG as
 the importer already reads them.
+
+## 92. `F` on the wave channel **advances** the frame; it does not name one
+
+§65 had `F` naming the frame it loads, from a reading of 8.4.4 where "`F 06` loaded frame 5".
+Re-measured on 8.4.4, 8.8.6, 9.2.L and 9.3.9 by tagging each of a synth's sixteen frames and
+reading the wave RAM back, with the command on a table row so it runs every tick:
+
+| `F 0 y` | `01` | `02` | `04` | `06` | `02` then `01` |
+|---|---|---|---|---|---|
+| frames loaded | 0 1 2 | 0 2 4 | 0 4 8 | 0 6 12 | 0 2 3 5 6 |
+
+**The frame advances by `y` every time the command runs**, through the synth's sixteen frames --
+not through the instrument's run, so `F 02` on a run of 0, 5, 10, 15 still reaches frame 2 -- and
+it wraps at the end. Identical on every version measured; the old reading was off by one and
+mistook a single step for an absolute index.
+
+`x` is not zero in any table of the user's songs and does something else: any non-zero high nibble
+parks the frame and holds it there. Not worked out, and noted at import rather than guessed.
+
+A table whose rows carry `F` is how LSDj walks a synth: the user's `SAMESONG` drives every one of
+its wave instruments that way, and its `GUITR` is `PLAY = MANUAL` with nothing but `F` rows.
+
+### 92.1 A table's commands are read for the instrument that runs it
+
+The importer converted a **table's** commands with no instrument kind at all, so every one that
+reads the kind fell through to the channel-less branch: on the wave channel `F` was **dropped**,
+with a note about the noise channel that was not even true. `tables()` now takes the kind from the
+instruments that name the table (`tableUse`), and passes it with a representative channel; a table
+shared between kinds keeps the old behaviour, because it cannot have both readings.
+
+On `SAMESONG` this is the difference between 47 wave note-ons in the first ten seconds and the
+ROM's 197 -- which ChipBoy now matches exactly.

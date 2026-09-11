@@ -499,10 +499,14 @@ design-log section the change touches. Update this file at the end of every chan
   19 or 21**: each falls through to the nearest below, which for 17-21 is the 8.8.6 model, and the
   changelog puts the whole noise overhaul at 9.0, so that is very likely wrong. Run the batteries
   in `/root/lsdj/probe/vs_*.py` on them -- they take a version name and need nothing else.
-- **`SAMESONG`'s wave channel** still triggers 2641 times against the ROM's 1596. Its first
-  phrases play `GUITR`, whose PLAY is MANUAL, so the run is driven by **`F` commands** in the
-  cells and not by the instrument; the ROM reloads wave RAM and retriggers three ticks running
-  where ChipBoy does not. That is where to start.
+- **The wave channel on the 9.2.L songs** is the one channel left (`docs/LSDJ_VERSIONS.md` §6).
+  It is not one error: ChipBoy over-triggers `SAMESONG` and `DELIVERY` and under-triggers
+  `CASTSHDW`. On `SAMESONG` the first ten seconds are **exact** (197 against 197), the rate
+  doubles after about thirteen, and 268 triggers land within two milliseconds of the one before
+  where the ROM has five in the whole song -- a frame loaded twice in one tick. Look at §64's
+  three table lanes and when a table's row fires relative to the note-on, not at a command's law.
+- **`SAMESONG`'s pulse channels** are much weaker than the other two 9.2.L songs (runs of 13 and
+  2 against `CASTSHDW`'s 399 and 176), so it uses something they do not. Worth finding.
 - **The bend's phase at a note-on** is the largest thing left on the old songs and on SUNRISE's
   wave channel alike (`docs/LSDJ_VERSIONS.md` section 4 item 3, matrix section 10.1): the ROM's
   note-on writes a period already part of the way into a running `P`, ChipBoy writes the plain
