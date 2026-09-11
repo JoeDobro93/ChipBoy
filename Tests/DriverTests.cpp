@@ -3229,3 +3229,75 @@ TEST_CASE("a pulse instrument's finetune detunes PU1 down and PU2 up", "[driver]
     CHECK(withF == fOnly);
     CHECK(withF > pu1Fine);
 }
+
+TEST_CASE("a table a table starts fires its first row at once", "[driver][table]")
+{
+    // Section 113: `SAMESONG`'s instrument 02 runs a STEP-mode table whose row 0
+    // starts another table holding the vibrato. In Step mode there is no next
+    // tick to catch the new table's row 0, so leaving it for one meant the
+    // second table never ran and the note sat dead flat.
+    const auto span = [](bank::TableMode mode) {
+        auto r = std::make_unique<Rig>();
+        r->tickHz = 100.0;
+        Table first; first.used = true; first.name = "Chain";
+        first.steps[0].cmd2 = { Cmd::A, 7, 0, 0 };          // start table slot 7
+        r->bank.tables[4] = first;                           // slot 5
+        Table second; second.used = true; second.name = "Vib";
+        second.steps[0].cmd2 = { Cmd::V, 15, 3, 0 };
+        r->bank.tables[6] = second;                          // slot 7
+        auto& i = r->bank.instruments[1];
+        i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Lead");
+        i.used = true; i.table = 5; i.tableMode = mode;
+        ChannelParams p; p.instrument = 2; p.velocityMode = 2; r->drv.setParams(0, p);
+        r->block({ Rig::on(0, 60, 100) }, 480);
+        int lo = 9999, hi = 0;
+        for (int k = 0; k < 24; ++k) {
+            r->block({}, 480);
+            const int per = int(r->drv.view(0).period);
+            if (per > 0) { lo = std::min(lo, per); hi = std::max(hi, per); }
+        }
+        return hi - lo;
+    };
+    CHECK(span(bank::TableMode::Tick) > 0);
+    CHECK(span(bank::TableMode::Step) > 0);   // this is the one that was flat
+}
+
+TEST_CASE("every vibrato shape is centred on the note", "[driver][commands]")
+{
+    // Section 114, measured on 9.2.L: triangle, saw and square all swing the
+    // full depth either side of the note -- `V F3` is a span of 12 register
+    // units whichever shape it is -- and the instrument's direction bit only
+    // picks which half comes first. Saw and Square used to run 0..+1.
+    const auto swing = [](bank::VibShape shape, bank::VibDir dir) {
+        auto r = std::make_unique<Rig>();
+        r->tickHz = 100.0;
+        auto& i = r->bank.instruments[1];
+        i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Lead");
+        i.used = true; i.vib.shape = shape; i.vib.dir = dir;
+        ChannelParams p; p.instrument = 2; p.velocityMode = 2; r->drv.setParams(0, p);
+        r->song.noteSource[0] = tracker::NoteSource::Tracker;
+        NoteEvent on = cellOn(0, 60, 2);
+        on.cmd1 = { Cmd::V, 15, 3, 0 };
+        r->block({ on }, 480);
+        int lo = 9999, hi = 0;
+        const int plain = int(r->drv.view(0).period);
+        for (int k = 0; k < 40; ++k) {
+            r->block({}, 480);
+            const int per = int(r->drv.view(0).period);
+            if (per > 0) { lo = std::min(lo, per); hi = std::max(hi, per); }
+        }
+        (void) plain;
+        return std::make_pair(lo, hi);
+    };
+    // Shape 3 is no vibrato at all, whatever V asks for -- so it also gives the
+    // note's own period to measure the others against.
+    const auto [offLo, offHi] = swing(bank::VibShape::Off, bank::VibDir::Down);
+    CHECK(offLo == offHi);
+    const int note = offLo;
+    for (auto shape : { bank::VibShape::Triangle, bank::VibShape::Saw, bank::VibShape::Square }) {
+        const auto [lo, hi] = swing(shape, bank::VibDir::Down);
+        INFO("shape " << int(shape) << ": note " << note << ", " << lo << " .. " << hi);
+        CHECK(lo < note);      // it goes below the note
+        CHECK(hi > note);      // and above it
+    }
+}

@@ -3212,3 +3212,54 @@ the note in progress, as it always did, and the next note-on brings the instrume
 
 Byte 11 is the wave instrument's **SPEED** (§65) and means nothing on noise, so this is a pulse
 field only.
+
+## 113. A table a table starts takes effect at once
+
+`SAMESONG`'s instrument 02 sounded dead flat in ChipBoy where the ROM has a vibrato on it. Its table
+`11` has `A 02` in row 0's second command lane, and table `02` has `V F3` in its own row 0 -- a table
+starting a table, with the vibrato in the second one.
+
+A plain chain already worked. What broke it is the instrument's **table mode**: byte 5 bit 3 is
+LSDj's STEP, one table row per trigger rather than one per tick, which a sweep confirms on both a
+pulse and a wave instrument -- with the bit set, a table whose transpose column steps `0 4 8 12`
+holds its first row and the note never moves. Instrument 02 is in STEP mode, so its table never
+leaves row 0: the `A 02` there is the whole of what the table does, and everything after depends on
+it firing.
+
+ChipBoy called `beginTableRun()` for the `A` and left the new table's row 0 for the next tick. In
+Tick mode that arrives and the vibrato starts a tick late; in **Step mode there is no next tick**, so
+the second table never ran at all. Measured on 9.2.L, byte 5 = `08`:
+
+```
+ROM      2016 1837 1837 1837 1831 1837 1843 1837 1831 1837 1843 …
+ChipBoy  1837 1837                                                 (flat: nothing ever fired)
+```
+
+So the table a table starts fires its **row 0 in the same step**, which is the rule a note-on already
+follows (§31). Only from inside a table: a cell's `A` keeps starting at row 0 and firing it on the
+next tick, which §32 pins. A depth guard stops a ring of `A`s running away.
+
+## 114. Every vibrato shape is centred, and shape 3 is off
+
+Chasing §113 left instrument 02 vibrating half as far as the ROM -- `1849 / 1855` against
+`1843 / 1855`. Sweeping byte 5's low three bits with `V F3` on 9.2.L:
+
+| byte 5 & 7 | what the period does | shape | starts |
+|---|---|---|---|
+| `0` | `1837 1831 1837 1843 …` | triangle | down |
+| `1` | `1837 1843 1837 1831 …` | triangle | up |
+| `2` | `1843 1840 1837 1834 …` | saw, ramping down | down |
+| `3` | `1831 1834 1837 1840 …` | saw, ramping up | up |
+| `4` | `1831 1831 1843 1843 …` | square | down |
+| `5` | `1843 1843 1831 1831 …` | square | up |
+| `6`, `7` | `1837` throughout | **off** | -- |
+
+Three things follow. **Every shape is centred on the note** -- the full depth either side, a span of
+12 units for `V F3` -- where ChipBoy's saw and square ran `0 .. +1`, half the swing and all of it on
+one side. **Bit 0 picks which half comes first**, not a one-sided direction; ChipBoy's `VibDir`
+already flips the wave, which is exactly that once the shapes are centred. And **shape 3 is no
+vibrato at all**, which the importer used to clamp to Square.
+
+`VibShape` gains `Off`, the saw becomes `2 * ph / N - 1` and the square `+1` then `-1`, and the
+importer stops clamping. Instrument 02 -- byte 5 `0D`, so square starting up -- now gives
+`1855 1855 1843 1843` against the ROM's `1855 1855 1843 1843`.

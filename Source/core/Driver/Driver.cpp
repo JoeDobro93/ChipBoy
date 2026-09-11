@@ -906,8 +906,13 @@ int Driver::vibratoFine(const Voice& v) const
               : ph <= 48 ? 2.0 - double(ph) / 16.0
                          : double(ph) / 16.0 - 4.0;
             break;
-        case VibShape::Saw:    u = double(ph) / double(kVibPhase); break;
-        case VibShape::Square: u = ph < kVibPhase / 2 ? 0.0 : 1.0; break;
+        // Section 114: centred, like the triangle -- measured on 9.2.L, every
+        // shape swings the full depth either side of the note and `vibDir` only
+        // picks which half comes first. Saw and Square used to run 0..+1, half
+        // the swing and all of it on one side.
+        case VibShape::Saw:    u = 2.0 * double(ph) / double(kVibPhase) - 1.0; break;
+        case VibShape::Square: u = ph < kVibPhase / 2 ? 1.0 : -1.0; break;
+        case VibShape::Off:    return 0;
     }
     const double off = u * double(depth);
     return v.vibDir == VibDir::Up ? int(std::lround(off)) : -int(std::lround(off));
@@ -1526,7 +1531,24 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
     switch (c.cmd) {
         case Cmd::A:                                  // table select, 0 stops
             if (c.a <= 0) v.tableOn = false;
-            else beginTableRun(ch, uint8_t(std::clamp<int>(c.a, 1, kTableSlots)));
+            else {
+                beginTableRun(ch, uint8_t(std::clamp<int>(c.a, 1, kTableSlots)));
+                // Section 113: the table a table starts takes effect **now** --
+                // its row 0 fires in this same step, not at the next tick,
+                // which is the rule a note-on already follows (section 31).
+                // Measured on 9.2.L: `SAMESONG`'s instrument 02 runs a table
+                // whose row 0 starts another table holding the vibrato, and in
+                // Step mode there is no next tick to catch it, so without this
+                // the second table never runs at all and the note sits dead
+                // flat. The depth guard stops a ring of `A`s running away.
+                // Only from inside a table: a cell's `A` keeps starting at row 0
+                // and firing it on the next tick, which section 32 already pins.
+                if (fromTable && v.tableOn && tableChain_ < kMaxTableChain) {
+                    ++tableChain_;
+                    stepTable(ch);
+                    --tableChain_;
+                }
+            }
             break;
         case Cmd::C:                                  // 0, x, y one step per chordRate + 1 ticks
             // Section 77: the noise channel takes it too -- the chord's semitones

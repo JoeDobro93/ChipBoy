@@ -28,7 +28,9 @@ enum class InstrumentType : uint8_t { Pulse = 0, Wave = 1, Kit = 2, Noise = 3 };
 enum class Pan : uint8_t { Off = 0, Left = 1, Right = 2, Both = 3 };
 enum class EnvDir : uint8_t { Down = 0, Up = 1 };
 enum class NoteOff : uint8_t { Kill = 0, Release = 1, Ignore = 2 };
-enum class VibShape : uint8_t { Triangle = 0, Saw = 1, Square = 2 };
+/// Section 114: LSDj's instrument byte 5, bits 1-2. Every shape is centred on
+/// the note; bit 0 picks which half it starts on, and shape 3 is no vibrato.
+enum class VibShape : uint8_t { Triangle = 0, Saw = 1, Square = 2, Off = 3 };
 enum class VibDir : uint8_t { Down = 0, Up = 1 };
 /// How fast P, L and V move (docs/COMMANDS_AND_TEMPO.md section 7). Fast is
 /// 360 updates a second, tempo-independent; Tick is one per tracker tick, so

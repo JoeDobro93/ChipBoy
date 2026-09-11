@@ -468,6 +468,12 @@ private:
     bank::Command resolveRandom(int ch, const bank::Command& z, int lane);
     /// Where a lane's last command is kept, so `applyCommand` and `resolveRandom`
     /// agree on which one a `Z` sees.
+    /// Section 113: how deep a table starting a table has gone, so a ring of
+    /// `A`s cannot run away. The new table's row 0 fires at once, as a
+    /// note-on's does (section 31).
+    int  tableChain_ = 0;
+    static constexpr int kMaxTableChain = 4;
+
     /// Section 84: while this is set, `tableTransposeOf` reads zero, so the
     /// period a note-on triggers with is the **plain** note. It is set only
     /// around the note's own period write and only when the table started with

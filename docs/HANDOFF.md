@@ -432,6 +432,13 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 28 (§113, §114): **a table a table starts fires its row 0 at once**, and **every vibrato
+  shape is centred**. `SAMESONG`'s instrument 02 was flat: it runs a STEP-mode table (byte 5 bit 3 --
+  one row per trigger, swept and confirmed) whose row 0 holds `A 02`, and ChipBoy left the new
+  table's row 0 for a next tick that Step mode never brings. Then the vibrato it started swung half
+  as far, because ChipBoy's saw and square ran `0 .. +1` where the ROM swings the full depth either
+  side; byte 5 bit 0 picks which half comes first, not a direction, and shape 3 is off, which the
+  importer had clamped to Square.
 - Round 27 (§112, D-UI-26): **the pulse instrument gains Finetune.** LSDj's byte 11 is a detune of
   `byte / 256` of a semitone, **down on PU1 and up on PU2** -- the two pulses beat against each other
   -- applied on the first pitch update rather than at the trigger, which is why a trigger-only

@@ -769,13 +769,13 @@ void InstrumentPanel::rebuildEditor()
     // --- PITCH & MODULATION -----------------------------------------------
     auto mod = std::make_unique<FormGroup>("Pitch & modulation");
     {
-        auto shape = std::make_unique<Segmented>(StringArray{ "Tri", "Saw", "Sq" });
+        auto shape = std::make_unique<Segmented>(StringArray{ "Tri", "Saw", "Sq", "Off" });   // section 114
         shape->setMini(true);
-        shape->setTooltip("The waveform of V and of the instrument's own vibrato.");
-        shape->onChange = [this](int v) { edit("vibrato shape", [v](bank::Instrument& i) { i.vib.shape = bank::VibShape(std::clamp(v, 0, 2)); }); };
+        shape->setTooltip("The waveform of V and of the instrument's own vibrato, centred on the note. Off silences it whatever V asks for.");
+        shape->onChange = [this](int v) { edit("vibrato shape", [v](bank::Instrument& i) { i.vib.shape = bank::VibShape(std::clamp(v, 0, 3)); }); };
         auto dir = std::make_unique<Segmented>(StringArray{ utf8("\xe2\x86\x93"), utf8("\xe2\x86\x91") });
         dir->setMini(true);
-        dir->setTooltip("Down swings between the note and the note minus the depth; up, between it and the note plus it.");
+        dir->setTooltip("Which half of the swing comes first: down goes below the note before above it, up the other way. The swing itself is centred on the note either way (section 114).");
         dir->onChange = [this](int v) { edit("vibrato direction", [v](bank::Instrument& i) { i.vib.dir = v == 1 ? bank::VibDir::Up : bank::VibDir::Down; }); };
         w_->vibShape = shape.get();
         w_->vibDir = dir.get();

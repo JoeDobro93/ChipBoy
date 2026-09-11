@@ -385,7 +385,8 @@ struct Reader {
             o.pan = bank::Pan(b[7] & 3); o.length = 0; o.noteOff = bank::NoteOff::Kill;
             o.cmdRate = uint8_t(b[8] & 15); o.chordRate = o.cmdRate;
             o.tableMode = (b[5] & 0x08) ? bank::TableMode::Step : bank::TableMode::Tick;
-            o.vib.shape = bank::VibShape(std::min(2, (b[5] >> 1) & 3)); o.vib.dir = (b[5] & 1) ? bank::VibDir::Up : bank::VibDir::Down;
+            o.vib.shape = bank::VibShape((b[5] >> 1) & 3);   // section 114: 3 is off
+            o.vib.dir = (b[5] & 1) ? bank::VibDir::Up : bank::VibDir::Down;
             o.vib.speed = 8; o.vib.depth = 0; o.vib.delay = 0;
             o.table = (b[6] & 0x20) ? uint8_t((b[6] & 0x1F) + 1) : uint8_t(0);
             o.transpose = !(b[5] & 0x20);

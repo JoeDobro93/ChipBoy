@@ -26,6 +26,31 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-11 — A table a table starts, and the vibrato shapes
+
+`docs/COMMANDS_AND_TEMPO.md` §113 and §114, both found chasing `SAMESONG`'s instrument 02, which
+sounded dead flat where the ROM has a vibrato on it.
+
+**§113.** Its table `11` has `A 02` in row 0's second command lane and table `02` has `V F3` in its
+own row 0 -- a table starting a table. A plain chain already worked; what broke it is the
+instrument's **table mode**. Byte 5 bit 3 is LSDj's STEP, one table row per trigger instead of one
+per tick, which a sweep confirms on both a pulse and a wave instrument. Instrument 02 is in STEP
+mode, so its table never leaves row 0 and the `A 02` there is the whole of what it does. ChipBoy
+called `beginTableRun()` and left the new table's row 0 for the next tick -- in Tick mode that
+arrives a tick late, in **Step mode it never arrives at all**. The table a table starts now fires its
+row 0 in the same step, which is the rule a note-on already follows (§31), with a depth guard against
+a ring of `A`s. Only from inside a table: a cell's `A` keeps §32's behaviour.
+
+**§114.** That left instrument 02 vibrating half as far as the ROM. Sweeping byte 5's low three bits
+with `V F3`: every shape is **centred on the note** -- a span of 12 register units either side --
+where ChipBoy's saw and square ran `0 .. +1`, half the swing and all of it on one side. Bit 0 picks
+which half comes **first**, not a one-sided direction, which is what `VibDir` already does once the
+shapes are centred. And shape **3 is no vibrato at all**, where the importer clamped it to Square.
+`VibShape` gains `Off`, the saw becomes `2 * ph / N - 1`, the square `+1` then `-1`, and the
+Instrument tab's shape switch gains an *Off* segment.
+
+Instrument 02 now gives `1855 1855 1843 1843` against the ROM's `1855 1855 1843 1843`.
+
 ### 2026-09-11 — The pulse instrument gains Finetune
 
 `docs/COMMANDS_AND_TEMPO.md` §112, D-UI-26. `SAMESONG` warned six times that a pulse instrument

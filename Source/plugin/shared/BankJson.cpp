@@ -135,7 +135,7 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     // The vibrato's shape used to carry its direction (Triangle, Square,
     // SawUp, SawDown); it is a shape and a direction now.
     if (o->hasProperty("vibDir")) {
-        i.vib.shape = VibShape(std::clamp(getOr(o, "vibShape", 0), 0, 2));
+        i.vib.shape = VibShape(std::clamp(getOr(o, "vibShape", 0), 0, 3));   // section 114: 3 is off
         i.vib.dir = VibDir(std::clamp(getOr(o, "vibDir", 0), 0, 1));
     } else {
         const int shape = std::clamp(getOr(o, "vibShape", 0), 0, 3);
