@@ -231,9 +231,9 @@ re-runs one song end to end; `agreew.py` and `runs.py` are the rulers (§9).
 
 | § | what changed | formats it moves | measured on |
 |---|---|---|---|
-| 101 | a cell with a blank instrument column keeps its note: a bare note from 4.0.4, a trigger before | 2 and up (it was dropped outright) | 3.6.5, 4.0.4, 9.2.L |
-| 100 | `F` on the wave channel takes the **whole byte**, and LSDj walks a flat 256-frame wave table (ChipBoy's sixteen-frame wave wraps: noted at import, not modelled) | **all** | 9.2.L |
-| 99 | `L` and `P` replace one another; in Drum a slide is linear in the **period register** | **all** | 9.2.L |
+| 101 | a cell with a blank instrument column keeps its note: a bare note from 4.0.4, a trigger before | 2 and up (it was dropped outright) | seventeen releases, §10.1 |
+| 100 | `F` on the wave channel takes the **whole byte**, and LSDj walks a flat 256-frame wave table (ChipBoy's sixteen-frame wave wraps: noted at import, not modelled) | **all**, confirmed from 3.1.5 up | seventeen releases, §10.1 |
+| 99 | `L` and `P` replace one another; in Drum a slide is linear in the **period register** | 4 and up (formats 0-3 unmeasured, §10.1) | seventeen releases, §10.1 |
 | 98 | the ROM beside the save decides the model, a pre-4.3 ROM is recognised at all, and 3.6.5 reads as 3.6.8 | 0-3 above all (every old ROM was invisible) | 3.6.5 |
 | 97 | a kit reads `PITCH` from byte 5; `P` on a kit is period-register units (1 a clock FAST/DRUM, 1 a tick TICK, 3x once STEP) | every format with kits | 9.2.L |
 | 96 | a kit's one `LENGTH` is byte 11 (not byte 3); `LOOP` is byte 5 bit 5 | every format with kits | 9.2.L |
@@ -262,6 +262,38 @@ re-runs one song end to end; `agreew.py` and `runs.py` are the rulers (§9).
 | 74 | `Z` re-runs its **own lane** | **all** | 9.3.9 |
 | 73 | `B`'s two laws: the phrase roll is `n/15`, the table hop `x/16` | 11 and up | 9.3.9 |
 | 72 | `S` on PU1 is a running sweep byte | **all** | 9.3.9 |
+
+### 10.1 The new rules, asked of every release
+
+§99, §100 and §101 were measured on 9.2.L alone. `/root/lsdj/probe/vs_new.py` asks them of a
+version at each model boundary. What came back (the `L vs P` column is the period register's step
+per pitch clock: the bend's own steps, then what follows the `L`):
+
+| version | fmt | `L` vs `P` | Drum slide | `F` past frame 15 | blank instrument column |
+|---|---|---|---|---|---|
+| 3.1.5 – 3.9.2 | 0, 2 | not read (see below) | no slide | **flat table** | **triggers** |
+| 4.0.4 – 4.8.0 | 2, 3 | not read | no slide | **flat table** | bends, no trigger |
+| 5.7.8, 6.4.5 | 4, 5 | −1 −1 −1 −2 −1 −1 then **+1 +1 +1** | ≈ −27 a clock, constant | **flat table** | bends, no trigger |
+| 6.8.2 | 7 | the same | ≈ −27 a clock, constant | **flat table** | bends, no trigger |
+| 7.5.4 | 9 | not read | no slide | **`F` did not move it** | bends, no trigger |
+| 8.4.4, 8.8.6, 8.9.3, 9.0.0 | 11-18 | the same | ≈ −5.5 a clock, constant | **flat table** | bends, no trigger |
+| 9.2.L, 9.3.9 | 22 | the same | ≈ −5.5 a clock, constant | **flat table** | bends, no trigger |
+
+- **§101's boundary is exactly 4.0.4**, which is where `bareNoteSounds` already puts it. Every
+  release above it bends without triggering and every one below it triggers. Nothing to change.
+- **§100 holds everywhere.** `F 10` walks sixteen frames on, out of the instrument's synth and into
+  the next, on every release from 3.1.5 up. So the gap it leaves in ChipBoy -- a wave of sixteen
+  frames that wraps -- is a gap in *every* format, not just 9.x. (7.5.4 is the one version where
+  the probe's `F` moved nothing at all; its `MANUAL` play may read byte 9 differently. Unmeasured.)
+- **§99's "a slide replaces a bend" holds from 5.7.8**, the release where `P` and `L` become the
+  semitone laws (§3). Below that they work in register units and this probe's `P F0` runs the
+  period off before the `L` lands, so it reads nothing: the rule is **unmeasured on formats 0-3**.
+  A gentler `P` would settle it.
+- **§99's register-unit Drum slide holds from 5.7.8 too** -- the step is constant to within a unit
+  or two at every release. Its *speed* is not the same, though: `L 10` covers the same distance in
+  about five updates on 5.7.8 to 6.8.2 and seventeen on 8.4.4 and up, so `L`'s duration law changed
+  somewhere between. ChipBoy uses the later one. Unmeasured, and rare: it needs a Drum instrument
+  whose table slides, on a format-4 to format-7 song.
 
 Model fields added over the same rounds, each of which changes a format's reading:
 `bareNoteSounds` (a note with a blank instrument column stops sounding at 4.0.4), `waveFrameRun`

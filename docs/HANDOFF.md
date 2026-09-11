@@ -500,6 +500,12 @@ design-log section the change touches. Update this file at the end of every chan
   `lsdjref_sav.py` writes **version byte 0**, so LSDj reads its songs with the legacy
   command table (no `B`) and the legacy noise map — its measurements stand, but a 9.x
   song needs 0x16 and the B-shifted letter table.
+- **Two gaps §10.1 left open**, both narrow. `L` replacing `P` is unmeasured on formats 0-3,
+  because that probe's `P F0` runs the period off the register before the `L` lands there; a
+  gentler `P` settles it. And `L`'s **duration** is not the same on formats 4-7 as on 11 and up --
+  `L 10` covers its distance in about five updates on 5.7.8 to 6.8.2 and seventeen on 8.4.4 --
+  so a Drum instrument whose table slides, on a song of those formats, slides too slowly. ChipBoy
+  uses the later law.
 - **The kit instrument's byte 3** and **a wave instrument's byte 3 low nibble** hold values in
   real songs and change nothing a trace can hear (§93, §96). Neither is mapped, neither is noted.
 - **The Waves tab draws a frame the other way up from LSDj's `WAVE` screen**, and rotated by one,
@@ -532,7 +538,8 @@ design-log section the change touches. Update this file at the end of every chan
   the whole noise overhaul at 9.0. A model for 17-21 wants the noise map measured on 9.0.0 first.
   Run the batteries in `/root/lsdj/probe/vs_*.py` on them -- they take a version name and need
   nothing else.
-- **LSDj's wave RAM is one flat 256-frame table** and ChipBoy's wave is sixteen frames (§100).
+- **LSDj's wave RAM is one flat 256-frame table** and ChipBoy's wave is sixteen frames (§100), on
+  **every** release from 3.1.5 up, not only 9.x (§10.1 of `docs/LSDJ_VERSIONS.md`).
   `F` walks that table straight through, so an advance past a synth's sixteen sounds the next
   synth's frames; ChipBoy wraps inside the wave and says so at import. `SAMESONG`'s `SLAPB` does
   exactly this -- `F 01` with a `Z 1E` beside it, a random 0-31 frames on -- so its tone is not the
