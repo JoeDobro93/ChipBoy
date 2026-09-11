@@ -3192,3 +3192,40 @@ TEST_CASE("a cell's L slides the bare note under a table transpose", "[driver][c
     INFO("highest while sliding " << highest);
     CHECK(highest < blipped);
 }
+
+TEST_CASE("a pulse instrument's finetune detunes PU1 down and PU2 up", "[driver][commands]")
+{
+    // Section 112, measured on 9.2.L: LSDj's instrument byte 11 is a detune of
+    // `fineTune / 256` of a semitone, **down** on PU1 and **up** on PU2, so a
+    // pair of pulses beat against each other. It lands on the first pitch
+    // update, not on the trigger, and a cell's F replaces it.
+    const auto run = [](int ch, int ft, bool withF) {
+        auto r = std::make_unique<Rig>();
+        r->tickHz = 100.0;
+        r->song.noteSource[size_t(ch)] = tracker::NoteSource::Tracker;
+        auto& i = r->bank.instruments[1];
+        i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Lead");
+        i.used = true; i.fineTune = uint8_t(ft);
+        ChannelParams p; p.instrument = 2; p.velocityMode = 2; r->drv.setParams(ch, p);
+        NoteEvent on = cellOn(ch, 60, 2);
+        if (withF) on.cmd1 = { Cmd::F, 0, 8, 0 };
+        r->block({ on }, 480);
+        r->block({}, 480);
+        return int(r->drv.view(ch).period);
+    };
+    const int pu1Plain = run(0, 0, false), pu2Plain = run(1, 0, false);
+    CHECK(pu1Plain == pu2Plain);
+    // Half a semitone either way.
+    const int pu1Fine = run(0, 0x80, false), pu2Fine = run(1, 0x80, false);
+    INFO("PU1 " << pu1Plain << " -> " << pu1Fine << ", PU2 " << pu2Plain << " -> " << pu2Fine);
+    CHECK(pu1Fine < pu1Plain);
+    CHECK(pu2Fine > pu2Plain);
+    // The same distance either way, to within the register's own rounding --
+    // a semitone is not a whole number of units and the curve is not symmetric.
+    CHECK(std::abs((pu1Plain - pu1Fine) - (pu2Fine - pu2Plain)) <= 1);
+    // An F on the cell replaces it rather than adding to it: F 0 8 is y/32 of a
+    // semitone down, a quarter of what 0x80 asks for, and that is what is left.
+    const int withF = run(0, 0x80, true), fOnly = run(0, 0, true);
+    CHECK(withF == fOnly);
+    CHECK(withF > pu1Fine);
+}

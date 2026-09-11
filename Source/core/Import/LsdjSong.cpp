@@ -418,7 +418,7 @@ struct Reader {
                 // own pu2Transpose is too -- carried exactly, so no note unless
                 // it takes a note off the keyboard (pu2TransposeRange()).
                 if (m.pu2Transpose && b[2]) o.pu2Transpose = int8_t(signedByte(b[2]));
-                if (b[11]) notes.add("pulse instrument " + name + " has finetune " + hex2(b[11]) + ": ChipBoy has no finetune");
+                o.fineTune = b[11];          // section 112
             } else if (t == 1) {
                 static const uint8_t kLevel[4] = { 0, 3, 2, 1 };       // the stored bits are the NR32 code, 1 = 100 %
                 o.waveLevel = kLevel[(b[1] >> 5) & 3];

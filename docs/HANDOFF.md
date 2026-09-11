@@ -432,6 +432,12 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 27 (§112, D-UI-26): **the pulse instrument gains Finetune.** LSDj's byte 11 is a detune of
+  `byte / 256` of a semitone, **down on PU1 and up on PU2** -- the two pulses beat against each other
+  -- applied on the first pitch update rather than at the trigger, which is why a trigger-only
+  reading showed nothing and the byte looked inert. An `F` on the cell replaces it. `Instrument::
+  fineTune` is new, a note-on seeds the voice from it, the Instrument tab has a stepper and the
+  importer sets it instead of warning. `SAMESONG`'s import notes: 57 to 51.
 - Round 26 (§111, correcting §110): **`L` on a note that carries its own instrument.** §110 had
   subtracted the *live* table column from a cell `L`'s source, which is zero at a note-on because the
   new instrument's table has already restarted on row 0 -- so `SAMESONG`'s phrase 23, whose `L`s ride

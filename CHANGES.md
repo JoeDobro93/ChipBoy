@@ -26,6 +26,28 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-11 — The pulse instrument gains Finetune
+
+`docs/COMMANDS_AND_TEMPO.md` §112, D-UI-26. `SAMESONG` warned six times that a pulse instrument
+"has finetune NN: ChipBoy has no finetune". It has one now.
+
+Measured on 9.2.L by sweeping LSDj's instrument byte 11 and reading the register stream: the byte is
+a detune of `byte / 256` of a semitone, linear across all fifteen values sampled (`FF` is one
+semitone, `80` half of one). It is **not** applied at the trigger -- the note sounds at its plain
+period and the *first pitch update* moves it -- which is why a trigger-only reading showed nothing
+at all and the byte first looked inert. And it goes **down on PU1 and up on PU2**: byte 11 = `80`
+gives 1831 on PU1 and 1843 on PU2 against a plain 1837, six units either side. That is the same
+split §78 measured for the `F` command, and an `F` on the cell **replaces** it rather than adding to
+it (`F 08` beside byte 11 = `80` leaves -3, which is `F`'s own `y/32` and nothing of the
+instrument's).
+
+`Instrument::fineTune` (0-255) is new; a note-on seeds the voice's `fineTune` from it, negated on
+PU1 and positive on PU2, where it used to seed zero. The Instrument tab gains a **Finetune** stepper
+beside PU2 transpose, the bank JSON carries it, and the importer sets it from byte 11 instead of
+warning. Pulse only: byte 11 is the wave instrument's SPEED (§65) and means nothing on noise.
+
+`SAMESONG`'s import notes go from 57 to 51.
+
 ### 2026-09-11 — L on a note that brings its own instrument, and the update the L fires on
 
 `docs/COMMANDS_AND_TEMPO.md` §111, and a correction to §110.

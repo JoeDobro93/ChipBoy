@@ -3184,3 +3184,31 @@ one update before the slide advance drops it.
 
 With this, `SAMESONG`'s phrase 21 and phrase 23 agree with the ROM register for register from the
 note through the whole bend.
+
+## 112. The pulse instrument's finetune, byte 11
+
+`SAMESONG` warned six times that a pulse instrument "has finetune NN: ChipBoy has no finetune".
+Measured on 9.2.L by sweeping byte 11 of a pulse instrument and reading the period:
+
+| byte | 00-08 | 0F | 10 | 20 | 30 | 40 | 60 | 80 | A0 | C0 | E0 | F0 | FF |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| units off the period, on PU1 | 0 | -1 | -1 | -1 | -2 | -3 | -4 | -6 | -7 | -9 | -10 | -11 | -12 |
+
+At this note a semitone is about 11.8 register units, so `FF` is one semitone and every row above
+is `round(-byte / 256)` of a semitone. It is **not** applied at the trigger -- the note sounds at its
+plain period and the *first pitch update* moves it -- which is why it took a register stream rather
+than a trigger reading to find at all.
+
+**It goes down on PU1 and up on PU2.** Byte 11 = `80` gives `1831` on PU1 and `1843` on PU2, six
+units either side of the plain `1837`: the two pulses detune against each other, which is what the
+byte is for. That is the same split §78 measured for the `F` command, and an `F` on the cell
+**replaces** it rather than adding to it -- `F 08` beside byte 11 = `80` gives -3, which is `F`'s own
+`y/32` of a semitone and nothing of the instrument's.
+
+ChipBoy's voice already carries `fineTune` in 1/256 semitones and `F` already writes it, so the
+instrument gains **Finetune** (`Instrument::fineTune`, 0-255) and a note-on seeds `v.fineTune` from
+it -- negated on PU1, positive on PU2 -- where it used to seed zero. A cell's `F` overwrites it for
+the note in progress, as it always did, and the next note-on brings the instrument's back.
+
+Byte 11 is the wave instrument's **SPEED** (§65) and means nothing on noise, so this is a pulse
+field only.

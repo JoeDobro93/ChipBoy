@@ -668,7 +668,13 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     v.noiseTsp = 0; v.noiseReg = 0; v.noiseRegStep = 0; v.noiseBend256 = 0; v.noiseBend9 = 0;   // S and P on NOI start over (sections 55 and 66)
     v.instKey = instrumentKey(ch, vel);
     v.ticks = 0; v.vibPhase9 = 0; v.pitchCount = 0;
-    v.fineOffset = 0; v.fineTune = 0; v.fineQueued = 0; v.drumOffset = 0.0; v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0;
+    // Section 112: a note starts on the instrument's own finetune, not on zero
+    // -- down on PU1, up on PU2, so a pair of pulses beat. A cell's F writes
+    // over it for the note in progress and the next note-on brings it back.
+    v.fineOffset = 0; v.fineQueued = 0; v.drumOffset = 0.0;
+    v.fineTune = (v.inst.type == InstrumentType::Pulse && v.inst.fineTune != 0)
+                     ? int16_t(ch == 1 ? int(v.inst.fineTune) : -int(v.inst.fineTune))
+                     : int16_t(0); v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0;
     v.slideTspFine = 0; v.slideTspHeld = false; v.slideTspDrop = false;   // a note starts on its own pitch (section 71)
     v.drumSlideStep = 0.0; v.drumSlideLeft = 0; v.drumSlideHold = false;   // section 99
     v.chordN = 0; v.chordIdx = 0; v.chordCount = 0;

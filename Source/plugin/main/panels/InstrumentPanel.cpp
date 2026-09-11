@@ -250,6 +250,7 @@ struct InstrumentPanel::Widgets {
     // sound
     Segmented* duty = nullptr; NameField* dutySeq = nullptr; Stepper* sweepRate = nullptr; Segmented* sweepDir = nullptr; Stepper* sweepShift = nullptr;
     Stepper* pu2Transpose = nullptr;
+    Stepper* fineTune = nullptr;
     Stepper* wave = nullptr; Stepper* frameLength = nullptr; Stepper* frameLoopStep = nullptr; Stepper* frameAdv = nullptr; Segmented* frameLoop = nullptr; Segmented* waveLevel = nullptr;
     Stepper* kit = nullptr; Segmented* kitLoop = nullptr; TextLine* kitRate = nullptr;
     Segmented* noiseDomain = nullptr; Segmented* lfsr = nullptr; Segmented* pitchMode = nullptr; Stepper* shift = nullptr; Stepper* divisor = nullptr; Stepper* noiseSweep = nullptr;
@@ -676,6 +677,11 @@ void InstrumentPanel::rebuildEditor()
         w_->pu2Transpose = stepper(*sound, "PU2 transpose", "Semitones added when this instrument plays on PU2 and nowhere else -- LSDj's PU2 TSP. An F on PU2 sets it for the note in progress.",
                                    -128, 127, 0, {}, [](bank::Instrument& i, int v) { i.pu2Transpose = int8_t(v); });
         w_->pu2Transpose->setTransposeNumbering(true);   // signed, or the byte in Hex (section 52)
+        // LSDj's byte 11 (section 112): the two pulses detune against each
+        // other, PU1 down and PU2 up, by this much of a semitone.
+        w_->fineTune = stepper(*sound, "Finetune",
+                               "Detune, in 256ths of a semitone: down when this instrument plays on PU1 and up on PU2, so a pair of pulses beat against each other -- LSDj's instrument finetune. An F on the cell replaces it for the note in progress.",
+                               0, 255, 0, {}, [](bank::Instrument& i, int v) { i.fineTune = uint8_t(v); });
     } else if (type == bank::InstrumentType::Wave) {
         w_->wave = stepper(*sound, "Wave", "The wave RAM source; a W command overrides it. Right-click lists the bank, double-click opens it.", 1, bank::kWaveSlots, 1,
                            [this](int v) { const auto bk = processor.bank(); const bank::Wave* wv = bk ? bk->wave(v) : nullptr; return wv ? slotAndName(v, wv->name) : slotAndName(v, "empty"); },
@@ -933,7 +939,7 @@ void InstrumentPanel::syncValues()
     }
     S(w.duty, i.duty);
     if (w.dutySeq && w.dutySeq->text() != dutySeqText(i)) w.dutySeq->setText(dutySeqText(i));
-    T(w.sweepRate, i.sweepRate); S(w.sweepDir, i.sweepDown ? 1 : 0); T(w.sweepShift, i.sweepShift); T(w.pu2Transpose, i.pu2Transpose);
+    T(w.sweepRate, i.sweepRate); S(w.sweepDir, i.sweepDown ? 1 : 0); T(w.sweepShift, i.sweepShift); T(w.pu2Transpose, i.pu2Transpose); T(w.fineTune, i.fineTune);
     T(w.wave, i.wave); T(w.frameLength, i.frameLength); T(w.frameLoopStep, i.frameLoopStep); T(w.frameAdv, i.frameAdvance); S(w.frameLoop, int(i.frameLoop)); S(w.waveLevel, i.waveLevel);
     T(w.kit, i.kit); S(w.kitLoop, int(i.kitLoop));
     if (w.kitRate) {
