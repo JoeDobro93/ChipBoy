@@ -26,6 +26,29 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-11 — SAMESONG: the fast retrigger reads its argument, and wave SPEED is signed
+
+Two defects found by comparing the user's `SAMESONG` (LSDj 9.2.L, format 22) against its own ROM,
+both in ground the `SUNRISE` work never covered.
+
+1. **`R 8 y` retriggers every `y + 1` pitch clocks** (spec section 90), not every pitch clock.
+   Section 76 called `x = 8` "LSDj's resync" and left `y` out of it, so ChipBoy rolled three times
+   too fast. Measured across the whole nibble on 9.3.9 and 9.2.L: 1 clock at `y = 0` up to 15 at
+   `y = E`. And **`R 8 F` stops a retrigger that is already running** rather than starting one --
+   confirmed against `R 0 F` and `R 0 0`, which do not -- which is exactly how `SAMESONG`'s two
+   tables use it. The noise channel went from 5191 retriggers against the ROM's 1678 to 1708.
+2. **The wave instrument's `SPEED` is a signed byte** (spec section 91). The run advances every
+   `speed + 4` ticks, and the importer read byte 11 unsigned, so `FD` asked for 257 ticks a frame
+   instead of one and the run stood still. Every wave instrument in `SAMESONG` stores a negative
+   speed.
+
+**Fourteen more ROMs** are in the container and every format gap is now filled: 7.2.3 (format 8),
+7.5.4 (9), 7.9.9 and 8.0.0 (10), 8.2.0 (11), 8.8.6 (15), 8.9.3 and 8.9.5 (17), 9.0.0 and 9.0.1
+(18), 9.1.0 (19), 9.1.C (21), and 3.6.5. The models do not know formats 8, 9, 10, 17, 18, 19 or
+21 yet -- each falls through to the nearest below, which for 17-21 is the 8.8.6 model, and the
+changelog puts the whole noise overhaul at 9.0, so that is very likely wrong. `docs/LSDJ_VERSIONS.md`
+section 7 says so plainly rather than leaving it implied.
+
 ### 2026-09-11 — the old formats tested on real songs: no wave frame run, and a bend in whole units
 
 Twenty-five songs from the *Computer Savvy* source files, all format 2, written in LSDj 3.6.5 and

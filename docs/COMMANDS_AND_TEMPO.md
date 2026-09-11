@@ -2520,3 +2520,43 @@ SPEED -- mean something else.
 Reading 9.x's bytes on an older instrument gives it a run it never had, which is heard as the
 wave channel retriggering two or three times a step. On `CLUCK` it was 978 wave note-ons against
 the ROM's 303; with `LsdjModel::waveFrameRun` clear for formats 0-5 it is 270.
+
+## 90. `R 8 y` is a fast retrigger every `y + 1` pitch clocks, and `R 8 F` stops one
+
+§76 called `x = 8` "LSDj's resync" and left `y` out of it, so ChipBoy retriggered on **every**
+pitch clock whatever `y` said. Measured on 9.3.9 and 9.2.L, a note held while `R 8 y` runs:
+
+| `y` | 0 | 1 | 2 | 3 | 4 | 8 | E | F |
+|---|---|---|---|---|---|---|---|---|
+| gap | 2.8 ms | 5.6 | 8.4 | 11.2 | 14.0 | 25.1 | 41.9 | — |
+| pitch clocks | 1 | 2 | 3 | 4 | 5 | 9 | 15 | none |
+
+**The interval is `y + 1` pitch clocks**, exactly, for `y` = 0 to E. **`R 8 F` retriggers nothing
+at all** -- and it *stops a retrigger that is already running*, which `R 0 F` and `R 0 0` do not:
+a table with `R 8 1` on one row and `R 8 F` two rows later rolls and then stops, where without the
+second row it rolls on. That is how the user's `SAMESONG` uses it, in both of its tables.
+
+`x` is still a signed nibble of volume change in the tick domain (`R 1 1` walks the level up by
+one a retrigger, `R 9 1` down by seven), and `x = 8` alone means the fast domain with no volume
+change. The driver keeps `retrigFastCount` beside `retrigCount` and `R 8 F` clears `retrigOn`.
+
+On `SAMESONG` this took the noise channel from 5191 retriggers against the ROM's 1678 to 1708.
+
+## 91. The wave instrument's `SPEED` is a **signed** byte
+
+The run advances every `speed + 4` ticks and `speed` is instrument byte 11 read as a **signed**
+byte, measured on 9.3.9 by counting wave-RAM refreshes over three seconds:
+
+| byte 11 | `00` | `01` | `02` | `03` | `04` | `FF` | `FE` | `FD` |
+|---|---|---|---|---|---|---|---|---|
+| signed | 0 | 1 | 2 | 3 | 4 | −1 | −2 | −3 |
+| ticks a frame | 4.00 | 4.99 | 6.00 | 6.99 | 7.99 | 3.00 | 2.00 | 1.00 |
+
+The importer read it unsigned, so `FD` asked for 257 ticks a frame rather than one and the run
+stood still. **Every wave instrument in `SAMESONG` stores a negative speed**, which is why its
+wave channel triggered 745 times against the ROM's 1596.
+
+The run's *content* was already right: `LENGTH` picks N frames spread evenly over the synth's
+sixteen -- `LENGTH = 4` is frames 0, 5, 10, 15 and `LENGTH = 8` is 0, 2, 4, 6, 9, 11, 13, 15 --
+which is what `bank::waveRun` builds, and `PLAY` 0/1/2/3 are MANUAL, ONCE, LOOP and PINGPONG as
+the importer already reads them.

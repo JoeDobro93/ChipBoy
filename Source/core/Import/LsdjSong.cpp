@@ -451,7 +451,11 @@ struct Reader {
                         case 3: o.frameLoop = bank::FrameLoop::PingPong; break;
                         default: o.frameLoop = bank::FrameLoop::Loop; break;
                     }
-                    if (b[9] & 3) o.frameAdvance = uint8_t(std::min(255, int(b[11]) + 4));
+                    // Section 91: SPEED is a **signed** byte and the run advances
+                    // every `speed + 4` ticks, so FD is one tick and not 255.
+                    // Every wave instrument in the user's SAMESONG stores a
+                    // negative speed, which read unsigned froze the run.
+                    if (b[9] & 3) o.frameAdvance = uint8_t(std::clamp(signedByte(b[11]) + 4, 1, 255));
                 }
             } else if (t == 2) {
                 if (!kitInstrument(i, b, o, name)) return false;

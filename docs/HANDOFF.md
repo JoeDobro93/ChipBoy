@@ -493,6 +493,16 @@ design-log section the change touches. Update this file at the end of every chan
 
 ## Next steps
 
+- **Fourteen more ROMs are in `/root/lsdj/roms/`** and every format gap is filled: 7.2.3 (format
+  8), 7.5.4 (9), 7.9.9 and 8.0.0 (10), 8.2.0 (11), 8.8.6 (15), 8.9.3 and 8.9.5 (17), 9.0.0 and
+  9.0.1 (18), 9.1.0 (19), 9.1.C (21), 3.6.5. **The models do not know formats 8, 9, 10, 17, 18,
+  19 or 21**: each falls through to the nearest below, which for 17-21 is the 8.8.6 model, and the
+  changelog puts the whole noise overhaul at 9.0, so that is very likely wrong. Run the batteries
+  in `/root/lsdj/probe/vs_*.py` on them -- they take a version name and need nothing else.
+- **`SAMESONG`'s wave channel** still triggers 2641 times against the ROM's 1596. Its first
+  phrases play `GUITR`, whose PLAY is MANUAL, so the run is driven by **`F` commands** in the
+  cells and not by the instrument; the ROM reloads wave RAM and retriggers three ticks running
+  where ChipBoy does not. That is where to start.
 - **The bend's phase at a note-on** is the largest thing left on the old songs and on SUNRISE's
   wave channel alike (`docs/LSDJ_VERSIONS.md` section 4 item 3, matrix section 10.1): the ROM's
   note-on writes a period already part of the way into a running `P`, ChipBoy writes the plain

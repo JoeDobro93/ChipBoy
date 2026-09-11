@@ -238,6 +238,22 @@ TEST_CASE("a model is chosen by format, by ROM title, by name, or the newest", "
     CHECK(lsdjModelForFormat(7)->waveFrameRun); CHECK_FALSE(lsdjModelForFormat(5)->waveFrameRun);
     CHECK_FALSE(lsdjModelForFormat(4)->waveFrameRun); CHECK(lsdjModelForFormat(11)->waveFrameRun);
     CHECK(lsdjModelForRomVersion("6.8.2")->waveFrameRun); CHECK_FALSE(lsdjModelForRomVersion("6.4.5")->waveFrameRun);
+    // Section 91: the wave SPEED byte is signed, so FD is one tick a frame and
+    // not 257. Every wave instrument in the user's SAMESONG stores a negative
+    // speed, which read unsigned froze the run.
+    {
+        auto sp = testSong(22);
+        uint8_t* w = sp.data() + kInst + 32;               // instrument 2 is the wave one
+        w[9] = 1; w[10] = 0x0C; w[11] = 0xFD;
+        auto bk = std::make_unique<bank::Bank>(); auto so = std::make_unique<tracker::Song>();
+        ImportSummary s2; ImportNotes n2;
+        REQUIRE(importSong(sp.data(), sp.size(), *lsdjModelForFormat(22), *bk, *so, s2, n2));
+        CHECK(int(bk->instruments[2].frameAdvance) == 1);
+        w[11] = 0x02;
+        auto bk2 = std::make_unique<bank::Bank>(); auto so2 = std::make_unique<tracker::Song>();
+        REQUIRE(importSong(sp.data(), sp.size(), *lsdjModelForFormat(22), *bk2, *so2, s2, n2));
+        CHECK(int(bk2->instruments[2].frameAdvance) == 6);
+    }
     CHECK(lsdjModelForRomVersion("7.0.2") == lsdjModelForFormat(7));
     CHECK(lsdjModelForRomVersion("") == nullptr);
     CHECK(lsdjModelNamed(models[0]->name) == models[0]);

@@ -317,6 +317,7 @@ private:
         /// `R`: the interval in **ticks** (section 76), and the one shot a `y = 0`
         /// still owes -- LSDj retriggers once and stops there, it does not run on.
         uint8_t  retrigEvery = 0; uint16_t retrigCount = 0; bool retrigOn = false, retrigOnce = false;
+        uint16_t retrigFastCount = 0;                 ///< pitch clocks since the last fast retrigger (section 90)
         bool     releasing = false;                   ///< Release note-off: WAV/KIT steps the level down
         bool     pulseReleasing = false;              ///< ... and PU/NOI let the software envelope finish
         bool     pendingOn = false, pendingPlain = true; uint8_t pendingNote = 0, pendingVel = 0;

@@ -16,17 +16,24 @@ Byte `0x7FFF` of a song, read from the save each ROM wrote for itself
 | format | releases |
 |---|---|
 | 0 | 3.1.5, 3.1.9, 3.4.4, 3.5.1 |
-| 2 | 3.6.8, 3.7.5, 3.8.7, 3.8.9, 3.9.2, 4.0.4, 4.1.0, 4.3.0 |
+| 2 | 3.6.5, 3.6.8, 3.7.5, 3.8.7, 3.8.9, 3.9.2, 4.0.4, 4.1.0, 4.3.0 |
 | 3 | 4.4.0, 4.5.4, 4.6.0, 4.6.2, 4.6.9, 4.7.3, 4.8.0, 4.9.4, 5.0.3 |
 | 4 | 5.7.8, 5.8.8, 5.9.9, 6.0.1 |
 | 5 | 6.4.5 |
 | 7 | 6.8.2, 6.9.0, 7.0.2 |
-| 11 | 8.4.4, 8.5.1 |
+| 8 | 7.2.3 |
+| 9 | 7.5.4 |
+| 10 | 7.9.9, 8.0.0 |
+| 11 | 8.2.0, 8.4.4, 8.5.1 |
+| 15 | 8.8.6 |
+| 17 | 8.9.3, 8.9.5 |
+| 18 | 9.0.0, 9.0.1 |
+| 19 | 9.1.0 |
+| 21 | 9.1.C |
 | 22 | 9.2.L, 9.3.9, 9.4.2 |
 
-Formats 1, 6, 8–10, 12–14 and 16–21 were never written by a stable release. Format 15 is 8.8.6,
-which is not in the archive; its row is carried from an earlier round's measurement on the user's
-own 8.8.6 ROM and is marked *assumed* where it could not be re-checked.
+Formats 1, 6, 12, 13, 14, 16 and 20 have no release in hand; everything else is measured on a ROM.
+The importer sends a format with no model of its own to the nearest below.
 
 **The song block layout is identical in every format.** Phrase notes at `0x0000`, grooves
 `0x1090`, song rows `0x1290`, table envelopes `0x1690`, chains `0x2080`, instruments `0x3080`,
@@ -127,28 +134,31 @@ the trigger *counts* are close on `SPACE TI` but the values diverge within a few
 had: diff the register streams and read the ROM where they disagree. `SAMESONG` also uses instrument finetune (byte 11) on four pulse instruments, which the
 importer drops with a note and the driver could carry (section 78 gives `F` the same law).
 
-## 7. ROMs that would close the remaining gaps
+## 7. Still to measure on the new ROMs
 
-The archive jumps from **8.5.1 to 9.2.L**, which is where LSDj changed most. These would each
-settle something currently assumed rather than measured:
+Fourteen releases arrived after the first sweep and fill every gap that mattered: **7.2.3**
+(format 8), **7.5.4** (9), **7.9.9** and **8.0.0** (10), **8.2.0** (11), **8.8.6** (15),
+**8.9.3** and **8.9.5** (17), **9.0.0** and **9.0.1** (18), **9.1.0** (19), **9.1.C** (21), and
+**3.6.5**, which is the version the *Computer Savvy* songs were actually written in.
 
-1. **8.8.6** (format 15). The only release that writes that format, and the model for it carries
-   an earlier round's measurement from a ROM no longer here. Its `retrigPlus` is assumed from
-   8.5.1 rather than measured.
-2. **9.0.0 or 9.0.1**. The changelog puts the whole noise overhaul here -- "rearranged noise
-   notes by frequency", the musical map, `V` on the noise channel, `C` behaving like the pulses',
-   and the removal of `S MODE`. Which format byte 9.0 writes is unknown, and the importer
-   currently sends formats 16-21 to the 8.8.6 model, which may be wrong for all of them.
-3. **9.1.0 or 9.1.C**. `S MODE` was removed in 9.1.0 and revived as `PITCH` in 9.2.H, so 9.1 is
-   the one release where a noise instrument has neither.
-4. **8.9.3** (a table `ENV` hop stops costing a tick there, §64) and **8.9.5** (`E` starts
-   retriggering when `LENGTH` is not `UNLIM`). Both are single-flag questions.
+The models do not yet know about formats 8, 9, 10, 17, 18, 19 and 21: each falls through to the
+nearest model below, which for 17-21 is the 8.8.6 model. The changelog puts the whole noise
+overhaul at 9.0 -- the musical map, `V` on the noise channel, `C` behaving like the pulses', the
+removal of `S MODE` -- so the 8.8.6 model is very likely wrong for formats 18, 19 and 21. That is
+the next sweep, and the battery to run it with is already written.
 
-Lower value, but they would remove a guess each: **3.6.5** (the version the *Computer Savvy*
-songs were written in; 3.6.8 is one patch away and is what they were read on here) and any
-release between **7.0.2 and 8.4.0**, which is a three-format gap with no ROM in it.
+## 8. What is still assumed rather than measured
 
-## 8. How this was measured
+Everything the previous round listed as a missing ROM has arrived, so only these remain:
+
+- **Formats 1, 6, 12, 13, 14, 16 and 20** were never seen. A song claiming one takes the nearest
+  model below, which is a guess, but no released version writes them.
+- **`retrigPlus` on 8.8.6.** Carried from 8.5.1 on the reading that 8.8.1's "changed back R
+  command to 4.7.3 behavior" reverted the whole of `R`. Now testable on the 8.8.6 ROM.
+- **The noise table transpose before 4.0.4** (§5), and **the bend's phase at a note-on** (§4),
+  which is the same question as the matrix's §10.1.
+
+## 9. How this was measured
 
 `tools/lsdjref` with a probe song built into each ROM's **own** bootstrapped save
 (`lsdjref_trace --init-sav`, then `Probe(blank=True)`), so a version can be probed with nothing

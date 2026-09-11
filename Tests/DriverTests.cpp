@@ -2809,3 +2809,46 @@ TEST_CASE("noise PITCH decides which pitch change restarts the channel", "[drive
         CHECK(has(w, 0xFF20, 0x3F));                              // 64 - 1, the value LSDj writes
     }
 }
+
+
+TEST_CASE("R x = 8 is a fast retrigger every y + 1 pitch clocks, and R 8 F stops one", "[driver][commands]")
+{
+    // Section 90, measured on 9.3.9 and 9.2.L. The fast domain runs on the pitch
+    // clock rather than the tick, and `y` is the interval there too -- which is
+    // what section 76 missed, so a roll ran at every clock whatever y said.
+    const auto rollIn = [](int val, uint32_t frames) {
+        auto r = std::make_unique<Rig>();
+        r->tickHz = 100.0;
+        for (auto& src : r->song.noteSource) src = tracker::NoteSource::Tracker;
+        auto& i = r->bank.instruments[20];
+        i = Instrument::defaults(InstrumentType::Noise, "roll");
+        i.used = true;
+        ChannelParams p; p.instrument = 21; r->drv.setParams(3, p);
+        auto w = r->block({ cellOn(3, 60, 21), cellCmd(3, Command{ Cmd::R, int16_t(val >> 4), int16_t(val & 15), 0 }) }, frames);
+        int n = 0;
+        for (const auto& x : w) if (x.addr == 0xFF23 && (x.value & 0x80)) ++n;
+        return n;
+    };
+    // 48000 frames is one second; the pitch clock is 11712 cycles of 4194304,
+    // so 358 of them a second. R80 fires on each, R81 on every second.
+    const int n0 = rollIn(0x80, 24000), n1 = rollIn(0x81, 24000), n3 = rollIn(0x83, 24000);
+    CHECK(n0 > n1); CHECK(n1 > n3);
+    // Within a tenth: one clock, two clocks, four clocks.
+    CHECK(std::abs(double(n1) * 2.0 / double(n0) - 1.0) < 0.1);
+    CHECK(std::abs(double(n3) * 4.0 / double(n0) - 1.0) < 0.15);
+    // R 8 F starts nothing, and stops a roll that is running.
+    CHECK(rollIn(0x8F, 24000) == 1);
+    {
+        auto r = std::make_unique<Rig>();
+        r->tickHz = 100.0;
+        for (auto& src : r->song.noteSource) src = tracker::NoteSource::Tracker;
+        auto& i = r->bank.instruments[20];
+        i = Instrument::defaults(InstrumentType::Noise, "roll"); i.used = true;
+        ChannelParams p; p.instrument = 21; r->drv.setParams(3, p);
+        r->block({ cellOn(3, 60, 21), cellCmd(3, Command{ Cmd::R, 8, 0, 0 }) }, 4800);
+        auto w = r->block({ cellCmd(3, Command{ Cmd::R, 8, 15, 0 }) }, 24000);
+        int n = 0;
+        for (const auto& x : w) if (x.addr == 0xFF23 && (x.value & 0x80)) ++n;
+        CHECK(n <= 1);                                     // it stopped
+    }
+}
