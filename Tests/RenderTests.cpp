@@ -176,3 +176,48 @@ TEST_CASE("golden render", "[render]")
     INFO("largest difference " << maxDiff << " at interleaved index " << where);
     CHECK(maxDiff < 2e-5);
 }
+
+TEST_CASE("the DAC inverts, on the analog path and on RAW alike", "[render][dac]")
+{
+    // Section 107. The DMG's DACs invert -- a larger digital level is a *lower*
+    // output -- measured on SameBoy with `lsdjref_trace --wave-probe`: a square
+    // wave frame renders the nibble 0 at +3772 and the nibble F at -3772, and a
+    // 12.5 % duty pulse inverts the same way, so it is one convention across the
+    // chip. ChipBoy's `dacValue()` does it too; this pins that end to end, and
+    // pins that RAW keeps the same polarity rather than only the same numbers.
+    using chipboy::harness::Write;
+    std::vector<Write> s;
+    uint64_t c = 0;
+    auto w = [&](uint16_t a, uint8_t v) { s.push_back({ c, a, v }); c += 8; };
+    w(0xFF26, 0x80); w(0xFF24, 0x77); w(0xFF25, 0xFF);
+    w(0xFF1A, 0x00);                                       // the DAC off, so wave RAM takes writes
+    for (int k = 0; k < 16; ++k) w(uint16_t(0xFF30 + k), k < 8 ? 0x00 : 0xFF);
+    w(0xFF1A, 0x80); w(0xFF1C, 0x20); w(0xFF1D, 0x00);     // DAC on, level 100 %, the lowest period
+    const uint64_t trig = c;
+    w(0xFF1E, 0x80);
+
+    const uint64_t frames = 48000 * 20 / 100;
+    Renderer probe; probe.prepare(48000.0, AnalogModel::dmg());
+    const auto analog = renderScript(s, AnalogModel::dmg(), 48000.0, frames, [](uint64_t) { return 256; }, false);
+    const auto raw = renderScript(s, AnalogModel::dmg(), 48000.0, frames, [](uint64_t) { return 256; }, false,
+                                  nullptr, nullptr, true);
+    // A sample is 4096 cycles at period 0; sample 1 sounds first (section 106),
+    // so samples 1-15 are the nibble 0 and 16-31 the nibble F.
+    const double perFrame = double(chipboy::kCpuHz) / 48000.0;
+    const size_t lat = size_t(probe.latencyFrames());
+    auto at = [&](double sampleNo) { return lat + size_t((double(trig) + sampleNo * 4096.0) / perFrame); };
+    for (double n : { 2.0, 8.0, 14.0 }) {
+        INFO("sample " << n << ", the nibble 0");
+        CHECK(analog[at(n) * 2] > 0.05f);
+        CHECK(raw[at(n) * 2] > 0.05f);
+    }
+    for (double n : { 18.0, 24.0, 30.0 }) {
+        INFO("sample " << n << ", the nibble F");
+        CHECK(analog[at(n) * 2] < -0.05f);
+        CHECK(raw[at(n) * 2] < -0.05f);
+    }
+    // RAW has no coupling to droop, so its square stays square: the two halves
+    // are the rails, not a decaying step.
+    CHECK(raw[at(2.0) * 2] > 0.9f);
+    CHECK(raw[at(30.0) * 2] < -0.9f);
+}

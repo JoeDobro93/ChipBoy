@@ -432,7 +432,7 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
-- Round 23 (§103-§106): **the wave bank is one flat table**, the user's call between the two shapes
+- Round 23 (§103-§107): **the wave bank is one flat table**, the user's call between the two shapes
   §100 left open -- wave slots laid out in synth order with the driver carrying between them,
   rather than one 256-frame wave. `kWaveSlots` is **16**, a slot is **always `kMaxFrames`**, and a
   frame jump moves the flat index `(slot - 1) * 16 + frame`, wrapping at `kWaveFrames` = 256: past
@@ -466,6 +466,15 @@ design-log section the change touches. Update this file at the end of every chan
   the two differ by one global sign -- inaudible, and left alone rather than inverting every golden
   file. The one-sample shift is real and both sides agree on it: a trigger sounds **sample 1** first
   and sample 0 a whole cycle later. `Tests/ApuTests.cpp` pins both.
+  §107 corrects §106's second half. **ChipBoy's DAC already inverts** -- `dacValue()` in the
+  renderer is `-(level - 7.5) / 7.5` and always has been; §106 read `Apu::outWave()`, which is the
+  digital level the DAC is *fed*, and stopped there. Rendered and measured, ChipBoy gives nibble `0`
+  positive and nibble `F` negative on the analog path and on **RAW** alike, which is the reference's
+  polarity. So nothing about the audio changed; what changed is the **Waves grid**, which drew level
+  15 at the top -- the sample value, not the output -- and now draws level 0 at the top like the DAC
+  and like LSDj. The stored bits are untouched and the corner readout still names the stored level.
+  §106's one-sample rotation is deliberately **not** applied to the grid: it is a trigger transient,
+  so drawing it would be a phase choice and would make column 0 edit sample 1.
 - Round 22 (§102): **a phrase's `H` loops**. `H x y` with x > 0 hops inside the phrase x times and
   the step carrying it stays silent on a hopping pass; the groove walks with the play order, not
   with the step number, both measured. §80 had called this engine work the Player could not do,

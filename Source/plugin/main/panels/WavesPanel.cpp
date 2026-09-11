@@ -38,9 +38,11 @@ void paintFrame(Graphics& g, Rectangle<int> r, const bank::Frame& f, Colour trac
     g.fillRect(r);
     const float cw = float(r.getWidth() - 4) / 32.0f;
     g.setColour(trace);
+    // Section 107: hanging from the top, like the grid and like the output --
+    // level 0 is the positive rail, 15 the negative one.
     for (int i = 0; i < 32; ++i) {
         const float h = float(r.getHeight() - 6) * float(f.s[size_t(i)] + 1) / 16.0f;
-        g.fillRect(float(r.getX()) + 2.0f + cw * float(i), float(r.getBottom()) - 3.0f - h, std::max(1.0f, cw - 0.5f), h);
+        g.fillRect(float(r.getX()) + 2.0f + cw * float(i), float(r.getY()) + 3.0f, std::max(1.0f, cw - 0.5f), h);
     }
     g.setColour(colours::scopeBorder);
     g.drawRect(r, 1);
@@ -85,7 +87,7 @@ public:
                 const float cw = (r.getWidth() - 6.0f) / 32.0f;
                 for (int i = 0; i < 32; ++i) {
                     const float h = (r.getHeight() - 8.0f) * (f.s[size_t(i)] + 1) / 16.0f;
-                    g.fillRect(r.getX() + 3.0f + cw * float(i), r.getBottom() - 4.0f - h, std::max(1.0f, cw - 0.5f), h);
+                    g.fillRect(r.getX() + 3.0f + cw * float(i), r.getY() + 4.0f, std::max(1.0f, cw - 0.5f), h);
                 }
                 // The frame's number in its corner, so the strip reads as the run
                 // it is and From / To can be read off it (section 36).
@@ -286,7 +288,8 @@ struct WavesPanel::SynthWidgets {
 
 WavesPanel::WavesPanel(ChipBoyProcessor& p)
     : EditorPanel(p),
-      listTitle_("Waves" + middot() + "64 slots", Fonts::sans(11.0f), colours::textMute),
+      listTitle_("Waves" + middot() + String(bank::kWaveSlots) + " slots" + middot() + String(bank::kWaveFrames) + " frames",
+                 Fonts::sans(11.0f), colours::textMute),
       newBtn_("New"),
       frameLabel_("Frame", Fonts::caption(10.0f), colours::textDim),
       frameText_({}, Fonts::mono(12.0f), colours::text),

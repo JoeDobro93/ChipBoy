@@ -3013,10 +3013,12 @@ It is not the wave channel's own quirk. The same probe reports PU1's duty positi
 duty note gives -4080 while the duty bit is 1 against +4080 while it is 0 -- **the pulse inverts
 too**. So it is one convention across the chip, not a relationship between channels.
 
-**ChipBoy is non-inverting, on every channel alike** (`Apu::outWave` returns the nibble,
-`outPulse` the volume). Against SameBoy that is one global sign on the whole mix, which cancels and
-sums identically and is inaudible. Flipping it would invert every golden file and the analog
-stage's -122 dB null for no audible gain, so it stays, recorded here rather than fixed.
+~~**ChipBoy is non-inverting, on every channel alike**~~ -- **wrong, and corrected in §107.** That
+read `Apu::outWave`, which returns the *digital* level the DAC is fed, and stopped there. The DAC
+is in the renderer, and it already inverts: `dacValue(level) = -(level - 7.5) / 7.5`, digital 0 the
+positive rail and 15 the negative one. §107 measures the rendered output and finds ChipBoy's
+polarity is the reference's on both the analog path and RAW. Nothing about the audio needed
+changing; what did was the picture.
 
 **The order.** §104 also repeated the user's reading that the frame is shifted by one with the last
 point wrapped to the front -- and it is, in the sound. A trigger puts the wave position at 0 and
@@ -3030,3 +3032,36 @@ samples in -- and every 131072 cycles after. **The two agree.** `Tests/ApuTests.
 So LSDj's WAVE screen draws what you hear, in the order you hear it, the way the DAC puts it out.
 ChipBoy's grid draws the sample values as stored. Both are right about different things, and
 whether the grid should switch conventions to sit beside LSDj's is still a UI decision for the user.
+
+## 107. ChipBoy's DAC already inverts; it is the Waves grid that was upside down
+
+§106 measured the DMG's DACs inverting and then said ChipBoy's did not. It does. The claim came
+from reading `Apu::outWave()`, which hands the DAC a digital level 0-15 and is not the DAC; the DAC
+is `dacValue()` in the renderer, and it has always been `-(level - 7.5) / 7.5` with a comment
+saying so. Measured this time instead of read -- the same square frame as §106, rendered, sampled
+at known points in the cycle:
+
+| | sample 2 | sample 8 | sample 14 | sample 18 | sample 24 | sample 30 |
+|---|---|---|---|---|---|---|
+| the nibble | `0` | `0` | `0` | `F` | `F` | `F` |
+| ChipBoy, analog | +0.739 | +0.297 | +0.120 | -1.415 | -0.568 | -0.229 |
+| ChipBoy, **RAW** | +0.988 | +0.952 | +0.918 | -1.080 | -1.041 | -1.004 |
+
+Nibble `0` positive, nibble `F` negative, on both paths -- SameBoy's +3772 / -3772. RAW keeps the
+polarity and only loses the coupling that makes the analog path droop across a half cycle, which is
+what RAW is for. `Tests/RenderTests.cpp` pins it, and `renderScript` takes a `bypassAnalog` flag so
+RAW is testable at all.
+
+**So the audio was already right and the display was not.** ChipBoy's Waves grid drew level 15 at
+the top, which is the sample value, not the output. It now draws the way the DAC puts it out and the
+way LSDj's WAVE screen draws it: **level 0 at the top, level 15 at the bottom.** The Points view's
+cell, the Bars view's bar (it hangs from the top now), the pointer's row, the frame strip's
+thumbnails and the synth preview all follow, and `cellAt` follows so a click still lands on the row
+under the pointer. The corner readout is unchanged and still names the **stored** level, 0-15: the
+bits are the bits, and only the drawing turned over.
+
+The one-sample rotation of §106 is **not** applied to the grid. It is a trigger transient -- the
+first cycle of a note starts at sample 1, every cycle after it runs 0 to 31 like any other -- so
+drawing it would be a phase choice, not the output, and it would make column 0 edit sample 1. The
+grid stays honest about which sample is which. If a pixel-exact LSDj view is wanted later it is one
+index rotation in the same three places.

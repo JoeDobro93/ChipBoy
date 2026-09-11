@@ -7,11 +7,13 @@ namespace chipboy::harness {
 std::vector<float> renderScript(const std::vector<Write>& script, const AnalogModel& model,
                                 double sampleRate, uint64_t frames,
                                 const std::function<int(uint64_t)>& blockSize, bool noise,
-                                std::vector<ApuEvent>* events, std::vector<MixEvent>* mix)
+                                std::vector<ApuEvent>* events, std::vector<MixEvent>* mix,
+                                bool bypassAnalog)
 {
     Apu apu;
     render::Renderer r;
     r.prepare(sampleRate, model, 8192);
+    if (bypassAnalog) r.setModel(model, true);
     // The harness's one switch is the whole noise floor: the hiss and the
     // frame hum, and the display's line, which the plugin splits in two
     // (docs/COMMANDS_AND_TEMPO.md section 21).

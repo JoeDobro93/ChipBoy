@@ -26,6 +26,33 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-11 — The Waves grid draws the output, and §106's claim about ChipBoy's DAC is corrected
+
+`docs/COMMANDS_AND_TEMPO.md` §107. The user asked for two things: that ChipBoy's DAC reflect a real
+DMG/CGB DAC, RAW included, and that the Waves grid draw the frame the way it actually sounds, the
+way LSDj does, while still storing the raw bits. The first turned out to be **already true** and
+§106 to be **wrong about it**: that claim came from reading `Apu::outWave()`, which hands the DAC a
+digital level 0-15 and is not the DAC. The DAC is `dacValue()` in the renderer and has always been
+`-(level - 7.5) / 7.5` -- digital 0 the positive rail, 15 the negative one.
+
+Measured this time rather than read. The same square frame, rendered and sampled at known points in
+the cycle, gives nibble `0` positive and nibble `F` negative on the analog path (+0.739 / -1.415)
+and on **RAW** (+0.988 / -1.080), matching SameBoy's +3772 / -3772. RAW keeps the polarity and only
+loses the coupling droop, which is what RAW is for. `Tests/RenderTests.cpp` pins both paths, and
+`harness::renderScript` gains a `bypassAnalog` flag so RAW is testable at all -- it was not before.
+
+So the audio needed no change and the **display** did. The Waves grid drew level 15 at the top,
+which is the sample value rather than the output. It now draws level **0 at the top** and 15 at the
+bottom: the Points cell, the Bars bar (hanging from the top now), the pointer's row, the frame
+strip's thumbnails and the synth preview, with `cellAt` inverted to match so a click still lands on
+the row under the pointer. The corner readout is unchanged and still names the stored level 0-15 --
+the bits are stored exactly as before and only the drawing turned over.
+
+**Not applied:** §106's one-sample rotation. It is a trigger transient -- the first cycle of a note
+begins at sample 1, every cycle after runs 0 to 31 -- so drawing it would be a phase choice rather
+than the output, and it would make column 0 edit sample 1. The grid stays honest about which sample
+is which. A pixel-exact LSDj view is one index rotation in the same three places if it is wanted.
+
 ### 2026-09-11 — §105 withdrawn, and the DMG's DACs measured
 
 `docs/COMMANDS_AND_TEMPO.md` §105 claimed that some songs' synths are rendered by LSDj as they

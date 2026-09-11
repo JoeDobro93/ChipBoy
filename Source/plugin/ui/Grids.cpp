@@ -2531,11 +2531,15 @@ struct WaveGrid::Impl {
     static juce::Rectangle<int> inner(const juce::Component& c) { return c.getLocalBounds().reduced(kPad); }
 
     /// The grid cell a point lands on, clamped into the 32 by 16.
+    /// Section 107: the grid is drawn the way the DAC puts the frame out, which
+    /// is the way LSDj's WAVE screen draws it -- sample **0 at the top**, 15 at
+    /// the bottom, because the DMG's DACs invert. So the row under the pointer
+    /// is the level straight off the y, not 15 less it.
     static void cellAt(const juce::Component& c, juce::Point<int> p, int& i, int& v)
     {
         const auto in = inner(c);
         i = juce::jlimit(0, 31, int(std::floor(float(p.x - in.getX()) / (float(in.getWidth()) / 32.0f))));
-        v = juce::jlimit(0, 15, 15 - int(std::floor(float(p.y - in.getY()) / (float(in.getHeight()) / 16.0f))));
+        v = juce::jlimit(0, 15, int(std::floor(float(p.y - in.getY()) / (float(in.getHeight()) / 16.0f))));
     }
 
     /// Sets one sample; drags interpolate between the previous and the new column.
@@ -2603,14 +2607,14 @@ void WaveGrid::paint(juce::Graphics& g)
     if (im.hoverI >= 0) {
         g.setColour(wav.withAlpha(0.10f));
         g.fillRect(float(in.getX()) + float(im.hoverI) * cellW, float(in.getY()), cellW, float(in.getHeight()));
-        g.fillRect(float(in.getX()), float(in.getBottom()) - float(im.hoverV + 1) * levelH, float(in.getWidth()), levelH);
+        g.fillRect(float(in.getX()), float(in.getY()) + float(im.hoverV) * levelH, float(in.getWidth()), levelH);
     }
     if (points) {
         // Each sample fills its grid box, the way LSDj's wave screen draws
         // them: one lit cell per column.
         for (int i = 0; i < 32; ++i) {
             const float x = float(in.getX()) + float(i) * cellW;
-            const float y = float(in.getBottom()) - (float(im.frame.s[size_t(i)]) + 1.0f) * levelH;
+            const float y = float(in.getY()) + float(im.frame.s[size_t(i)]) * levelH;
             g.setColour(i == im.hoverI ? wav : wav.withAlpha(0.9f));
             g.fillRect(x + 1.0f, y + 1.0f, cellW - 1.0f, levelH - 1.0f);
         }
@@ -2618,13 +2622,16 @@ void WaveGrid::paint(juce::Graphics& g)
         const float colW = (float(in.getWidth()) - 31.0f) / 32.0f;
         for (int i = 0; i < 32; ++i) {
             const float x = float(in.getX()) + float(i) * (colW + 1.0f);
+            // Section 107: the bar hangs from the top, because level 15 is the
+            // bottom of the output and level 0 the top of it.
             const float h = float(im.frame.s[size_t(i)] + 1) / 16.0f * float(in.getHeight());
             g.setColour(i == im.hoverI ? wav : wav.withAlpha(0.9f));
-            g.fillRect(x + 1.0f, float(in.getBottom()) - h, colW - 2.0f, h);
+            g.fillRect(x + 1.0f, float(in.getY()), colW - 2.0f, h);
         }
     }
     // The coordinates, the way LSDj's wave screen shows them: the sample
-    // under the pointer and its level, in a corner, out of the way.
+    // under the pointer and its level, in a corner, out of the way. The number
+    // is the **stored** level, 0-15, whichever way up the grid draws it.
     if (im.hoverI >= 0) {
         const juce::String text = "sample " + ValueFormat::number(im.hoverI) + "  level " + ValueFormat::number(im.hoverV)
                                 + "  (" + ValueFormat::number(im.frame.s[size_t(im.hoverI)]) + ")";

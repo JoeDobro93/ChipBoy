@@ -23,11 +23,14 @@ struct Write {
 /// blocks whose sizes come from `blockSize(blockIndex)`. Returns interleaved
 /// stereo. Also returns the APU's complete event streams through `events`
 /// and `mix` when those pointers are given, for the reference path.
+/// `bypassAnalog` is RAW (section 107): the plain digital mix through the same
+/// DAC, so the polarity can be checked on both paths.
 std::vector<float> renderScript(const std::vector<Write>& script, const AnalogModel& model,
                                 double sampleRate, uint64_t frames,
                                 const std::function<int(uint64_t)>& blockSize, bool noise,
                                 std::vector<ApuEvent>* events = nullptr,
-                                std::vector<MixEvent>* mix = nullptr);
+                                std::vector<MixEvent>* mix = nullptr,
+                                bool bypassAnalog = false);
 
 /// A dense, deterministic script exercising all four channels, DAC toggles,
 /// mixer changes and the noise channel at its fastest -- the test material.
