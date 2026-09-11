@@ -92,7 +92,7 @@ String commandRevertText(bank::Cmd c)
         case bank::Cmd::P: return "no offset, no bend";
         case bank::Cmd::T: return "the song tempo";
         case bank::Cmd::E: case bank::Cmd::F: case bank::Cmd::O:
-        case bank::Cmd::S: case bank::Cmd::V: case bank::Cmd::W:
+        case bank::Cmd::S: case bank::Cmd::V: case bank::Cmd::W: case bank::Cmd::U:
             return "the instrument's own";
         case bank::Cmd::None: case bank::Cmd::C: case bank::Cmd::D: case bank::Cmd::H:
         case bank::Cmd::K: case bank::Cmd::L: case bank::Cmd::R: case bank::Cmd::Z:
@@ -110,6 +110,9 @@ String commandArgText(const bank::Command& c)
     switch (c.cmd) {
         case bank::Cmd::None: return {};
         case bank::Cmd::A:    return x == 0 ? String("stop") : "table " + String(x);
+        // Section 115: the wave run -- x ticks a frame, y + 1 frames, y 0 all sixteen.
+        case bank::Cmd::U:    return (x ? String(x) + " tk/fr" : String("speed keep")) + dot
+                                   + (y ? String(y + 1) + " frames" : String("16 frames"));
         case bank::Cmd::C:    return y == 0 ? (x == 0 ? String("off") : "0" + dot + "+" + String(x))
                                             : "0" + dot + "+" + String(x) + dot + "+" + String(y);
         case bank::Cmd::D:    return String(x) + " ticks";
@@ -161,6 +164,7 @@ constexpr CommandInfo kCmdInfo[bank::kCmdCount] = {
     { 'W', "Wave",          "duty 0-3, or wave 1-64",    1, { 0, 0 }, { 64, 0 },   { 1, 0 },   CmdShape::Small },
     { 'Z', "Random add",    "0..x on x, 0..y on y",      2, { 0, 0 }, { 15, 15 },  { 15, 0 },  CmdShape::Nibbles },
     { 'B', "Chance",        "cell: two x/15 rolls; table: hop row y, x/16 of the time", 2, { 0, 0 }, { 15, 15 }, { 15, 0 }, CmdShape::Nibbles },
+    { 'U', "Wave run",      "x ticks a frame, y + 1 frames (y 0 = all sixteen)", 2, { 0, 0 }, { 15, 15 }, { 4, 0 }, CmdShape::Nibbles },
 };
 } // namespace
 

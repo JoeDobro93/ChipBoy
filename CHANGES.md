@@ -26,6 +26,34 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-11 — `A 20` stops the table, and `W` on a wave instrument is the run
+
+`docs/COMMANDS_AND_TEMPO.md` §115, the first two of the user's list of `SAMESONG` import notes.
+
+**`A 20` is LSDj's table stop**, measured: a table that loops for ever stops dead where the `A 20`
+lands, and the pitch stays on the row it last reached. ChipBoy's cell has a TBL **column**, which
+names a slot and cannot say "stop", so the importer dropped it -- thirteen times in this song.
+ChipBoy's own `A 0` already stops a run, so the importer puts it in a command slot instead.
+
+**`W xy` on a wave instrument is the frame run.** Sweeping both nibbles: the high one is **x ticks a
+frame** exactly (19, 39, 58, 77, 161, 393 ms for 1, 2, 3, 4, 8, F at a 19.5 ms tick), with `x = 0`
+leaving the speed alone; the low one is the run's **length**, `y + 1` frames spread across the
+sixteen, `y = 0` meaning all of them.
+
+**Considered and rejected:** giving ChipBoy's `W` this meaning on the wave channel. ChipBoy's `W`
+there is the wave slot (§75) and songs, presets and tests already use it that way, so overloading it
+would have broken existing work to fit LSDj's lettering. The run gets its own letter, **`U`**, and
+the importer maps LSDj's wave `W` onto it. `U` is deliberately **not** added to the per-channel
+command *parameter* list, so the 76-parameter table does not move -- `H` is already left out the same
+way.
+
+**Left open, with numbers:** the run's frame spread matches the ROM at most lengths but not all --
+at length 3 the ROM visits `0 7 15` where `waveRun()` gives `0 8 15`, and at length 7 `0 2 5 7 10 13
+15` against `0 2 5 8 10 13 15`. Neither `i * 15 / (L - 1)` nor `i * 16 / (L - 1)` fits every length,
+so the ROM is doing something else. Recorded rather than guessed at.
+
+`SAMESONG`'s import notes go from 51 to 17.
+
 ### 2026-09-11 — A table a table starts, and the vibrato shapes
 
 `docs/COMMANDS_AND_TEMPO.md` §113 and §114, both found chasing `SAMESONG`'s instrument 02, which

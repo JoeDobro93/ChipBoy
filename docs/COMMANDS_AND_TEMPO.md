@@ -3263,3 +3263,43 @@ vibrato at all**, which the importer used to clamp to Square.
 `VibShape` gains `Off`, the saw becomes `2 * ph / N - 1` and the square `+1` then `-1`, and the
 importer stops clamping. Instrument 02 -- byte 5 `0D`, so square starting up -- now gives
 `1855 1855 1843 1843` against the ROM's `1855 1855 1843 1843`.
+
+## 115. `A 20` in a cell stops the table, and `W` on a wave instrument is the run
+
+Two of `SAMESONG`'s import notes, both measured on 9.2.L.
+
+**`A 20` is LSDj's table stop.** A table whose transpose column climbs, with `A 20` on the row after
+the note:
+
+```
+no A20   1837 1837 1871 1899 1923 1943 1959 1974 1985 1837 1871 …   (it loops for ever)
+A20      1837 1837 1871 1899 1923 1943 1959                          (it stops dead)
+```
+
+and the pitch stays on the row the table last reached rather than returning to the note. ChipBoy's
+cell has a **TBL column**, which names a slot and cannot say "stop", so the importer dropped the
+command -- thirteen times in this song. ChipBoy's own `A 0` already stops a run, so the importer
+puts it in a **command slot** instead of the column.
+
+**`W xy` on a wave instrument is the frame run**, not a wave slot. Sweeping both nibbles:
+
+| `x` (high) | 1 | 2 | 3 | 4 | 8 | F |
+|---|---|---|---|---|---|---|
+| ms between frames | 19 | 39 | 58 | 77 | 161 | 393 |
+
+which is **x ticks a frame** exactly (a tick is 19.5 ms at this tempo), and `x = 0` leaves the speed
+alone. The low nibble is the run's **length**, `y + 1` frames spread across the sixteen the way §65's
+LENGTH is, with `y = 0` meaning all sixteen: `y = 1` visits `0 15`, `y = 2` visits `0 7 15`, `y = 3`
+visits `0 5 10 15`, `y = F` visits all of them.
+
+ChipBoy's own `W` on the wave channel is the **wave slot** (§75), a different thing, and songs and
+tests already use it that way. So the run gets its own letter, **`U`**: `x` ticks a frame, `y + 1`
+frames. It is not added to the per-channel command *parameter* list, so the 76-parameter table does
+not move -- `H` is already left out the same way.
+
+**One frame still out of place.** The spread `waveRun()` computes matches the ROM at most lengths
+(`0 5 10 15` for 4, `0 3 6 9 12 15` for 6, `0 2 4 6 9 11 13 15` for 8) but not all: at length 3 the
+ROM visits `0 7 15` and ChipBoy `0 8 15`, and at length 7 the ROM visits `0 2 5 7 10 13 15` against
+ChipBoy's `0 2 5 8 10 13 15`. Neither `i * 15 / (L - 1)` nor `i * 16 / (L - 1)` fits every length, so
+the ROM is doing something else -- an accumulator with its own rounding. Recorded rather than
+guessed at; it is one frame of sixteen, on two of the sixteen lengths.

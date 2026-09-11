@@ -581,7 +581,13 @@ struct Reader {
         switch (letter) {
             case 'A':
                 if (cell) {
-                    if (v == 0x20) { notes.add("A20 (table stop) at " + where + ": the table column cannot say 'stop'; dropped"); return false; }
+                    // Section 115: `A 20` is LSDj's table **stop** and the cell's
+                    // TBL column cannot say it -- the column names a slot. It
+                    // goes into the command slot instead, where ChipBoy's own
+                    // `A 0` already stops a run. Measured on 9.2.L: the table
+                    // stops dead where the A20 lands and the pitch stays on the
+                    // row it last reached.
+                    if (v == 0x20) { out = { Cmd::A, 0, 0, 0 }; return true; }
                     cell->table = uint8_t(std::min(v + 1, int(bank::kTableSlots)));
                     return false;
                 }
@@ -672,7 +678,10 @@ struct Reader {
                 if (v < 40 && !m.tempoLowIsHigh) { notes.add("T" + hex2(v) + " at " + where + ": this version does not read a tempo byte below 40 as 256-295 BPM; kept as " + std::to_string(std::max(40, int(v))) + " BPM"); out = { Cmd::T, int16_t(std::max(40, int(v))), 0, 0 }; return true; }
                 out = { Cmd::T, int16_t(v < 40 ? 256 + v : v), 0, 0 }; return true;
             case 'W':
-                if (instKind == 1) { notes.add("W" + hex2(v) + " at " + where + " on a wave instrument (synth speed / length): not mapped"); return false; }
+                // Section 115: on a wave instrument LSDj's `W` is the run --
+                // x ticks a frame, y + 1 frames. ChipBoy's `W` is the wave slot,
+                // so the run comes in as `U`.
+                if (instKind == 1) { out = { Cmd::U, int16_t(x), int16_t(y), 0 }; return true; }
                 // Section 6.18: the ROM masks the byte to its low **two bits**,
                 // so W04 is W00 and W07 is W03; the rest of the byte is ignored.
                 if (v & 0xFC) notes.add("W" + hex2(v) + " at " + where + ": the ROM keeps only the low two bits of the byte, so this is duty " + std::to_string(v & 3));

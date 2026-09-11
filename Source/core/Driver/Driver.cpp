@@ -1892,6 +1892,18 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
             if (noise && v.vibDepth && pitchSpeed(v) != PitchSpeed::Tick) v.pitchClockOn = true;
             if (live) writePeriod(ch, false);
             break;
+        case Cmd::U:
+            // Section 115: LSDj's `W` on a wave instrument is the **run** -- x
+            // ticks a frame and y + 1 frames of it, y = 0 being all sixteen --
+            // measured on 9.2.L by sweeping both nibbles. ChipBoy's own `W` is
+            // the wave slot, so the run has its own letter. x = 0 leaves the
+            // speed as it is, which is what the ROM does.
+            if (v.inst.type == InstrumentType::Wave) {
+                if (c.a) v.inst.frameAdvance = uint8_t(c.a & 15);
+                v.inst.frameLength = uint8_t(c.b ? (int(c.b & 15) + 1) : 0);
+                setFrameStep(ch, 0, live);
+            }
+            break;
         case Cmd::W: {
             // Duty on the pulses, wave slot on WAV: one letter, the thing the
             // channel's waveform actually is.

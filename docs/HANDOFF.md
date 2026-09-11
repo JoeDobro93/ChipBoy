@@ -432,6 +432,14 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 29 (§115): **`A 20` stops the table** -- measured, and ChipBoy's cell TBL column cannot say
+  it, so the importer emits `A 0` into a command slot instead of dropping thirteen of them. And
+  **`W` on a wave instrument is the run**: x ticks a frame, y + 1 frames, y = 0 all sixteen, both
+  swept. ChipBoy's `W` on that channel is the wave slot and songs already use it so, so the run has
+  its own letter **`U`**, kept out of the command parameter list so the 76-parameter table stays put.
+  `SAMESONG`'s notes: 51 to 17.
+  Still open with numbers: `waveRun()`'s spread is one frame out at lengths 3 and 7 (the ROM visits
+  `0 7 15` and `0 2 5 7 10 13 15`); neither `i*15/(L-1)` nor `i*16/(L-1)` fits every length.
 - Round 28 (§113, §114): **a table a table starts fires its row 0 at once**, and **every vibrato
   shape is centred**. `SAMESONG`'s instrument 02 was flat: it runs a STEP-mode table (byte 5 bit 3 --
   one row per trigger, swept and confirmed) whose row 0 holds `A 02`, and ChipBoy left the new

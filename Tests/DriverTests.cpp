@@ -3301,3 +3301,40 @@ TEST_CASE("every vibrato shape is centred on the note", "[driver][commands]")
         CHECK(hi > note);      // and above it
     }
 }
+
+TEST_CASE("U sets the wave run's speed and length", "[driver][wave]")
+{
+    // Section 115, measured on 9.2.L: LSDj's `W` on a wave instrument is the
+    // run -- x ticks a frame, y + 1 frames, y = 0 all sixteen -- and x = 0
+    // leaves the speed alone. ChipBoy's `W` is the wave slot, so this is `U`.
+    const auto frames = [](int x, int y, int blocks) {
+        auto r = std::make_unique<Rig>();
+        r->tickHz = 100.0;
+        r->song.noteSource[2] = tracker::NoteSource::Tracker;
+        auto& w = r->bank.waves[0];
+        w.used = true;
+        for (int f = 0; f < bank::kMaxFrames; ++f) w.frames[size_t(f)].s.fill(uint8_t(f));
+        auto& i = r->bank.instruments[1];
+        i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Run");
+        i.used = true; i.wave = 1; i.frameAdvance = 8; i.frameLength = 0;
+        ChannelParams p; p.instrument = 2; p.velocityMode = 2; r->drv.setParams(2, p);
+        NoteEvent on = cellOn(2, 60, 2);
+        on.cmd1 = { Cmd::U, int16_t(x), int16_t(y), 0 };
+        r->block({ on }, 480);
+        std::vector<int> seen{ int(r->drv.view(2).frame) - 1 };
+        for (int k = 0; k < blocks; ++k) { r->block({}, 480); seen.push_back(int(r->drv.view(2).frame) - 1); }
+        return seen;
+    };
+    // x = 1 is a frame a tick, so every block moves one on.
+    const auto fast = frames(1, 0, 6);
+    CHECK(fast[1] == 1); CHECK(fast[2] == 2); CHECK(fast[3] == 3);
+    // x = 2 is a frame every two.
+    const auto half = frames(2, 0, 6);
+    CHECK(half[1] == 0); CHECK(half[2] == 1); CHECK(half[4] == 2);
+    // y = 3 is a run of four spread across the sixteen: 0, 5, 10, 15.
+    const auto four = frames(1, 3, 6);
+    CHECK(four[1] == 5); CHECK(four[2] == 10); CHECK(four[3] == 15);
+    // y = 1 is a run of two: the ends.
+    const auto two = frames(1, 1, 4);
+    CHECK(two[1] == 15); CHECK(two[2] == 0);
+}

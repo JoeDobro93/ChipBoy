@@ -30,7 +30,7 @@ uint8_t q4(double x) { return uint8_t(std::clamp(int(std::lround(7.5 + 7.5 * x))
 
 const char* cmdLetter(Cmd c)
 {
-    static const char* L[] = { "", "A", "C", "D", "E", "F", "G", "H", "K", "L", "M", "O", "P", "R", "S", "T", "V", "W", "Z", "B" };
+    static const char* L[] = { "", "A", "C", "D", "E", "F", "G", "H", "K", "L", "M", "O", "P", "R", "S", "T", "V", "W", "Z", "B", "U" };
     return L[int(c) <= kCmdCount ? int(c) : 0];
 }
 Cmd cmdFromLetter(char c)
