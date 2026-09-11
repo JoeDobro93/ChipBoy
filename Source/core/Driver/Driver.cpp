@@ -78,6 +78,8 @@ constexpr double kDrumUnitsPerSemitone = 19.11;
 constexpr int kEnvStepPeriods[8] = { 0, 1432, 2865, 4297, 5730, 7162, 8595, 10027 };
 /// One pitch clock, in the units the table is held in.
 constexpr int kEnvClock = 256;
+/// Section 116: the shaped envelope's position is in 1/kShapedFine of a tick.
+constexpr int kShapedFine = 256;
 
 /// The spacing of the NRx2 writes a level change is made of (measured): the
 /// three writes of one step down are sixteen cycles apart and successive steps
@@ -403,7 +405,7 @@ void Driver::reloadInstrument(int ch)
     // A shaped instrument brings its envelope with it: the load triggers the
     // channel, so the shape starts again from its attack (sections 26, 27).
     v.shapedOn = core.env.mode == EnvMode::Shaped;
-    v.shapedTaken = false; v.shapedRelease = false; v.shapedTick = 0; v.shapedFrom = 0;
+    v.shapedTaken = false; v.shapedRelease = false; v.shapedTick = 0; v.shapedPosMax = 0; v.shapedFrom = 0;
     if (v.shapedOn) {
         const uint8_t level = shapedLevel(v);
         if (core.type == InstrumentType::Wave || core.type == InstrumentType::Kit) v.waveLevel = uint8_t(level / 4);
@@ -582,7 +584,7 @@ void Driver::beginRelease(int ch)
     // change that took the envelope over leaves the chip's release instead.
     if (v.shapedOn && !v.shapedTaken) {
         if (!v.dacOn || v.inst.env.releaseTicks == 0) { v.shapedOn = false; stopVoice(ch, true); return; }
-        v.shapedRelease = true; v.shapedTick = 0;
+        v.shapedRelease = true; v.shapedTick = 0; v.shapedPosMax = 0;
         v.shapedFrom = (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit)
                        ? uint8_t(v.waveLevel * 5) : v.envVol;
         v.releasing = true;
@@ -690,7 +692,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // envelope holds at period 0 and its direction bit is up, so a level of
     // zero keeps the DAC on and every step of the shape can be a zombie write.
     v.shapedOn = core.env.mode == EnvMode::Shaped;
-    v.shapedTaken = false; v.shapedRelease = false; v.shapedTick = 0; v.shapedFrom = 0;
+    v.shapedTaken = false; v.shapedRelease = false; v.shapedTick = 0; v.shapedPosMax = 0; v.shapedFrom = 0;
     if (v.shapedOn) {
         const uint8_t level = shapedLevel(v);
         if (core.type == InstrumentType::Wave || core.type == InstrumentType::Kit) v.waveLevel = uint8_t(level / 4);
@@ -1318,13 +1320,45 @@ uint8_t Driver::shapedLevel(const Voice& v) const
 {
     const Envelope& e = v.inst.env;
     auto clamp15 = [](int x) { return uint8_t(std::clamp(x, 0, 15)); };
-    if (v.shapedRelease) return clamp15(envSegmentLevel(v.shapedFrom, 0, e.releaseTicks, int(v.shapedTick), e.releaseCurve));
-    const int a = e.attackTicks, d = e.decayTicks, f = e.fadeTicks, t = int(v.shapedTick);
+    // Section 116: the stages are whole ticks and the position is in 1/256 of
+    // one -- exact on a tick boundary, interpolated between them from how far
+    // this tick's pitch clocks have got. envSegmentLevel only cares about the
+    // ratio, so scaling both sides leaves the per-tick list as it was and adds
+    // the levels in between.
+    constexpr int F = kShapedFine;
+    const int sub = std::clamp(clocksThisTick_ * F / std::max(1, clocksPerTick_), 0, F - 1);
+    const int pos = std::max(int(v.shapedTick) * F + sub, int(v.shapedPosMax));
+    if (v.shapedRelease) return clamp15(envSegmentLevel(v.shapedFrom, 0, int(e.releaseTicks) * F, pos, e.releaseCurve));
+    const int a = int(e.attackTicks) * F, d = int(e.decayTicks) * F, f = int(e.fadeTicks) * F, t = pos;
     if (t < a) return clamp15(envSegmentLevel(e.start, e.peak, a, t, e.attackCurve));
     if (t < a + d) return clamp15(envSegmentLevel(e.peak, e.sustain, d, t - a, e.decayCurve));
     // The third stage (section 51): the sustain fades to a level and holds there.
     if (f > 0 && t < a + d + f) return clamp15(envSegmentLevel(e.sustain, e.fadeTo, f, t - a - d, e.fadeCurve));
     return clamp15(f > 0 ? e.fadeTo : e.sustain);
+}
+
+/// Section 116: the level the shaped envelope is on right now, written only
+/// when it changes and always through section 26 -- no trigger, so a playback
+/// ROM can replay the same list of levels (section 27). Called on the tick,
+/// which owns the stage, and again on every pitch clock inside it, which is
+/// what lets a stage shorter than the levels it crosses walk through them.
+void Driver::emitShapedLevel(int ch)
+{
+    Voice& v = v_[size_t(ch)];
+    if (!v.shapedOn || v.shapedTaken) return;
+    {   // the position only ever goes forward (section 116)
+        constexpr int F = kShapedFine;
+        const int sub = std::clamp(clocksThisTick_ * F / std::max(1, clocksPerTick_), 0, F - 1);
+        v.shapedPosMax = std::max(v.shapedPosMax, uint32_t(int(v.shapedTick) * F + sub));
+    }
+    const uint8_t level = shapedLevel(v);
+    if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) {
+        const uint8_t code = uint8_t(level / 4);
+        if (code != v.waveLevel) { v.waveLevel = code; setLevel(ch); }
+    } else if (level != v.envVol) {
+        v.envVol = level;
+        setLevel(ch);
+    }
 }
 
 void Driver::stepShaped(int ch)
@@ -1340,14 +1374,7 @@ void Driver::stepShaped(int ch)
         stopVoice(ch, true);
         return;
     }
-    const uint8_t level = shapedLevel(v);
-    if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) {
-        const uint8_t code = uint8_t(level / 4);
-        if (code != v.waveLevel) { v.waveLevel = code; setLevel(ch); }
-    } else if (level != v.envVol) {
-        v.envVol = level;
-        setLevel(ch);
-    }
+    emitShapedLevel(ch);
 }
 
 void Driver::writeNr51(bool force)
@@ -2578,9 +2605,15 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
             // interleave with it on real hardware, and must not overtake
             // writes that were computed before it, so it follows the burst.
             if (at > cycle_ + burst_) moveTo(at);
+            ++clocksThisTick_;                      // section 116
             for (int ch = 0; ch < 4; ++ch) {
                 Voice& v = v_[size_t(ch)];
                 if (v.active && v.pitchClockOn) pitchStep(ch, false);
+                // Section 116: the shaped envelope's level is re-read on this
+                // clock as well as on the tick, so a stage shorter than the
+                // levels it crosses walks through every one of them as the ROM
+                // does. The tick still owns the stage, this only fills it in.
+                if (v.active) emitShapedLevel(ch);
                 // The instrument's own envelope and R's resync run on the same
                 // clock, whatever the pitch speed is (sections 7 and 8).
                 // Section 109: a channel a K has killed still answers a later E --
@@ -2641,6 +2674,10 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
         moveTo(at);
         for (size_t i = 0; i < pendingCount_; ++i) fire(i);   // notes that were waiting for a tick
         pendingCount_ = 0;
+        // Section 116: how many pitch clocks that tick took, so the shaped
+        // envelope knows how far 1/256 of a tick is. A tick with none in it
+        // (a very fast tempo, or the first of a block) keeps the last reading.
+        if (clocksThisTick_ > 0) { clocksPerTick_ = clocksThisTick_; clocksThisTick_ = 0; }
         tickAll();
     }
     while (ei < n) { NoteEvent& e = events[ei++]; if (waits(e)) hold(e); else runEvent(e); }

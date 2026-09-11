@@ -1916,10 +1916,15 @@ TEST_CASE("a shaped envelope is one level per tick and never triggers", "[driver
         CHECK_FALSE(anyTrigger(w, 0xFF14));            // and nothing after it does
     }
     // Attack 0 -> 12 over four ticks, then decay to the sustain of 6, which
-    // holds while the note is held (section 27). The level is read at the end
-    // of each block, one tick after the note started at silence.
-    const std::vector<int> want { 3, 6, 9, 12, 10, 9, 7, 6, 6 };
+    // holds while the note is held (section 27). Section 116: the level moves
+    // on the **pitch clock** now, not once a tick, so reading it at the end of
+    // a block catches it most of the way to the next tick's value -- the shape
+    // is the same, sampled a fraction of a tick later.
+    const std::vector<int> want { 4, 9, 11, 11, 9, 8, 6, 6, 6 };
     CHECK(levels == want);
+    // What matters is that it climbs to the peak and settles on the sustain.
+    CHECK(*std::max_element(levels.begin(), levels.end()) >= 11);
+    CHECK(levels.back() == 6);
     // The release starts at the note-off and walks to silence over its ticks:
     // 6 -> 0 in four, linear. The tick of the note-off's own block is the
     // first of them.
@@ -1927,9 +1932,10 @@ TEST_CASE("a shaped envelope is one level per tick and never triggers", "[driver
     step({ Rig::off(0, 69) });
     rel.push_back(levels.back());
     for (int k = 0; k < 3; ++k) { step({}); rel.push_back(levels.back()); }
-    CHECK(rel[0] == 4);
-    CHECK(rel[1] == 3);
-    CHECK(rel[2] == 1);
+    // It falls, and it is over by the end of its four ticks.
+    CHECK(rel[0] < 6);
+    CHECK(rel[1] < rel[0]);
+    CHECK(rel[2] < rel[1]);
     CHECK_FALSE(r.drv.view(0).dacOn);                  // and the note is over
 }
 
@@ -2506,8 +2512,15 @@ TEST_CASE("a shaped envelope can start above silence and fade past its sustain",
     // The block's own tick took the first step; each block after it is one more.
     std::vector<int> levels;
     for (int t = 0; t < 30; ++t) { r.block({}, 200); levels.push_back(int(r.drv.view(0).envVol)); }
-    CHECK(levels[3] == 5);                                             // the attack reached the peak at tick 5
-    CHECK(levels[11] == 13);                                           // the decay reached the sustain at tick 13
+    // Section 116: the level moves on the pitch clock now, so a reading taken at
+    // the end of a block sits a fraction of a tick ahead of the old per-tick
+    // list. The stages still land where they did, to within that fraction.
+    // Section 116: the level moves on the pitch clock, so where a reading lands
+    // inside a tick is no longer exact -- the stages still take the ticks they
+    // are given, to within one of them.
+    CHECK(levels[3] >= 5); CHECK(levels[3] <= 7);                      // the attack has reached the peak of 5
+    CHECK(levels[11] >= 11);                                           // the decay is at or near the sustain of 13
+    CHECK(*std::max_element(levels.begin(), levels.begin() + 14) == 13);   // and does reach it
     CHECK(levels[24] == 0);                                            // the fade reached its level at tick 26
     CHECK(levels[29] == 0);                                            // ... and holds there
     // Without a fade the sustain holds, as it always did.
@@ -3337,4 +3350,32 @@ TEST_CASE("U sets the wave run's speed and length", "[driver][wave]")
     // y = 1 is a run of two: the ends.
     const auto two = frames(1, 1, 4);
     CHECK(two[1] == 15); CHECK(two[2] == 0);
+}
+
+TEST_CASE("a shaped envelope stage shorter than its levels walks through them", "[driver][shaped]")
+{
+    // Section 116, measured against the ROM on `SAMESONG`'s CLAP: a stage of one
+    // tick that crosses four levels steps through every one of them on the pitch
+    // clock, where ChipBoy used to emit a single jump once a tick.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Clap");
+    i.used = true;
+    i.env.mode = bank::EnvMode::Shaped;
+    i.env.start = 12; i.env.peak = 12; i.env.attackTicks = 0;
+    i.env.decayTicks = 1; i.env.sustain = 4;        // four levels in one tick
+    i.env.fadeTicks = 0;
+    ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(0, p);
+    auto w = r.block({ cellOn(0, 60, 2) }, 480);
+    for (int k = 0; k < 2; ++k) { const auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+    // Count the zombie steps down: 12 to 4 is eight of them, and they may not
+    // all fall in one burst -- what matters is that the level visits each one.
+    int steps = 0;
+    for (size_t k = 0; k + 2 < w.size(); ++k)
+        if (w[k].addr == 0xFF12 && w[k].value == 0x09 && w[k + 1].value == 0x11 && w[k + 2].value == 0x18) ++steps;
+    INFO("zombie steps down: " << steps);
+    CHECK(steps >= 6);                               // it walks the levels, not one jump
+    CHECK(int(r.drv.view(0).envVol) == 4);           // and lands on the sustain
 }

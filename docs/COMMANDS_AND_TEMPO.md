@@ -3303,3 +3303,41 @@ ROM visits `0 7 15` and ChipBoy `0 8 15`, and at length 7 the ROM visits `0 2 5 
 ChipBoy's `0 2 5 8 10 13 15`. Neither `i * 15 / (L - 1)` nor `i * 16 / (L - 1)` fits every length, so
 the ROM is doing something else -- an accumulator with its own rounding. Recorded rather than
 guessed at; it is one frame of sixteen, on two of the sixteen lengths.
+
+## 116. The shaped envelope steps on the pitch clock, not on the tick
+
+`SAMESONG` warned eight times that "an envelope stage faster than a tick a level is quantised to the
+tick". It was not a rounding: whole levels were being skipped.
+
+`CLAP` is the clearest. Its shaped envelope is start 12 → peak 8 over **2 ticks**, decay to 4 over
+**2**, then a fade to 0 over **1** -- four levels in a single tick. Sampling the noise channel's
+volume every 5 ms:
+
+```
+ROM       B BA 99 88 777 66 55 4 2 0        every level, 11 down to 0
+ChipBoy   AAA 8888 6666 4444 0000           four levels, the rest skipped
+```
+
+LSDj steps the level on its own envelope clock -- the same pitch clock everything else in §7 runs on,
+about 2.8 ms -- so a stage shorter than the levels it crosses still walks through every one of them.
+ChipBoy rendered the shaped envelope **one level per tracker tick** (§27), so a four-level fade in one
+tick became a single jump.
+
+The stages stay whole ticks, which is what the instrument stores and what the importer converts to.
+What changes is the reading: the position is now `shapedTick * 256 + sub`, where `sub` is how far
+this tick's pitch clocks have got, and the level is re-read on every pitch clock as well as on the
+tick. `envSegmentLevel` only cares about the ratio, so scaling both sides leaves the value at a tick
+boundary exactly as it was and fills in the levels between. The driver measures `clocksPerTick_`
+from the clocks it counts between ticks, so it follows the tempo with nothing to configure, and the
+position is held monotonic -- the tick resets `sub` to zero, and without that the level would step
+backwards at every tick boundary and the channel would hear it.
+
+```
+CLAP      ROM  B BA 99 88 777 66 55 4 2 0      ChipBoy  A 99 88 77 66 55 4 3 2 11 0
+SNARE     ROM  AAA 999 8888 777 666 5555 444 3333 222 111
+          CB   AA 999 888 7777 666 555 4444 333 2222 111
+```
+
+What is left is the stage *lengths*, which the importer rounds to whole ticks (`envTicks`), so a
+stage can be a tick longer or shorter than the ROM's. The level sequence is right; the total is
+within a tick.

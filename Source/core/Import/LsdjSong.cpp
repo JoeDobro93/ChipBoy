@@ -316,9 +316,18 @@ struct Reader {
             o.env.decayTicks = uint8_t(envTicks(a2 - a3, s2)); o.env.sustain = uint8_t(a3);
             if (s3 && !hw) { o.env.fadeTicks = uint8_t(envTicks(a3, s3)); o.env.fadeTo = 0; }
         }
+        // Section 116: a stage faster than a tick a level is no longer flattened
+        // -- the driver steps the shaped envelope on the pitch clock and walks
+        // every level. What is left is the stage's own **length**, which
+        // `envTicks` rounds to a whole tick, so a stage can be up to half a tick
+        // longer or shorter than the ROM's.
         for (int sp : { s1, s2, s3 }) {
             const double perLevelMs = m.envPeriods != nullptr ? double(m.envPeriods[size_t(sp & 15)]) * kPitchClockMs : double(sp & 7) * 1000.0 / 64.0;
-            if (sp && perLevelMs < tickMs) { notes.add("instrument " + name + ": an envelope stage faster than a tick a level is quantised to the tick"); break; }
+            const double stageMs = perLevelMs * 16.0;
+            if (sp && stageMs > 0.0 && std::fabs(std::lround(stageMs / tickMs) * tickMs - stageMs) > tickMs * 0.25) {
+                notes.add("instrument " + name + ": an envelope stage does not land on a whole tick; its length is rounded to one (section 116)");
+                break;
+            }
         }
     }
 

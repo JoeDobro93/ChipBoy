@@ -295,7 +295,12 @@ private:
         // The shaped envelope (section 27): where it is, and whether a level
         // change has taken it over until the next plain note-on.
         bool     shapedOn = false, shapedTaken = false, shapedRelease = false;
-        uint16_t shapedTick = 0;           ///< ticks into the envelope, or into the release
+        uint16_t shapedTick = 0;           ///< whole ticks into the envelope, or into the release
+        /// Section 116: the furthest the envelope has got, in 1/256 of a tick.
+        /// The tick and the pitch clock both read the position and the tick
+        /// resets the fraction, so without this the level would step back at
+        /// every tick boundary and the channel would hear it.
+        uint32_t shapedPosMax = 0;
         uint8_t  shapedFrom = 0;           ///< the level the release started from
         bool     tableJustStarted = false; ///< row 0 fired with the note-on (section 31)
         bool     tableHopped = false;      ///< a `B` in this lane took its hop (section 73)
@@ -435,6 +440,7 @@ private:
     /// The shaped envelope's level for this tick, and the write it needs
     /// (section 27). Called from the tick, after the table.
     void stepShaped(int ch);
+    void emitShapedLevel(int ch);   ///< section 116
     /// The level a shaped envelope is at, `tick` ticks in.
     uint8_t shapedLevel(const Voice& v) const;
     /// A table's volume column, an E or a level lane taking the level over:
@@ -468,6 +474,12 @@ private:
     bank::Command resolveRandom(int ch, const bank::Command& z, int lane);
     /// Where a lane's last command is kept, so `applyCommand` and `resolveRandom`
     /// agree on which one a `Z` sees.
+    /// Section 116: pitch clocks between the last two ticks, so the shaped
+    /// envelope knows how far 1/256 of a tick is. Seeded with the 19.5 ms tick
+    /// a 128 BPM song has, and re-measured every tick.
+    int  clocksPerTick_ = 7;
+    int  clocksThisTick_ = 0;
+
     /// Section 113: how deep a table starting a table has gone, so a ring of
     /// `A`s cannot run away. The new table's row 0 fires at once, as a
     /// note-on's does (section 31).

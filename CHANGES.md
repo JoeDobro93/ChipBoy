@@ -26,6 +26,33 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-11 — The shaped envelope steps on the pitch clock
+
+`docs/COMMANDS_AND_TEMPO.md` §116, the third of the user's list. `SAMESONG` warned eight times that
+"an envelope stage faster than a tick a level is quantised to the tick". It was not a rounding:
+whole levels were being skipped. `CLAP`'s envelope fades four levels in **one tick**, and sampling
+the noise volume every 5 ms shows the ROM stepping through every level (`B BA 99 88 777 66 55 4 2 0`)
+where ChipBoy jumped (`AAA 8888 6666 4444 0000`).
+
+LSDj steps the level on the pitch clock -- the same ~2.8 ms clock everything in §7 runs on -- so a
+stage shorter than the levels it crosses still walks through all of them. ChipBoy rendered the
+shaped envelope one level per tracker tick (§27).
+
+The stages stay whole ticks, which is what the instrument stores. What changes is the reading: the
+position is `shapedTick * 256 + sub`, where `sub` is how far this tick's pitch clocks have got, and
+the level is re-read on every pitch clock as well as on the tick. `envSegmentLevel` only cares about
+the ratio, so a tick-boundary value is exactly what it was and the levels between are filled in. The
+driver measures `clocksPerTick_` from the clocks it counts between ticks, so it follows the tempo
+with nothing to configure, and the position is held monotonic -- the tick resets `sub` to zero, and
+without that the level would step backwards at every tick boundary and the channel would hear it.
+
+Two existing tests sampled the level once a tick and pinned the old list; they now check the shape
+and the landings with a tick of tolerance, because where a reading falls inside a tick is no longer
+exact by design. The import note is rewritten: it now warns only when a stage's *length* does not
+land near a whole tick, which is what `envTicks` still rounds.
+
+`SAMESONG`'s import notes go from 17 to 13.
+
 ### 2026-09-11 — `A 20` stops the table, and `W` on a wave instrument is the run
 
 `docs/COMMANDS_AND_TEMPO.md` §115, the first two of the user's list of `SAMESONG` import notes.

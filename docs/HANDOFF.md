@@ -432,6 +432,12 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 30 (§116): **the shaped envelope steps on the pitch clock**, not once a tracker tick.
+  `SAMESONG`'s `CLAP` fades four levels in one tick and ChipBoy emitted one jump; the ROM walks every
+  level. The stages stay whole ticks and the position becomes `shapedTick * 256 + sub`, `sub` being
+  how far this tick's pitch clocks have got, held monotonic so the level never steps back at a tick
+  boundary. `clocksPerTick_` is measured, so it follows the tempo. Notes: 17 to 13. What is left is
+  the stage *lengths*, which `envTicks` rounds to whole ticks.
 - Round 29 (§115): **`A 20` stops the table** -- measured, and ChipBoy's cell TBL column cannot say
   it, so the importer emits `A 0` into a command slot instead of dropping thirteen of them. And
   **`W` on a wave instrument is the run**: x ticks a frame, y + 1 frames, y = 0 all sixteen, both
