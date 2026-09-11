@@ -194,6 +194,11 @@ struct InstrumentCore {
     Envelope env;                    ///< Chip by default; Shaped renders its own level (section 27)
     uint8_t  sweepRate = 0;          ///< PU1 only
     int8_t   pu2Transpose = 0;       ///< semitones added on the second pulse only (section 49)
+    /// Section 88: `P` bends the **period register** by its signed byte of
+    /// units a pitch clock, exactly, rather than by a step from the semitone
+    /// table. What LSDj did before 5.7.8 (docs/LSDJ_VERSIONS.md), and the only
+    /// way to reproduce one of its slides without drifting off it.
+    bool     pitchRegisterUnits = false;
     bool     sweepDown = false;
     uint8_t  sweepShift = 0;
     // wave

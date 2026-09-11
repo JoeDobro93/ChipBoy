@@ -705,6 +705,7 @@ int main(int argc, char** argv)
     juce::File outDir = juce::File::getCurrentWorkingDirectory().getChildFile("recordtest");
     juce::File writeSong, checkSong, writeState, checkState, playFile;
     juce::File importSav, importOut; juce::String importWhich;   // --import-sav SAV NAME|working OUT.cbsong (a .lsdprj too)
+    juce::String importModel;                                    // --model NAME: read the song as that version rather than the format's default
     juce::File traceFile, traceOut; double traceSeconds = 20.0;  // --trace-song FILE OUT.csv [seconds]
     int playBars = 8;                                         // --play-song's default (section 24)
     bool dump = false;
@@ -718,6 +719,7 @@ int main(int argc, char** argv)
         else if (key == "--check-song") checkSong = juce::File(juce::String(argv[++i]));
         else if (key == "--write-state") writeState = juce::File(juce::String(argv[++i]));
         else if (key == "--check-state") checkState = juce::File(juce::String(argv[++i]));
+        else if (key == "--model") importModel = juce::String(argv[++i]);
         else if (key == "--import-sav" && i + 3 < argc) {
             importSav = juce::File(juce::String(argv[++i])); importWhich = juce::String(argv[++i]); importOut = juce::File(juce::String(argv[++i]));
         }
@@ -756,7 +758,17 @@ int main(int argc, char** argv)
             if (!lsdj::decompressFile(preview.bytes.data(), preview.bytes.size(), hit->file, bytes, err)) { std::printf("FAIL %s\n", err.c_str()); return 1; }
             format = hit->formatVersion; name = hit->name;
         }
-        const auto& model = plugin::autoModel(format, preview.romVersion);
+        // --model names a version's own reading, which is how two releases that
+        // write the same format byte are told apart (docs/LSDJ_VERSIONS.md).
+        const lsdj::LsdjModel* forced = importModel.isEmpty() ? nullptr : lsdj::lsdjModelNamed(importModel.toRawUTF8());
+        if (forced == nullptr && importModel.isNotEmpty()) forced = lsdj::lsdjModelForRomVersion(importModel.toRawUTF8());
+        if (forced == nullptr && importModel.isNotEmpty()) {
+            std::printf("FAIL no model named %s; the models are:", importModel.toRawUTF8());
+            int n = 0; const auto* const* all = lsdj::lsdjModels(n);
+            for (int k = 0; k < n; ++k) std::printf("\n  %s", all[k]->name);
+            std::printf("\n"); return 1;
+        }
+        const auto& model = forced != nullptr ? *forced : plugin::autoModel(format, preview.romVersion);
         auto bank = std::make_unique<bank::Bank>(); auto song = std::make_unique<tracker::Song>();
         lsdj::ImportSummary sum; lsdj::ImportNotes notes;
         if (!lsdj::importSong(bytes.data(), bytes.size(), model, *bank, *song, sum, notes, preview.kits.empty() ? nullptr : &preview.kits)) { std::printf("FAIL the song could not be read\n"); return 1; }

@@ -57,14 +57,14 @@ was a candidate for change:
 
 | release | format | differs from 9.3.9 | how it maps |
 |---|---|---|---|
-| 3.1.5 – 3.5.1 | 0 | command letters have no `B`; envelope is the chip's own `NRx2`; noise is `~SHAPE + 16 × (5 − octave)`, saturating; `P`/`L` are period-register units; `V` is a one-sided triangle **below** the note; `C` and `V` do nothing on noise; no pitch change ever restarts the noise channel; `R x y` retriggers every **y + 1** ticks and `R x 0` once; `T` below 40 clamps to 40 BPM; a cell with a blank instrument column still sounds | the letter table, `EnvelopeLaw::Chip`, `NoiseRule::Shape`, `PitchLaw::Register`, `VibratoLaw::RegisterOneSided`, `NoisePitch::Never`, `retrigPlus = 1`, `retrigZeroOnce`, `bareNoteSounds`. `C`/`V` on noise are dropped with a note |
+| 3.1.5 – 3.5.1 | 0 | command letters have no `B`; envelope is the chip's own `NRx2`; noise is `~SHAPE + 16 × (5 − octave)`, saturating; **a wave instrument has no frame run** (§89); `P`/`L` are period-register units (§88); `V` is a one-sided triangle **below** the note; `C` and `V` do nothing on noise; no pitch change ever restarts the noise channel; `R x y` retriggers every **y + 1** ticks and `R x 0` once; `T` below 40 clamps to 40 BPM; a cell with a blank instrument column still sounds | the letter table, `EnvelopeLaw::Chip`, `NoiseRule::Shape`, `PitchLaw::Register`, `VibratoLaw::RegisterOneSided`, `NoisePitch::Never`, `retrigPlus = 1`, `retrigZeroOnce`, `bareNoteSounds`, `waveFrameRun = false`, and `pitchRegisterUnits` so `P`'s byte moves exactly that many units a clock. `C`/`V` on noise are dropped with a note |
 | 3.6.8 – 3.9.2 | 2 | as above but `V` is already 9.x's centred vibrato | `VibratoLaw::Semitone`; the rest as format 0 |
 | 4.0.4 – 4.3.0 | 2 | **a cell whose instrument column is blank now sounds nothing at all**; the noise table's transpose changes law (it stepped `NR43` in uneven jumps before, one step per row after) | `bareNoteSounds = false`: such a note is dropped with a note at import. **Ambiguous** — 3.9.2 and 4.0.4 write the same format byte |
 | 4.4.0 – 4.7.3 | 3 | `P` and `L` still register units; everything else as 4.3.0 | the format-3 model with `retrigZeroOnce` |
 | 4.8.0 – 5.0.3 | 3 | **`R x 0` retriggers every tick instead of once** (changed back in 8.8.1) | `retrigZeroOnce = false`, so `R x 0` imports as ChipBoy's `R x 1`. **Ambiguous** — 4.7.3 and 4.8.0 write the same format byte |
-| 5.7.8 – 6.0.1 | 4 | `P` and `L` become the 9.x semitone laws; **`C` starts working on the noise channel**; 5.7.8's vibrato is a little slower than 5.8.8's | `PitchLaw::Semitone`, `noiseChord`. 5.7.8's vibrato is **not** mapped: it differs from its format-mates by about one period unit a clock |
-| 6.4.5 | 5 | **an `E` on the wave channel with a value outside 0–3 writes a nonsense `NR32`** (`E10` → `FE`, `E20` → `FC`, `E30` → `FA`) instead of muting | ChipBoy clamps to the four levels; the difference is noted at import |
-| 6.8.2 – 7.0.2 | 7 | as 6.4.5 | — |
+| 5.7.8 – 6.0.1 | 4 | `P` and `L` become the 9.x semitone laws; **`C` starts working on the noise channel**; still no wave frame run; 5.7.8's vibrato is a little slower than 5.8.8's | `PitchLaw::Semitone`, `noiseChord`. 5.7.8's vibrato is **not** mapped: it differs from its format-mates by about one period unit a clock |
+| 6.4.5 | 5 | **an `E` on the wave channel with a value outside 0–3 writes a nonsense `NR32`** (`E10` → `FE`, `E20` → `FC`, `E30` → `FA`) instead of muting; still no wave frame run | ChipBoy clamps to the four levels; the difference is noted at import |
+| 6.8.2 – 7.0.2 | 7 | **the wave frame run begins** (§89): a wave instrument walks its synth's frames while a note sounds | `waveFrameRun` |
 | 8.4.4 – 8.5.1 | 11 | `B` enters the command letter table (every letter from `C` on moves up one code); the envelope becomes three stages the **chip** ramps between; `T` bytes 0–39 start meaning 256–295 BPM; the `E`-outside-0–3 bug is still there | the letter table, `EnvelopeLaw::HardwareStages`, `tempoLowIsHigh` |
 | 8.8.6 | 15 | noise is `FF − note byte`; the envelope's three stages are ramped in software; `R x 0` back to once (8.8.1) | `NoiseRule::Raw`, `EnvelopeLaw::SoftwareStages`, `retrigZeroOnce`. *Assumed*: `retrigPlus` is carried from 8.5.1, not measured |
 | 9.2.L – 9.4.2 | 22 | the reference. The musical noise map, `S` on noise in semitones, the synth byte moves from instrument byte 2 to byte 3, noise `PITCH` (section 86), `V` reaches the noise channel, `R x y` retriggers every **y** ticks, and `E` on a pulse stops retriggering | — |
@@ -108,19 +108,47 @@ The user's own saves, against their own ROMs, over eighty seconds, note-on for n
 | song | version | PU1 | PU2 | WAV | NOI |
 |---|---|---|---|---|---|
 | `SUNRISE` | 9.3.9 | **276 / 276** | **170 / 170** | 440 / 440 | **740 / 740** |
+| `CLUCK` | 3.6.5 | 277 / 279 | 139 / 135 | 303 / 270 | 288 / 286 |
+| `BUS` | 3.6.5 | 67 / 49 | **307 / 307** | 22 / 22 | 476 / 404 |
+| `DISPATCH` | 3.6.5 | 128 / 131 | 96 / 82 | 346 / 376 | 213 / 216 |
 | `SPACE TI` | 8.4.4 | 359 / 299 | 846 / 797 | 1135 / 1151 | 437 / 373 |
 | `SAMESONG` | 9.2.L | 225 / 224 | 160 / 159 | 1596 / 745 | 1678 / 5191 |
+
+(The wave column counts the ROM's note-ons once: LSDj triggers that channel twice, with a stale
+period and then the real one.) The three format-2 songs are from the *Computer Savvy* source
+files, written in LSDj 3.6.5 and read here on 3.6.8. `BUS`'s PU2 is 307 of 307 with a longest
+common run of 304; the rest is close in count and diverges in value, for the two reasons in §4
+and §5 -- the bend's phase at a note-on, and the noise table transpose before 4.0.4.
 
 `SUNRISE` is exact on three channels of four (the wave channel's swept drums differ only in the
 first update of each, matrix section 10.1). The other two are not, and they are the next round:
 the trigger *counts* are close on `SPACE TI` but the values diverge within a few notes, and
-`SAMESONG`'s wave and noise channels are out by a factor. Neither is explained by anything in this
-document -- every rule here was measured against a controlled probe, not against these songs -- so
-they want the same treatment `SUNRISE` had: diff the register streams and read the ROM where they
-disagree. `SAMESONG` also uses instrument finetune (byte 11) on four pulse instruments, which the
+`SAMESONG`'s wave and noise channels are out by a factor. They want the same treatment `SUNRISE`
+had: diff the register streams and read the ROM where they disagree. `SAMESONG` also uses instrument finetune (byte 11) on four pulse instruments, which the
 importer drops with a note and the driver could carry (section 78 gives `F` the same law).
 
-## 7. How this was measured
+## 7. ROMs that would close the remaining gaps
+
+The archive jumps from **8.5.1 to 9.2.L**, which is where LSDj changed most. These would each
+settle something currently assumed rather than measured:
+
+1. **8.8.6** (format 15). The only release that writes that format, and the model for it carries
+   an earlier round's measurement from a ROM no longer here. Its `retrigPlus` is assumed from
+   8.5.1 rather than measured.
+2. **9.0.0 or 9.0.1**. The changelog puts the whole noise overhaul here -- "rearranged noise
+   notes by frequency", the musical map, `V` on the noise channel, `C` behaving like the pulses',
+   and the removal of `S MODE`. Which format byte 9.0 writes is unknown, and the importer
+   currently sends formats 16-21 to the 8.8.6 model, which may be wrong for all of them.
+3. **9.1.0 or 9.1.C**. `S MODE` was removed in 9.1.0 and revived as `PITCH` in 9.2.H, so 9.1 is
+   the one release where a noise instrument has neither.
+4. **8.9.3** (a table `ENV` hop stops costing a tick there, §64) and **8.9.5** (`E` starts
+   retriggering when `LENGTH` is not `UNLIM`). Both are single-flag questions.
+
+Lower value, but they would remove a guess each: **3.6.5** (the version the *Computer Savvy*
+songs were written in; 3.6.8 is one patch away and is what they were read on here) and any
+release between **7.0.2 and 8.4.0**, which is a three-format gap with no ROM in it.
+
+## 8. How this was measured
 
 `tools/lsdjref` with a probe song built into each ROM's **own** bootstrapped save
 (`lsdjref_trace --init-sav`, then `Probe(blank=True)`), so a version can be probed with nothing

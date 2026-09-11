@@ -2479,3 +2479,44 @@ either way and ChipBoy's `0` reaches the same place. Only the noise channel keep
 `InstrumentCore::lengthLatent` says an instrument carries its length this way: `NRx1` gets the
 value, `NRx4`'s enable bit stays clear, and only a §86 restart turns the counter on. The importer
 sets it with `length = 64 - byte 3` on every noise instrument whose byte 3 is not zero.
+
+## 88. `P` before 5.7.8 moves the period register by whole units
+
+§56 found that before format 4 `P xx` adds `xx` **period-register units** a pitch clock rather
+than bending by semitones, and the importer squeezed that into the nearest of ChipBoy's Drum
+speeds. Measured against 3.6.8 playing the user's `CLUCK`, that is not close enough:
+
+```
+ROM       060A 05FA 05EA 05DA 05CA 05BA 05AA 059A 058A     exactly -16 a clock
+ChipBoy   060B 05FB 05EC 05DC 05CC 05BD 05AD 059D          -16, -15, -16, -16, -15 ...
+```
+
+The nearest Drum speed to sixteen units is about 15.7, so a slide drifts a unit every three
+clocks and a long one ends a semitone away from where the ROM's ends. Every note after it
+inherits the error.
+
+**`InstrumentCore::pitchRegisterUnits`**: when set, `P`'s signed byte is the number of units a
+clock, whole, and the driver adds it straight to `drumOffset` -- which is already a
+period-register offset (§7), so nothing else in the pitch path changes. The importer sets it on
+every pulse and wave instrument of a `PitchLaw::Register` model and passes `P`'s byte through
+untouched, which also removes the conversion that produced the drift.
+
+With it, ChipBoy's slide is `060B 05FB 05EB 05DB 05CB 05BB 05AB 059B 058B` -- the ROM's step for
+step, one unit above it because the note-on period rounds the other way, which is a thirtieth of
+a semitone.
+
+## 89. A wave instrument has no frame run before format 7
+
+Measured on every release: a wave instrument walks a **run** of its synth's frames while a note
+sounds only from 6.8.2 (format 7). Before that it loads **frame 0** and holds it, whatever the
+low nibble of its synth byte says, and bytes 9, 10 and 11 -- which 9.x reads as PLAY, LENGTH and
+SPEED -- mean something else.
+
+| | note byte `30` | `31` | `35` | `3F` |
+|---|---|---|---|---|
+| 3.6.8 - 6.4.5 (formats 0-5) | frame 0 | frame 0 | frame 0 | frame 0 |
+| 6.8.2 - 7.0.2 (format 7) | frames 0 1 2 3 4 5 | 0 1 2 3 4 5 | 0 1 2 3 4 5 | 0 1 2 3 4 5 |
+
+Reading 9.x's bytes on an older instrument gives it a run it never had, which is heard as the
+wave channel retriggering two or three times a step. On `CLUCK` it was 978 wave note-ons against
+the ROM's 303; with `LsdjModel::waveFrameRun` clear for formats 0-5 it is 270.

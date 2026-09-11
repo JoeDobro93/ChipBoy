@@ -76,6 +76,7 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     if (i.frameLoopStep) o->setProperty("frameLoopStep", int(i.frameLoopStep));
     o->setProperty("pitchSpeed", int(i.pitchSpeed)); o->setProperty("cmdRate", int(i.cmdRate)); o->setProperty("chordRate", int(i.chordRate)); o->setProperty("tableMode", int(i.tableMode));
     if (i.pu2Transpose != 0) o->setProperty("pu2Transpose", int(i.pu2Transpose));   // section 49; absent reads as 0
+    if (i.pitchRegisterUnits) o->setProperty("pitchRegisterUnits", true);          // section 88
     o->setProperty("vibShape", int(i.vib.shape)); o->setProperty("vibDir", int(i.vib.dir)); o->setProperty("vibSpeed", int(i.vib.speed)); o->setProperty("vibDepth", int(i.vib.depth)); o->setProperty("vibDelay", int(i.vib.delay));
     o->setProperty("duty", int(i.duty));
     { Array<var> seq; for (int k = 0; k < i.dutySeqLen; ++k) seq.add(int(i.dutySeq[size_t(k)])); o->setProperty("dutySeq", seq); }
@@ -128,6 +129,7 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.chordRate = uint8_t(std::clamp(getOr(o, "chordRate", int(i.cmdRate)), 0, 15));
     i.tableMode = TableMode(std::clamp(getOr(o, "tableMode", 0), 0, 1));
     i.pu2Transpose = int8_t(std::clamp(getOr(o, "pu2Transpose", 0), -128, 127));
+    i.pitchRegisterUnits = bool(o->getProperty("pitchRegisterUnits"));             // section 88
     // The vibrato's shape used to carry its direction (Triangle, Square,
     // SawUp, SawDown); it is a shape and a direction now.
     if (o->hasProperty("vibDir")) {

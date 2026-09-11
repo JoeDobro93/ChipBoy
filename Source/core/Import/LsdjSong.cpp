@@ -45,18 +45,6 @@ uint8_t nibbleS(uint8_t nr43, int xy) { return uint8_t(((((nr43 >> 4) - (xy >> 4
 /// The pulse period register for a MIDI note, the chip's own formula (the
 /// LSDj table is within a unit of it): what a register-unit slide covers.
 double gbPeriod(int midi) { return 2048.0 - 131072.0 / (440.0 * std::pow(2.0, (midi - 69) / 12.0)); }
-/// Drum mode's units a pitch clock for a P speed (Driver.cpp: bendStep256 /
-/// 256 of a semitone at kDrumUnitsPerSemitone).
-double drumUnitsPerClock(int speed) { return double(driver::Driver::bendStepFor(speed)) / 256.0 * 19.11; }
-/// The ChipBoy P speed whose Drum step is nearest `units` a pitch clock
-/// (section 56: an old P adds its byte to the register every clock).
-int drumSpeedFor(int units)
-{
-    int best = 1; double bestErr = 1e9;
-    for (int m2 = 1; m2 <= 127; ++m2) { const double e = std::fabs(drumUnitsPerClock(m2) - double(units)); if (e < bestErr) { bestErr = e; best = m2; } }
-    return best;
-}
-
 /// The interpreter's state for one song.
 /// A kit instrument's two kits (plan section 4a, measured on 9.2.L): the
 /// note's high digit picks a sample of the kit in byte 2, its low digit one
@@ -422,6 +410,7 @@ struct Reader {
             if (t == 0 || t == 3) envelope(b, o, name);
             if (t == 0) {
                 o.duty = uint8_t(b[7] >> 6); o.dutySeqLen = 0; o.pitchSpeed = m.pitchLaw == PitchLaw::Register ? bank::PitchSpeed::Drum : pitchSpeedOf(b[5]);
+                o.pitchRegisterUnits = m.pitchLaw == PitchLaw::Register;      // section 88
                 const int nr10 = (~b[4]) & 0xFF;
                 o.sweepRate = uint8_t((nr10 >> 4) & 7); o.sweepDown = (nr10 & 8) != 0; o.sweepShift = uint8_t(nr10 & 7);
                 // Section 49: a whole signed byte of semitones, which ChipBoy's
@@ -435,22 +424,35 @@ struct Reader {
                 // The synth byte is 2 before 9.x and 3 after (section 60); its low
                 // nibble is LSDj's LOOP POS, not a start frame (section 65).
                 const uint8_t wb = b[size_t(m.waveByte == 3 ? 3 : 2)];
-                const int synth = wb >> 4, loopPos = wb & 15;
+                const int synth = wb >> 4;
+                const int loopPos = wb & 15;
                 o.wave = uint8_t(waveSlotFor(synth));
                 o.pitchSpeed = m.pitchLaw == PitchLaw::Register ? bank::PitchSpeed::Drum : pitchSpeedOf(b[5]);
-                // The run: LENGTH is 16 - the low nibble of byte 10, SPEED is byte
-                // 11 and costs four ticks on top, PLAY is byte 9's low two bits,
-                // and the loop covers the last 16 - LOOP POS steps of the run.
-                const int len = 16 - int(b[10] & 15);
-                o.frameLength = uint8_t(len);
-                o.frameLoopStep = uint8_t(std::max(0, len - (16 - loopPos)));
-                switch (b[9] & 3) {
-                    case 0: o.frameAdvance = 0; o.frameLoop = bank::FrameLoop::Loop; break;      // MANUAL: only an F moves it
-                    case 1: o.frameLoop = bank::FrameLoop::Once; break;
-                    case 3: o.frameLoop = bank::FrameLoop::PingPong; break;
-                    default: o.frameLoop = bank::FrameLoop::Loop; break;
+                o.pitchRegisterUnits = m.pitchLaw == PitchLaw::Register;      // section 88
+                // docs/LSDJ_VERSIONS.md: a wave instrument walks a run of frames
+                // only from format 7. Before that it loads frame 0 and holds it,
+                // and bytes 9, 10 and 11 mean something else -- reading them as
+                // the run gives an old song a frame run it never had, which is
+                // heard as the wave channel retriggering two or three times a
+                // step.
+                if (!m.waveFrameRun) {
+                    o.frameLength = 1; o.frameLoopStep = 0; o.frameAdvance = 0;
+                    o.frameLoop = bank::FrameLoop::Loop;
+                } else {
+                    // The run: LENGTH is 16 - the low nibble of byte 10, SPEED is
+                    // byte 11 and costs four ticks on top, PLAY is byte 9's low two
+                    // bits, and the loop covers the last 16 - LOOP POS steps.
+                    const int len = 16 - int(b[10] & 15);
+                    o.frameLength = uint8_t(len);
+                    o.frameLoopStep = uint8_t(std::max(0, len - (16 - loopPos)));
+                    switch (b[9] & 3) {
+                        case 0: o.frameAdvance = 0; o.frameLoop = bank::FrameLoop::Loop; break;      // MANUAL: only an F moves it
+                        case 1: o.frameLoop = bank::FrameLoop::Once; break;
+                        case 3: o.frameLoop = bank::FrameLoop::PingPong; break;
+                        default: o.frameLoop = bank::FrameLoop::Loop; break;
+                    }
+                    if (b[9] & 3) o.frameAdvance = uint8_t(std::min(255, int(b[11]) + 4));
                 }
-                if (b[9] & 3) o.frameAdvance = uint8_t(std::min(255, int(b[11]) + 4));
             } else if (t == 2) {
                 if (!kitInstrument(i, b, o, name)) return false;
             } else {
@@ -632,12 +634,12 @@ struct Reader {
                 // Section 66: P on noise goes through too -- the instrument's
                 // Sweep says whether it walks the map or the NR43 nibbles.
                 if (channel == 3) { out = { Cmd::P, int16_t(v), 0, 0 }; return true; }
-                if (m.pitchLaw == PitchLaw::Register && v != 0) {
-                    // Section 56: xx register units a clock, into the Drum speed with the nearest step.
-                    const int units = signedByte(v);
-                    const int speed = drumSpeedFor(std::abs(units));
-                    out = { Cmd::P, int16_t(units < 0 ? 256 - speed : speed), 0, 0 }; return true;
-                }
+                // Section 88: under the register law the byte **is** the number
+                // of units a clock, and the instrument's pitchRegisterUnits makes
+                // the driver move exactly that many. It used to be squeezed into
+                // the nearest Drum speed, which drifted about one unit every
+                // three clocks and left a long slide a semitone off the ROM's.
+                if (m.pitchLaw == PitchLaw::Register) { out = { Cmd::P, int16_t(v), 0, 0 }; return true; }
                 out = { Cmd::P, int16_t(v), 0, 0 }; return true;                     // the two's-complement byte
             case 'G': out = { Cmd::G, int16_t(std::min(v + 1, 16)), 0, 0 }; return true;           // LSDj's groove 00 is ChipBoy's slot 1
             case 'O': out = { Cmd::O, int16_t(v & 3), 0, 0 }; return true;

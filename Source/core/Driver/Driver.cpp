@@ -1011,7 +1011,12 @@ void Driver::pitchStep(int ch, bool onTick)
             // (measured), not the 7.46 that a tick is worth in updates.
             const int mag = bendStep256(std::abs(int(v.bendSpeed))) * (onTick ? 4 : 1);
             const int step = v.bendSpeed < 0 ? -mag : mag;
-            if (pitchSpeed(v) == PitchSpeed::Drum)
+            if (v.inst.pitchRegisterUnits)
+                // Section 88: the byte is the number of period-register units a
+                // clock, whole. No table, so a long slide ends where the ROM's
+                // ends rather than a fraction of a semitone away.
+                v.drumOffset += double(v.bendSpeed) * (onTick ? 4.0 : 1.0);
+            else if (pitchSpeed(v) == PitchSpeed::Drum)
                 v.drumOffset += double(step) / 256.0 * kDrumUnitsPerSemitone;
             else
                 v.fineOffset = std::clamp<int32_t>(v.fineOffset + step, -1 << 20, 1 << 20);

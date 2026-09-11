@@ -105,6 +105,10 @@ struct LsdjModel {
     /// before 4.0.4; from 4.0.4 the ROM plays nothing at all
     /// (docs/LSDJ_VERSIONS.md).
     bool           bareNoteSounds;
+    /// A wave instrument walks a **run** of its synth's frames while a note
+    /// sounds. Before format 7 it does not: it loads frame 0 and holds it, and
+    /// bytes 9, 10 and 11 mean something else (docs/LSDJ_VERSIONS.md).
+    bool           waveFrameRun;
     bool           tableGrooveWalks; ///< a table's G walks the groove (9.x) or holds its first step (section 63)
     bool           envHopCostsTick;  ///< a table ENV hop spends a tick before 8.9.3, none after (section 64)
     bool           measured;         ///< traced on that ROM, or assumed from another model

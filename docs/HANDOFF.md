@@ -493,10 +493,21 @@ design-log section the change touches. Update this file at the end of every chan
 
 ## Next steps
 
-- **Import the user's 8.4.4 and 9.2.L saves** (`/root/lsdj/lsdj8_4_4.sav`, `/root/lsdj/lsdj9_2_L.sav`)
-  and compare them against their ROMs the way SUNRISE is compared, with attention to the wave
-  frame/synth handling. That is the remaining piece of the version round: the sweep itself is
-  done and written up in `docs/LSDJ_VERSIONS.md`.
+- **The bend's phase at a note-on** is the largest thing left on the old songs and on SUNRISE's
+  wave channel alike (`docs/LSDJ_VERSIONS.md` section 4 item 3, matrix section 10.1): the ROM's
+  note-on writes a period already part of the way into a running `P`, ChipBoy writes the plain
+  note. One question, two symptoms. Then **the noise table transpose before 4.0.4**, whose law is
+  not worked out.
+- **`SPACE TI` (8.4.4) and `SAMESONG` (9.2.L)** still diverge; the numbers are in
+  `docs/LSDJ_VERSIONS.md` section 6. `SAMESONG` also uses instrument finetune (byte 11) on four
+  pulse instruments, which the importer drops with a note and the driver could carry (section 78
+  gives `F` the same law).
+- **Test saves now in the container**: `/root/lsdj/csavvy[123].sav` are the *Computer Savvy*
+  source files (25 songs, all format 2, LSDj 3.6.5), plus `lsdj8_4_4.sav` and `lsdj9_2_L.sav`.
+  `/root/lsdj/probe/cmpn.py` is the comparison that counts noise by its **clock** rather than its
+  `NR43` byte -- before 9.x the importer crosses into ChipBoy's own clock map, which reaches the
+  same clock through a different shift/divisor pair, so a byte comparison reads as total failure
+  when nothing is wrong.
 - The software envelope's ramp steps are quantised to the tick (matrix §10 item 7). Not specific
   to noise; fixing it moves every instrument, so it wants its own round.
 - The playback-ROM exporter: `HARDWARE_DRIVER_AUDIT.md` ends with the binary layout a

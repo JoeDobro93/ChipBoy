@@ -26,6 +26,36 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-11 — the old formats tested on real songs: no wave frame run, and a bend in whole units
+
+Twenty-five songs from the *Computer Savvy* source files, all format 2, written in LSDj 3.6.5 and
+compared against 3.6.8 playing them. Two defects, both of which only ever showed on an old song:
+
+1. **A wave instrument has no frame run before format 7** (spec section 89). The importer read
+   9.x's PLAY, LENGTH and SPEED bytes (9, 10, 11) on every version; on an older instrument those
+   bytes mean something else, so an old wave part got a frame run it never had and retriggered
+   two or three times a step. `CLUCK`'s wave channel was 978 note-ons against the ROM's 303; it
+   is 270 now. `LsdjModel::waveFrameRun` is clear for formats 0-5 and set from format 7, measured
+   on every release on both sides of the boundary.
+2. **`P` before 5.7.8 moves the period register by whole units** (spec section 88). Section 56
+   had the law right and the importer squeezed it into the nearest of ChipBoy's Drum speeds --
+   about 15.7 units where the ROM moves 16 -- so a slide drifted a unit every three clocks and a
+   long one ended a semitone out. `InstrumentCore::pitchRegisterUnits` makes the driver add the
+   byte straight to the period offset, which `drumOffset` already is, so nothing else in the
+   pitch path moves. ChipBoy's slide is now the ROM's step for step, one unit above it because
+   the note-on period rounds the other way.
+
+**Also:** `kLsdj57` covered formats 4 through 10 and had to be split, because the wave frame run
+starts at format 7 -- `kLsdj68` is the format-7 model. And `chipboy_recordtest --model NAME` reads
+a save as a named version rather than the format's default, which is how the two ambiguous
+formats get tested both ways.
+
+**What is left on the old songs** is two things, and they are named in `docs/LSDJ_VERSIONS.md`
+sections 4 and 5: the phase of a bend at a note-on -- the ROM's note-on writes a period already
+part of the way into a running `P`, the same unmeasured thing as the matrix's section 10.1 on
+`SUNRISE`'s wave channel -- and the noise table transpose before 4.0.4, whose law is still not
+worked out.
+
 ### 2026-09-11 — every stable LSDj release swept, and the two boundaries the format byte cannot see
 
 `docs/LSDJ_VERSIONS.md` is new: all 31 stable releases in the user's archive plus 8.4.4, 9.2.L and

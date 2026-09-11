@@ -195,7 +195,7 @@ TEST_CASE("the default codes expand to the default wave and instrument", "[lsdj]
 TEST_CASE("a model is chosen by format, by ROM title, by name, or the newest", "[lsdj]")
 {
     int n = 0; const auto* const* models = lsdjModels(n);
-    REQUIRE(n == 9);
+    REQUIRE(n == 10);
     CHECK(std::string(lsdjLatestModel().name).find("9.4.2") != std::string::npos);
     CHECK(lsdjModelForFormat(22) == models[0]);
     CHECK(lsdjModelForFormat(15)->formatVersion == 15);          // 8.8.6, measured
@@ -233,6 +233,11 @@ TEST_CASE("a model is chosen by format, by ROM title, by name, or the newest", "
     CHECK(lsdjModelForFormat(22)->noiseVibrato); CHECK_FALSE(lsdjModelForFormat(11)->noiseVibrato);
     CHECK(lsdjModelForFormat(4)->noiseChord); CHECK_FALSE(lsdjModelForFormat(3)->noiseChord);
     CHECK(lsdjModelForFormat(11)->tempoLowIsHigh); CHECK_FALSE(lsdjModelForFormat(7)->tempoLowIsHigh);
+    // docs/LSDJ_VERSIONS.md: a wave instrument walks a run of frames only from
+    // format 7; before that it loads frame 0 and holds it.
+    CHECK(lsdjModelForFormat(7)->waveFrameRun); CHECK_FALSE(lsdjModelForFormat(5)->waveFrameRun);
+    CHECK_FALSE(lsdjModelForFormat(4)->waveFrameRun); CHECK(lsdjModelForFormat(11)->waveFrameRun);
+    CHECK(lsdjModelForRomVersion("6.8.2")->waveFrameRun); CHECK_FALSE(lsdjModelForRomVersion("6.4.5")->waveFrameRun);
     CHECK(lsdjModelForRomVersion("7.0.2") == lsdjModelForFormat(7));
     CHECK(lsdjModelForRomVersion("") == nullptr);
     CHECK(lsdjModelNamed(models[0]->name) == models[0]);
@@ -543,9 +548,12 @@ TEST_CASE("the formats before 5.7 convert P, L and V from the period register", 
     REQUIRE(pu->cells[2].cmd1.cmd == bank::Cmd::L);
     const double dist = (2048.0 - 131072.0 / 329.6276) - (2048.0 - 131072.0 / 261.6256);
     CHECK(int(pu->cells[2].cmd1.a) == int(std::ceil(dist / 4.0)) - 1);
-    // P08: 8 units a clock, the Drum speed whose measured step is nearest (27: 105/256 x 19.11 = 7.84).
+    // Section 88: P08 is eight period-register units a clock, and the byte goes
+    // through as it stands -- the instrument's pitchRegisterUnits is what makes
+    // the driver move exactly eight rather than the nearest Drum step.
     REQUIRE(pu->cells[4].cmd1.cmd == bank::Cmd::P);
-    CHECK(int(pu->cells[4].cmd1.a) == 27);
+    CHECK(int(pu->cells[4].cmd1.a) == 8);
+    CHECK(bank->instruments[0].pitchRegisterUnits);
     // V under format 3 is already the 9.x law: untouched.
     REQUIRE(pu->cells[6].cmd1.cmd == bank::Cmd::V);
     CHECK(int(pu->cells[6].cmd1.a) == 2); CHECK(int(pu->cells[6].cmd1.b) == 4);
