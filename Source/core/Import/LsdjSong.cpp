@@ -84,6 +84,8 @@ struct Reader {
     std::array<bool, kLsdjInstruments> instTranspose{};
     std::map<int, int> waveSlotOfSynth;                  // LSDj synth -> ChipBoy wave slot
     std::map<int, std::set<bool>> noiseWidths;           // ChipBoy slot -> the LFSR widths its notes take
+    std::map<int, int> pu2Top;                          // ChipBoy slot -> the highest note it plays on PU2 (section 49)
+    bool bareDropped = false;                           // a blank instrument column silenced a note (docs/LSDJ_VERSIONS.md)
     // LSDj's noise clocks run from 16 Hz to 524 kHz; ChipBoy's notes 12-127
     // reach 2 kHz and up (section 9.4). The instrument's Shift parameter moves
     // the whole map by octaves, so each noise slot takes the offset that puts
@@ -260,6 +262,10 @@ struct Reader {
     /// that puts most there.
     void chooseNoiseOffsets()
     {
+        // Section 81: a mapped noise instrument reads LSDj's own table straight
+        // off the bank and never crosses into ChipBoy's clock map, so there is
+        // no Shift to choose and nothing to warn about.
+        if (mappedNoise()) return;
         static const int kTry[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, -1, -2, -3, -4, -5 };
         for (const auto& [slot, bytes] : noiseClocks) {
             int best = 0; double bestErr = 1e9;
@@ -418,7 +424,10 @@ struct Reader {
                 o.duty = uint8_t(b[7] >> 6); o.dutySeqLen = 0; o.pitchSpeed = m.pitchLaw == PitchLaw::Register ? bank::PitchSpeed::Drum : pitchSpeedOf(b[5]);
                 const int nr10 = (~b[4]) & 0xFF;
                 o.sweepRate = uint8_t((nr10 >> 4) & 7); o.sweepDown = (nr10 & 8) != 0; o.sweepShift = uint8_t(nr10 & 7);
-                if (m.pu2Transpose && b[2]) { o.pu2Transpose = int8_t(signedByte(b[2])); notes.add("pulse instrument " + name + " carries PU2 TSP " + hex2(b[2]) + " (" + std::to_string(signedByte(b[2])) + " semitones), kept as its PU2 transpose"); }
+                // Section 49: a whole signed byte of semitones, which ChipBoy's
+                // own pu2Transpose is too -- carried exactly, so no note unless
+                // it takes a note off the keyboard (pu2TransposeRange()).
+                if (m.pu2Transpose && b[2]) o.pu2Transpose = int8_t(signedByte(b[2]));
                 if (b[11]) notes.add("pulse instrument " + name + " has finetune " + hex2(b[11]) + ": ChipBoy has no finetune");
             } else if (t == 1) {
                 static const uint8_t kLevel[4] = { 0, 3, 2, 1 };       // the stored bits are the NR32 code, 1 = 100 %
@@ -448,10 +457,18 @@ struct Reader {
                 o.lfsr7 = false; o.noiseManual = false; o.noiseShift = 5; o.noiseDivisor = 1; o.noiseSweep = 0;
                 // Section 66: before 9 the noise commands work on the NR43 byte.
                 o.noiseDomain = m.noiseS == NoiseS::Semitones ? bank::NoiseSweepDomain::Notes : bank::NoiseSweepDomain::Register;
-                // Section 86: PITCH. Zero is FREE -- the channel restarts only
-                // when a pitch change turns the 7-bit LFSR on -- and anything
-                // else is SAFE, which restarts it on every pitch change.
-                o.noisePitchSafe = m.noisePitchByte >= 0 && b[size_t(m.noisePitchByte)] != 0;
+                // Section 86 and docs/LSDJ_VERSIONS.md: PITCH. Only 9.2 and
+                // later restart the channel on a pitch change at all -- zero is
+                // FREE (a restart when the 7-bit LFSR comes on) and anything
+                // else SAFE (a restart on every change). Before that the byte
+                // is the S CMD / S MODE setting, which clamps the LFSR width
+                // during an S command and has no ChipBoy equivalent.
+                if (m.noisePitchByte < 0) {
+                    o.noisePitch = bank::NoisePitch::Never;
+                    if (b[2]) notes.add("noise instrument " + name + " has S MODE = STABLE (byte 2 = " + hex2(b[2]) + "), which holds the LFSR width through an S command; ChipBoy has no equivalent and lets S cross it");
+                } else {
+                    o.noisePitch = b[size_t(m.noisePitchByte)] ? bank::NoisePitch::Safe : bank::NoisePitch::Free;
+                }
                 // Section 87: LENGTH goes into NR41 and stays there, but the
                 // note-on never enables the counter -- only a pitch restart
                 // does, and then the note is cut that many steps later.
@@ -547,8 +564,15 @@ struct Reader {
                     return false;
                 }
                 out = { Cmd::A, int16_t(v == 0x20 ? 0 : std::min(v + 1, int(bank::kTableSlots))), 0, 0 }; return true;
-            case 'C': out = { Cmd::C, int16_t(x), int16_t(y), 0 }; return true;
+            case 'C':
+                // C reaches the noise channel only from format 4 (LSDj 5.7.8);
+                // before that the ROM ignores it there (docs/LSDJ_VERSIONS.md).
+                if (channel == 3 && !m.noiseChord) { notes.add("C" + hex2(v) + " at " + where + ": this version's C does nothing on the noise channel; dropped"); return false; }
+                out = { Cmd::C, int16_t(x), int16_t(y), 0 }; return true;
             case 'V':
+                // V reaches the noise channel only from format 22 (LSDj 9.0);
+                // before that the ROM ignores it there.
+                if (channel == 3 && !m.noiseVibrato) { notes.add("V" + hex2(v) + " at " + where + ": this version's V does nothing on the noise channel; dropped"); return false; }
                 if (m.vibratoLaw == VibratoLaw::RegisterOneSided && channel != 3) {
                     // Section 56: 8y units a clock for x + 1 clocks below the note and back.
                     const int speed = std::clamp(int(std::lround(32.0 / double(x + 1))) - 1, 0, 15);
@@ -559,7 +583,18 @@ struct Reader {
                 out = { Cmd::V, int16_t(x), int16_t(y), 0 }; return true;
             case 'Z': out = { Cmd::Z, int16_t(x), int16_t(y), 0 }; return true;
             case 'M': out = { Cmd::M, int16_t(x), int16_t(y), 0 }; return true;
-            case 'R': out = { Cmd::R, int16_t(x), int16_t(y), 0 }; return true;
+            case 'R': {
+                // docs/LSDJ_VERSIONS.md: before 9.2 the interval is **y + 1**
+                // ticks where 9.x's is y, and between 4.8.0 and 8.8.0 `R x 0`
+                // retriggers every tick rather than once. ChipBoy's R is 9.x's,
+                // so an older song's y moves up by one -- which is why y = 15
+                // is the one value that cannot be carried.
+                int yy = y;
+                if (y == 0 && !m.retrigZeroOnce) yy = 1;                 // every tick
+                else if (y != 0 || m.retrigPlus == 0) yy = y + m.retrigPlus;
+                if (yy > 15) { notes.add("R" + hex2(v) + " at " + where + ": this version retriggers every " + std::to_string(y + m.retrigPlus) + " ticks, past ChipBoy's fifteen; fifteen is used"); yy = 15; }
+                out = { Cmd::R, int16_t(x), int16_t(yy), 0 }; return true;
+            }
             case 'H': out = { Cmd::H, int16_t(x), int16_t(y), 0 }; return true;            // times, row: 0-based in both
             case 'E':
                 // Section 79: on a wave instrument LSDj reads NR32's two bits from
@@ -610,6 +645,9 @@ struct Reader {
                 // The byte is BPM for 40-255; **bytes 0-39 mean 256-295 BPM**
                 // (LSDJ_COMMAND_MATRIX section 6.16, measured on 9.3.9). ChipBoy's
                 // own range reaches 295, so it converts exactly.
+                // ...but only from format 11: before that the ROM does not
+                // read them that way (docs/LSDJ_VERSIONS.md).
+                if (v < 40 && !m.tempoLowIsHigh) { notes.add("T" + hex2(v) + " at " + where + ": this version does not read a tempo byte below 40 as 256-295 BPM; kept as " + std::to_string(std::max(40, int(v))) + " BPM"); out = { Cmd::T, int16_t(std::max(40, int(v))), 0, 0 }; return true; }
                 out = { Cmd::T, int16_t(v < 40 ? 256 + v : v), 0, 0 }; return true;
             case 'W':
                 if (instKind == 1) { notes.add("W" + hex2(v) + " at " + where + " on a wave instrument (synth speed / length): not mapped"); return false; }
@@ -728,6 +766,14 @@ struct Reader {
             const int cur = state.inst;
             const int kind = kindFor(cur, channel);
             const int lsdjMidi = n ? int(n) + 35 : -1;
+            if (n && ins == 0xFF && !m.bareNoteSounds) {
+                // docs/LSDJ_VERSIONS.md: from 4.0.4 a cell whose instrument
+                // column is blank sounds nothing at all, however many notes
+                // came before it. Measured on every release either side.
+                notes.add("a note at phrase " + hex2(p) + " step " + std::to_string(st) + " has no instrument column: this version plays nothing there, so the step is left empty");
+                bareDropped = true;
+                continue;
+            }
             if (n && !state.instSeen) {
                 // A note before any instrument column: LSDj plays the channel's instrument, 00 at the start.
                 c.inst = uint8_t(slotFor(cur, channel)); state.instSeen = true;
@@ -738,6 +784,13 @@ struct Reader {
                 if (kn) c.note = kn;
             } else if (n) {
                 int midi = lsdjMidi;
+                // Section 49: the top note this instrument reaches on PU2, so
+                // pu2TransposeRange() can say whether its transpose fits.
+                if (kind == 0 && channel == 1) {
+                    const int slot = slotFor(cur, channel);
+                    auto it = pu2Top.find(slot);
+                    if (it == pu2Top.end() || it->second < midi) pu2Top[slot] = midi;
+                }
                 if (kind == 1) midi += m.waveOctave;                       // the wave channel's period table (section 45)
                 else if (kind == 3) {
                     const int tspMidi = midi + (transposeOn(cur) ? noiseTsp : 0);
@@ -813,6 +866,23 @@ struct Reader {
         }
         if (noiseTsp) notes.add("chain transposes on the noise channel go through ChipBoy's map: near LSDj's pitch, not on it");
         sum.phrases = phrasesOut;
+    }
+    /// Section 49: a pulse instrument's byte 2 is a **signed byte of
+    /// semitones** added on PU2 -- measured on 9.3.9 across `01`, `02`, `0F`,
+    /// `1F`, `FF` and `F1`, each landing exactly that many semitones from the
+    /// plain note -- and ChipBoy's `pu2Transpose` is the same signed byte, so
+    /// it always carries. The one thing it cannot carry is a note the
+    /// transpose puts off the keyboard, where LSDj holds the top of its own
+    /// note table, so that is the only case worth a note. Runs after chains().
+    void pu2TransposeRange()
+    {
+        for (const auto& [slot, top] : pu2Top) {
+            const auto& o = bank.instruments[size_t(slot - 1)];
+            if (o.pu2Transpose == 0 || top + int(o.pu2Transpose) <= 127) continue;
+            notes.add("pulse instrument " + o.name + " carries PU2 TSP "
+                      + std::to_string(int(o.pu2Transpose)) + " semitones, which puts its highest PU2 note past "
+                      + "ChipBoy's top note; LSDj holds the top of its own note table there");
+        }
     }
     void noiseWidthsToInstruments()
     {
@@ -946,6 +1016,7 @@ bool importSong(const uint8_t* bytes, size_t size, const LsdjModel& model,
     r.tables(summary);
     r.chains(summary);
     r.noiseWidthsToInstruments();
+    r.pu2TransposeRange();
     r.grooves();
     r.flattenTableGrooves();
     summary.waves = int(r.waveSlotOfSynth.size());

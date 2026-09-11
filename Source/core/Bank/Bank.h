@@ -162,6 +162,9 @@ struct Envelope {
 int envSegmentLevel(int from, int to, int ticks, int t, EnvCurve curve);
 
 /// The part of an instrument the driver latches. Trivially copyable.
+/// Section 86: which pitch change restarts the noise channel.
+enum class NoisePitch : uint8_t { Free, Safe, Never };
+
 struct InstrumentCore {
     InstrumentType type = InstrumentType::Pulse;
     Pan      pan = Pan::Both;
@@ -217,12 +220,14 @@ struct InstrumentCore {
     /// lands on the entry of LSDj's own table that the ROM lands on.
     bool     noiseLsdjMap = false;
     bool     noiseManual = false;
-    /// Section 86: LSDj's noise PITCH. FREE restarts the channel only when a
-    /// pitch change turns the **7-bit** LFSR on; SAFE restarts it on every
-    /// pitch change, which is what stops a DMG muting itself on some of them.
-    /// Either restart re-arms `NRx2` at the level the note is at, so the
-    /// envelope carries on rather than jumping back to the note's own.
-    bool     noisePitchSafe = false;
+    /// Section 86: LSDj's noise PITCH. Free restarts the channel only when a
+    /// pitch change turns the **7-bit** LFSR on; Safe restarts it on every
+    /// pitch change, which is what stops a DMG muting itself on some of them;
+    /// Never restarts on none, which is what every LSDj before 9.2 does
+    /// (docs/LSDJ_VERSIONS.md). Either restart re-arms `NRx2` at the level the
+    /// note is at, so the envelope carries on rather than jumping back to the
+    /// note's own.
+    NoisePitch noisePitch = NoisePitch::Free;
     uint8_t  noiseShift = 5;
     uint8_t  noiseDivisor = 1;
     int8_t   noiseSweep = 0;         ///< shift steps per tick

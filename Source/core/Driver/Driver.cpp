@@ -1113,13 +1113,15 @@ void Driver::writePeriod(int ch, bool trigger)
         uint8_t nr = uint8_t((s << 4) | (v.lfsr7 ? 8 : 0) | (d & 7));
         if (v.inst.noiseDomain == bank::NoiseSweepDomain::Register && v.noiseReg) nr = bank::noiseNibbleSub(nr, v.noiseReg);
         // Sections 82 and 86: a pitch change can restart the channel. Under
-        // PITCH = FREE only one that turns the **7-bit** LFSR on does (turning
-        // it off does not); under PITCH = SAFE every change does, which is the
-        // setting that keeps a DMG from muting itself.
+        // PITCH = Free only one that turns the **7-bit** LFSR on does (turning
+        // it off does not); under Safe every change does, which is the setting
+        // that keeps a DMG from muting itself; under Never none does, which is
+        // every LSDj before 9.2 (docs/LSDJ_VERSIONS.md).
         const bool changed = int16_t(nr) != v.lastPeriod;
         const bool wasWide = v.lastPeriod >= 0 && (v.lastPeriod & 8) == 0;
         const bool restart = !trigger && v.active && changed
-                          && (v.inst.noisePitchSafe || ((nr & 8) != 0 && wasWide));
+                          && (v.inst.noisePitch == bank::NoisePitch::Safe
+                              || (v.inst.noisePitch == bank::NoisePitch::Free && (nr & 8) != 0 && wasWide));
         // Section 84: LSDj writes NR43 when the value changes, and a note-on
         // always writes it. A forced repeat is a write the ROM does not make.
         if (trigger || changed) emit(regAddr(3, 3), nr, true);

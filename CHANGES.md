@@ -26,6 +26,43 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-11 — every stable LSDj release swept, and the two boundaries the format byte cannot see
+
+`docs/LSDJ_VERSIONS.md` is new: all 31 stable releases in the user's archive plus 8.4.4, 9.2.L and
+9.3.9, each probed on its own bootstrapped save, with what differs from 9.3.9, how the importer
+remaps it, and what cannot be remapped.
+
+**Found, and now in the model:** `R x y` retriggers every **y + 1** ticks before 9.2 and every y
+after; `R x 0` fires once on formats 0–2 and on format 3 up to 4.7.3, every tick from 4.8.0 to
+8.8.0, and once again from 8.8.1; `C` reaches the noise channel only from format 4 and `V` only
+from format 22; `T` bytes 0–39 mean 256–295 BPM only from format 11; **no pitch change restarts
+the noise channel before 9.2 at all**, so section 82's width-flip trigger had to become a third
+state (`NoisePitch::Never`) rather than the default for every imported instrument; and a cell whose
+instrument column is blank sounds on 3.6.8–3.9.2 but **nothing at all** from 4.0.4 — confirmed on
+the user's own SUNRISE, which has two such cells and whose trigger counts match the ROM exactly
+only once they are dropped.
+
+**Two releases can write the same format byte and still read a song differently**, which the
+importer could not express before. `lsdjModelForRomVersion` now walks a version-keyed table rather
+than going through the format, so a supplied ROM settles it; the format's own default is named in
+the document. The splits are format 2 at 4.0.4 and format 3 at 4.8.0.
+
+**Confirmed unchanged across every release**, each of which was a candidate: the wave note table
+(only 3.1.5 differs, and only past note `43` where its table wraps), the tempo law, `S` on the
+pulses, `W`'s two-bit mask, the latent `LENGTH`, and a note-on sounding the plain note with the
+table's transpose one update later.
+
+**Flagged as unmappable** (section 5 of the document): the noise `S MODE` width clamp on formats
+2–11, 5.7.8's slightly slower vibrato, `M` on 4.6.9 (which leaves the master at maximum on that
+release alone), the noise table transpose before 4.0.4, `E` on the wave channel outside 0–3 on
+6.4.5–8.5.1, and `R x F` on a version whose interval is `y + 1`.
+
+**Also:** the PU2 transpose note is gone. Instrument byte 2 is a **signed byte of semitones**
+measured across `01`, `02`, `0F`, `1F`, `FF` and `F1`, and ChipBoy's `pu2Transpose` is the same
+signed byte, so `1F` really is +31 semitones and is carried exactly. The import now says nothing
+unless the transpose puts a note the song actually plays past ChipBoy's top note. SUNRISE imports
+with no notes at all.
+
 ### 2026-09-11 — the noise channel's `PITCH`, its latent `LENGTH`, and note numbers that read like LSDj's
 
 Three findings on 9.3.9, all of them audible on an imported `SUNRISE` and all of them measured

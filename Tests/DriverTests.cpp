@@ -2748,7 +2748,7 @@ TEST_CASE("noise PITCH decides which pitch change restarts the channel", "[drive
         i = Instrument::defaults(InstrumentType::Noise, "drum");
         i.used = true;
         i.noiseLsdjMap = true; i.noiseShift = 5; i.table = 10;
-        i.noisePitchSafe = safe;
+        i.noisePitch = safe ? NoisePitch::Safe : NoisePitch::Free;
         if (length) { i.length = length; i.lengthLatent = true; }
         ChannelParams p; p.instrument = 21; for (int ch = 0; ch < 4; ++ch) r->drv.setParams(ch, p);
         return r;

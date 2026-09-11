@@ -83,14 +83,29 @@ constexpr uint8_t kNoise886[128] = {
 // no Z either). Before 5.7.8 P and L work in period-register units a pitch
 // clock and there are no pitch modes; before 3.6.8 V does too.
 
-constexpr LsdjModel kLsdj9   { "LSDj 9.2.J - 9.4.2 (format 22)",   22, 22, 31, kLetters9,      EnvelopeLaw::SoftwareStages, kEnvPeriods9, NoiseRule::Map,   kNoise9,   36, 155, NoiseS::Semitones, PitchLaw::Semitone, VibratoLaw::Semitone,         3, -12, true, 2, true, false, true };
-constexpr LsdjModel kLsdj886 { "LSDj 8.8.6 (format 15)",           15, 15, 21, kLetters9,      EnvelopeLaw::SoftwareStages, kEnvPeriods9, NoiseRule::Raw,   kNoise886, 36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         2, -12, true, -1, false, true, true };
-constexpr LsdjModel kLsdj84  { "LSDj 8.4.0 - 8.5.1 (format 11)",   11, 11, 14, kLetters9,      EnvelopeLaw::HardwareStages, nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         2, -12, true, -1, false, true, true };
-constexpr LsdjModel kLsdj57  { "LSDj 5.7.8 - 7.0.2 (formats 4-7)",  4,  4, 10, kLettersLegacy, EnvelopeLaw::Chip,           nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         2, -12, true, -1, false, true, true };
-constexpr LsdjModel kLsdj36  { "LSDj 3.6.8 - 5.0.3 (formats 2-3)",  3,  2,  3, kLettersLegacy, EnvelopeLaw::Chip,           nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Register, VibratoLaw::Semitone,         2, -12, true, -1, false, true, true };
-constexpr LsdjModel kLsdj31  { "LSDj 3.1.5 - 3.5.1 (format 0)",     0,  0,  1, kLettersLegacy, EnvelopeLaw::Chip,           nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Register, VibratoLaw::RegisterOneSided, 2, -12, true, -1, false, true, true };
+constexpr LsdjModel kLsdj9   { "LSDj 9.2.J - 9.4.2 (format 22)",   22, 22, 31, kLetters9,      EnvelopeLaw::SoftwareStages, kEnvPeriods9, NoiseRule::Map,   kNoise9,   36, 155, NoiseS::Semitones, PitchLaw::Semitone, VibratoLaw::Semitone,         3, -12, true, 2, 0, true,  true,  true, true, false, true, false, true };
+constexpr LsdjModel kLsdj886 { "LSDj 8.8.6 (format 15)",           15, 15, 21, kLetters9,      EnvelopeLaw::SoftwareStages, kEnvPeriods9, NoiseRule::Raw,   kNoise886, 36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         2, -12, true, -1, 1, true,  true,  false, true, false, false, true, true };
+constexpr LsdjModel kLsdj84  { "LSDj 8.4.0 - 8.5.1 (format 11)",   11, 11, 14, kLetters9,      EnvelopeLaw::HardwareStages, nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         2, -12, true, -1, 1, false, true,  false, true, false, false, true, true };
+constexpr LsdjModel kLsdj57  { "LSDj 5.7.8 - 7.0.2 (formats 4-7)",  4,  4, 10, kLettersLegacy, EnvelopeLaw::Chip,           nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         2, -12, true, -1, 1, false, true,  false, false, false, false, true, true };
+constexpr LsdjModel kLsdj48  { "LSDj 4.8.0 - 5.0.3 (format 3)",     3,  3,  3, kLettersLegacy, EnvelopeLaw::Chip,           nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Register, VibratoLaw::Semitone,         2, -12, true, -1, 1, false, false, false, false, false, false, true, true };
+constexpr LsdjModel kLsdj44  { "LSDj 4.4.0 - 4.7.3 (format 3)",     3,  3,  3, kLettersLegacy, EnvelopeLaw::Chip,           nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Register, VibratoLaw::Semitone,         2, -12, true, -1, 1, true,  false, false, false, false, false, true, true };
+constexpr LsdjModel kLsdj404  { "LSDj 4.0.4 - 4.3.0 (format 2)",     2,  2,  2, kLettersLegacy, EnvelopeLaw::Chip,           nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Register, VibratoLaw::Semitone,         2, -12, true, -1, 1, true,  false, false, false, false, false, true, true };
+constexpr LsdjModel kLsdj36  { "LSDj 3.6.8 - 3.9.2 (format 2)",     2,  2,  2, kLettersLegacy, EnvelopeLaw::Chip,           nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Register, VibratoLaw::Semitone,         2, -12, true, -1, 1, true,  false, false, false, true, false, true, true };
+constexpr LsdjModel kLsdj31  { "LSDj 3.1.5 - 3.5.1 (format 0)",     0,  0,  1, kLettersLegacy, EnvelopeLaw::Chip,           nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Register, VibratoLaw::RegisterOneSided, 2, -12, true, -1, 1, true,  false, false, false, true, false, true, true };
 
-constexpr const LsdjModel* kModels[] = { &kLsdj9, &kLsdj886, &kLsdj84, &kLsdj57, &kLsdj36, &kLsdj31 };   // newest first
+constexpr const LsdjModel* kModels[] = { &kLsdj9, &kLsdj886, &kLsdj84, &kLsdj57, &kLsdj48, &kLsdj44, &kLsdj404, &kLsdj36, &kLsdj31 };   // newest first
+
+// The model each measured release follows, newest first. Finer than the format
+// alone: two releases can write the same format byte and still read a song
+// differently (docs/LSDJ_VERSIONS.md), and then only the ROM's own version
+// string tells them apart. `lsdjModelForFormat` gives the default for a format
+// -- the first entry in `kModels` whose range holds it.
+struct VersionModel { int major, minor, patch; const LsdjModel* model; };
+constexpr VersionModel kVersionModels[] = {
+    { 9, 2, 0, &kLsdj9 }, { 8, 8, 6, &kLsdj886 }, { 8, 4, 0, &kLsdj84 }, { 5, 7, 8, &kLsdj57 },
+    { 4, 8, 0, &kLsdj48 }, { 4, 4, 0, &kLsdj44 }, { 4, 0, 4, &kLsdj404 },
+    { 3, 6, 8, &kLsdj36 }, { 3, 1, 5, &kLsdj31 },
+};
 
 // The format each measured release writes, newest first (section 56). A
 // version between two entries takes the entry below it.
@@ -149,8 +164,12 @@ int lsdjFormatForVersion(const char* version)
 
 const LsdjModel* lsdjModelForRomVersion(const char* version)
 {
-    const int f = lsdjFormatForVersion(version);
-    return f < 0 ? nullptr : lsdjModelForFormat(f);
+    int major = 0, minor = 0, patch = 0;
+    if (!parseVersion(version, major, minor, patch)) return nullptr;
+    const long key = long(major) * 10000 + long(minor) * 100 + long(patch);
+    for (const auto& e : kVersionModels)
+        if (key >= long(e.major) * 10000 + long(e.minor) * 100 + long(e.patch)) return e.model;
+    return kVersionModels[sizeof(kVersionModels) / sizeof(kVersionModels[0]) - 1].model;
 }
 
 const LsdjModel* lsdjModelNamed(const char* name)

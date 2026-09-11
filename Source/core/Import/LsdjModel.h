@@ -93,6 +93,18 @@ struct LsdjModel {
     int            waveOctave;       ///< semitones added to a wave note (section 45)
     bool           pu2Transpose;     ///< instrument byte 2 applies on PU2 (section 49)
     int            noisePitchByte;   ///< the noise instrument byte holding PITCH (0 FREE, else SAFE); -1 when the version has none (section 86)
+    /// `R x y`: the interval is y + `retrigPlus` ticks (1 before 9.x, 0 after),
+    /// and `retrigZeroOnce` says whether `R x 0` fires once or every tick
+    /// (docs/LSDJ_VERSIONS.md).
+    int            retrigPlus;
+    bool           retrigZeroOnce;
+    bool           noiseChord;       ///< C reaches the noise channel (format 4 and up)
+    bool           noiseVibrato;     ///< V reaches the noise channel (format 22)
+    bool           tempoLowIsHigh;   ///< T bytes 0-39 mean 256-295 BPM (formats 11 and 22)
+    /// A cell whose instrument column is blank (`FF`) still sounds its note
+    /// before 4.0.4; from 4.0.4 the ROM plays nothing at all
+    /// (docs/LSDJ_VERSIONS.md).
+    bool           bareNoteSounds;
     bool           tableGrooveWalks; ///< a table's G walks the groove (9.x) or holds its first step (section 63)
     bool           envHopCostsTick;  ///< a table ENV hop spends a tick before 8.9.3, none after (section 64)
     bool           measured;         ///< traced on that ROM, or assumed from another model

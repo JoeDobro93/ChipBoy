@@ -65,9 +65,12 @@ std::vector<uint8_t> testSong(int format)
     // phrase 0 (PU1): C-4 with the lead and P -3 at step 4, A table 0 at step 8; phrase 1 (NOI): hats; phrase 2 (WAV): a note
     auto alloc = [&](int p) { s[kPhraseAlloc + size_t(p / 8)] |= uint8_t(1 << (p % 8)); };
     alloc(0); alloc(1); alloc(2);
+    // Every note names its instrument, as LSDj's own editor writes them: from
+    // 4.0.4 a cell whose instrument column is blank sounds nothing at all
+    // (docs/LSDJ_VERSIONS.md).
     s[kNotes + 0] = 60 - 35; s[kPhraseInst + 0] = 0;
-    s[kNotes + 4] = 62 - 35; s[kCmd + 4] = uint8_t(format >= 20 ? 13 : 12); s[kCmdV + 4] = 0xFD;   // P -3
-    s[kNotes + 8] = 64 - 35; s[kCmd + 8] = 1; s[kCmdV + 8] = 0;                                      // A00: table 0
+    s[kNotes + 4] = 62 - 35; s[kPhraseInst + 4] = 0; s[kCmd + 4] = uint8_t(format >= 20 ? 13 : 12); s[kCmdV + 4] = 0xFD;   // P -3
+    s[kNotes + 8] = 64 - 35; s[kPhraseInst + 8] = 0; s[kCmd + 8] = 1; s[kCmdV + 8] = 0;                                      // A00: table 0
     s[kNotes + 16 + 0] = 93 - 35; s[kPhraseInst + 16 + 0] = 1;                                       // the hat on A-6 (MIDI 93 -> NR43 20)
     s[kNotes + 32 + 0] = 48 - 35; s[kPhraseInst + 32 + 0] = 2;                                       // the bass on C-3
     // chains: chain 0 = phrase 0 twice, the second row transposed +5; chain 1 = phrase 1; chain 2 = phrase 2
@@ -93,37 +96,38 @@ struct SaveWriter {
     {
         std::memcpy(save.data() + 0x8000 + size_t(file) * 8, name, std::min<size_t>(8, std::strlen(name)));
         if (active) save[0x8140] = uint8_t(file);
-        std::vector<uint8_t> out;
+        // The stream is built as whole codes, because a block boundary may
+        // never fall inside one: the reader would take the tail of a code for
+        // the head of another.
+        std::vector<std::vector<uint8_t>> codes;
         const uint8_t defWave[16] = { 0x8E, 0xCD, 0xCC, 0xBB, 0xAA, 0xA9, 0x99, 0x88, 0x87, 0x76, 0x66, 0x55, 0x54, 0x43, 0x32, 0x31 };
         const uint8_t defInst[16] = { 0xA8, 0, 0, 0xFF, 0, 0, 3, 0, 0, 0xD0, 0, 0, 0, 0xF3, 0, 0 };
         for (size_t i = 0; i < song.size();) {
-            if (i + 16 <= song.size() && std::memcmp(song.data() + i, defWave, 16) == 0) { out.insert(out.end(), { 0xE0, 0xF0, 1 }); i += 16; continue; }
-            if (i + 16 <= song.size() && std::memcmp(song.data() + i, defInst, 16) == 0) { out.insert(out.end(), { 0xE0, 0xF1, 1 }); i += 16; continue; }
+            if (i + 16 <= song.size() && std::memcmp(song.data() + i, defWave, 16) == 0) { codes.push_back({ 0xE0, 0xF0, 1 }); i += 16; continue; }
+            if (i + 16 <= song.size() && std::memcmp(song.data() + i, defInst, 16) == 0) { codes.push_back({ 0xE0, 0xF1, 1 }); i += 16; continue; }
             size_t run = 1;
             while (i + run < song.size() && song[i + run] == song[i] && run < 255) ++run;
-            if (run >= 4) { out.insert(out.end(), { 0xC0, song[i], uint8_t(run) }); i += run; continue; }
-            if (song[i] == 0xC0) out.insert(out.end(), { 0xC0, 0xC0 });
-            else if (song[i] == 0xE0) out.insert(out.end(), { 0xE0, 0xE0 });
-            else out.push_back(song[i]);
+            if (run >= 4) { codes.push_back({ 0xC0, song[i], uint8_t(run) }); i += run; continue; }
+            if (song[i] == 0xC0) codes.push_back({ 0xC0, 0xC0 });
+            else if (song[i] == 0xE0) codes.push_back({ 0xE0, 0xE0 });
+            else codes.push_back({ song[i] });
             ++i;
         }
-        out.insert(out.end(), { 0xE0, 0xFF });
+        codes.push_back({ 0xE0, 0xFF });
         // into blocks of 512, each ending with a jump to the next
-        size_t pos = 0;
-        while (pos < out.size()) {
+        size_t at = 0;
+        while (at < codes.size()) {
             const int block = nextBlock++;
             REQUIRE(block <= kBlockCount);
             save[0x8141 + size_t(block - 1)] = uint8_t(file);
             uint8_t* dst = save.data() + 0x8000 + size_t(block) * 0x200;
             const size_t room = 0x200 - 2;                   // the jump, or the end marker inside
-            size_t take = std::min(room, out.size() - pos);
-            // never split a code: back up to a byte that starts one -- the
-            // stream here is short enough that ending on a literal is safe
-            // when we stop before an escape byte
-            while (take > 1 && (out[pos + take - 1] == 0xC0 || out[pos + take - 1] == 0xE0)) --take;
-            std::memcpy(dst, out.data() + pos, take);
-            pos += take;
-            if (pos < out.size()) { dst[take] = 0xE0; dst[take + 1] = uint8_t(nextBlock); }
+            size_t used = 0;
+            while (at < codes.size() && used + codes[at].size() <= room) {
+                std::memcpy(dst + used, codes[at].data(), codes[at].size());
+                used += codes[at].size(); ++at;
+            }
+            if (at < codes.size()) { dst[used] = 0xE0; dst[used + 1] = uint8_t(nextBlock); }
         }
     }
 };
@@ -165,7 +169,7 @@ TEST_CASE("the save's file table and its compressed files are read back", "[lsdj
     CHECK_FALSE(decompressFile(w->save.data(), w->save.size(), 7, back, err));   // no such file
     // A jump outside the save fails with a message rather than reading past it.
     auto broken = w->save;
-    broken[0x8000 + 0x200 + 0x1FF] = 0xF5; broken[0x8000 + 0x200 + 0x1FE] = 0xE0;
+    broken[0x8000 + 0x200 + 0x100] = 0xE0; broken[0x8000 + 0x200 + 0x101] = 0xF5;
     CHECK_FALSE(decompressFile(broken.data(), broken.size(), 0, back, err));
     CHECK_FALSE(err.empty());
     // Not a save at all.
@@ -191,7 +195,7 @@ TEST_CASE("the default codes expand to the default wave and instrument", "[lsdj]
 TEST_CASE("a model is chosen by format, by ROM title, by name, or the newest", "[lsdj]")
 {
     int n = 0; const auto* const* models = lsdjModels(n);
-    REQUIRE(n == 6);
+    REQUIRE(n == 9);
     CHECK(std::string(lsdjLatestModel().name).find("9.4.2") != std::string::npos);
     CHECK(lsdjModelForFormat(22) == models[0]);
     CHECK(lsdjModelForFormat(15)->formatVersion == 15);          // 8.8.6, measured
@@ -213,7 +217,22 @@ TEST_CASE("a model is chosen by format, by ROM title, by name, or the newest", "
     CHECK(lsdjModelForRomVersion("9.3.9") == models[0]);
     CHECK(lsdjModelForRomVersion("8.8.6")->formatVersion == 15);
     CHECK(lsdjModelForRomVersion("8.4.0")->formatVersion == 11);
-    CHECK(lsdjModelForRomVersion("4.7.3") == lsdjModelForFormat(3));
+    // docs/LSDJ_VERSIONS.md: two releases can write the same format byte and
+    // still read a song differently, and then only the ROM's version tells them
+    // apart. Format 3 is the case: 4.8.0 changed `R x 0` from a single
+    // retrigger to one every tick, and 8.8.1 changed it back.
+    CHECK(lsdjModelForRomVersion("4.7.3")->retrigZeroOnce);
+    CHECK_FALSE(lsdjModelForRomVersion("5.0.3")->retrigZeroOnce);
+    CHECK(lsdjModelForRomVersion("4.7.3") != lsdjModelForRomVersion("5.0.3"));
+    CHECK(lsdjModelForRomVersion("4.7.3")->formatVersion == 3);
+    CHECK(lsdjModelForRomVersion("5.0.3")->formatVersion == 3);
+    CHECK(lsdjModelForFormat(3)->formatVersion == 3);
+    CHECK(lsdjModelForRomVersion("4.3.0") == lsdjModelForFormat(2));
+    // R's interval and the noise C and V, per version.
+    CHECK(lsdjModelForFormat(22)->retrigPlus == 0); CHECK(lsdjModelForFormat(11)->retrigPlus == 1);
+    CHECK(lsdjModelForFormat(22)->noiseVibrato); CHECK_FALSE(lsdjModelForFormat(11)->noiseVibrato);
+    CHECK(lsdjModelForFormat(4)->noiseChord); CHECK_FALSE(lsdjModelForFormat(3)->noiseChord);
+    CHECK(lsdjModelForFormat(11)->tempoLowIsHigh); CHECK_FALSE(lsdjModelForFormat(7)->tempoLowIsHigh);
     CHECK(lsdjModelForRomVersion("7.0.2") == lsdjModelForFormat(7));
     CHECK(lsdjModelForRomVersion("") == nullptr);
     CHECK(lsdjModelNamed(models[0]->name) == models[0]);
@@ -282,9 +301,11 @@ TEST_CASE("a format-22 song imports its instruments, tables, phrases and chains"
     CHECK(out->grooves[0].ticks[0] == 7); CHECK(out->grooves[0].ticks[1] == 5); CHECK(out->grooves[0].ticks[2] == 0);
     CHECK(out->grooves[1].ticks[0] == 6);
     for (auto src : out->noteSource) CHECK(src == tracker::NoteSource::Tracker);
-    bool noted = false;
-    for (const auto& l : notes.lines) if (l.find("PU2 TSP") != std::string::npos) noted = true;
-    CHECK(noted);
+    // Section 49: the PU2 transpose is a signed byte of semitones and ChipBoy's
+    // is the same, so a transpose that keeps every note on the keyboard is
+    // carried in silence -- +12 from MIDI 60 and 64 does.
+    CHECK(int(bank->instruments[0].pu2Transpose) == 12);
+    for (const auto& l : notes.lines) CHECK(l.find("PU2 TSP") == std::string::npos);
 }
 
 namespace {
@@ -370,7 +391,7 @@ std::vector<uint8_t> oldSong(int format)
     s[kNotes + 8] = 72 - 35; s[kPhraseInst + 8] = 2;
     // phrase 1 (PU1): C-4 with the lead; E-4 with L04 at step 2; P08 at step 4; V24 at step 6
     s[kNotes + 16 + 0] = 60 - 35; s[kPhraseInst + 16 + 0] = 0;
-    s[kNotes + 16 + 2] = 64 - 35; s[kCmd + 16 + 2] = letter('L'); s[kCmdV + 16 + 2] = 0x04;
+    s[kNotes + 16 + 2] = 64 - 35; s[kPhraseInst + 16 + 2] = 0; s[kCmd + 16 + 2] = letter('L'); s[kCmdV + 16 + 2] = 0x04;
     s[kCmd + 16 + 4] = letter('P'); s[kCmdV + 16 + 4] = 0x08;
     s[kCmd + 16 + 6] = letter('V'); s[kCmdV + 16 + 6] = 0x24;
     s[kChainPhrases + 0] = 1;                       // chain 0 = phrase 1 (PU1)
@@ -485,7 +506,7 @@ TEST_CASE("a 9.x noise instrument brings its PITCH, its LENGTH and LSDj's own no
     REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes));
     const auto& noi = bank->instruments[1];
     CHECK(noi.noiseLsdjMap);
-    CHECK(noi.noisePitchSafe);
+    CHECK(noi.noisePitch == bank::NoisePitch::Safe);
     CHECK(noi.lengthLatent);
     CHECK(int(noi.length) == 64 - 0x3F);
     // The cell carries LSDj's note byte, so the grid prints what LSDj prints.
@@ -498,13 +519,15 @@ TEST_CASE("a 9.x noise instrument brings its PITCH, its LENGTH and LSDj's own no
     i1[2] = 0x00;
     auto bank2 = std::make_unique<bank::Bank>(); auto out2 = std::make_unique<tracker::Song>();
     REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(22), *bank2, *out2, sum, notes));
-    CHECK_FALSE(bank2->instruments[1].noisePitchSafe);
+    CHECK(bank2->instruments[1].noisePitch == bank::NoisePitch::Free);
     // Before 9.2.J the byte is not PITCH, so nothing reads it.
     auto old = testSong(11);
     old[kInst + 16 + 2] = 0x04;
     auto bank3 = std::make_unique<bank::Bank>(); auto out3 = std::make_unique<tracker::Song>();
     REQUIRE(importSong(old.data(), old.size(), *lsdjModelForFormat(11), *bank3, *out3, sum, notes));
-    CHECK_FALSE(bank3->instruments[1].noisePitchSafe);
+    // Before 9.2 no pitch change restarts the channel at all, and byte 2 is
+    // the S MODE setting instead (docs/LSDJ_VERSIONS.md).
+    CHECK(bank3->instruments[1].noisePitch == bank::NoisePitch::Never);
 }
 
 TEST_CASE("the formats before 5.7 convert P, L and V from the period register", "[lsdj]")
@@ -737,9 +760,9 @@ TEST_CASE("a kit instrument takes its samples from the ROM beside the save", "[l
     std::memcpy(song.data() + kNames, "DRUMS", 5);
     song[kPhraseAlloc] |= 1;
     song[kNotes + 0] = 0x10; song[kPhraseInst + 0] = 0;     // kit A sample 1: the ramp, two frames of it
-    song[kNotes + 4] = 0x20;                                // kit A sample 2: the flat one
-    song[kNotes + 8] = 0x01;                                // kit B sample 1: the triangle
-    song[kNotes + 12] = 0x10;                               // the ramp again: the same note
+    song[kNotes + 4] = 0x20; song[kPhraseInst + 4] = 0;     // kit A sample 2: the flat one
+    song[kNotes + 8] = 0x01; song[kPhraseInst + 8] = 0;     // kit B sample 1: the triangle
+    song[kNotes + 12] = 0x10; song[kPhraseInst + 12] = 0;   // the ramp again: the same note
     song[kChainPhrases + 0] = 0;
     song[kRows + 0] = 0xFF; song[kRows + 1] = 0xFF; song[kRows + 2] = 0; song[kRows + 3] = 0xFF;
     auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();

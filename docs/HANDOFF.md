@@ -307,6 +307,16 @@ design-log section the change touches. Update this file at the end of every chan
   - **Method note**: the user has cleared reading the ROM directly rather than only tracing it
     (their project, their call on L3). Register-stream diffing settled this one without it, but
     it is available for constants that resist measurement.
+- **The version sweep is done** (`docs/LSDJ_VERSIONS.md`): all 31 stable releases in the user's
+  archive plus 8.4.4, 9.2.L and 9.3.9, each probed on its own bootstrapped save. The format map,
+  what differs from 9.3.9 per release, how the importer remaps it, what cannot map, and the two
+  places where **two releases write the same format byte and still read a song differently**
+  (format 2 at 4.0.4, format 3 at 4.8.0). `lsdjModelForRomVersion` now walks a version-keyed
+  table so a supplied ROM settles those; `lsdjModelForFormat` gives the format's default.
+  The probe scripts are at `/root/lsdj/probe/vs_*.py`. Two traps, both of which gave a confident
+  wrong answer first: the wave channel is triggered with a **stale period** (read the pair written
+  a few ms later), and a note with **no instrument column does not sound from 4.0.4**, so a probe
+  that uses one measures the next pass of the phrase and reads as half the tempo.
 - **`docs/plan-lsdj-version-sweep.md` is the next two stages**: validate the command matrix on
   the 9.3.9 ROM, then probe every older version against it. It says what to supply (a ROM is
   enough -- the rig bootstraps its own host save), how to set up in a fresh container, the three
@@ -483,18 +493,10 @@ design-log section the change touches. Update this file at the end of every chan
 
 ## Next steps
 
-- **The version sweep is the round in flight** (`docs/plan-lsdj-version-sweep.md`, stage 2). The
-  archive is unpacked at `/root/lsdj/archive` (31 ROMs) with the changelog at
-  `/root/lsdj/changelog_full.txt`; each ROM's format is confirmed from its own `--init-sav` save.
-  Measured so far across versions: `M`'s command code (10 for formats 0-7, 11 for 11 and 22, so
-  `B` enters at format 11), `NR12` at a plain note (`F0` before 9.x, `F8` at format 22), the wave
-  octave (period 1280 for formats 0-11, 2016 for 22) and `R00` (retrigger once on formats 0-3,
-  every tick from 5.0.3 to 8.5.1, once again on 22). Still to do: build
-  `docs/LSDJ_VERSIONS.md` -- a row per ROM with what differs from 9.3.9, how the importer remaps
-  it, and what cannot map -- implement the remaps in `LsdjModel`, and import the user's 8.4.4 and
-  9.2.L saves with attention to the wave frame/synth handling. `LsdjModel::noisePitchByte` is
-  -1 for every pre-9.2.J model and wants measuring: the changelog has `S MODE FREE/STABLE` added
-  around 5.x, removed in 9.1.0 and revived as `PITCH` in 9.2.H.
+- **Import the user's 8.4.4 and 9.2.L saves** (`/root/lsdj/lsdj8_4_4.sav`, `/root/lsdj/lsdj9_2_L.sav`)
+  and compare them against their ROMs the way SUNRISE is compared, with attention to the wave
+  frame/synth handling. That is the remaining piece of the version round: the sweep itself is
+  done and written up in `docs/LSDJ_VERSIONS.md`.
 - The software envelope's ramp steps are quantised to the tick (matrix §10 item 7). Not specific
   to noise; fixing it moves every instrument, so it wants its own round.
 - The playback-ROM exporter: `HARDWARE_DRIVER_AUDIT.md` ends with the binary layout a
