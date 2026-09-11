@@ -432,7 +432,7 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
-- Round 23 (§103-§105): **the wave bank is one flat table**, the user's call between the two shapes
+- Round 23 (§103-§106): **the wave bank is one flat table**, the user's call between the two shapes
   §100 left open -- wave slots laid out in synth order with the driver carrying between them,
   rather than one 256-frame wave. `kWaveSlots` is **16**, a slot is **always `kMaxFrames`**, and a
   frame jump moves the flat index `(slot - 1) * 16 + frame`, wrapping at `kWaveFrames` = 256: past
@@ -453,10 +453,19 @@ design-log section the change touches. Update this file at the end of every chan
   the data. Of 850 distinct wave-RAM loads the ROM made over `READROOM`, 35 are a stored synth
   frame byte for byte and **none** is the vertical inverse of one, so the bytes ChipBoy imports are
   the bytes the APU sounds. Whether ChipBoy's grid should draw LSDj's way is open, and is a UI
-  decision for the user. §105: **some songs' synths are generated as they play.** 85.7% of the
-  ROM's wave-RAM loads on `SAMESONG` are frames stored in the save; on `READROOM` only **3.7%**,
-  and it loads 841 distinct frames where a save holds 256. `READROOM`'s synths are live and the
-  save's `0x6000` is a snapshot.
+  decision for the user. §105 claimed **some songs' synths are generated as they play** and is
+  **withdrawn** -- the user said LSDj never does that, and they were right. The 12776 wave-RAM loads
+  on `READROOM` that did not match a stored frame arrive every **2.79 ms**, which is 32 samples at
+  11468 Hz: a **kit** streaming through channel 3, not a synth. Split by rate rather than by
+  content, 99.6% of `SAMESONG`'s non-streaming loads and 88.7% of `READROOM`'s are frames the save
+  holds, so §103's "read all sixteen synths out of the save" is the whole story.
+  §106, measured at the user's asking with a new `lsdjref_trace --wave-probe` that renders
+  SameBoy's audio beside the wave channel's own position: **the DMG's DACs invert.** A square frame
+  gives nibble `0` at **+3772** and nibble `F` at **-3772**, and a 12.5% duty pulse inverts the same
+  way, so it is one convention across the chip. ChipBoy is non-inverting on every channel alike, so
+  the two differ by one global sign -- inaudible, and left alone rather than inverting every golden
+  file. The one-sample shift is real and both sides agree on it: a trigger sounds **sample 1** first
+  and sample 0 a whole cycle later. `Tests/ApuTests.cpp` pins both.
 - Round 22 (§102): **a phrase's `H` loops**. `H x y` with x > 0 hops inside the phrase x times and
   the step carrying it stays silent on a hopping pass; the groove walks with the play order, not
   with the step number, both measured. §80 had called this engine work the Player could not do,
@@ -573,12 +582,11 @@ design-log section the change touches. Update this file at the end of every chan
   the whole noise overhaul at 9.0. A model for 17-21 wants the noise map measured on 9.0.0 first.
   Run the batteries in `/root/lsdj/probe/vs_*.py` on them -- they take a version name and need
   nothing else.
-- **LSDj's synth parameters are not imported** (§105). An imported synth is `used = false` with the
-  save's snapshot frames drawn into it, so a song whose synths move -- `READROOM`, where only 3.7%
-  of the ROM's wave-RAM loads are frames the save holds -- plays the right notes through frames
-  that stop moving. ChipBoy already has `bank::Synth` and `synthesize()` (§33, §36); what is
-  missing is reading LSDj's synth parameter block and mapping it onto them. This is the next thing
-  the wave channel wants, and probably the second cause of `READROOM` coming apart after ~30 s.
+- **Importing LSDj's synth parameters** would give the Waves tab an editable synth instead of
+  sixteen drawn frames. It buys **nothing at play time** -- §105 first claimed otherwise and was
+  withdrawn: LSDj writes a synth's frames into the wave table when a parameter changes, never while
+  playing, and 99.6% of `SAMESONG`'s wave-instrument loads (88.7% of `READROOM`'s) are frames the
+  save holds once the kit's 2.79 ms streaming bursts are separated out. A convenience, not parity.
 - **`CASTSHDW`'s kit notes** are the largest thing left on the 9.2.L songs: 1142 note-level hits
   on the ROM against ChipBoy's 326, though the ones that do play now land on the ROM's period 77%
   of the time (§97). Whole notes are missing, among them every one whose note byte names a sample

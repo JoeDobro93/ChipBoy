@@ -26,6 +26,39 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-11 — §105 withdrawn, and the DMG's DACs measured
+
+`docs/COMMANDS_AND_TEMPO.md` §105 claimed that some songs' synths are rendered by LSDj as they
+play, from 12776 wave-RAM loads on `READROOM` of which only 3.7% matched a frame stored in the save.
+The user said LSDj never does that -- a synth writes its frames into the wave table when a parameter
+changes, not at play time -- and they were right. The unmatched loads arrive every **2.79 ms**,
+which is 32 samples at 11468 Hz: a **kit** streaming through channel 3. Classified by rate alone and
+only then by content, 99.6% of `SAMESONG`'s non-streaming loads and 88.7% of `READROOM`'s are frames
+the save holds. §103's "read all sixteen synths out of the save" is the whole story, and the section
+is struck through rather than deleted so the mistake stays visible.
+
+§106, at the user's asking: `lsdjref_trace` gains **`--wave-probe`**, which renders SameBoy's audio
+and records per output sample which of the wave channel's thirty-two nibbles the DAC is on, the byte
+it came from, PU1's duty position, and the output. A square frame gives nibble `0` at **+3772** and
+nibble `F` at **-3772**, so **the DMG's wave DAC inverts**; a 12.5% duty pulse inverts the same way,
+so it is one convention across the chip rather than a relationship between channels. (A ramp cannot
+answer this -- through a DC blocker a rising ramp comes out falling either way -- which is why the
+first attempt at it was inconclusive.) ChipBoy is non-inverting on every channel alike, so the two
+differ by one global sign on the whole mix: it cancels and sums identically and is inaudible.
+**Left as it is** -- flipping it would invert every golden file and the analog stage's -122 dB null
+for no audible gain.
+
+The one-sample shift the user also reported is real, in the sound. A trigger puts the wave position
+at 0 and does not refill the sample buffer, so the first nibble read is **sample 1**; sample 0 is
+heard a whole thirty-two-sample cycle later. Both sides agree: SameBoy's position counter runs
+`0 1 2 … 31 0 1` with the byte still `00` at index 0, and ChipBoy's APU puts a sample-0 spike at
+cycle 131078 at period 0 -- thirty-two samples in -- and every 131072 after. `Tests/ApuTests.cpp`
+pins the order and the polarity.
+
+So LSDj's WAVE screen draws what you hear, in the order you hear it, the way the DAC puts it out;
+ChipBoy's grid draws the sample values as stored. Whether the grid should switch conventions to sit
+beside LSDj's is a UI decision and is still the user's.
+
 ### 2026-09-11 — The Waves tab opens in Points, and two measurements about wave frames
 
 The Waves tab's view switch reads **Points, Bars** and starts on Points, at the user's request --

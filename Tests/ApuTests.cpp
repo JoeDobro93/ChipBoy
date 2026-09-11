@@ -397,3 +397,72 @@ TEST_CASE("DAC off is reported and the channel is stopped", "[apu]")
     CHECK(apu.dacOn(1));
     CHECK_FALSE(apu.channelActive(1));           // ...but not triggered
 }
+
+TEST_CASE("the wave channel's read order and its polarity", "[apu][wave]")
+{
+    // Section 106, measured against SameBoy with `lsdjref_trace --wave-probe`.
+    // Two things the user asked about after seeing LSDj's WAVE screen draw a
+    // frame mirrored against ChipBoy's grid.
+    //
+    // The order: a trigger puts the position at 0 and does **not** refill the
+    // sample buffer, so the first nibble the DAC reads is the one the first
+    // advance lands on -- sample **1**, not sample 0. Sample 0 is heard a whole
+    // cycle later. A frame with a spike on sample 0 and nothing else shows it.
+    auto rig = [](const uint8_t* ram) {
+        auto apu = std::make_unique<Apu>();
+        apu->write(NR52, 0x80);
+        apu->write(NR30, 0x00);                       // the DAC off, so wave RAM takes writes
+        for (int k = 0; k < 16; ++k) apu->write(uint16_t(0xFF30 + k), ram[size_t(k)]);
+        apu->write(NR30, 0x80);
+        apu->write(NR32, 0x20);                       // level 100 %
+        setFreq(*apu, NR33, NR34, 0x0000, 0x80);      // the lowest period, and trigger
+        apu->runTo(kCpuHz / 4);
+        return apu;
+    };
+    auto levels = [](Apu& apu) {
+        std::vector<int> out;
+        for (const auto& e : apu.events())
+            if (e.channel == 2 && (out.empty() || out.back() != int(e.level))) out.push_back(int(e.level));
+        return out;
+    };
+
+    {   // sample 0 is the only non-zero one
+        const uint8_t ram[16] = { 0xF0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+        auto apu = rig(ram);
+        const auto seen = levels(*apu);
+        REQUIRE(seen.size() >= 2);
+        // Nothing but zero until the position wraps back onto sample 0: the
+        // first sample of the note is sample 1, which is what LSDj's screen
+        // draws first and what SameBoy's own position counter does.
+        CHECK(seen[0] == 0);
+        CHECK(seen[1] == 15);
+        // And it arrives a whole 32-sample cycle after the trigger, not at once:
+        // at period 0 a sample is 4096 cycles, so sample 0 is heard 32 of them
+        // in, and once every 32 after that.
+        constexpr uint64_t kSample = 4096, kCycle = 32 * kSample;
+        std::vector<uint64_t> spikes;
+        for (const auto& e : apu->events())
+            if (e.channel == 2 && e.level == 15) spikes.push_back(e.cycle);
+        REQUIRE(spikes.size() >= 3);
+        CHECK(spikes[0] >= 31 * kSample);
+        CHECK(spikes[0] < 33 * kSample);
+        CHECK(spikes[1] - spikes[0] == kCycle);
+        CHECK(spikes[2] - spikes[1] == kCycle);
+    }
+
+    {   // a square frame: samples 0-15 are 0, samples 16-31 are 15
+        uint8_t ram[16];
+        for (int k = 0; k < 16; ++k) ram[size_t(k)] = k < 8 ? 0x00 : 0xFF;
+        auto apu = rig(ram);
+        const auto seen = levels(*apu);
+        REQUIRE(seen.size() >= 3);
+        // The polarity: ChipBoy's level **is** the nibble -- 15 is the loud end.
+        // SameBoy renders the same frame the other way up (nibble 0 at +4080,
+        // nibble F at -4080): the DMG's DACs invert, and they invert on every
+        // channel alike, so the two differ by one global sign and nothing else.
+        // Section 106 has the numbers; it is inaudible and is left as it is.
+        CHECK(seen[0] == 0);
+        CHECK(seen[1] == 15);
+        CHECK(seen[2] == 0);
+    }
+}

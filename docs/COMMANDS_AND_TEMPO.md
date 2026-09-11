@@ -2949,37 +2949,84 @@ frames as it plays, which is what a synth with live parameters does.) So the byt
 are the bytes in the save, and ChipBoy holds those bytes: the import is right and the sound is the
 ROM's.
 
-Why LSDj's screen is the other way up was not measured. The likely reason is that the DMG's wave
-DAC is inverting -- a larger sample is a *lower* output voltage -- so LSDj's screen draws the analog
-shape while ChipBoy's draws the sample value. Either way it is inaudible on its own: a vertical
-mirror is a polarity flip, and a one-sample shift a thirty-second of a cycle.
+Why LSDj's screen is the other way up is measured in **§106**: the DMG's DACs invert, on every
+channel, so LSDj draws the analog shape while ChipBoy draws the sample value. The one-sample shift
+is real too, and §106 measures that as well -- a trigger sounds sample 1 first and sample 0 a whole
+cycle later, on both sides. Neither is audible on its own: a vertical mirror is a polarity flip and
+a one-sample shift a thirty-second of a cycle.
 
 Nothing in ChipBoy changes for this. Whether the **grid** should draw LSDj's way, so the two
 editors can be read side by side, is a UI decision and is open.
 
-## 105. Some songs' synths are generated as they play, and the save holds only a snapshot
+## 105. ~~Some songs' synths are generated as they play~~ -- withdrawn: those loads are kit samples
 
-§103 has the importer read all sixteen synths out of the save's wave RAM at `0x6000`. That is the
-whole story only for a song whose synths stand still. Counting the ROM's sixteen-byte loads into
-`FF30-FF3F` against the frames stored in the same save:
+**This section was wrong, and the user said so.** It read the wave-RAM loads on `READROOM` -- 12776
+of them, 841 distinct, only 3.7% matching a frame stored in the save -- as LSDj rendering its synths
+from their parameters as it played. It is not. LSDj writes a synth's frames into the wave table the
+moment a synth parameter changes and never at play time, which is what the user said, and what the
+loads themselves say once they are split by rate:
 
-| song | ROM loads | distinct | loads that are a stored frame |
+| song | loads | median gap when the frame **is** stored | median gap when it is not |
 |---|---|---|---|
-| `SAMESONG` | 1563 | 205 | **85.7%** |
-| `READROOM` | 12776 | 841 | **3.7%** |
+| `READROOM` | 12776 | 45.9 ms | **2.79 ms** |
+| `SAMESONG` | 1563 | 39.1 ms | **2.79 ms** |
 
-`SAMESONG`'s synths are still: what is in the save is what the APU gets, and importing those bytes
-is right. `READROOM`'s are not -- LSDj is rendering its synth frames from the synth's parameters as
-it plays, and the bytes at `0x6000` are only the last frames it happened to leave there. 841
-distinct frames is far more than the 256 a save can hold.
+2.79 ms is 32 samples at 11468 Hz. Those loads are a **kit** streaming its next thirty-two nibbles
+through channel 3, not a synth. Classifying each load by nothing but its distance from the previous
+one -- under 5 ms is a kit mid-stream -- and only then asking what it holds:
 
-ChipBoy has the machinery for this: `bank::Synth` is a source, a shaper chain and a morph, and
-`synthesize()` renders it (§33, §36). What is missing is the **import**: LSDj's synth parameters
-are not read, so an imported synth is `used = false` with the snapshot's frames drawn into it. A
-song like `READROOM` therefore plays the right notes through frames that stop moving.
+| song | loads not mid-stream | of those, a stored synth frame |
+|---|---|---|
+| `SAMESONG` | 1373 | **99.6%** |
+| `READROOM` | 673 | **88.7%** |
 
-With §103 in, `SAMESONG`'s wave channel walks runs of up to **87 consecutive frames** identical to
-the ROM's, and 114 of the 205 frames the ROM loads are frames ChipBoy loads too. The 81 it loads
-that the ROM never does are the same gap from the other side. Reading LSDj's synth parameters and
-mapping them onto `bank::Synth` is the next thing the wave channel wants; it is in
-`docs/HANDOFF.md`.
+`READROOM`'s remaining 11% are the first load of each kit note, which arrives after a gap like a
+synth frame does. So every wave-instrument load on both songs is a frame the save holds, §103's
+"read all sixteen synths out of the save" is the whole story, and importing LSDj's synth parameters
+buys nothing at play time. What it would buy is an **editable** synth in ChipBoy's Waves tab rather
+than sixteen drawn frames, which is a convenience, not parity.
+
+The lesson is in the method: a 16-byte write burst into `FF30-FF3F` is not by itself a synth frame,
+and counting distinct ones without asking what else uses channel 3 counted a drum kit as evidence.
+
+## 106. The DMG's DACs invert, which is why LSDj's WAVE screen is upside down
+
+§104 settled that ChipBoy holds the bytes the APU sounds and that LSDj's WAVE screen draws their
+mirror, and guessed at the reason without measuring it. The user asked for the reason to be
+measured: play a frame and see how the sound is actually produced. `lsdjref_trace --wave-probe`
+does that now -- it renders SameBoy's audio and records, per output sample, which of the wave
+channel's thirty-two nibbles the DAC is on, the byte that pair came from, and what came out.
+
+**The polarity.** A ramp cannot answer this: a rising ramp through a DC blocker comes out falling
+whichever way the DAC runs. A square can. With synth 2 frame 0 set to `00 x8, FF x8` -- samples
+0-15 the nibble 0, samples 16-31 the nibble F -- averaged over 38 complete passes:
+
+| the nibble | SameBoy's output |
+|---|---|
+| `0` | **+3772** |
+| `F` | **-3772** |
+
+The DAC is **inverting**: a larger wave-RAM nibble is a *lower* output. That is LSDj's screen: it
+draws the analog shape, so it is the mirror of the sample values, and it is right to be.
+
+It is not the wave channel's own quirk. The same probe reports PU1's duty position, and a 12.5%
+duty note gives -4080 while the duty bit is 1 against +4080 while it is 0 -- **the pulse inverts
+too**. So it is one convention across the chip, not a relationship between channels.
+
+**ChipBoy is non-inverting, on every channel alike** (`Apu::outWave` returns the nibble,
+`outPulse` the volume). Against SameBoy that is one global sign on the whole mix, which cancels and
+sums identically and is inaudible. Flipping it would invert every golden file and the analog
+stage's -122 dB null for no audible gain, so it stays, recorded here rather than fixed.
+
+**The order.** §104 also repeated the user's reading that the frame is shifted by one with the last
+point wrapped to the front -- and it is, in the sound. A trigger puts the wave position at 0 and
+does **not** refill the sample buffer, so the first nibble the DAC reads is the one the first
+advance lands on: **sample 1**. Sample 0 is heard a whole thirty-two-sample cycle later. Measured on
+both sides with a frame whose only non-zero sample is sample 0: SameBoy's position counter goes
+`0 1 2 ... 31 0 1`, with the byte still `00` at index 0 and the frame's first byte from index 1; and
+ChipBoy's APU, at period 0 where a sample is 4096 cycles, puts the spike at cycle 131078 -- thirty-two
+samples in -- and every 131072 cycles after. **The two agree.** `Tests/ApuTests.cpp` pins both.
+
+So LSDj's WAVE screen draws what you hear, in the order you hear it, the way the DAC puts it out.
+ChipBoy's grid draws the sample values as stored. Both are right about different things, and
+whether the grid should switch conventions to sit beside LSDj's is still a UI decision for the user.

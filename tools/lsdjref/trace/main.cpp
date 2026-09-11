@@ -28,6 +28,8 @@ extern "C" {
 uint64_t lsdjref_ticks_8mhz(GB_gameboy_t* gb);
 uint8_t  lsdjref_io(GB_gameboy_t* gb, uint8_t low);
 uint8_t  lsdjref_volume(GB_gameboy_t* gb, int channel);
+void     lsdjref_wave_state(GB_gameboy_t* gb, uint8_t* index, uint8_t* byte);
+void     lsdjref_pulse_state(GB_gameboy_t* gb, int channel, uint8_t* pos, uint8_t* duty);
 }
 
 #include <algorithm>
@@ -65,7 +67,23 @@ struct Trace {
     bool probe = false;
     int64_t frame = 0;
     int pending = -1;   ///< a write whose channel volume is still to be read
+    /// --wave-probe: one row per rendered audio sample -- the cycle, which of
+    /// the wave channel's thirty-two nibbles the DAC is on, the byte that pair
+    /// came from, and what SameBoy put out. It is the order and the polarity of
+    /// wave RAM, read from the emulator rather than inferred from a picture.
+    struct WaveRow { uint64_t cycle; uint8_t index, byte, pulsePos, pulseDuty; int16_t left, right; };
+    std::vector<WaveRow> wave;
+    bool waveProbe = false;
 } g_trace;
+
+void onSample(GB_gameboy_t* gb, GB_sample_t* s)
+{
+    if (!g_trace.waveProbe) return;
+    uint8_t index = 0, byte = 0, pos = 0, duty = 0;
+    lsdjref_wave_state(gb, &index, &byte);
+    lsdjref_pulse_state(gb, 0, &pos, &duty);
+    g_trace.wave.push_back({ lsdjref_ticks_8mhz(gb) / 2, index, byte, pos, duty, s->left, s->right });
+}
 
 bool logged(uint16_t addr)
 {
@@ -205,7 +223,8 @@ void usage()
 
 int main(int argc, char** argv)
 {
-    std::string rom, sav, out, initSav, bootDir, keys, screen;
+    std::string rom, sav, out, initSav, bootDir, keys, screen, waveOut;
+    int waveRate = 131072;   // 4194304 / 32: thirty-two rows per wave sample at the lowest note
     std::string model = "dmg";
     int64_t frames = 600;
     int64_t bootFrames = -1;      // -1: press nothing extra, use --keys
@@ -227,6 +246,8 @@ int main(int argc, char** argv)
         else if (a == "--frames")      frames = std::strtoll(next("--frames").c_str(), nullptr, 10);
         else if (a == "--boot-frames") bootFrames = std::strtoll(next("--boot-frames").c_str(), nullptr, 10);
         else if (a == "--screen")      screen = next("--screen");
+        else if (a == "--wave-probe")  waveOut = next("--wave-probe");
+        else if (a == "--wave-rate")   waveRate = int(std::strtol(next("--wave-rate").c_str(), nullptr, 10));
         else if (a == "--probe")       probe = true;
         else if (a == "-h" || a == "--help") { usage(); return 0; }
         else { std::fprintf(stderr, "lsdjref-trace: unknown option %s\n", a.c_str()); usage(); return 2; }
@@ -280,7 +301,10 @@ int main(int argc, char** argv)
         GB_set_rgb_encode_callback(&gb, encodeGrey);
         GB_set_pixels_output(&gb, pixels.data());
     }
-    GB_set_sample_rate(&gb, 0);             // nor is the audio: SameBoy's APU state is
+    // The audio is a measurement only when --wave-probe asks for it; otherwise
+    // SameBoy renders none and the APU state is what the trace reads.
+    if (waveOut.empty()) GB_set_sample_rate(&gb, 0);
+    else { g_trace.waveProbe = true; g_trace.wave.reserve(1u << 20); GB_set_sample_rate(&gb, unsigned(waveRate)); GB_apu_set_sample_callback(&gb, onSample); }
     GB_set_turbo_mode(&gb, true, true);
 
     g_trace.gb = &gb;
@@ -338,6 +362,19 @@ int main(int argc, char** argv)
         std::fprintf(o, "%llu,%04X,%s,%02X,%d\n", (unsigned long long) w.cycle, w.addr, regName(w.addr), w.value, int(w.vol));
     if (o != stdout) std::fclose(o);
     std::fprintf(stderr, "lsdjref-trace: %zu writes over %lld frames\n", g_trace.writes.size(), (long long) frames);
+
+    if (!waveOut.empty()) {
+        FILE* w = std::fopen(waveOut.c_str(), "wb");
+        if (w == nullptr) { std::fprintf(stderr, "lsdjref-trace: cannot write '%s'\n", waveOut.c_str()); GB_free(&gb); return 2; }
+        std::fprintf(w, "# lsdjref-wave 1\n# rate=%d cpu_hz=%u\n", waveRate, kCpuHz);
+        std::fprintf(w, "cycle,index,byte,pu1pos,pu1duty,left,right\n");
+        for (const auto& r : g_trace.wave)
+            std::fprintf(w, "%llu,%u,%02X,%u,%u,%d,%d\n", (unsigned long long) r.cycle,
+                         unsigned(r.index), unsigned(r.byte), unsigned(r.pulsePos), unsigned(r.pulseDuty),
+                         int(r.left), int(r.right));
+        std::fclose(w);
+        std::fprintf(stderr, "lsdjref-trace: %zu audio samples to %s\n", g_trace.wave.size(), waveOut.c_str());
+    }
 
     GB_free(&gb);
     return g_trace.writes.empty() ? 1 : 0;
