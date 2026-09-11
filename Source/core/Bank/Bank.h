@@ -331,10 +331,15 @@ struct Bank {
     std::array<Table, kTableSlots>           tables;
     std::array<Wave, kWaveSlots>             waves;
     std::array<Kit, kKitSlots>               kits;
-    /// Section 81: LSDj's own note-to-`NR43` table, when a song was imported
-    /// from a save. One per bank -- an import comes from one version -- and
-    /// used only by instruments whose `noiseLsdjMap` is set.
+    /// Sections 81 and 83: LSDj's own `NR43` table, when a song was imported
+    /// from a save. One per bank -- an import comes from one version -- and used
+    /// only by instruments whose `noiseLsdjMap` is set. `noiseMapLen` is how
+    /// many of the bytes are the table (120 on 9.x) and `noiseMapNote0` which
+    /// ChipBoy note entry 0 plays; the index **wraps** modulo the length, which
+    /// is what the ROM does and is why the table cannot simply be clamped.
     std::array<uint8_t, 128> noiseMap{};
+    uint8_t                  noiseMapLen = 0;
+    uint8_t                  noiseMapNote0 = 8;
     bool                     noiseMapSet = false;
 
     /// Slot access, 1-based; nullptr for 0 or an unused slot.

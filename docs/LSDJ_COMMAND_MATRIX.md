@@ -1021,60 +1021,68 @@ register writes in order) still stands.
 
 ## 10. What is still open in ChipBoy
 
-**Most of this list is now done.** Sections 72-82 of `COMMANDS_AND_TEMPO.md` carry the design and
+**Most of this list is now done.** Sections 72-84 of `COMMANDS_AND_TEMPO.md` carry the design and
 the code is in: `S` accumulates onto a running sweep byte, `B` exists in both its forms, `Z`
 re-runs its own lane, `M`'s down half is right, `R`'s interval is `y` ticks with `y = 0` firing
 once, `C` and `V` reach the noise channel, `F` is a finetune on PU1 and two nibbles on PU2, `E`
-on WAV reads `y`, and an imported noise instrument plays LSDj's own note map rather than
-ChipBoy's nearest-clock one. The importer converts `T`'s low bytes and masks `W` to two bits.
+on WAV reads `y`, an imported noise instrument plays LSDj's own 120-entry table with its index
+**wrapping** as the ROM's does, and a note-on triggers at the plain note with the table's
+transpose following one update later. The importer converts `T`'s low bytes and masks `W` to two
+bits.
 
 What is left, in the order it costs a real song:
 
-1. **A counted phrase `H`** (§6.8, §80). `H 0 y` -- end the phrase, next starts at step `y` -- is
+1. **The phase of a `P` bend at a note-on** (§6.13). The ROM's note-on writes a period already
+   *half* a bend step in where ChipBoy writes the plain note; from the second update the two
+   agree to within one period unit. It costs the first five milliseconds of every swept drum --
+   27 of SUNRISE's 61 wave note-ons -- and nothing after that. Needs a measurement of its own,
+   beside `LSDJ_PARITY.md` §5.
+2. **A counted phrase `H`** (§6.8, §80). `H 0 y` -- end the phrase, next starts at step `y` -- is
    expressed for `y = 0` and noted otherwise. `H x y` with `x > 0` hops *within* the phrase, `x`
    passes running, and ChipBoy cannot: the Player lays a chain row's steps out ahead of the row,
    and a hop whose count survives across passes has no place in a schedule built once. Noted at
    import.
-2. **Phrase `HFF`** (§6.8) triggers nothing after its hop on the ROM and is not understood.
-3. **`W` on a wave instrument** addresses a synth engine ChipBoy does not have (§6.18); it stays
+3. **Phrase `HFF`** (§6.8) triggers nothing after its hop on the ROM and is not understood.
+4. **`W` on a wave instrument** addresses a synth engine ChipBoy does not have (§6.18); it stays
    dropped with a note.
-4. **Kit `DIST` mixing** — narrowed to instrument byte 13's bit 6; needs a kit-stream decoder.
+5. **Kit `DIST` mixing** — narrowed to instrument byte 13's bit 6; needs a kit-stream decoder.
    61 of 69 kit instruments in the user's saves mix two kits.
-5. **`LSDJ_PARITY.md` was measured on 9.2.J** with generated probe saves. §7 has been superseded
+6. **`LSDJ_PARITY.md` was measured on 9.2.J** with generated probe saves. §7 has been superseded
    twice over — by a real-save measurement (§70) and by the ROM's own rate table (§6.5) — and the
    rest has not been re-read for the same problem.
 
 ### Where the user's SUNRISE stands (LSDj 9.3.9, format 22)
 
 The acceptance test for a format-22 import: the ROM playing the song, against ChipBoy playing
-what the importer made of it, note-on for note-on over twenty-seven seconds.
+what the importer made of it, note-on for note-on over twenty-seven seconds, comparing the
+period (or `NR43`) each trigger actually sounds at.
 
-| | ROM | ChipBoy | longest common run |
-|---|---|---|---|
-| PU1 | 63 | 63 | **63** |
-| PU2 | 53 | 53 | **53** |
-| WAV | 61 | 61 | 7 |
-| NOI | 70 | 55 | 4 |
+| | ROM | ChipBoy | longest common run | values differing |
+|---|---|---|---|---|
+| PU1 | 63 | 63 | **63** | **0** |
+| PU2 | 53 | 53 | **53** | **0** |
+| WAV | 61 | 61 | 7 | 28 |
+| NOI | 70 | 70 | **70** | **0** |
 
-**PU1 and PU2 are exact** — every note-on, in order, at the same period. Two things are not:
+**Three channels of four are exact** — every note-on, in order, at the byte or period the ROM
+writes. The import prints one note, and it is about a PU2 transpose it kept rather than
+anything it lost.
 
-- **WAV**: the note-ons are right in count and time, and the first seven periods match exactly.
-  The ones that differ are the *swept* drum notes, where ChipBoy's first period after the
-  trigger is a few units off the ROM's (1788 against 1834, 1874 against 1910). The sweep is the
-  §71 machinery; what is off is where it starts, not that it runs.
-- **NOI**: every `NR43` byte ChipBoy writes now matches the ROM's, which the map fixed. But the
-  ROM plays **fifteen hits ChipBoy does not** — one extra trigger a tick after certain notes,
-  writing `NR43` values (`08`, `28`) that are **not entries of the measured map**. §82's rising
-  7-bit edge is the shape of that trigger and is implemented, but nothing ChipBoy produces
-  reaches a value that fires it, so the note is missing rather than mistimed. Where those two
-  bytes come from is now half-answered: **the noise map was truncated.** Swept whole on 9.3.9,
-  LSDj's table runs note byte 1 to 120 -- the 15-bit half is bytes 1-60 and the 7-bit half bytes
-  61-120, and byte 121 upward reads as junk off the end. Byte `n` is MIDI `n + 35`, so the table
-  reaches **MIDI 155**, and `08` and `28` are its bytes 120 and 118. `LsdjModel::noiseMap` is
-  indexed by MIDI note in a 128-entry array: it now carries the measured values up to 127
-  (`noiseHi` was 115) and *cannot* carry the last twenty-eight, which are written out in
-  `LsdjModel.cpp` beside the table. Reaching them means carrying a noise note as LSDj's own byte
-  rather than as a MIDI note.
+**What is left is the wave channel's swept drums**, and only their first update. The table's row
+0 carries `P CF`, a downward bend; the ROM's note-on writes a period already part of the way
+into it (1910 where the plain note is 1923) and ChipBoy's writes the plain note. From the
+*second* update the two are identical to within one period unit, all the way down the sweep:
+
+```
+ROM   2016(trig)  1910  1899  1875  1851  1827  1802  1778  1753  1729
+CB    1923(trig)        1899  1874  1850  1826  1802  1777  1753  1729
+```
+
+So 27 of 61 wave note-ons start about 1.3 semitones high for one pitch update -- roughly five
+milliseconds at the attack of a drum -- and are right thereafter. The ROM's first value is
+**half** a bend step below the plain note, not a whole one, so it is not simply "ChipBoy is one
+update late": what sets the bend's phase at a note-on is not yet measured, and belongs with §6.13
+and `LSDJ_PARITY.md` §5 rather than here.
 
 ### Where SPACE TI stands (the working song, LSDj 8.4.4)
 

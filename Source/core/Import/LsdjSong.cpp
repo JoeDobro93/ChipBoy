@@ -223,33 +223,24 @@ struct Reader {
             return uint8_t(std::clamp(((~shape) & 0xFF) + 16 * (5 - octave), 0, 255));
         }
         if (m.noiseRule == NoiseRule::Raw) return uint8_t(std::clamp(0xFF - (midi - 35), 0, 255));
-        const int lo = std::clamp(m.noiseLo, 0, 127), hi = std::clamp(m.noiseHi, lo, 127);
-        int k = std::clamp(midi, 0, 127);
-        if (k < lo || k > hi) {
-            // Outside the measured range: the octave neighbour inside it.
-            notes.add("noise note " + std::to_string(midi) + " is outside the measured map; mapped as its octave's neighbour");
-            while (k < lo) k += 12;
-            while (k > hi) k -= 12;
-            k = std::clamp(k, lo, hi);
-        }
+        // Section 83: the table starts at `noiseLo` and its index **wraps**, which
+        // is what the ROM does -- a transpose off either end walks round.
+        const int len = std::max(1, m.noiseHi - m.noiseLo + 1);
+        const int k = ((midi - m.noiseLo) % len + len) % len;
         return m.noiseMap[size_t(k)];
     }
-    /// Section 81: the note LSDj's own table has an entry for -- the note
-    /// itself, or its octave neighbour inside the measured range. This is what
-    /// the cell carries when the instrument reads `Bank::noiseMap` directly, so
-    /// no clock is ever crossed into ChipBoy's own map and back.
+    /// Sections 81 and 83: a mapped noise instrument's note is an **index into
+    /// LSDj's table**, not a pitch, so the cell carries the table's entry number
+    /// re-based onto ChipBoy's keyboard -- entry 0 at note `kNoiseMapNote0`, the
+    /// whole 120-entry table at notes 8-127, with room underneath for a
+    /// transpose to walk. No clock is ever crossed into ChipBoy's own map.
+    static constexpr int kNoiseMapNote0 = 8;
     bool mappedNoise() const { return m.noiseRule == NoiseRule::Map && m.noiseMap != nullptr; }
+    int noiseMapLen() const { return std::max(1, m.noiseHi - m.noiseLo + 1); }
     int noiseNoteInMap(int midi)
     {
-        const int lo = std::clamp(m.noiseLo, 0, 127), hi = std::clamp(m.noiseHi, lo, 127);
-        int k = std::clamp(midi, 0, 127);
-        if (k < lo || k > hi) {
-            notes.add("noise note " + std::to_string(midi) + " is outside the measured map; mapped as its octave's neighbour");
-            while (k < lo) k += 12;
-            while (k > hi) k -= 12;
-            k = std::clamp(k, lo, hi);
-        }
-        return k;
+        const int len = noiseMapLen();
+        return kNoiseMapNote0 + ((midi - m.noiseLo) % len + len) % len;
     }
     int offsetOf(int slot) const { const auto it = noiseOffset.find(slot); return it == noiseOffset.end() ? 0 : it->second; }
     /// The ChipBoy note that plays NR43 `v` on `slot`, its Shift offset taken
@@ -411,7 +402,13 @@ struct Reader {
             // writes is the byte the ROM writes.
             if (type == bank::InstrumentType::Noise && mappedNoise()) {
                 o.noiseLsdjMap = true;
-                std::copy(m.noiseMap, m.noiseMap + 128, bank.noiseMap.begin());
+                // The table's entries are whole NR43 bytes, so nothing may be
+                // added to the shift afterwards: Shift stays at its neutral 5.
+                o.noiseShift = 5;
+                const int len = std::min(noiseMapLen(), int(bank.noiseMap.size()));
+                std::copy(m.noiseMap, m.noiseMap + len, bank.noiseMap.begin());
+                bank.noiseMapLen = uint8_t(len);
+                bank.noiseMapNote0 = uint8_t(kNoiseMapNote0);
                 bank.noiseMapSet = true;
             }
             if (t == 0 || t == 3) envelope(b, o, name);

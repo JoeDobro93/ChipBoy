@@ -24,10 +24,11 @@ constexpr uint8_t kEnvPeriods9[16] = { 0, 1, 2, 3, 4, 6, 8, 11, 15, 20, 27, 36, 
 // The noise map: MIDI note -> NR43, measured note by note on a format-22 song
 // for C-2 (36) to G-8 (115); above A-6 the values are 7-bit (bit 3). Outside
 // that range the interpreter folds the note into it by octaves.
-constexpr uint8_t kNoise9[128] = {
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,                                       // 0-11 unmeasured
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,                                       // 12-23
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,                                       // 24-35
+// Section 83: the table swept whole -- note byte 1 to 120, so **index 0 is note
+// byte 1**, which is MIDI 36. Bytes 1-60 are the 15-bit half and 61-120 the
+// 7-bit half; byte 121 and up read past the end on the ROM. The index wraps
+// modulo 120, measured in both directions.
+constexpr uint8_t kNoise9[120] = {
     0xD7, 0xD6, 0xD5, 0xD4, 0xC7, 0xD3, 0xC5, 0xD2, 0xB7, 0xC3, 0xB5, 0xD1,   // 36-47
     0xA7, 0xB3, 0xA5, 0xD0, 0x97, 0xA3, 0x95, 0xC0, 0x87, 0x93, 0x85, 0xB0,   // 48-59
     0x77, 0x83, 0x75, 0xA0, 0x67, 0x73, 0x65, 0x90, 0x57, 0x63, 0x55, 0x80,   // 60-71
@@ -35,7 +36,9 @@ constexpr uint8_t kNoise9[128] = {
     0x17, 0x23, 0x15, 0x40, 0x07, 0x13, 0x05, 0x30, 0x03, 0x20, 0x10, 0x00,   // 84-95
     0xDF, 0xDE, 0xDD, 0xDC, 0xCF, 0xDB, 0xCD, 0xDA, 0xBF, 0xCB, 0xBD, 0xD9,   // 96-107 (7-bit)
     0xAF, 0xBB, 0xAD, 0xD8, 0x9F, 0xAB, 0x9D, 0xC8, 0x8F, 0x9B, 0x8D, 0xB8,   // 108-119
-    0x7F, 0x8B, 0x7D, 0xA8, 0x6F, 0x7B, 0x6D, 0x98                            // 120-127
+    0x7F, 0x8B, 0x7D, 0xA8, 0x6F, 0x7B, 0x6D, 0x98, 0x5F, 0x6B, 0x5D, 0x88,   // 120-131
+    0x4F, 0x5B, 0x4D, 0x78, 0x3F, 0x4B, 0x3D, 0x68, 0x2F, 0x3B, 0x2D, 0x58,   // 132-143
+    0x1F, 0x2B, 0x1D, 0x48, 0x0F, 0x1B, 0x0D, 0x38, 0x0B, 0x28, 0x18, 0x08    // 144-155
 };
 // The whole table swept on 9.3.9, note byte 1 to 120 (docs/LSDJ_COMMAND_MATRIX
 // section 6.15): the 15-bit half is bytes 1-60 and the 7-bit half bytes 61-120,
@@ -80,7 +83,7 @@ constexpr uint8_t kNoise886[128] = {
 // no Z either). Before 5.7.8 P and L work in period-register units a pitch
 // clock and there are no pitch modes; before 3.6.8 V does too.
 
-constexpr LsdjModel kLsdj9   { "LSDj 9.2.J - 9.4.2 (format 22)",   22, 22, 31, kLetters9,      EnvelopeLaw::SoftwareStages, kEnvPeriods9, NoiseRule::Map,   kNoise9,   36, 127, NoiseS::Semitones, PitchLaw::Semitone, VibratoLaw::Semitone,         3, -12, true, true, false, true };
+constexpr LsdjModel kLsdj9   { "LSDj 9.2.J - 9.4.2 (format 22)",   22, 22, 31, kLetters9,      EnvelopeLaw::SoftwareStages, kEnvPeriods9, NoiseRule::Map,   kNoise9,   36, 155, NoiseS::Semitones, PitchLaw::Semitone, VibratoLaw::Semitone,         3, -12, true, true, false, true };
 constexpr LsdjModel kLsdj886 { "LSDj 8.8.6 (format 15)",           15, 15, 21, kLetters9,      EnvelopeLaw::SoftwareStages, kEnvPeriods9, NoiseRule::Raw,   kNoise886, 36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         2, -12, true, false, true, true };
 constexpr LsdjModel kLsdj84  { "LSDj 8.4.0 - 8.5.1 (format 11)",   11, 11, 14, kLetters9,      EnvelopeLaw::HardwareStages, nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         2, -12, true, false, true, true };
 constexpr LsdjModel kLsdj57  { "LSDj 5.7.8 - 7.0.2 (formats 4-7)",  4,  4, 10, kLettersLegacy, EnvelopeLaw::Chip,           nullptr, NoiseRule::Shape, nullptr,   36, 115, NoiseS::Nibbles,   PitchLaw::Semitone, VibratoLaw::Semitone,         2, -12, true, false, true, true };

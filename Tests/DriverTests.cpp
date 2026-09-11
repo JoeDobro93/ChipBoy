@@ -2138,15 +2138,20 @@ TEST_CASE("a noise instrument takes its table's transpose column through the map
     t.steps[0].hasTranspose = true; t.steps[0].transpose = -24;
     t.steps[1].hasTranspose = true; t.steps[1].transpose = 12;
     auto& i = r.bank.instruments[20]; i = Instrument::defaults(InstrumentType::Noise, "hat"); i.table = 10;   // slot 21
-    // The note-on carries row 0's transpose in its own NR43 (section 31).
+    // Section 84: the note-on triggers at the **plain** note; row 0's transpose
+    // reaches the channel on the update after it, not in the note's own writes.
     auto w = r.block({ cellOn(3, 72, 21) }, 200);
-    REQUIRE(last(w, 0xFF22) != nullptr);
-    CHECK(last(w, 0xFF22)->value == nr43For(48));
+    std::vector<uint8_t> nrs;
+    for (const auto& x : w) if (x.addr == 0xFF22) nrs.push_back(x.value);
+    REQUIRE(nrs.size() >= 2);
+    CHECK(nrs[0] == nr43For(72));                             // plain, with the trigger
+    CHECK(nrs[1] == nr43For(48));                             // row 0's -24, one update later
     CHECK(r.drv.view(3).tableSlot == 10);
+    CHECK(std::count_if(w.begin(), w.end(), [](const RegWrite& x) { return x.addr == 0xFF23 && (x.value & 0x80); }) == 1);
     // Row 1 at the next tick: a new NR43, no trigger.
     w = r.block({}, 200);
     REQUIRE(last(w, 0xFF22) != nullptr);
-    CHECK(last(w, 0xFF22)->value == nr43For(84));
+    CHECK(last(w, 0xFF22)->value == nr43For(84));             // +12
     CHECK_FALSE(has(w, 0xFF23));
     // Row 2 is blank: the note itself.
     w = r.block({}, 200);
@@ -2157,7 +2162,7 @@ TEST_CASE("a noise instrument takes its table's transpose column through the map
     // never the table's own column (section 61), so this still moves.
     i.transpose = false;
     w = r.block({ cellOn(3, 72, 21) }, 200);
-    CHECK(last(w, 0xFF22)->value == nr43For(48));
+    CHECK(last(w, 0xFF22)->value == nr43For(48));             // row 0 still moves it
 }
 
 TEST_CASE("E re-attacks the note when the instrument asks for it", "[driver][commands]")
@@ -2212,18 +2217,25 @@ TEST_CASE("S on the noise channel transposes through the map and adds up", "[dri
     for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
     { ChannelParams p; p.instrument = 21; for (int ch = 0; ch < 4; ++ch) r.drv.setParams(ch, p); }
     auto& i = r.bank.instruments[20]; i = Instrument::defaults(InstrumentType::Noise, "snare");   // slot 21
+    // Section 84: NR43 goes out when the byte **changes**, as the ROM writes it,
+    // so a step between two notes the map gives the same pair writes nothing.
+    // The running value is what the test follows.
+    uint8_t nr = 0;
+    const auto step = [&](const std::vector<RegWrite>& out) { if (const auto* x = last(out, 0xFF22)) nr = x->value; };
     auto w = r.block({ cellOn(3, 72, 21) }, 200);
     REQUIRE(last(w, 0xFF22) != nullptr);
-    CHECK(last(w, 0xFF22)->value == nr43For(72));
+    step(w);
+    CHECK(nr == nr43For(72));
     w = r.block({ cellCmd(3, Command{ Cmd::S, 0, 1, 0 }) }, 200);        // S01: one up
-    REQUIRE(last(w, 0xFF22) != nullptr);
-    CHECK(last(w, 0xFF22)->value == nr43For(73));
+    step(w);
+    CHECK(nr == nr43For(73));
     CHECK_FALSE(has(w, 0xFF23));
     w = r.block({ cellCmd(3, Command{ Cmd::S, 0xF, 0xE, 0 }) }, 200);    // SFE: two down, on top of the one up
-    REQUIRE(last(w, 0xFF22) != nullptr);
-    CHECK(last(w, 0xFF22)->value == nr43For(71));
+    step(w);
+    CHECK(nr == nr43For(71));
     w = r.block({ cellCmd(3, Command{ Cmd::S, 1, 0, 0 }) }, 200);        // S10: sixteen up
-    CHECK(last(w, 0xFF22)->value == nr43For(87));
+    step(w);
+    CHECK(nr == nr43For(87));
     w = r.block({ cellOn(3, 72, 21) }, 200);                             // the note-on starts over
     CHECK(last(w, 0xFF22)->value == nr43For(72));
     // An S in the note's own cell transposes the note-on itself (the write is

@@ -437,6 +437,11 @@ private:
     bank::Command resolveRandom(int ch, const bank::Command& z, int lane);
     /// Where a lane's last command is kept, so `applyCommand` and `resolveRandom`
     /// agree on which one a `Z` sees.
+    /// Section 84: while this is set, `tableTransposeOf` reads zero, so the
+    /// period a note-on triggers with is the **plain** note. It is set only
+    /// around the note's own period write and only when the table started with
+    /// that note; the update after the trigger picks the column up.
+    bool plainTrigger_ = false;
     bank::Command* zSlot(int ch, bool fromTable, int lane);
     /// Section 73: a cell's `B`. Each nibble is an independent roll that passes
     /// `n` times in **15**, and the note sounds if either passes -- so `B00`

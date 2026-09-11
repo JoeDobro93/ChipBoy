@@ -344,15 +344,24 @@ design-log section the change touches. Update this file at the end of every chan
     instrument plays **LSDj's own note map** off the bank (§81) instead of crossing into
     ChipBoy's nearest-clock one and back.
   - **The acceptance test is the user's SUNRISE** (`/root/lsdj/lsdj9_3_9.sav`, song 6, format
-    22). ROM against ChipBoy over 27 s: PU1 63/63 exact, PU2 53/53 exact, WAV 61/61 note-ons
-    with the swept drums a few period units off at the start of the sweep, NOI right in every
-    `NR43` byte but **fifteen hits short** -- the ROM triggers again a tick after certain notes
-    with bytes (`08`, `28`) that are not entries of the measured map. §82's rising 7-bit edge is
-    that trigger's shape and is implemented; what produces those two bytes is not settled. A
-    table transpose of -58 semitones from note 93 lands at note 35, below the map's floor of 36,
-    which is where to look next.
+    22). ROM against ChipBoy over 27 s, comparing the period or `NR43` each trigger sounds at:
+    **PU1 63/63, PU2 53/53 and NOI 70/70 with zero values differing**; WAV 61/61 note-ons with
+    27 of them starting about 1.3 semitones high for one pitch update and identical thereafter.
+    That last one is §10.1 of the matrix: the table's `P CF` bend, whose *phase at the note-on*
+    is not measured -- the ROM's first period is half a bend step below the plain note.
     Rebuild the comparison with `chipboy_recordtest --import-sav` then `--trace-song`, and
-    `lsdjref_trace` on a save whose working song is the one under test.
+    `lsdjref_trace` on a save whose working song is the one under test; `/root/lsdj/probe/cmp.py`
+    lines the two note streams up. Compare the value **at** the trigger on noise and a few
+    milliseconds after it on the pitched channels, because LSDj triggers the wave channel with a
+    stale period and writes the real one immediately after.
+  - **Sections 83 and 84** finished the noise: LSDj's table is **120 entries** (note byte 1-120)
+    and its index **wraps** modulo 120, measured in both directions, so a mapped noise
+    instrument's cell carries the table's entry number re-based onto notes 8-127 and the driver
+    wraps rather than clamps. The table entry's own **width bit** is the note, not a property of
+    the instrument, which is what had been turning the table's 7-bit half into its 15-bit one.
+    And a note-on triggers at the **plain** note: the table's transpose column reaches the
+    channel on the next pitch update, which for noise means the channel has to join the pitch
+    clock whenever a table runs.
 - **`tools/lsdjref/probe_fmt22.py` + `run.py`** build and trace a controlled probe song inside a
   format-22 save -- a real one, or one the ROM formatted itself (`--init-sav`, 3000 frames, then
   `Probe(host=..., blank=True)`), which is what the verification pass used. Start from it for any

@@ -2342,3 +2342,74 @@ than a pitch, and it only takes effect on a trigger.
 ChipBoy wrote the width bit and carried on, which cost SUNRISE fifteen of its seventy noise hits
 -- every one of them a snare's click. `writePeriod`'s noise branch now triggers on the rising
 edge, mid-note only: a note-on has its own trigger and must not get a second.
+
+## 83. LSDj's noise table is 120 entries and its index **wraps**
+
+§81 gave an imported noise instrument LSDj's own table; §82 found the trigger that comes with a
+7-bit entry. Both were right and both were reading a **truncated** table.
+
+Swept whole on 9.3.9 -- every note byte 1 to 120 played on a noise instrument, `NR43` read at
+each trigger -- the table is **120 entries**: bytes 1-60 are the 15-bit half, from `D7` down to
+`00`, and bytes 61-120 the 7-bit half, from `DF` down to `08`. Byte 121 and up read past the end
+as junk, which is why a phrase cannot usefully name one.
+
+**The index wraps modulo 120.** Measured with a table transpose on a note whose byte is 58
+(`NR43 = 20`, index 57), against `table[(57 + tsp) mod 120]`:
+
+| `TSP` | −10 | −58 | −60 | −70 | −120 | +20 | +62 | +80 | +100 |
+|---|---|---|---|---|---|---|---|---|---|
+| `NR43` | `50` | `08` | `28` | `58` | `20` | `AB` | `08` | `A3` | `53` |
+| wrapped | `50` | `08` | `28` | `58` | `20` | `AB` | `08` | `A3` | `53` |
+| clamped | `50` | `D7` | `D7` | `D7` | `D7` | `AB` | `08` | `08` | `08` |
+
+Every one is the wrap, and none is the clamp. `SUNRISE`'s two unexplained bytes fall straight
+out: a transpose of −58 from index 57 lands on index 119, which is `08`.
+
+**What ChipBoy has to change.** A cell's note is 0-127, and LSDj's table spans MIDI 36-155, so
+it cannot be carried as a MIDI note. It does not need to be: for a mapped noise instrument the
+note is an **index into that table**, not a pitch, so the importer re-bases it -- note byte `n`
+becomes ChipBoy note `n + 7`, so the whole table sits at notes 8-127 with room underneath for a
+transpose to walk.
+
+- `Bank::noiseMap` keeps its 128 bytes; `Bank::noiseMapLen` says how many are the table (120 on
+  9.x) and `Bank::noiseMapNote0` which ChipBoy note entry 0 plays (8). A version whose table is
+  a different length needs no new field.
+- The driver wraps: `idx = ((note + transposes) - noiseMapNote0) mod noiseMapLen`, the modulo
+  taken so a negative walks to the top. It **replaces** the clamp into `-kNoiseMapBelow..127`
+  for a mapped instrument, because a clamp is exactly the wrong answer here.
+- The importer emits `noteByte + 7` and drops the octave folding, which only existed because the
+  table it knew about had holes at both ends.
+
+The note the tracker shows for such an instrument is therefore not the note LSDj names. That is
+already true of every imported noise instrument -- the channel has no pitch, only a clock -- and
+the alternative is losing a fifth of the table.
+
+## 84. A note-on triggers at the plain note; the table's transpose follows one update later
+
+Measured on 9.3.9 with a table whose row 0 transposes +12, note `18` (period 1517, +12 = 1783):
+
+| channel | what the ROM writes |
+|---|---|
+| PU1, row 0 = +12 | `1517` **with the trigger**, then `1783` 1.2 ms later, then `1517` |
+| PU1, row 1 = +12 | `1517` with the trigger, `1517`, then `1783` |
+| WAV, row 0 = +12 | trigger at a stale `2016`, `1517` in the same burst, then `1783` 1.2 ms later |
+
+So **row 0 of a table fires with the note-on** -- §31 stands, and its commands and its volume are
+the note's -- but its **transpose column reaches the channel on the next pitch update**, not in
+the note's own writes. ChipBoy folded it in, which puts the channel one table row ahead for the
+first instant of every note that starts a transposing table.
+
+It costs more than an instant when the table is a *sweep*: the wave kick's first period came out
+two updates into the sweep rather than at its start, so the whole drum began lower than the ROM's.
+
+**The change.** `writePeriod` takes the transpose column out of the period it writes **when that
+write carries the trigger and the table started with this note** (`Voice::tableJustStarted`) --
+narrow enough that a retrigger mid-table, where the column genuinely applies, is untouched. The
+update that follows picks the column up, because a note-on already asks for one
+(`Voice::pitchWrite`).
+
+The noise channel has no pitch clock unless a vibrato is running (§77), so it would never take
+that following update and row 0's transpose would be lost rather than late. It joins the clock
+whenever a **table** is running as well, and `writePeriod` then skips a noise write whose `NR43`
+is the one already out -- LSDj writes the register when the value changes, and a forced repeat
+would be a write the ROM does not make.

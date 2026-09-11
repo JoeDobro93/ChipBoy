@@ -705,6 +705,11 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         stepTable(ch);
         inNoteOn_ = wasIn;
         v.tableJustStarted = true;
+        // Section 84: the noise channel takes no pitch clock of its own, so the
+        // update that carries row 0's transpose has to be asked for here --
+        // after the table is certainly running, which restartPitchClock() above
+        // cannot know.
+        if (v.tableOn && core.type == InstrumentType::Noise) { v.pitchClockOn = true; v.pitchWrite = true; }
     }
     // instrument, then its table, then CMD1 and CMD2: the slots in force apply
     // to every note in their span (section 3). Their registers go out with the
@@ -926,6 +931,7 @@ double Driver::noteOfVoice(int ch) const
 /// (section 61). The noise channel takes it too (section 45).
 int Driver::tableTransposeOf(const Voice& v) const
 {
+    if (plainTrigger_) return 0;                   // section 84
     if (!v.tableOn || !bank_) return 0;
     const Table* t = bank_->table(v.tableSlot);
     if (!t) return 0;
@@ -1039,13 +1045,23 @@ void Driver::restartPitchClock(int ch)
     // never bent between ticks. Noise is bent only by a vibrato (section 77);
     // without one its NR43 moves on the tick and nowhere else.
     v.pitchClockOn = (v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Wave
-                      || (v.inst.type == InstrumentType::Noise && v.vibOn && v.vibDepth))
+                      || (v.inst.type == InstrumentType::Noise && ((v.vibOn && v.vibDepth) || v.tableOn)))
                      && pitchSpeed(v) != PitchSpeed::Tick;
 }
 
 void Driver::writePeriod(int ch, bool trigger)
 {
     Voice& v = v_[size_t(ch)];
+    // Section 84: the note-on triggers at the **plain** note and the table's
+    // transpose column reaches the channel on the next pitch update. Only the
+    // note's own write, and only when the table started with it, so a retrigger
+    // in the middle of a table keeps the column it is on.
+    const bool plain = trigger && v.tableJustStarted;
+    struct PlainScope {
+        bool& f; bool was;
+        PlainScope(bool& x, bool on) : f(x), was(x) { f = on; }
+        ~PlainScope() { f = was; }
+    } scope(plainTrigger_, plain);
     if (v.inst.type == InstrumentType::Noise) {
         uint8_t s, d;
         if (v.inst.noiseManual) { s = v.noiseShift; d = v.noiseDiv; }
@@ -1057,16 +1073,25 @@ void Driver::writePeriod(int ch, bool trigger)
             int raw = int(v.note) + v.noteTsp + v.p.transpose + tableTransposeOf(v) + v.noiseTsp;
             if (v.chordN) raw += v.chord[v.chordIdx % v.chordN];
             if (v.vibOn && v.vibDepth) raw += int(std::lround(double(vibratoFine(v)) / 256.0));
-            const int n = std::clamp(raw, -kNoiseMapBelow, 127);
             // The instrument's Shift is an offset from the map's pair (5 is
             // none); it is read from the instrument, not from the pair the last
             // write left in `v.noiseShift`, or a second write would compound it.
-            if (v.inst.noiseLsdjMap && bank_ != nullptr && bank_->noiseMapSet) {
-                // Section 81: LSDj's own table, so an imported drum lands on the
-                // byte the ROM writes rather than on ChipBoy's nearest clock.
-                const uint8_t nr = bank_->noiseMap[size_t(std::clamp(n, 0, 127))];
-                s = uint8_t(nr >> 4); d = uint8_t(nr & 7);
+            const bool mapped = v.inst.noiseLsdjMap && bank_ != nullptr && bank_->noiseMapSet && bank_->noiseMapLen > 0;
+            if (mapped) {
+                // Sections 81 and 83: LSDj's own table, and its index **wraps** --
+                // a transpose off either end walks round rather than stopping, so
+                // a drum lands on the byte the ROM writes and not on the table's
+                // first or last entry.
+                const int len = int(bank_->noiseMapLen);
+                const int idx = ((raw - int(bank_->noiseMapNote0)) % len + len) % len;
+                const uint8_t nr = bank_->noiseMap[size_t(idx)];
+                // The table's own entry carries the **width bit**: half of it is
+                // the 7-bit LFSR, and that is the note, not a property of the
+                // instrument. Taking the width from the instrument here would
+                // turn the table's whole second half into its first.
+                s = uint8_t(nr >> 4); d = uint8_t(nr & 7); v.lfsr7 = (nr & 8) != 0;
             } else {
+                const int n = std::clamp(raw, -kNoiseMapBelow, 127);
                 s = uint8_t(noiseShiftMap_[size_t(n + kNoiseMapBelow)]); d = uint8_t(noiseDivMap_[size_t(n + kNoiseMapBelow)]);
             }
             s = uint8_t(std::clamp(int(s) + int(v.inst.noiseShift) - 5, 0, 13));
@@ -1082,7 +1107,9 @@ void Driver::writePeriod(int ch, bool trigger)
         // fifteen of each and no exception either way.
         const bool wasWide = v.lastPeriod >= 0 && (v.lastPeriod & 8) == 0;
         const bool widthOn = !trigger && v.active && (nr & 8) != 0 && wasWide;
-        emit(regAddr(3, 3), nr, true);
+        // Section 84: LSDj writes NR43 when the value changes, and a note-on
+        // always writes it. A forced repeat is a write the ROM does not make.
+        if (trigger || widthOn || int16_t(nr) != v.lastPeriod) emit(regAddr(3, 3), nr, true);
         if (trigger || widthOn) { emit(regAddr(3, 4), uint8_t(0x80 | (v.inst.length ? 0x40 : 0)), true); markTrigger(ch); }
         v.lastPeriod = int16_t(nr);
         return;
@@ -1919,6 +1946,12 @@ void Driver::beginTableRun(int ch, uint8_t slot)
     v.volLaneOn = true;
     v.tableOn = slot != 0 && bank_ && bank_->table(slot);
     if (v.tableOn) ++v.tableRun;
+    // Section 84: the noise channel has no pitch clock of its own, so without
+    // this the update that carries the table's row-0 transpose never comes and
+    // the column is lost rather than late. A table can start after
+    // restartPitchClock() has already run, so the clock is turned on here too.
+    if (v.tableOn && v.inst.type == InstrumentType::Noise && pitchSpeed(v) != PitchSpeed::Tick)
+        v.pitchClockOn = true;
 }
 
 /// Section 65: the frames a wave instrument's run visits, and the frame a run

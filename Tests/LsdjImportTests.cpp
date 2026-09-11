@@ -128,15 +128,18 @@ struct SaveWriter {
     }
 };
 
-/// Section 81: under LSDj's own table the cell carries the **LSDj note** and
-/// the driver reads `Bank::noiseMap`, so the test is the stronger one -- the
-/// byte that will reach NR43 is the byte the ROM writes.
+/// Sections 81 and 83: under LSDj's own table the cell carries the table's
+/// **entry number**, re-based onto ChipBoy's keyboard, and the driver wraps the
+/// index. The test is the strong one -- the byte that will reach NR43 is the
+/// byte the ROM writes -- and it reads the index exactly as the driver does.
 bool noiseByteMatches(const bank::Bank& bank, const tracker::Phrase& p, int cell, uint8_t nr43)
 {
     const auto& c = p.cells[size_t(cell)];
-    if (c.inst < 1 || !bank.noiseMapSet) return false;
+    if (c.inst < 1 || !bank.noiseMapSet || bank.noiseMapLen == 0) return false;
     if (!bank.instruments[size_t(c.inst - 1)].noiseLsdjMap) return false;
-    return c.note < 128 && bank.noiseMap[size_t(c.note)] == nr43;
+    const int len = int(bank.noiseMapLen);
+    const int idx = ((int(c.note) - int(bank.noiseMapNote0)) % len + len) % len;
+    return bank.noiseMap[size_t(idx)] == nr43;
 }
 
 } // namespace

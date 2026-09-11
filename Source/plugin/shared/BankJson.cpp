@@ -358,8 +358,9 @@ var bankToVar(const Bank& b)
     // bank without one leaves the key out and reads back with the flag clear.
     if (b.noiseMapSet) {
         Array<var> nm;
-        for (uint8_t x : b.noiseMap) nm.add(int(x));
+        for (int i = 0; i < int(b.noiseMapLen); ++i) nm.add(int(b.noiseMap[size_t(i)]));
         o->setProperty("noiseMap", nm);
+        o->setProperty("noiseMapNote0", int(b.noiseMapNote0));   // section 83: the index wraps from here
     }
     return var(o);
 }
@@ -382,9 +383,12 @@ bool bankFromVar(const var& v, Bank& out)
     });
     each(o->getProperty("waves"), kWaveSlots, [&](const var& e, int slot) { waveFromVarImpl(e, out.waves[size_t(slot - 1)]); });
     each(o->getProperty("kits"), kKitSlots, [&](const var& e, int slot) { kitFromVarImpl(e, out.kits[size_t(slot - 1)]); });
-    if (auto* nm = o->getProperty("noiseMap").getArray()) {                 // section 81
-        for (int i = 0; i < 128 && i < nm->size(); ++i) out.noiseMap[size_t(i)] = uint8_t(std::clamp(int((*nm)[i]), 0, 255));
-        out.noiseMapSet = true;
+    if (auto* nm = o->getProperty("noiseMap").getArray()) {                 // sections 81 and 83
+        const int len = std::min(128, nm->size());
+        for (int i = 0; i < len; ++i) out.noiseMap[size_t(i)] = uint8_t(std::clamp(int((*nm)[i]), 0, 255));
+        out.noiseMapLen = uint8_t(len);
+        out.noiseMapNote0 = uint8_t(std::clamp(getOr(o, "noiseMapNote0", 8), 0, 127));
+        out.noiseMapSet = len > 0;
     }
     return true;
 }
