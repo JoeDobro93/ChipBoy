@@ -354,6 +354,10 @@ design-log section the change touches. Update this file at the end of every chan
     lines the two note streams up. Compare the value **at** the trigger on noise and a few
     milliseconds after it on the pitched channels, because LSDj triggers the wave channel with a
     stale period and writes the real one immediately after.
+  - **Section 85**: on the **noise channel** the Note column shows the byte, in the grid's own
+    base (`3A` in Hex, `58` in Decimal), because §83 made that note an index into a clock map
+    rather than a pitch. The entry box takes a number there and still takes a note name. Display
+    only -- nothing in the song file, the bank or the driver moves.
   - **Sections 83 and 84** finished the noise: LSDj's table is **120 entries** (note byte 1-120)
     and its index **wraps** modulo 120, measured in both directions, so a mapped noise
     instrument's cell carries the table's entry number re-based onto notes 8-127 and the driver

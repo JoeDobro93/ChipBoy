@@ -116,6 +116,15 @@ juce::String ValueFormat::noteName(int n)
     static const char* names[12] = { "C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-" };
     return juce::String(names[n % 12]) + juce::String(n / 12 - 1);
 }
+juce::String ValueFormat::noteValue(int n, bool numeric)
+{
+    if (!numeric) return noteName(n);
+    if (n == 255) return "OFF";
+    if (n <= 0 || n > 127) return "---";
+    // Section 85: the byte, in the grid's own base -- padded either way so the
+    // column keeps its width.
+    return gHex ? byte(n) : juce::String(n).paddedLeft('0', 2);
+}
 
 // ---------------------------------------------------------------------------
 // drawing helpers

@@ -399,12 +399,22 @@ bool cmdEntryCommit(bank::Command& c, int arg, const juce::String& text)
 /// A note typed with auto-correction (docs/COMMANDS_AND_TEMPO.md section 30):
 /// "a1", "A 1", "a#1" and "bb2" are A-1, A-1, A#1 and A#2, "off" or "-" is a
 /// note off, an empty box blanks the cell, and anything else is refused.
-bool parseNoteText(const juce::String& text, uint8_t& out)
+bool parseNoteText(const juce::String& text, uint8_t& out, bool numeric = false)
 {
     juce::String t = text.trim().toLowerCase().removeCharacters(" -\xe2\x88\x92");
     if (text.trim().isEmpty()) { out = 0; return true; }
     if (t.isEmpty()) { out = tracker::kNoteOff; return true; }          // "-" and "---"
     if (t == "off" || t == "o") { out = tracker::kNoteOff; return true; }
+    // Section 85: on the noise channel the column is a number, so a number is
+    // what it takes -- in the grid's base. A note name still works, because
+    // refusing one would only puzzle a keyboard-minded edit.
+    if (numeric) {
+        const int v = ValueFormat::hex() ? t.getHexValue32() : t.getIntValue();
+        bool digits = t.isNotEmpty();
+        for (int k = 0; k < t.length() && digits; ++k)
+            digits = juce::CharacterFunctions::isDigit(t[k]) || (ValueFormat::hex() && t[k] >= 'a' && t[k] <= 'f');
+        if (digits && v >= 1 && v <= 127) { out = uint8_t(v); return true; }
+    }
     static const int base[7] = { 9, 11, 0, 2, 4, 5, 7 };                // a b c d e f g
     const auto letter = t[0];
     if (letter < 'a' || letter > 'g') return false;
@@ -1322,16 +1332,16 @@ struct PhraseGrid::Impl {
             if (cell.note != 0) {
                 blank = false;
                 colour = cell.note == tracker::kNoteOff ? colours::textDim : colours::channel(c.ch).withAlpha(0.45f);
-                return ValueFormat::noteName(cell.note);
+                return ValueFormat::noteValue(cell.note, c.ch == 3);   // section 85
             }
             const int n = shadow[size_t(c.ch)][size_t(row)];
             blank = true;
-            return n > 0 ? ValueFormat::noteName(n) : juce::String::charToString(0x00b7);
+            return n > 0 ? ValueFormat::noteValue(n, c.ch == 3) : juce::String::charToString(0x00b7);
         }
         if (c.kind == Kind::Note) {
             blank = cell.note == 0;
             if (cell.note != 0 && cell.note != tracker::kNoteOff) colour = colours::channel(c.ch);
-            return ValueFormat::noteName(cell.note);
+            return ValueFormat::noteValue(cell.note, c.ch == 3);       // section 85
         }
         if (c.kind == Kind::Vel) { blank = cell.vel == 0; return blank ? kBlank2 : ValueFormat::number(cell.vel); }
         if (c.kind == Kind::Inst) { blank = cell.inst == 0; return blank ? kBlank2 : ValueFormat::slot(cell.inst); }
@@ -1550,12 +1560,12 @@ struct PhraseGrid::Impl {
         if (c.kind != Kind::Note) return;
         const int ch = c.ch;
         const auto& cell = cells[size_t(ch)][size_t(row)];
-        const juce::String now = cell.note == 0 ? juce::String() : ValueFormat::noteName(cell.note);
+        const juce::String now = cell.note == 0 ? juce::String() : ValueFormat::noteValue(cell.note, ch == 3);
         core.setCursor(row, col);
         box.begin(owner, core.cellRect(row, col).reduced(1), now, juce::Justification::centredLeft,
                   [this, row, ch](const juce::String& text) {
                       uint8_t note = 0;
-                      if (!parseNoteText(text, note)) { owner.repaint(); return; }   // refused: the cell keeps what it had
+                      if (!parseNoteText(text, note, ch == 3)) { owner.repaint(); return; }   // refused: the cell keeps what it had
                       auto& target = cells[size_t(ch)][size_t(row)];
                       if (target.note == note) { owner.repaint(); return; }
                       const tracker::Cell before = target;

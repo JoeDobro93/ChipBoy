@@ -2413,3 +2413,18 @@ that following update and row 0's transpose would be lost rather than late. It j
 whenever a **table** is running as well, and `writePeriod` then skips a noise write whose `NR43`
 is the one already out -- LSDj writes the register when the value changes, and a forced repeat
 would be a write the ROM does not make.
+
+## 85. The noise channel's note reads as a number, not a note name
+
+§83 made an imported noise instrument's note an **index into LSDj's table** rather than a pitch:
+the channel has a clock, not a frequency, and the map's entries are not a twelve-tone scale.
+Drawing that index as `C#4` invites exactly the confusion it caused -- a note name that does not
+name the note, beside a transpose column whose semitones are really table steps.
+
+**On the noise channel the Note column shows the byte**, in the same base the rest of the grid
+uses (§52): `3A` in Hex, `58` in Decimal. `OFF` and the blank stay as they are, because they mean
+the same thing on every channel. The entry box takes a number there too, and still takes a note
+name, so a keyboard-minded edit is not refused; on the other three channels nothing changes.
+
+This is the display only. Nothing in the song file, the bank or the driver moves: a cell's note
+is the same byte it always was.

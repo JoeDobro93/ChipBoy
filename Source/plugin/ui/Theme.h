@@ -75,6 +75,10 @@ struct ValueFormat {
     static juce::String transpose(int v);         ///< "-32" in Decimal, "E0" in Hex
     static juce::String byte(int v);              ///< always two hex digits, for register lines
     static juce::String noteName(int midiNote);   ///< "C-4", "F#3"; 255 -> "OFF", 0 -> "---"
+    /// Section 85: the **noise** channel's note is an index into a clock map,
+    /// not a pitch, so it reads as the byte -- "3A" in Hex, "58" in Decimal.
+    /// `OFF` and the blank are the same on every channel.
+    static juce::String noteValue(int midiNote, bool numeric);
 };
 
 class ChipBoyLookAndFeel : public juce::LookAndFeel_V4 {
