@@ -757,7 +757,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         case InstrumentType::Wave: {
             const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr;
             const Frame* f = w && !w->frames.empty() ? &w->frames[0] : nullptr;
-            v.frameCount = 0; v.frameDir = 1; v.kitOn = false; v.streamActive = false;
+            v.frameCount = 0; v.frameDir = 1; v.frameFresh = true; v.kitOn = false; v.streamActive = false;
             // The run starts at its first step, which is always frame 0
             // (section 65); the reset above put the voice there, so an F on this
             // very row -- applied with the note's other commands -- still stands.
@@ -1011,7 +1011,11 @@ void Driver::pitchStep(int ch, bool onTick)
             // (measured), not the 7.46 that a tick is worth in updates.
             const int mag = bendStep256(std::abs(int(v.bendSpeed))) * (onTick ? 4 : 1);
             const int step = v.bendSpeed < 0 ? -mag : mag;
-            if (v.inst.pitchRegisterUnits)
+            if (v.inst.type == InstrumentType::Kit)
+                // Section 97: a kit's P is period-register units too, but one
+                // step a tick under TICK rather than section 88's four.
+                v.drumOffset += double(v.bendSpeed);
+            else if (v.inst.pitchRegisterUnits)
                 // Section 88: the byte is the number of period-register units a
                 // clock, whole. No table, so a long slide ends where the ROM's
                 // ends rather than a fraction of a semitone away.
@@ -1056,10 +1060,12 @@ void Driver::restartPitchClock(int ch)
     // and 3).
     Voice& v = v_[size_t(ch)];
     v.pitchWrite = true;
-    // A kit's period is its sample rate, read by the streaming timer, so it is
-    // never bent between ticks. Noise is bent only by a vibrato (section 77);
-    // without one its NR43 moves on the tick and nowhere else.
+    // Section 97: a kit's period is its sample rate, and LSDj bends it on the
+    // pitch clock like any other -- a `P` on a kit note moves the register by
+    // the whole byte every 2.79 ms. Noise is bent only by a vibrato
+    // (section 77); without one its NR43 moves on the tick and nowhere else.
     v.pitchClockOn = (v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Wave
+                      || v.inst.type == InstrumentType::Kit
                       || (v.inst.type == InstrumentType::Noise && ((v.vibOn && v.vibDepth) || v.tableOn)))
                      && pitchSpeed(v) != PitchSpeed::Tick;
 }
@@ -1686,7 +1692,13 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
                 break;
             }
             const int speed = int(int8_t(uint8_t(std::clamp<int>(c.a, 0, 255))));
-            if (pitchSpeed(v) == PitchSpeed::Step) {
+            if (v.inst.type == InstrumentType::Kit && pitchSpeed(v) == PitchSpeed::Step) {
+                // Section 97: one offset of three period-register units per unit
+                // of the byte, and no bend after it.
+                v.drumOffset += 3.0 * double(speed); v.bendSpeed = 0;
+                if (live) writePeriod(ch, false);
+            }
+            else if (pitchSpeed(v) == PitchSpeed::Step) {
                 // The offset reaches the pitch at the next update, not in the
                 // note-on's own writes: LSDj's note-on writes the pitch the
                 // channel was at and the commands move it from there
@@ -2077,20 +2089,28 @@ void Driver::stepTableLane(int ch, int lane)
         v.volLaneOn = false;                                   // nothing but hops
         return;
     }
-    row = step;
-    const TableStep& s = t->steps[row];
-    const Command raw = lane == 2 ? s.cmd2 : s.cmd1;
-    const Command c = raw.cmd == Cmd::Z ? resolveRandom(ch, raw, lane) : raw;
-    if (c.cmd != Cmd::None) applyCommand(ch, c, true, lane);
-    wait = tableRowTicks(ch, row);
-    if (!v.tableOn) return;                           // the command stopped it
-    if (raw.cmd == Cmd::H) return;                    // hopped: the lane's step is already set
-    if (v.tableHopped) { v.tableHopped = false; return; }   // a B took its hop (section 73)
-    if (step + 1 < kTableSteps) { ++step; return; }
-    switch (t->end) {
-        case TableEnd::Loop: step = 0; break;
-        case TableEnd::Hop:  step = uint8_t(std::clamp<int>(t->hopStep - 1, 0, 15)); break;
-        case TableEnd::Stop: v.tableOn = false; break;
+    // Section 95: a command lane's `H` costs no tick -- the row it lands on runs
+    // in this same tick, which is what makes a four row arpeggio four ticks long
+    // and not five. The guard stops a ring of hops with no row to play spinning
+    // the tick, as the volume lane's does.
+    for (int guard = 0; guard <= kTableSteps; ++guard) {
+        row = step;
+        const uint8_t was = step;
+        const TableStep& s = t->steps[row];
+        const Command raw = lane == 2 ? s.cmd2 : s.cmd1;
+        const Command c = raw.cmd == Cmd::Z ? resolveRandom(ch, raw, lane) : raw;
+        if (c.cmd != Cmd::None) applyCommand(ch, c, true, lane);
+        wait = tableRowTicks(ch, row);
+        if (!v.tableOn) return;                           // the command stopped it
+        if (raw.cmd == Cmd::H && step != was) continue;   // hopped: that row plays now
+        if (v.tableHopped) { v.tableHopped = false; return; }   // a B took its hop (section 73)
+        if (step + 1 < kTableSteps) { ++step; return; }
+        switch (t->end) {
+            case TableEnd::Loop: step = 0; break;
+            case TableEnd::Hop:  step = uint8_t(std::clamp<int>(t->hopStep - 1, 0, 15)); break;
+            case TableEnd::Stop: v.tableOn = false; break;
+        }
+        return;
     }
 }
 
@@ -2210,7 +2230,9 @@ void Driver::tick(int ch)
     }
     // wave frames
     if (v.inst.type == InstrumentType::Wave && v.inst.frameAdvance) {
-        if (++v.frameCount >= v.inst.frameAdvance) {
+        // Section 94: the note's own tick belongs to the first frame.
+        if (v.frameFresh) { v.frameFresh = false; }
+        else if (++v.frameCount >= v.inst.frameAdvance) {
             v.frameCount = 0;
             const Wave* w = bank_ ? bank_->wave(v.waveSlot) : nullptr;
             if (w && w->frames.size() > 1) {
@@ -2233,6 +2255,7 @@ void Driver::tick(int ch)
     // With the pitch speed at Tick this tick is the pitch update: the vibrato
     // phase, a slide and a P bend move here rather than on the pitch clock.
     if (!v.pitchClockOn && (v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Wave
+                            || v.inst.type == InstrumentType::Kit
                             || (v.inst.type == InstrumentType::Noise && v.vibOn && v.vibDepth))
         && pitchSpeed(v) == PitchSpeed::Tick) pitchStep(ch, true);
     // pitch for this tick. The pitch clock writes the period whenever a pitch

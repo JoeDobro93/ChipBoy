@@ -108,49 +108,54 @@ The importer takes the **ROM's own version string** when one is supplied
 - **`R x y` where the version's interval is fifteen or more.** Before 9.2 the interval is `y + 1`
   ticks, so `R x F` would need sixteen, past ChipBoy's nibble. Fifteen is used, with a note.
 
-## 6. Where the two test songs stand
+## 6. Where the test songs stand
 
-The user's own saves, against their own ROMs, over eighty seconds, note-on for note-on:
+The user's own saves, against their own ROMs, over eighty seconds. Two rulers, because one is not
+enough: **note-ons**, ChipBoy's against the ROM's, and **agree**, the share of the time the two are
+sounding the same semitone, sampled every 2 ms in six second windows each with its own offset
+(`/root/lsdj/probe/agree.py`; §9 says why counting triggers alone misleads).
 
 | song | version | PU1 | PU2 | WAV | NOI |
 |---|---|---|---|---|---|
 | `SUNRISE` | 9.3.9 | **276 / 276** | **170 / 170** | 440 / 440 | **740 / 740** |
-| `CASTSHDW` | 9.2.L | **399 / 399** (run 399) | **177 / 176** (run 176) | 4264 / 2248 | 637 / 655 (run 260) |
-| `DELIVERY` | 9.2.L | **99 / 99** | **89 / 89** (run 89) | 5104 / 5735 | 1067 / 1031 (run 511) |
-| `SAMESONG` | 9.2.L | 225 / 224 | 160 / 159 | 1596 / 3073 | 1678 / 1708 (run 56) |
+| `CASTSHDW` | 9.2.L | **399 / 399**, 90% | **177 / 176**, 90% | 4264 / 3075, 40% | 637 / 655, 92% |
+| `DELIVERY` | 9.2.L | **99 / 99**, 67% | **89 / 89**, 75% | 5104 / 4209, 65% | 1067 / 1031, 90% |
+| `SAMESONG` | 9.2.L | 225 / 224, 85% | 160 / 159, **94%** | 1596 / 1587, 73% | 1678 / 1708, **94%** |
+| `READROOM` | 9.2.L | 577 / 487, 4% | 199 / 138, 5% | 12971 / 8650, 51% | 1032 / 3093, 5% |
 | `CLUCK` | 3.6.5 | 277 / 279 | 139 / 135 | 303 / 270 | 288 / 286 |
 | `BUS` | 3.6.5 | 67 / 49 | **307 / 307** | 22 / 22 | 476 / 404 |
 | `DISPATCH` | 3.6.5 | 128 / 131 | 96 / 82 | 346 / 376 | 213 / 216 |
-| `SPACE TI` | 8.4.4 | 359 / 299 | 846 / 797 | 1135 / 1151 | 437 / 373 |
+| `SPACE TI` | 8.4.4 | 359 / 299, 57% | 846 / 797, 39% | 1135 / 1136, 44% | 437 / 373, 81% |
 
-**Three songs from the user's 9.2.L save**, which is the format ChipBoy models directly, put the
-pulse channels where `SUNRISE` already was: `CASTSHDW`'s PU1 is 399 note-ons in a row at the
-period the ROM sounds and its PU2 176 of 177, and `DELIVERY`'s PU2 is 89 of 89. The noise channel
-is close behind -- a longest common run of 511 on `DELIVERY`, 260 on `CASTSHDW`.
+`SAMESONG`, `CASTSHDW` and `DELIVERY` are the three that the rounds behind §93-§97 were fixed
+against, and they agree with the ROM for most of their length now. What moved them:
 
-**The wave channel is the one left**, and it is not one error: ChipBoy triggers it too often on
-`SAMESONG` (3073 against 1596) and `DELIVERY` (5735 against 5104) and not often enough on
-`CASTSHDW` (2248 against 4264). On `SAMESONG` the first ten seconds are exact (197 against 197)
-and the rate doubles after about thirteen, and 268 of its triggers land within two milliseconds
-of the one before where the ROM has five in the whole song -- a frame loaded twice in one tick.
-That is a table-timing question (§64's three lanes), not a command's law, and it is the next
-thing to take up.
+- **`REPEAT` off the right byte** (§93). Every wave instrument in `SAMESONG` stores `REPEAT = F`,
+  which makes its frame run a one-shot; read off the synth byte it came through as zero and every
+  run looped for as long as the note held. 2866 wave note-ons became 1587 against the ROM's 1596.
+- **A table's `H` costing no tick** (§95). Every arpeggio in every song ran a fifth slow before
+  this. `SAMESONG`'s pulse channels went from 47% and 30% agreement to 85% and 94%.
+- **The kit `LENGTH` byte and `LOOP` bit** (§96) and **`P` on a kit** (§97), which is
+  `CASTSHDW`'s wave channel: it is kit drums from end to end, each hit tuned by a `P` in its cell.
+
+**What is still wrong, in the order it is worth taking up:**
+
+1. `CASTSHDW`'s **kit notes**: 1142 note-level hits on the ROM against 326, and the ones that do
+   play land on the ROM's period 77% of the time (43% before §97). ChipBoy is missing whole notes,
+   among them every one whose note byte names a sample one of the two kits does not have -- the
+   ROM plays the other kit's, the importer gives up on both.
+2. `DELIVERY` and `READROOM` **come apart part way through**: `DELIVERY` agrees on every channel
+   until about 50 s and on none after, `READROOM` never agrees on three channels at all. Both are
+   structure, not a command: something ends a phrase or a chain in the wrong place. `READROOM`'s
+   noise channel triples its note count (1032 against 3093), which is the clearer thread to pull.
+3. `SPACE TI` (8.4.4) starts at 20% and climbs to 98% by the end, which reads like a structural
+   difference early rather than a wrong law.
 
 (The wave column counts the ROM's note-ons once: LSDj triggers that channel twice, with a stale
 period and then the real one.) The three format-2 songs are from the *Computer Savvy* source
 files, written in LSDj 3.6.5 and read here on 3.6.8. `BUS`'s PU2 is 307 of 307 with a longest
 common run of 304; the rest is close in count and diverges in value, for the two reasons in §4
 and §5 -- the bend's phase at a note-on, and the noise table transpose before 4.0.4.
-
-`SUNRISE` is exact on three channels of four (the wave channel's swept drums differ only in the
-first update of each, matrix section 10.1). The other two are not, and they are the next round:
-the trigger *counts* are close on `SPACE TI` but the values diverge within a few notes, and
-the three 9.2.L songs' wave channels are. They want the same treatment `SUNRISE` had: diff the
-register streams and read the ROM where they disagree. `SAMESONG` also uses instrument finetune
-(byte 11) on four pulse instruments, which the importer drops with a note and the driver could
-carry (section 78 gives `F` the same law), and its pulse channels are the weakest of the three
-9.2.L songs -- a longest run of 13 and 2 where `CASTSHDW` manages 399 and 176 -- so it is using
-something the other two are not.
 
 ## 7. Still to measure on the new ROMs
 
@@ -159,11 +164,17 @@ Fourteen releases arrived after the first sweep and fill every gap that mattered
 **8.9.3** and **8.9.5** (17), **9.0.0** and **9.0.1** (18), **9.1.0** (19), **9.1.C** (21), and
 **3.6.5**, which is the version the *Computer Savvy* songs were actually written in.
 
-The models do not yet know about formats 8, 9, 10, 17, 18, 19 and 21: each falls through to the
-nearest model below, which for 17-21 is the 8.8.6 model. The changelog puts the whole noise
-overhaul at 9.0 -- the musical map, `V` on the noise channel, `C` behaving like the pulses', the
-removal of `S MODE` -- so the 8.8.6 model is very likely wrong for formats 18, 19 and 21. That is
-the next sweep, and the battery to run it with is already written.
+Formats 9 and 10 have their own model now (`kLsdj75`, LSDj 7.5.4 - 8.0.0): the wave
+instrument's `REPEAT` moved from byte 3 to byte 2 at 7.5.4, measured on every ROM from 6.8.2 up
+(COMMANDS_AND_TEMPO §93), and a model cannot straddle that. `kLsdj68` keeps formats 7 and 8.
+
+The models still do not know about formats 17, 18, 19 and 21: each falls through to the 8.8.6
+model. Two things are already known to be wrong there -- the synth number moves from byte 2 to
+byte 3 at format 17 (§93's table), and a table `ENV` hop stops costing a tick at 8.9.3 -- and the
+changelog puts the whole noise overhaul at 9.0: the musical map, `V` on the noise channel, `C`
+behaving like the pulses', the removal of `S MODE`. So a model for 17-21 wants the noise map
+measured on 9.0.0 first. That is the next sweep, and the battery to run it with is already
+written.
 
 ## 8. What is still assumed rather than measured
 
@@ -175,6 +186,8 @@ Everything the previous round listed as a missing ROM has arrived, so only these
   command to 4.7.3 behavior" reverted the whole of `R`. Now testable on the 8.8.6 ROM.
 - **The noise table transpose before 4.0.4** (§5), and **the bend's phase at a note-on** (§4),
   which is the same question as the matrix's §10.1.
+- **Byte 3 of a wave instrument's low nibble**, and **byte 3 of a kit instrument**: neither
+  changes anything a trace can hear (§93, §96), and both hold a value in real songs.
 
 ## 9. How this was measured
 
@@ -192,3 +205,10 @@ Two traps worth repeating, because both produced a confident wrong answer first:
 - **A note with no instrument column does not sound from 4.0.4.** A probe that relies on one
   measures the *next pass* of the phrase instead, which reads as a tempo that is half what it
   should be. Give every probe note an instrument column.
+- **Counting triggers is not a comparison** on a channel that retriggers inside a note. A kit
+  plays by rewriting wave RAM once a wave cycle and both sides trigger on every rewrite, so the
+  count is a count of refills. `/root/lsdj/probe/agree.py` samples the pitch both sides are
+  sounding every 2 ms instead and reports the share of the time they agree, in six second windows
+  each with its own offset (the ROM's playback drifts a few ms against ChipBoy's over a song);
+  `runs.py` groups the triggers into notes and compares those. Both are better rulers than
+  `cmp.py`'s longest common run, which one row's difference in timing can halve.

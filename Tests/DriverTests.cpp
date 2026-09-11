@@ -2612,10 +2612,11 @@ TEST_CASE("a wave instrument's frame run takes its length and loops from its own
     r.block({ Rig::on(2, 60, 100) }, 480);
     std::vector<int> frames{ int(r.drv.view(2).frame) };
     for (int k = 0; k < 6; ++k) { r.block({}, 480); frames.push_back(int(r.drv.view(2).frame)); }
-    // view().frame is the frame plus one. The run walks its four steps once --
-    // frames 0, 5, 10, 15 -- and then repeats from step 2.
-    CHECK(frames[0] == 5 + 1); CHECK(frames[1] == 10 + 1); CHECK(frames[2] == 15 + 1);
-    CHECK(frames[3] == 10 + 1); CHECK(frames[4] == 15 + 1); CHECK(frames[5] == 10 + 1);
+    // view().frame is the frame plus one. The note's own tick belongs to frame 0
+    // (section 94); the run then walks its four steps -- frames 0, 5, 10, 15 --
+    // and repeats from step 2.
+    CHECK(frames[0] == 0 + 1); CHECK(frames[1] == 5 + 1); CHECK(frames[2] == 10 + 1);
+    CHECK(frames[3] == 15 + 1); CHECK(frames[4] == 10 + 1); CHECK(frames[5] == 15 + 1);
 }
 
 TEST_CASE("PingPong turns at the run's loop step, not at its first", "[driver][wave]")
@@ -2867,4 +2868,95 @@ TEST_CASE("R x = 8 is a fast retrigger every y + 1 pitch clocks, and R 8 F stops
         for (const auto& x : w) if (x.addr == 0xFF23 && (x.value & 0x80)) ++n;
         CHECK(n <= 1);                                     // it stopped
     }
+}
+
+
+TEST_CASE("a wave note-on loads its frame once, not once per table lane", "[driver][wave]")
+{
+    // The user's SAMESONG drives every wave instrument from a table of F rows.
+    // The ROM loads the frame once a tick; ChipBoy was loading it twice on the
+    // tick a note starts, which is 268 extra triggers over that song.
+    auto r = std::make_unique<Rig>();
+    r->tickHz = 100.0;
+    for (auto& src : r->song.noteSource) src = tracker::NoteSource::Tracker;
+    auto& w = r->bank.waves[0];
+    w.used = true; w.frames.clear();
+    for (int f = 0; f < 16; ++f) { bank::Frame fr; fr.s.fill(uint8_t(f)); w.frames.push_back(fr); }
+    Table t; t.used = true; t.name = "F rows";
+    for (int k = 0; k < 16; ++k) t.steps[size_t(k)].cmd1 = { Cmd::F, 1, 0, 0 };   // including row 0
+    r->bank.tables[7] = t;
+    auto& i = r->bank.instruments[1];
+    i = Instrument::defaults(InstrumentType::Wave, "GUITR");
+    i.used = true; i.wave = 1; i.frameLength = 4; i.frameAdvance = 0; i.table = 8;
+    ChannelParams p; p.instrument = 2; r->drv.setParams(2, p);
+    // One tick a block, so a block is a tick: count the triggers in each.
+    std::vector<int> perTick;
+    auto w0 = r->block({ cellOn(2, 60, 2) }, 480);
+    int n = 0; for (const auto& x : w0) if (x.addr == 0xFF1E && (x.value & 0x80)) ++n;
+    perTick.push_back(n);
+    for (int k = 0; k < 6; ++k) {
+        auto wk = r->block({}, 480);
+        n = 0; for (const auto& x : wk) if (x.addr == 0xFF1E && (x.value & 0x80)) ++n;
+        perTick.push_back(n);
+    }
+    INFO("triggers per tick: " << perTick[0] << " " << perTick[1] << " " << perTick[2] << " "
+         << perTick[3] << " " << perTick[4] << " " << perTick[5] << " " << perTick[6]);
+    for (int k : perTick) CHECK(k <= 1);
+}
+
+
+TEST_CASE("a table's H costs no tick", "[driver][commands]")
+{
+    // Section 95: four transposes with an H on row 4. The cycle is four ticks,
+    // not five, because the row the hop lands on plays in that same tick --
+    // which is what makes an LSDj arpeggio keep time.
+    Rig r;
+    r.tickHz = 100.0;
+    Table t; t.used = true; t.name = "Arp";
+    const int tsp[4] = { -3, 0, 5, 9 };
+    for (int i = 0; i < 4; ++i) { t.steps[size_t(i)].hasTranspose = true; t.steps[size_t(i)].transpose = int8_t(tsp[i]); }
+    t.steps[4].cmd1 = { Cmd::H, 0, 0, 0 };                 // hop back to row 0, for ever
+    r.bank.tables[7] = t;
+    r.bank.instruments[0].table = 8; r.bank.instruments[0].vib.depth = 0;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    r.block({ Rig::on(0, 60, 100) }, 480);
+    std::vector<int> notes;
+    for (int i = 0; i < 8; ++i) { r.block({}, 480); notes.push_back(int(r.drv.view(0).period)); }
+    const int want[8] = { 60, 65, 69, 57, 60, 65, 69, 57 };
+    for (int i = 0; i < 8; ++i) { INFO("tick " << i); CHECK(notes[size_t(i)] == note(want[i])); }
+    r.bank.instruments[0].table = 0;
+}
+
+TEST_CASE("P on a kit moves the period register, not the note", "[driver][kit]")
+{
+    // Section 97: the byte is period-register units -- three of them once under
+    // STEP, one a pitch clock under FAST.
+    Rig r;
+    r.tickHz = 100.0;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    auto& k = r.bank.kits[0];
+    k = bank::Kit{};
+    k.used = true; k.name = "Drums"; k.period = 1865;
+    bank::KitSample s; s.note = 60; s.data.assign(1024, uint8_t(8)); s.loopPoint = 0;
+    k.samples.push_back(s);
+    auto& i = r.bank.instruments[1];
+    i = Instrument::defaults(InstrumentType::Kit, "Drums");
+    i.used = true; i.kit = 1; i.pitchSpeed = PitchSpeed::Step;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(2, p);
+    // The view has no period for a kit, so read the register the block wrote.
+    int lo = 0, hi = 0;
+    auto per = [&](const std::vector<RegWrite>& w) {
+        for (const auto& x : w) { if (x.addr == 0xFF1D) lo = x.value; else if (x.addr == 0xFF1E) hi = x.value & 7; }
+        return (hi << 8) | lo;
+    };
+    const int base = per(r.block({ cellOn(2, 60, 2) }, 480));
+    CHECK(base > 0);
+    NoteEvent e = cellOn(2, 60, 2); e.cmd1 = { Cmd::P, 2, 0, 0 };
+    CHECK(per(r.block({ e }, 480)) == base + 6);            // three units a unit, once
+    CHECK(per(r.block({}, 480)) == base + 6);               // and no bend after it
+    i.pitchSpeed = PitchSpeed::Fast;
+    NoteEvent e2 = cellOn(2, 60, 2); e2.cmd1 = { Cmd::P, 2, 0, 0 };
+    const int after = per(r.block({ e2 }, 480));
+    CHECK(after > base);                                    // a unit a pitch clock
+    CHECK(per(r.block({}, 480)) > after);                   // and it keeps going
 }

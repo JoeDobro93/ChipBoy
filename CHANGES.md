@@ -26,6 +26,42 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-11 — The wave run's REPEAT, a table's free hop, and how a kit is played
+
+Five measured corrections, from the three songs in the user's 9.2.L save. The middle one moves
+every song there is.
+
+1. **`REPEAT` is a byte of its own** (spec section 93). Section 65 read the frame run's loop point
+   out of the low nibble of the wave instrument's *synth* byte. Both bytes 2 and 3 carry the synth
+   number in their high nibble and LSDj keeps them in step, so the wrong choice reads a plausible
+   synth and a loop point of zero. Measured on every ROM from 6.8.2 up: the synth is byte 2 to
+   format 15 and byte 3 from 17, while `REPEAT` is byte 3 on formats 7-8 and byte 2 from 9. Every
+   wave instrument in `SAMESONG` stores `REPEAT = F`, which makes the run a one-shot; read wrong
+   it looped for as long as the note held. 2866 wave note-ons became 1587 against the ROM's 1596.
+   Formats 9-10 are their own model now (`kLsdj75`), because the byte moves inside the old one's
+   range.
+2. **The tick a note starts on belongs to the first frame** (section 94). ChipBoy fired the
+   note-on inside the tick and then ran the tick's frame counter, so a one-tick run loaded two
+   frames a hundred microseconds apart -- 268 times over `SAMESONG`.
+3. **A table's `H` costs no tick** (section 95). LSDj plays the row it hops to in the same tick;
+   ChipBoy spent a tick on the row carrying the `H`, so a four row arpeggio took five ticks and
+   ran against the beat. Measured identical on 3.6.5, 8.4.4, 9.2.L and 9.3.9. This is the one that
+   matters most: `SAMESONG`'s pulse channels went from agreeing with the ROM 47% and 30% of the
+   time to 85% and 94%.
+4. **A kit has one `LENGTH`, in byte 11, and a `LOOP` bit in byte 5** (section 96). The importer
+   read byte 3 as kit A's length; byte 3 does nothing a note can hear. `CASTSHDW`'s `DSAMP` is two
+   frames long and looping, and came through as three frames that stopped.
+5. **A kit reads `PITCH` from byte 5, and its `P` is period-register units** (section 97) -- one a
+   pitch clock under FAST and DRUM, one a tick under TICK, three times the byte once under STEP.
+   ChipBoy held that a kit's period "is never bent between ticks" and played every hit at the
+   instrument's `SPEED`. `CASTSHDW` is kit drums from end to end, each tuned by a `P` in its cell;
+   its kit notes now land on the ROM's period 77% of the time against 43%.
+
+**Where that leaves the songs** is `docs/LSDJ_VERSIONS.md` section 6, which also gains a second
+ruler: the share of the time the two are sounding the same semitone, sampled every 2 ms. Counting
+triggers is not a comparison on a channel that retriggers inside a note -- a kit plays by
+rewriting wave RAM once a wave cycle and both sides trigger on every rewrite.
+
 ### 2026-09-11 — F on the wave channel advances the frame, and a table's commands know their channel
 
 Two more from `SAMESONG`, and the second is the bigger one.

@@ -432,6 +432,15 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 20 (§93-§97), from the three songs in the user's 9.2.L save: the wave run's **`REPEAT`**
+  comes off its own byte (byte 3 on formats 7-8, byte 2 from 9, while the synth moves to byte 3 at
+  17), so formats 9-10 get their own model `kLsdj75`; the tick a note starts on belongs to its
+  **first frame**; a table's **`H` costs no tick**, which is what an LSDj arpeggio's timing rests
+  on; a kit has **one `LENGTH`, in byte 11**, and a **`LOOP` bit** in byte 5; and a kit reads
+  **`PITCH` from byte 5** with `P` in period-register units. `SAMESONG`'s pulse channels went from
+  agreeing with the ROM 47% and 30% of the time to 85% and 94%. `docs/LSDJ_VERSIONS.md` §6 has
+  every song's numbers and what is still wrong.
+
 ## Open issues
 
 - ~~Table rows: LSDj measured two ticks per row.~~ Closed (§44): re-measured on a 9.3.9
@@ -477,6 +486,8 @@ design-log section the change touches. Update this file at the end of every chan
   `lsdjref_sav.py` writes **version byte 0**, so LSDj reads its songs with the legacy
   command table (no `B`) and the legacy noise map — its measurements stand, but a 9.x
   song needs 0x16 and the B-shifted letter table.
+- **The kit instrument's byte 3** and **a wave instrument's byte 3 low nibble** hold values in
+  real songs and change nothing a trace can hear (§93, §96). Neither is mapped, neither is noted.
 - **The kit `DIST` modes** are the one gap left of the four. Narrowed to **byte 13's bit 6** of
   the kit instrument, which changes the mixed stream with its length unchanged, while bytes 4,
   5, 6, 7, 10, 12, 14, 15 and the top bits of 2 and 9 do not (5 and 6 are length, 10 an offset
@@ -495,27 +506,38 @@ design-log section the change touches. Update this file at the end of every chan
 
 - **Fourteen more ROMs are in `/root/lsdj/roms/`** and every format gap is filled: 7.2.3 (format
   8), 7.5.4 (9), 7.9.9 and 8.0.0 (10), 8.2.0 (11), 8.8.6 (15), 8.9.3 and 8.9.5 (17), 9.0.0 and
-  9.0.1 (18), 9.1.0 (19), 9.1.C (21), 3.6.5. **The models do not know formats 8, 9, 10, 17, 18,
-  19 or 21**: each falls through to the nearest below, which for 17-21 is the 8.8.6 model, and the
-  changelog puts the whole noise overhaul at 9.0, so that is very likely wrong. Run the batteries
-  in `/root/lsdj/probe/vs_*.py` on them -- they take a version name and need nothing else.
-- **The wave channel on the 9.2.L songs** is the one channel left (`docs/LSDJ_VERSIONS.md` §6).
-  It is not one error: ChipBoy over-triggers `SAMESONG` and `DELIVERY` and under-triggers
-  `CASTSHDW`. On `SAMESONG` the first ten seconds are **exact** (197 against 197), the rate
-  doubles after about thirteen, and 268 triggers land within two milliseconds of the one before
-  where the ROM has five in the whole song -- a frame loaded twice in one tick. Look at §64's
-  three table lanes and when a table's row fires relative to the note-on, not at a command's law.
-- **`SAMESONG`'s pulse channels** are much weaker than the other two 9.2.L songs (runs of 13 and
-  2 against `CASTSHDW`'s 399 and 176), so it uses something they do not. Worth finding.
+  9.0.1 (18), 9.1.0 (19), 9.1.C (21), 3.6.5. Formats 9 and 10 have their own model now
+  (`kLsdj75`, §93). **The models still do not know formats 17, 18, 19 or 21**: each falls through
+  to the 8.8.6 model, and two things are already known wrong there -- the synth number moves to
+  byte 3 at format 17, a table ENV hop stops costing a tick at 8.9.3 -- while the changelog puts
+  the whole noise overhaul at 9.0. A model for 17-21 wants the noise map measured on 9.0.0 first.
+  Run the batteries in `/root/lsdj/probe/vs_*.py` on them -- they take a version name and need
+  nothing else.
+- **`CASTSHDW`'s kit notes** are the largest thing left on the 9.2.L songs: 1142 note-level hits
+  on the ROM against ChipBoy's 326, though the ones that do play now land on the ROM's period 77%
+  of the time (§97). Whole notes are missing, among them every one whose note byte names a sample
+  one of its two kits does not have -- the ROM plays the other kit's, `kitNote()` gives up on both
+  and returns silence. Start there; it is a few lines.
+- **`DELIVERY` and `READROOM` come apart part way through.** `DELIVERY` agrees with the ROM on
+  every channel until about 50 s and on none after; `READROOM` never agrees on three channels at
+  all and its noise channel triples the ROM's note count (1032 against 3093). Neither is a
+  command's law -- something ends a phrase or a chain in the wrong place. `READROOM`'s noise is
+  the clearer thread. Compare with `/root/lsdj/probe/agreew.py`, which shows the windows.
 - **The bend's phase at a note-on** is the largest thing left on the old songs and on SUNRISE's
   wave channel alike (`docs/LSDJ_VERSIONS.md` section 4 item 3, matrix section 10.1): the ROM's
   note-on writes a period already part of the way into a running `P`, ChipBoy writes the plain
   note. One question, two symptoms. Then **the noise table transpose before 4.0.4**, whose law is
   not worked out.
-- **`SPACE TI` (8.4.4) and `SAMESONG` (9.2.L)** still diverge; the numbers are in
-  `docs/LSDJ_VERSIONS.md` section 6. `SAMESONG` also uses instrument finetune (byte 11) on four
-  pulse instruments, which the importer drops with a note and the driver could carry (section 78
-  gives `F` the same law).
+- **`SPACE TI` (8.4.4)** starts at about 20% agreement and climbs to 98% by the end, which reads
+  like a structural difference early rather than a wrong law. `SAMESONG` also uses instrument
+  finetune (byte 11) on four pulse instruments, which the importer drops with a note and the
+  driver could carry (section 78 gives `F` the same law).
+- **Two rulers now**, both in `/root/lsdj/probe/`: `agree.py` / `agreew.py` sample the pitch both
+  sides are sounding every 2 ms and report the share of the time they agree, in six second windows
+  each with its own offset; `runs.py` groups triggers into notes first. Counting triggers alone
+  misleads on any channel that retriggers inside a note -- a kit plays by rewriting wave RAM once
+  a wave cycle and both sides trigger on every rewrite. `song.py SAV IDX ROM TAG [sec]` is the
+  whole pipeline for one song: extract, trace the ROM, import, trace ChipBoy, compare.
 - **Test saves now in the container**: `/root/lsdj/csavvy[123].sav` are the *Computer Savvy*
   source files (25 songs, all format 2, LSDj 3.6.5), plus `lsdj8_4_4.sav` and `lsdj9_2_L.sav`.
   `/root/lsdj/probe/cmpn.py` is the comparison that counts noise by its **clock** rather than its

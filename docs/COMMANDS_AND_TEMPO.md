@@ -2592,3 +2592,119 @@ shared between kinds keeps the old behaviour, because it cannot have both readin
 
 On `SAMESONG` this is the difference between 47 wave note-ons in the first ten seconds and the
 ROM's 197 -- which ChipBoy now matches exactly.
+
+## 93. `REPEAT` is a byte of its own, and it is not the synth byte
+
+§65 read the wave instrument's run loop point out of the **low nibble of the synth byte** -- byte 2
+on the formats it was measured on, byte 3 from 9.x, whichever `waveByte` names. That is wrong on
+both edges, because *both* bytes carry the synth number in their high nibble and LSDj keeps them in
+step, so a wrong choice reads a plausible synth and a loop point of zero.
+
+Measured on every ROM from 6.8.2 up, with the two bytes given different synths and their frames
+tagged so the wave RAM names the frame that is loaded:
+
+| formats | 7-8 | 9-15 | 17-22 |
+|---|---|---|---|
+| synth number | byte 2, high nibble | byte 2, high nibble | byte 3, high nibble |
+| `REPEAT` | byte 3, low nibble | byte 2, low nibble | byte 2, low nibble |
+
+The nibble's meaning is §65's and unchanged -- the loop covers the last `16 - REPEAT` steps of the
+run -- and `REPEAT = F` is the case that matters: the loop is then the run's **last step alone**, so
+the run plays through once and the frame never changes again. Measured on 9.2.L with `PLAY = LOOP`
+and the frames tagged:
+
+| `LENGTH` | `REPEAT` | frames loaded |
+|---|---|---|
+| 4 | 0 | 0 5 10 15 0 5 10 15 ... |
+| 4 | E | 0 5 10 15 10 15 10 15 ... |
+| 4 | F | 0 5 10 15 |
+| 8 | C | 0 2 4 6 9 11 13 15 9 11 13 15 ... |
+| 8 | F | 0 2 4 6 9 11 13 15 |
+
+**Every wave instrument in the user's `SAMESONG` stores `REPEAT = F`**, so every wave run there is
+a one-shot; read off byte 3 it came through as 0 and each run looped for as long as the note held.
+With §91's one-tick `SPEED` that is a trigger a tick: 2866 wave note-ons against the ROM's 1596.
+
+The split at format 9 means LSDj 6.8.2-7.2.3 and 7.5.4-8.0.0 no longer share a model: the format
+byte tells them apart (7-8 against 9-10), so `kLsdj68` keeps formats 7-8 and `kLsdj75` takes 9-10.
+
+## 94. The tick a note starts on belongs to the first frame
+
+The frame run advances every `SPEED + 4` ticks (§91) counted from the note-on -- and the tick the
+note-on happens in is the **first frame's own tick**, not a tick the counter has already spent.
+Measured on 9.2.L with `SPEED = FD` (a tick a frame): the note-on loads frame 0 and the *next* tick
+loads the second frame; with `SPEED = 00` the second frame comes four ticks later, not three.
+
+ChipBoy fired the note-on inside the tick and then ran the tick's own counter, so a one-tick run
+loaded two frames in the same tick -- two triggers a hundred microseconds apart, 268 of them over
+`SAMESONG`. The voice now carries `frameFresh`, set by the note-on and spent by that tick.
+
+## 95. A table's `H` costs no tick
+
+`H` inside a table hops the lane (§34, §64), and ChipBoy spent a tick on the row that carried it:
+the row hopped to played on the *next* tick. LSDj plays it **now**. Measured on 3.6.5, 8.4.4,
+9.2.L and 9.3.9 with a four row arpeggio -- transposes `FD 00 05 09` on rows 0-3 and `H 00` on
+row 4 -- reading the period register:
+
+```
+0.026:1798  0.045:1837  0.065:1890  0.084:1923  0.104:1798  0.123:1837 ...
+```
+
+Four values, 19.4 ms apart, and the cycle closes in **four** ticks on every version. ChipBoy's
+took five, the extra one being row 4 itself, so every arpeggio in a real song ran a fifth slow and
+against the beat -- on the user's `SAMESONG` the pulse channels agreed with the ROM 47% and 30% of
+the time before this and 85% and 94% after.
+
+The lane now re-reads at the row it lands on, inside the same tick, with the volume lane's guard
+against a ring of hops that never reaches a row to play. A hop whose count is spent (`H x y` with
+`x` hops taken) leaves the step alone and the lane moves on to the next row, which it did not
+before.
+
+## 96. A kit instrument has one `LENGTH`, in byte 11, and a `LOOP` bit in byte 5
+
+The importer read byte 3 as kit A's length and byte 11 as kit B's. Measured on 9.2.L by counting
+the wave RAM refills a kit note makes -- LSDj rewrites the sixteen bytes once a wave cycle, so the
+count is the sample's length in 32 nibble frames -- with one kit pointed at a slot the ROM does not
+have so only the other sounds:
+
+| bytes set | frames played |
+|---|---|
+| nothing | 56 (the whole sample) |
+| byte 3 = 04, either kit or both | 56 |
+| byte 11 = 04 | 4 |
+| byte 11 = 08 | 8 |
+| byte 13 = 08 | 48 |
+
+**Byte 11 is the instrument's one LENGTH** and cuts both kits; byte 3 does nothing a note can hear,
+and byte 13 is an offset into the sample (already noted at import, still not mapped).
+
+Byte 5 carries **LOOP** in bit 5: with `20` set, a four frame sample kept refilling for the whole
+1.6 s traced rather than stopping after four. It is `KitLoop::Loop` now, which repeats the sample --
+cut to LENGTH -- until the note ends.
+
+The user's `CASTSHDW` is the case: its `DSAMP` stores `LENGTH = 02` with `LOOP` on, and ChipBoy
+read the length off byte 3 as three frames without the loop, so every kit note stopped after a
+tenth of the sound the ROM makes -- 2395 wave writes against the ROM's 4264.
+
+## 97. A kit reads `PITCH` from byte 5, and its `P` works in period-register units
+
+ChipBoy held that "a kit's period is its sample rate, read by the streaming timer, so it is never
+bent between ticks", and gave a kit no `PITCH` setting of its own. Both are wrong. Measured on
+9.2.L with a looping kit note and one `P` in the cell, reading the period register (base 1865):
+
+| byte 5 | `P 02` | `P F0` |
+|---|---|---|
+| `00` FAST | 1867, 1869, 1871, 1873 ... (+2 a pitch clock) | 1849, 1833, 1817 ... (−16 a clock) |
+| `40` DRUM | the same as FAST | the same as FAST |
+| `10` TICK | 1867, 1869, 1871 ... (+2 a **tick**) | −16 a tick |
+| `80` STEP | 1871, and no more | 1817, and no more |
+
+So a kit takes `PITCH` out of byte 5 exactly as a pulse or wave instrument does (§34's
+`pitchSpeedOf`), and `P`'s byte is a number of **period-register units**, not semitones: one unit a
+pitch clock under FAST and DRUM, one a tick under TICK -- not §88's four -- and **three times the
+byte, once**, under STEP.
+
+The user's `CASTSHDW` drives its kit drums this way: `DSAMP` is `PITCH = STEP` and every phrase row
+carries a different `P`, which is what tunes each hit. ChipBoy played all of them at the
+instrument's `SPEED` and nothing else; with this the kit notes it does play land on the ROM's
+period 77% of the time against 43%.

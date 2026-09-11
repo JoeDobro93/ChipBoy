@@ -90,6 +90,11 @@ struct LsdjModel {
     PitchLaw       pitchLaw;
     VibratoLaw     vibratoLaw;
     int            waveByte;         ///< the instrument byte holding synth << 4 | frame: 2 before 9.x, 3 after (section 60)
+    /// The instrument byte whose **low nibble** is the frame run's `REPEAT`
+    /// (section 93). It is not always the byte the synth number lives in:
+    /// formats 7 and 8 keep it in byte 3 and every format from 9 in byte 2,
+    /// while the synth moves the other way at format 17.
+    int            waveRepeatByte;
     int            waveOctave;       ///< semitones added to a wave note (section 45)
     bool           pu2Transpose;     ///< instrument byte 2 applies on PU2 (section 49)
     int            noisePitchByte;   ///< the noise instrument byte holding PITCH (0 FREE, else SAFE); -1 when the version has none (section 86)

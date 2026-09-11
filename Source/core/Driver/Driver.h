@@ -307,6 +307,10 @@ private:
         /// `frameStep` walks the run section 65 builds, not the wave's frames:
         /// `frameIdx` is the frame that step lands on, kept for the writers.
         uint8_t  waveSlot = 1, frameStep = 0, frameIdx = 0, frameCount = 0; int8_t frameDir = 1;
+        /// Section 94: the tick a note starts on is the first frame's own tick,
+        /// so the run does not advance on it -- the note-on happens inside that
+        /// tick and the counter would otherwise spend it twice.
+        bool     frameFresh = false;
         std::array<uint8_t, 16> ram{};
         bool     ramValid = false;
         // kit

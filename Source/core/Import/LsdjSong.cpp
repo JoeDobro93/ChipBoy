@@ -425,7 +425,10 @@ struct Reader {
                 // nibble is LSDj's LOOP POS, not a start frame (section 65).
                 const uint8_t wb = b[size_t(m.waveByte == 3 ? 3 : 2)];
                 const int synth = wb >> 4;
-                const int loopPos = wb & 15;
+                // Section 93: REPEAT is a byte of its own. Both bytes carry the
+                // synth in their high nibble, so reading the run's loop point
+                // off the synth byte was right only for formats 9 to 15.
+                const int loopPos = b[size_t(m.waveRepeatByte == 3 ? 3 : 2)] & 15;
                 o.wave = uint8_t(waveSlotFor(synth));
                 o.pitchSpeed = m.pitchLaw == PitchLaw::Register ? bank::PitchSpeed::Drum : pitchSpeedOf(b[5]);
                 o.pitchRegisterUnits = m.pitchLaw == PitchLaw::Register;      // section 88
@@ -490,7 +493,10 @@ struct Reader {
     {
         if (kitSlots >= bank::kKitSlots) { notes.add("kit instrument " + name + ": ChipBoy's 32 kit slots are full; skipped"); return false; }
         KitUse use;
-        use.kitA = b[2] & 0x3F; use.kitB = b[9] & 0x3F; use.lenA = b[3]; use.lenB = b[11];
+        // Section 96: LENGTH is byte 11 and there is only one of it -- it cuts
+        // both kits, in 32 nibble frames, 0 meaning the whole sample. Byte 3,
+        // which this read as kit A's length, is not a length at all.
+        use.kitA = b[2] & 0x3F; use.kitB = b[9] & 0x3F; use.lenA = b[11]; use.lenB = b[11];
         const int count = int(kits->size());
         if (use.kitA >= count && use.kitB >= count) { notes.add("kit instrument " + name + " names kits " + hex2(use.kitA) + " and " + hex2(use.kitB) + ", which this ROM does not have; skipped"); return false; }
         use.kitSlot = ++kitSlots;
@@ -499,12 +505,20 @@ struct Reader {
         k.used = true;
         k.name = (use.kitA < count ? (*kits)[size_t(use.kitA)].name : std::string("?")) + (use.kitB < count && use.kitB != use.kitA ? "+" + (*kits)[size_t(use.kitB)].name : std::string());
         k.period = kitPeriodOfSpeed(b[8]);
-        k.loop = bank::KitLoop::Once;
-        o.kit = uint8_t(use.kitSlot); o.kitLoop = bank::KitLoop::Once; o.waveLevel = 3;
+        // Section 96: bit 5 of byte 5 is LOOP, and it repeats the sample -- cut
+        // to LENGTH -- for as long as the note holds.
+        const bank::KitLoop loop = (b[5] & 0x20) ? bank::KitLoop::Loop : bank::KitLoop::Once;
+        k.loop = loop;
+        o.kit = uint8_t(use.kitSlot); o.kitLoop = loop; o.waveLevel = 3;
+        // Section 97: a kit reads `PITCH` out of byte 5 like every other
+        // instrument, and `P` then moves its period **register** by the whole
+        // byte -- once a pitch clock under FAST and DRUM, once a tick under
+        // TICK, and three times the byte once under STEP.
+        o.pitchSpeed = pitchSpeedOf(b[5]);
         o.env.mode = bank::EnvMode::Chip;
         kitUse[i] = use;
         if (b[12] || b[13]) notes.add("kit instrument " + name + ": the sample offsets (" + hex2(b[12]) + ", " + hex2(b[13]) + ") are not mapped; samples play from their start");
-        if (b[5] & 0x40) notes.add("kit instrument " + name + ": a loop or half-speed flag in byte 5 is not mapped");
+        if (b[5] & 0x40) notes.add("kit instrument " + name + ": a half-speed flag in byte 5 is not mapped");
         return true;
     }
     /// The MIDI note a kit note byte plays on: the sample (or the two,

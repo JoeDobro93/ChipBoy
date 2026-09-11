@@ -195,7 +195,7 @@ TEST_CASE("the default codes expand to the default wave and instrument", "[lsdj]
 TEST_CASE("a model is chosen by format, by ROM title, by name, or the newest", "[lsdj]")
 {
     int n = 0; const auto* const* models = lsdjModels(n);
-    REQUIRE(n == 10);
+    REQUIRE(n == 11);
     CHECK(std::string(lsdjLatestModel().name).find("9.4.2") != std::string::npos);
     CHECK(lsdjModelForFormat(22) == models[0]);
     CHECK(lsdjModelForFormat(15)->formatVersion == 15);          // 8.8.6, measured
@@ -609,9 +609,11 @@ TEST_CASE("the song's own transpose is read and added to every chain row", "[lsd
     CHECK(told);
 }
 
-TEST_CASE("the wave instrument's synth and frame come from byte 2 before 9", "[lsdj]")
+TEST_CASE("the wave instrument's synth comes from byte 2 before 9 and REPEAT from its own", "[lsdj]")
 {
-    // Section 60: byte 2 up to format 15, byte 3 from 22.
+    // Section 60: the synth is byte 2 up to format 15 and byte 3 from 17.
+    // Section 93: REPEAT is byte 2's low nibble on both, and byte 3's on
+    // formats 7 and 8 -- it is not the synth byte's.
     auto song = blankSong(11);
     song[kInstAlloc + 0] = 1;
     uint8_t* i0 = song.data() + kInst;
@@ -636,8 +638,14 @@ TEST_CASE("the wave instrument's synth and frame come from byte 2 before 9", "[l
     song[kFormatVersionAt] = 22;
     REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes));
     const auto& w22 = bank->instruments[0];
-    CHECK(int(w22.frameLoopStep) == 0);
+    CHECK(int(w22.frameLoopStep) == 5);                                    // REPEAT still byte 2 (section 93)
     CHECK(int(bank->waves[size_t(w22.wave - 1)].frames[0].s[0]) == 4);      // synth 4, from byte 3
+    // Formats 7 and 8 take the synth from byte 2 and REPEAT from byte 3.
+    song[kFormatVersionAt] = 7;
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(7), *bank, *out, sum, notes));
+    const auto& w7 = bank->instruments[0];
+    CHECK(int(w7.frameLoopStep) == 0);                                     // byte 3's low nibble is 0
+    CHECK(int(bank->waves[size_t(w7.wave - 1)].frames[0].s[0]) == 2);      // synth 2, from byte 2
 }
 
 TEST_CASE("an H that ends a phrase becomes the phrase's length", "[lsdj]")
@@ -777,10 +785,11 @@ TEST_CASE("a kit instrument takes its samples from the ROM beside the save", "[l
     CHECK(kits[1].samples.size() == 1); CHECK(kits[1].samples[0].nibbles == tri);
     CHECK(kitPeriodOfSpeed(0x00) == 1865); CHECK(kitPeriodOfSpeed(0xD0) == 1817); CHECK(kitPeriodOfSpeed(0x40) == 1929);
 
-    // A song with one kit instrument: kit A = 00 cut to 2 frames, kit B = 01 whole, speed D0.
+    // A song with one kit instrument: kit A = 00, kit B = 01, both cut to two
+    // frames by the instrument's one LENGTH (byte 11, section 96), speed D0.
     auto song = blankSong(22);
     song[kInstAlloc + 0] = 1;
-    uint8_t* i0 = song.data() + kInst; i0[0] = 2; i0[1] = 0xA8; i0[2] = 0x00; i0[3] = 2; i0[7] = 3; i0[8] = 0xD0; i0[9] = 0x01; i0[11] = 0;
+    uint8_t* i0 = song.data() + kInst; i0[0] = 2; i0[1] = 0xA8; i0[2] = 0x00; i0[3] = 0; i0[7] = 3; i0[8] = 0xD0; i0[9] = 0x01; i0[11] = 2;
     std::memcpy(song.data() + kNames, "DRUMS", 5);
     song[kPhraseAlloc] |= 1;
     song[kNotes + 0] = 0x10; song[kPhraseInst + 0] = 0;     // kit A sample 1: the ramp, two frames of it
@@ -801,8 +810,18 @@ TEST_CASE("a kit instrument takes its samples from the ROM beside the save", "[l
     REQUIRE(kit.samples.size() == 3);
     CHECK(kit.samples[0].data.size() == 64);                // two frames of the 128-nibble ramp
     CHECK(kit.samples[0].data[17] == 1);
-    CHECK(kit.samples[1].data == flat);
-    CHECK(kit.samples[2].data == tri);
+    CHECK(kit.samples[1].data == flat);                     // already two frames
+    CHECK(kit.samples[2].data.size() == 64);                // and the 96-nibble triangle is cut too
+    CHECK(inst.kitLoop == bank::KitLoop::Once);             // byte 5 has no LOOP bit
+    {   // Section 96: bit 5 of byte 5 is LOOP.
+        i0[5] = 0x20;
+        auto b2 = std::make_unique<bank::Bank>(); auto o2 = std::make_unique<tracker::Song>();
+        ImportSummary s2; ImportNotes n2;
+        REQUIRE(importSong(song.data(), song.size(), lsdjLatestModel(), *b2, *o2, s2, n2, &kits));
+        CHECK(b2->instruments[0].kitLoop == bank::KitLoop::Loop);
+        CHECK(b2->kits[0].loop == bank::KitLoop::Loop);
+        i0[5] = 0;
+    }
     const auto* p = out->phrase(1);
     REQUIRE(p != nullptr);
     CHECK(p->cells[0].note == 36); CHECK(p->cells[4].note == 37); CHECK(p->cells[8].note == 38); CHECK(p->cells[12].note == 36);
