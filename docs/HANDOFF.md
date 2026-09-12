@@ -92,9 +92,9 @@ design-log section the change touches. Update this file at the end of every chan
   kit instrument's two kits (byte 2 for the note's high digit, byte 9 for the low), their
   lengths (bytes 3, 11), the speed byte as a signed offset on period 1865. `LsdjKits`
   reads the banks; `importSong` takes them; the file side loads the ROM beside the save,
-  preferring the one whose version reads the song's format. Not decoded: the DIST modes
-  for notes that play both kits (summed and clipped instead, noted), offsets, loop and
-  half-speed flags. All eight songs of the kit save convert and play.
+  preferring the one whose version reads the song's format. Not decoded then: offsets, loop
+  and half-speed flags, and the DIST modes -- those are §117 now. All eight songs of the kit
+  save convert and play.
 - Round 13: **every stable LSDj release measured, the older formats imported, S on noise, project
   files** (`COMMANDS_AND_TEMPO.md` §55–§56, `plan-lsdj-import.md` §1a, §3, §4b; CHANGES 2026-09-10).
   The user's archive of 31 stable releases (3.1.5 – 9.4.2) sits unpacked at `/root/lsdj/archive/`
@@ -568,6 +568,13 @@ design-log section the change touches. Update this file at the end of every chan
   **`PITCH` from byte 5** with `P` in period-register units. `SAMESONG`'s pulse channels went from
   agreeing with the ROM 47% and 30% of the time to 85% and 94%. `docs/LSDJ_VERSIONS.md` §6 has
   every song's numbers and what is still wrong.
+- Round 24 (§117): the kit **`DIST` modes**, read off the ROM rather than guessed. Byte 10 of a
+  kit instrument is the **page of the mixing table** LSDj looks the two samples up in -- `D0` to
+  `D3` -- and each of the four tables is a function of the two nibbles' sum, so each is a curve.
+  All four are in `Source/core/Import/LsdjKitDist.h` in closed form, checked entry for entry
+  against the 47 ROMs in the archive and end to end against the ROM's streamed wave RAM. The list
+  moved at 9.2 (`CLIP/SHAPE/SHAP2/WRAP` became `HARD/SOFT/FOLD/WRAP`), so the model carries the
+  pair. The old sum had no floor, so a quiet passage wrapped round into noise; that is gone.
 
 ## Open issues
 
@@ -627,13 +634,6 @@ design-log section the change touches. Update this file at the end of every chan
   of `SAMESONG`'s phrase 0B are identical to the ROM's, measured in the register traces, so the
   sound is right and this is a drawing convention. `Grids.cpp` puts sample 0 at the left with 0 at
   the bottom; matching LSDj is a one-line change if the user wants the editors to agree.
-- **The kit `DIST` modes** are the one gap left of the four. Narrowed to **byte 13's bit 6** of
-  the kit instrument, which changes the mixed stream with its length unchanged, while bytes 4,
-  5, 6, 7, 10, 12, 14, 15 and the top bits of 2 and 9 do not (5 and 6 are length, 10 an offset
-  into the sample -- a high nibble of `b` starts past the end and plays silence). Reading the
-  modes off wants a kit-stream decoder in `/root/lsdj/` that can line the mix up against each
-  sample nibble by nibble; two samples at once are summed and clipped until then. 61 of the 69
-  kit instruments in the user's saves play two kits at once, so it is worth a round.
 - The chord rate defaults to LSDj's one step a tick; the demo songs' arpeggios still run
   at that speed. Slowing them is a content decision (`make_songs.py` would need a
   `chordRate` field).

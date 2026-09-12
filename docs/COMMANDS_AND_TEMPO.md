@@ -3341,3 +3341,54 @@ SNARE     ROM  AAA 999 8888 777 666 5555 444 3333 222 111
 What is left is the stage *lengths*, which the importer rounds to whole ticks (`envTicks`), so a
 stage can be a tick longer or shorter than the ROM's. The level sequence is right; the total is
 within a tick.
+
+## 117. A kit instrument's `DIST`: the four ways LSDj sums two samples
+
+A kit note plays **two** samples at once -- its high digit picks one from the kit in instrument
+byte 2, its low digit one from the kit in byte 9 (§96) -- and `DIST` says how the two are added.
+ChipBoy sums the pair when it imports the note, so the mode has to be exact there.
+
+**What the ROM does.** Measured on 9.2.L: the streamer copies the first kit's sixteen bytes into
+the scratch buffer at `$FFA0` (bank 0, `$0420`), then calls a routine it *generates* in WRAM at
+`$D480` which mixes the second kit in nibble by nibble. That routine is a lookup, not arithmetic:
+
+```
+a = the buffer byte (the high digit's sample)   ahi, alo
+b = the second kit's byte (the low digit's)     bhi, blo
+out = T[(bhi << 4) | ahi] << 4  |  T[(alo << 4) | blo]
+```
+
+`T` is one of four 256-byte tables LSDj copies out of ROM into `$D000`, `$D100`, `$D200`, `$D300`
+at boot, and **instrument byte 10 holds that page** -- it is literally `D0`, `D1`, `D2` or `D3`
+(bank 0, `$04BA`: `ld a,[$C4F9]; ld h,a; call $D480`, and `$C4F9` is byte 10 copied through
+`$C0DA`). Any other value points the lookup at unrelated memory; the ROM then streams noise, which
+nothing can reproduce, so ChipBoy reads such a byte as `HARD` and says so in the import notes.
+`F0` behaves as `D0` only because echo RAM mirrors it.
+
+**The four curves.** Every table is a function of `r + c` alone, so each is a curve over the sum
+`s = a + b - 8` of the two nibbles (both 0-15, 8 being silence). Checked entry for entry against
+all 47 ROMs in the archive:
+
+| page | 9.2 and later | 9.1.C and earlier | what it does to `s` |
+|------|---------------|-------------------|---------------------|
+| `D0` | `HARD`  | `CLIP`  | `clamp(s, 0, 15)` |
+| `D1` | `SOFT`  | `SHAPE` | 9.2: half slope outside a knee (below); before: the mirror |
+| `D2` | `FOLD`  | `SHAP2` | 9.2: the mirror, `-s` below 0 and `30 - s` above 15; before: twice that slope |
+| `D3` | `WRAP`  | `WRAP`  | `(s - 8) & 15` -- the sum wraps round |
+
+So the meaning of the stored byte moved at 9.2: a save written by 9.1 that says `D1` means the
+mirror, and the same byte in a 9.2 save means the soft clip. The model carries the pair (§56).
+
+`SOFT` is symmetric about `s = 8`: with `k = |s - 8|`, the offset is `k` while `k <= 4`, then
+`min(7, (k + 4) / 2)`, and 8 from `k = 13` up; the result is `8 +/- offset`, clamped.
+
+`SHAP2` is the mirror with twice the slope outside the range: `-2s` below 0 and `15 - 2(s - 15)`
+above 15, clamped. Its ROM table has **one** entry that the formula does not give -- `r = 12,
+c = 15` reads 5 where the fold would give 7, and the transposed entry reads 7 -- so ChipBoy
+reproduces that entry as well, which is why the nibble order above matters: the high nibble of each
+byte indexes the second kit's sample by the row and the first kit's by the column, and the low
+nibble the other way round.
+
+**What ChipBoy does.** The importer builds one ChipBoy sample per note byte, so the mix happens
+once, at import, with the model's mode: `kitMix` in `Source/core/Import/LsdjKitDist.h`. Nothing in
+the engine changes -- a ChipBoy kit sample is still plain nibbles.

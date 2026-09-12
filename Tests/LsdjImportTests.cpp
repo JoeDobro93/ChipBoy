@@ -806,6 +806,105 @@ TEST_CASE("a real save, when one is given, imports every song without a fault", 
     CHECK(imported == int(idx.files.size()));
 }
 
+TEST_CASE("a kit instrument's DIST curve sums its two samples", "[lsdj]")
+{
+    using namespace chipboy::lsdj;
+    // Section 117: the four curves, at the points that tell them apart. `s` is
+    // the sum of the two nibbles less 8; both operands are 0-15.
+    SECTION("the curves") {
+        for (int a = 0; a <= 15; ++a) for (int b = 0; b <= 15; ++b) {
+            const int s = a + b - 8;
+            CHECK(kitDistEntry(KitDist::Clip, a, b) == std::clamp(s, 0, 15));
+            CHECK(kitDistEntry(KitDist::Wrap, a, b) == (s & 15));
+            CHECK(kitDistEntry(KitDist::Fold, a, b) == (s < 0 ? -s : (s > 15 ? 30 - s : s)));
+        }
+        // SOFT: a knee at four either side of 8, then half the slope.
+        CHECK(kitDistEntry(KitDist::Soft, 8, 8) == 8);
+        CHECK(kitDistEntry(KitDist::Soft, 8, 12) == 12);        // s = 12, still 1:1
+        CHECK(kitDistEntry(KitDist::Soft, 8, 13) == 12);        // s = 13, the slope halves
+        CHECK(kitDistEntry(KitDist::Soft, 8, 14) == 13);
+        CHECK(kitDistEntry(KitDist::Soft, 15, 15) == 15);       // s = 22, clamped
+        CHECK(kitDistEntry(KitDist::Soft, 8, 4) == 4);          // s = 4
+        CHECK(kitDistEntry(KitDist::Soft, 8, 3) == 4);          // s = 3
+        CHECK(kitDistEntry(KitDist::Soft, 8, 0) == 2);          // s = 0
+        CHECK(kitDistEntry(KitDist::Soft, 0, 0) == 0);          // s = -8, clamped
+        // SHAP2 before 9.2: the mirror at twice the slope, and the ROM's one
+        // entry that the mirror does not give.
+        CHECK(kitDistEntry(KitDist::Fold2, 8, 8) == 8);
+        CHECK(kitDistEntry(KitDist::Fold2, 0, 7) == 2);         // s = -1 -> 2
+        CHECK(kitDistEntry(KitDist::Fold2, 0, 0) == 15);        // s = -8 -> 16, clamped
+        CHECK(kitDistEntry(KitDist::Fold2, 15, 10) == 11);      // s = 17 -> 15 - 4
+        CHECK(kitDistEntry(KitDist::Fold2, 12, 15) == 5);       // the odd one
+        CHECK(kitDistEntry(KitDist::Fold2, 15, 12) == 7);       // its transpose, as the mirror gives
+        // The low nibble of a byte indexes the table the other way round, which
+        // is why the two above differ.
+        CHECK(kitMix(KitDist::Fold2, 0, 15, 12) == 5);          // even: row is the low digit's sample
+        CHECK(kitMix(KitDist::Fold2, 1, 15, 12) == 7);
+    }
+    SECTION("a mixed kit note") {
+        // One ROM bank per kit: kit 00 a ramp, kit 01 a flat 15.
+        std::vector<uint8_t> rom(2 * 0x4000, 0);
+        auto bankAt = [&](int b, const char* name, const std::vector<uint8_t>& sample) {
+            uint8_t* p = rom.data() + size_t(b) * 0x4000;
+            p[0] = 0x60; p[1] = 0x40;
+            std::memcpy(p + 0x52, name, 6);
+            std::memcpy(p + 0x22, "S01", 3);
+            for (size_t k = 0; k < sample.size(); k += 2) p[0x60 + k / 2] = uint8_t((sample[k] << 4) | sample[k + 1]);
+            const uint16_t end = uint16_t(0x4060 + sample.size() / 2);
+            p[2] = uint8_t(end & 0xFF); p[3] = uint8_t(end >> 8);
+        };
+        std::vector<uint8_t> ramp(64), full(64, 15);
+        for (size_t k = 0; k < ramp.size(); ++k) ramp[k] = uint8_t((k + 1) % 16);
+        bankAt(0, "RAMPKT", ramp);
+        bankAt(1, "FULLKT", full);
+        const auto kits = readKits(rom.data(), rom.size());
+        REQUIRE(kits.size() == 2);
+
+        auto mixed = [&](uint8_t distByte, int format, const LsdjModel& model) {
+            auto song = blankSong(format);
+            song[kInstAlloc + 0] = 1;
+            uint8_t* i0 = song.data() + kInst;
+            i0[0] = 2; i0[1] = 0xF0; i0[2] = 0x00; i0[7] = 3; i0[9] = 0x01; i0[10] = distByte;
+            song[kPhraseAlloc] |= 1;
+            song[kNotes + 0] = 0x11; song[kPhraseInst + 0] = 0;   // sample 1 of each kit
+            song[kChainPhrases + 0] = 0;
+            song[kRows + 0] = 0xFF; song[kRows + 1] = 0xFF; song[kRows + 2] = 0; song[kRows + 3] = 0xFF;
+            auto b = std::make_unique<bank::Bank>(); auto o = std::make_unique<tracker::Song>();
+            ImportSummary sum; ImportNotes notes;
+            REQUIRE(importSong(song.data(), song.size(), model, *b, *o, sum, notes, &kits));
+            REQUIRE(b->kits[0].samples.size() == 1);
+            return b->kits[0].samples[0].data;
+        };
+        // Sample k of the ramp is (k + 1) % 16 against a flat 15, so s = a + 7.
+        const auto hard = mixed(0xD0, 22, lsdjLatestModel());
+        REQUIRE(hard.size() == 64);
+        CHECK(hard[0] == 8);            // a = 1, s = 8
+        CHECK(hard[8] == 15);           // a = 9, s = 16 -> clamped
+        CHECK(hard[14] == 15);          // a = 15, s = 22 -> clamped
+        const auto wrap = mixed(0xD3, 22, lsdjLatestModel());
+        CHECK(wrap[0] == 8);
+        CHECK(wrap[8] == 0);            // s = 16 wraps
+        CHECK(wrap[14] == 6);           // s = 22
+        const auto fold = mixed(0xD2, 22, lsdjLatestModel());
+        CHECK(fold[0] == 8);
+        CHECK(fold[8] == 14);           // s = 16 mirrors to 14
+        CHECK(fold[14] == 8);           // s = 22
+        const auto soft = mixed(0xD1, 22, lsdjLatestModel());
+        CHECK(soft[0] == 8);
+        CHECK(soft[7] == 13);           // a = 8, s = 15
+        CHECK(soft[14] == 15);          // s = 22
+        // Before 9.2 the same byte names the curve one place up the list: D1 is
+        // the mirror and D2 the steep one.
+        const LsdjModel* old = lsdjModelNamed("LSDj 8.4.0 - 8.5.1 (format 11)");
+        REQUIRE(old != nullptr);
+        CHECK(mixed(0xD1, 11, *old) == fold);
+        const auto steep = mixed(0xD2, 11, *old);
+        CHECK(steep[0] == 8);
+        CHECK(steep[8] == 13);          // s = 16 -> 15 - 2
+        CHECK(steep[14] == 1);          // s = 22 -> 15 - 14
+    }
+}
+
 TEST_CASE("a kit instrument takes its samples from the ROM beside the save", "[lsdj]")
 {
     // A ROM of two kit banks, built here: bank 0 (kit 00) "TESTKT" with two

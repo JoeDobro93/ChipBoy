@@ -26,6 +26,38 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-12 — A kit note's two samples are summed the way LSDj sums them
+
+`docs/COMMANDS_AND_TEMPO.md` §117, the fourth of the user's list. A kit note plays one sample from
+each of the instrument's two kits, and the importer summed the pair with `min(15, a + b - 8)` and
+warned that "LSDj's DIST modes are not modelled". Two things were wrong with that: it had no floor,
+so a sum below 8 went negative, became a nibble of 250-odd when it was stored, and turned quiet
+passages into noise -- 4069 of the 16992 nibbles of `SAMESONG`'s `AIR`+`AIR` note, a quarter of the
+sample, which is the raspberry the user heard; and LSDj has four curves, not one.
+
+**Measured, not guessed.** SameBoy traced the ROM down to the code: bank 0 `$0420` copies the first
+kit's sixteen bytes into `$FFA0`, `$04BA` loads the mixing table's page out of `$C4F9` and calls a
+routine LSDj *generates* in WRAM at `$D480`, and that routine is a pair of lookups per byte. The
+four tables are copied out of ROM to `$D000`-`$D300` at boot, and instrument **byte 10 is the
+page**: `D0`, `D1`, `D2`, `D3`. Every table turned out to be a function of the sum of the two
+nibbles, so each is a curve; all four are reproduced in closed form in
+`Source/core/Import/LsdjKitDist.h` and checked entry for entry against the 47 ROMs in the archive,
+then end to end against the ROM's own streamed wave RAM for all four modes.
+
+**The list moved at 9.2.** Before: `CLIP`, `SHAPE` (the mirror), `SHAP2` (the mirror at twice the
+slope), `WRAP`. From 9.2: `HARD`, `SOFT` (a new soft clip), `FOLD` (the old `SHAPE`), `WRAP`. So the
+same stored byte means different curves either side of that line, and the model carries the pair.
+
+**Departure from the spec:** `SHAP2`'s ROM table has one entry the fold does not give -- row 12,
+column 15 reads 5 where the mirror gives 7, and the transposed entry reads 7. ChipBoy reproduces it,
+because the mixer indexes the table one way round for a byte's high nibble and the other way round
+for its low one, so the two are audibly different. Considered leaving it symmetric; rejected, since
+the point of the exercise is that the result is identical.
+
+A byte 10 that names no table (anything but `D0`-`D3`) makes the ROM read unrelated memory and
+stream noise. Nothing can reproduce that, so ChipBoy clips and says so in the import notes -- and
+only for a note that actually plays two samples.
+
 ### 2026-09-11 — The shaped envelope steps on the pitch clock
 
 `docs/COMMANDS_AND_TEMPO.md` §116, the third of the user's list. `SAMESONG` warned eight times that

@@ -54,6 +54,8 @@ double gbPeriod(int midi) { return 2048.0 - 131072.0 / (440.0 * std::pow(2.0, (m
 struct KitUse {
     int kitSlot = 0;                 ///< the ChipBoy kit slot, 1-32
     int kitA = -1, kitB = -1;        ///< LSDj kit numbers
+    KitDist dist = KitDist::Clip;    ///< how a note's two samples are summed (section 117)
+    int distByte = -1;               ///< byte 10 when it names no table of LSDj's, else -1
     int lenA = 0, lenB = 0;          ///< frames of 32 samples, 0 whole
     std::map<int, uint8_t> noteOf;   ///< LSDj note byte -> the MIDI note its sample sits on
 };
@@ -527,14 +529,20 @@ struct Reader {
         // TICK, and three times the byte once under STEP.
         o.pitchSpeed = pitchSpeedOf(b[5]);
         o.env.mode = bank::EnvMode::Chip;
+        // Section 117: byte 10 is `DIST` -- the page of the table LSDj mixes a
+        // note's two samples through, `D0` to `D3`, and which curve each page
+        // names depends on the version.
+        const int distPage = int(b[10]) - int(kKitDistFirstPage);
+        if (distPage >= 0 && distPage < kKitDistPages && m.kitDist != nullptr) use.dist = m.kitDist[distPage];
+        else use.distByte = int(b[10]);
         kitUse[i] = use;
         if (b[12] || b[13]) notes.add("kit instrument " + name + ": the sample offsets (" + hex2(b[12]) + ", " + hex2(b[13]) + ") are not mapped; samples play from their start");
         if (b[5] & 0x40) notes.add("kit instrument " + name + ": a half-speed flag in byte 5 is not mapped");
         return true;
     }
-    /// The MIDI note a kit note byte plays on: the sample (or the two,
-    /// summed and clipped) is added to the instrument's ChipBoy kit the first
-    /// time the byte is seen.
+    /// The MIDI note a kit note byte plays on: the sample -- or the two, mixed
+    /// through the instrument's DIST curve (section 117) -- is added to the
+    /// instrument's ChipBoy kit the first time the byte is seen.
     uint8_t kitNote(int inst, int noteByte, const std::string& where)
     {
         auto it = kitUse.find(inst);
@@ -554,14 +562,16 @@ struct Reader {
         bank::KitSample out;
         auto cut = [](std::vector<uint8_t> v, int frames) { if (frames > 0 && size_t(frames) * 32 < v.size()) v.resize(size_t(frames) * 32); return v; };
         if (a && b) {
-            // Both kits at once: LSDj sums them under its DIST setting; the
-            // sum clipped to 15 stands in for every mode (plan section 4a).
+            // Both kits at once, through the instrument's DIST curve (section
+            // 117). A sample the other outlives reads as silence, which is 8.
             const auto da = cut(a->nibbles, use.lenA), db = cut(b->nibbles, use.lenB);
             const size_t n = std::max(da.size(), db.size());
             out.data.resize(n);
-            for (size_t k = 0; k < n; ++k) out.data[k] = uint8_t(std::min(15, (k < da.size() ? int(da[k]) : 8) + (k < db.size() ? int(db[k]) : 8) - 8));
+            for (size_t k = 0; k < n; ++k)
+                out.data[k] = kitMix(use.dist, int(k), k < da.size() ? int(da[k]) : 8, k < db.size() ? int(db[k]) : 8);
             out.name = a->name + "+" + b->name;
-            notes.add("kit note " + hex2(noteByte) + " plays two samples at once: they are summed and clipped, LSDj's DIST modes are not modelled");
+            if (use.distByte >= 0)
+                notes.add("kit instrument " + hex2(inst) + ": DIST is " + hex2(use.distByte) + ", which names none of LSDj's four mixing tables -- the ROM reads unrelated memory there and streams noise; notes that play two samples are clipped instead");
         } else if (a || b) {
             const auto* one = a ? a : b;
             out.data = cut(one->nibbles, a ? use.lenA : use.lenB);

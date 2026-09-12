@@ -46,6 +46,8 @@
 
 #include <cstdint>
 
+#include "core/Import/LsdjKitDist.h"
+
 namespace chipboy::lsdj {
 
 /// How a noise note becomes NR43 (section 56).
@@ -118,6 +120,12 @@ struct LsdjModel {
     bool           tableGrooveWalks; ///< a table's G walks the groove (9.x) or holds its first step (section 63)
     bool           envHopCostsTick;  ///< a table ENV hop spends a tick before 8.9.3, none after (section 64)
     bool           measured;         ///< traced on that ROM, or assumed from another model
+    /// What a kit instrument's byte 10 means (section 117): the curve each of
+    /// the four table pages `D0`-`D3` names. The list moved at 9.2 -- `D1` was
+    /// the mirror and became the soft clip, `D2` the steep mirror and became
+    /// the mirror -- so a save is read with the list of the version that wrote
+    /// it. [4], indexed by byte 10 minus `D0`.
+    const KitDist* kitDist;
 };
 
 /// Every model, newest first. `count` receives how many.
