@@ -432,6 +432,18 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 41 (§132, closing §129's open half-step), from the user's **`READROOM`**: **`WAV` phrase 17,
+  instrument `1D`** stopped on the ROM and sustained in ChipBoy -- its `PLAY` is **ONCE**, and one
+  step past the end of the run the ROM writes a wave of sixteen `77` bytes (a flat line at mid-scale,
+  silent). Sweeping `PLAY` confirmed §65's table otherwise. **`PU1` phrase 05, instrument `09`**
+  stepped its envelope early: `envSegmentLevel` **rounded** along the ramp where LSDj holds each level
+  for its whole step (ROM 75 and 150 ms after the note, ChipBoy 36 and 114), and the **importer never
+  wrote §121's fine byte**, so every stage was still rounded to a whole tick. Both now within 2 ms of
+  the ROM. And the run's **frame ladder is an 8.8 accumulator** -- `(frames * 256 - 1) / L` truncated,
+  running total truncated too -- which matches every run length measured (2, 3, 4, 5, 8, 10, 12, 15)
+  and closes what §129 left open. Three tests. Note for future reports: LSDj's wave `LENGTH` is
+  ChipBoy's **Frames**; ChipBoy's **Length** is the `NRx1` counter, which LSDj's wave instruments do
+  not use.
 - Round 40 (§131, correcting §129 and §130): the user reported the wave channel **worse** after round
   39 -- "not getting to the vibrato or the E commands in the nested table". §130's lane model was
   wrong. An `A` inside a table row starts a **second, nested run** beside the instrument's own (its

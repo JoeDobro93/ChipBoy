@@ -360,10 +360,15 @@ inline int waveRun(int n, int frameLength, uint8_t* out)
     int len = frameLength <= 0 || frameLength > frames ? frames : frameLength;
     if (len < 1) len = 1;
     for (int i = 0; i < len; ++i) {
-        // Section 129: the run's steps are spread across the frames' own span,
-        // `frames - 1`, so the last step lands exactly on the last frame. The
-        // old `i * frames` was a frame too wide and needed a clamp.
-        const int f = len == 1 ? 0 : (i * (frames - 1)) / (len - 1);
+        // Section 132, closing section 129's open half-step: the ladder is an
+        // 8.8 accumulator. LSDj divides the frame count by the run's steps once
+        // -- `(frames * 256 - 1) / (len - 1)`, truncated -- and truncates the
+        // running total too, which is not the same as any single division: at a
+        // run of ten it gives 0 1 3 4 6 7 9 11 12 14 15 where `15 k / L` gives
+        // 10 and 13 for the eighth and tenth. Every run length measured on the
+        // ROM, 2 to 15, matches this exactly.
+        const int inc = len == 1 ? 0 : (frames * 256 - 1) / (len - 1);
+        const int f = (i * inc) / 256;
         out[i] = uint8_t(f < frames - 1 ? f : frames - 1);
     }
     return len;

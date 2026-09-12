@@ -3859,11 +3859,11 @@ ChipBoy called `setFrameStep(ch, 0, live)`, which wrote frame 0 immediately: an 
 bottom of the wave on every `W`, and the reason ChipBoy's frames in those phrases sat at the start
 of the run where the ROM's were spread through it.
 
-**Not settled**, and left as it is: the ladder's rounding at half steps for `L` of 10 and 12. `W 2A`
-measured `1 3 4 6 7 9 11 12` where `15 * k / L` truncated gives `1 3 4 6 7 9 10 12`, and `W 2C`
-measured `1 2 3 5 6 7 9 10` against `1 2 3 5 6 7 8 10` -- one index high, at one step, in both. Every
-`L` up to 8 matches exactly. It is a half-frame in a randomised command; a rule wants more than two
-disagreeing cases behind it.
+**Not settled here**, and closed by §132: the ladder's rounding at half steps for `L` of 10 and 12.
+`W 2A` measured `1 3 4 6 7 9 11 12` where `15 * k / L` truncated gives `1 3 4 6 7 9 10 12`, and
+`W 2C` measured `1 2 3 5 6 7 9 10` against `1 2 3 5 6 7 8 10` -- one index high, at one step, in
+both. Every `L` up to 8 matched. §132 has the rule: the ladder is an 8.8 accumulator, not a
+division.
 
 **`U` keeps its own letter.** ChipBoy's `W` on the wave channel is the wave slot, which LSDj has no
 command for, so the run came in as `U` and stays there: folding them together would need one letter
@@ -3970,3 +3970,80 @@ note starting from the instrument's own frame 0 and the run walking inside the g
 climbed a group at a time. What is left between the two is the `Z`'s own dice and one write: the ROM
 loads the instrument's frame and then the table's `F` reloads it a few hundred microseconds later,
 where ChipBoy folds both into the note's one burst (§3).
+
+## 132. A run that plays **once** goes quiet; an envelope level is held, not rounded; and the frame ladder is an accumulator
+
+Four things, from the user's `READROOM` -- a simpler song than `SAMESONG` and easier to hear one
+fault at a time.
+
+### The wave run's `ONCE` writes silence
+
+`READROOM`'s phrase `17` on `WAV` plays instrument `1D`, whose `PLAY` is **ONCE**. On the ROM the
+sound stops at the end of the run; in ChipBoy it sustained. Sweeping `PLAY` on that instrument, all
+four modes read off the wave-RAM loads:
+
+```
+PLAY 0  MANUAL     30                                  loads one frame and holds
+PLAY 1  ONCE       30 31 33 34 36 37 39 3B 3C 3E 3F  FLAT
+PLAY 2  LOOP       30 31 33 34 36 37 39 3B 3C 3E 3F  33 34 36 …   back to the loop step
+PLAY 3  PING-PONG  30 31 33 34 36 37 39 3B 3C 3E 3F  3E 3C 3B …   and back down
+```
+
+§65's table of the modes is right. What was missing is the `FLAT`: one step past the end of a `ONCE`
+run the ROM writes a wave of **sixteen `77` bytes** -- every nibble 7, a flat line at mid-scale, so
+the channel is silent without the DAC going off or the level changing. ChipBoy clamped the run to its
+last step and held a real waveform, which is the note that would not stop. It now writes the same
+flat frame, once, when the run would step past its end.
+
+### A shaped envelope holds each level for its whole step
+
+`READROOM`'s phrase `05` on `PU1` plays instrument `09`, whose envelope walks `5` down to `0` at
+speed 10 -- a level every 27 pitch clocks, 75.4 ms. The ROM steps at **75** and **150** ms after the
+note; ChipBoy stepped at **36** and **114**.
+
+The 36 is half a step. `envSegmentLevel` interpolated along the ramp and **rounded**, so a falling
+segment reached the next level down when the ramp was half way to it. LSDj holds a level until the
+ramp has travelled a whole one. The interpolation is now **truncated** toward the level it started
+from, which makes the sampled ramp identical to the ROM's stepping. §27's rounding was ChipBoy's own
+choice and had nothing measured behind it.
+
+The second difference was the stage's length. §121 gave `bank::Envelope` a fine byte beside each
+stage's tick count, and the driver reads it -- but the **importer never wrote one**, so every stage
+was still rounded to a whole tick. Instrument `09`'s 376.9 ms attack became 25 ticks (383.4 ms) and
+every level after the first slid late. The importer now carries the fraction, which is what §121 said
+it would.
+
+```
+                      note   1st    2nd    3rd    4th    5th
+ROM                     0     75    150    225    300    375
+ChipBoy, before         0     36    114    192    270    348
+ChipBoy, after          0     73    151    ...           within 2 ms throughout
+```
+
+### The frame ladder is an 8.8 accumulator
+
+§129 left the run's ladder unresolved for `L` of 10 and 12, where `15 * k / L` truncated was one
+frame low at one step. `READROOM`'s instrument `1D` is another `L = 10` and measures the same
+`0 1 3 4 6 7 9 11 12 14 15`, so the disagreement is real and not a stray reading.
+
+The rule is that LSDj does not divide per step. It divides **once** -- `(frames * 256 - 1) / L`,
+truncated, an 8.8 increment -- and then truncates the running total as well, which is not the same
+thing:
+
+```
+L = 10   increment (16 * 256 - 1) / 10 = 409      409 * k / 256 floored
+         0  1  3  4  6  7  9  11  12  14  15      the ROM's, exactly
+15 k / L 0  1  3  4  6  7  9  10  12  13  15      one low at the eighth and tenth
+```
+
+Every run length read off the ROM -- 2, 3, 4, 5, 8, 10, 12, 15 -- matches the accumulator exactly,
+including the ones `15 k / L` already got right. With it, `READROOM`'s phrase `17` plays the ROM's
+eleven frames and its flat frame, in order, on every note.
+
+### A note on the two `LENGTH`s
+
+LSDj's wave instrument screen calls the run's length `LENGTH`, stored as `15 - L` in byte 10's low
+nibble -- instrument `1D`'s `05` is the `A` the editor shows. ChipBoy calls that **Frames** (it counts
+frames, `L + 1`, so it reads 11) and keeps **Length** for the note's own length counter, `NRx1`,
+which LSDj's wave instruments do not use. Setting ChipBoy's Length to `0A` therefore does nothing for
+this instrument, which is what the user found; the run's `PLAY` is what stops the sound.

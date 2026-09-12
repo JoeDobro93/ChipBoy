@@ -266,6 +266,9 @@ private:
         uint16_t nestWait[3] = { 0, 0, 0 };
         uint8_t  nestHopLeft[2] = { 0, 0 }, nestHopFrom[2] = { 0xFF, 0xFF };
         bool     nestOn = false, nestVolOn = true, nestJustStarted = false;
+        /// Section 132: a `PLAY = ONCE` run has already written its flat
+        /// silencing frame, so it is not written again every tick.
+        bool     frameSilenced = false;
         bool     volLaneOn = false;                   ///< the volume lane ends at its first empty row (section 64)
         uint16_t tableRun = 0;                        ///< counts this channel's table runs (section 32)
         uint16_t tableWait = 0;                       ///< ticks left of lane 1's row

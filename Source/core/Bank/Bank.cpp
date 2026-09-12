@@ -19,7 +19,11 @@ int envSegmentLevel(int from, int to, int ticks, int t, EnvCurve curve)
         case EnvCurve::Linear: break;
     }
     const int64_t d = int64_t(to) - int64_t(from);
-    const int64_t v = (d * num * 2 + (d >= 0 ? den : -den)) / (den * 2);   // round half away from zero
+    // Section 132: **truncated**, not rounded. LSDj holds each level for its
+    // whole step and changes when the ramp has travelled a full level; rounding
+    // put every transition half a step early -- `READROOM`'s instrument 09
+    // stepped at 36 ms where the ROM steps at 75.
+    const int64_t v = d * num / den;
     return int(int64_t(from) + v);
 }
 

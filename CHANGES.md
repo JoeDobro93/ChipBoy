@@ -26,6 +26,40 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-12 — A wave run that plays once goes quiet, and an envelope level is held rather than rounded
+
+`docs/COMMANDS_AND_TEMPO.md` §132, closing §129's open half-step. From the user's `READROOM`.
+
+**`WAV` phrase 17, instrument `1D`: the sound stopped on the ROM and sustained in ChipBoy.** Its
+`PLAY` is **ONCE**, and one step past the end of the run the ROM writes a wave of sixteen `77` bytes
+-- every nibble 7, a flat line at mid-scale -- so the channel goes silent with no DAC or level change
+to show for it. ChipBoy clamped the run to its last step and held a real waveform. Sweeping `PLAY`
+confirmed §65's table otherwise: `0` loads one frame and holds, `2` returns to the loop step, `3`
+reverses. Only `ONCE` writes the flat frame, and ChipBoy now writes it once, when the run would step
+past its end.
+
+**`PU1` phrase 05, instrument `09`: the envelope stepped early.** Two causes. `envSegmentLevel`
+interpolated along the ramp and **rounded**, so a falling segment reached the next level down half a
+step early -- the ROM steps at 75 and 150 ms after the note, ChipBoy at 36 and 114. LSDj holds each
+level until the ramp has travelled a whole one, so the interpolation is now truncated toward the
+level it starts from; §27's rounding was ChipBoy's own choice with nothing measured behind it. And
+§121 gave `bank::Envelope` a fine byte beside each stage's tick count, and the driver reads it, but
+the **importer never wrote one** -- every stage was still rounded to a whole tick, stretching this
+instrument's 376.9 ms attack to 383.4 and sliding every level after the first. The importer now
+carries the fraction. Both steps are within 2 ms of the ROM's.
+
+**The frame ladder is an 8.8 accumulator, which closes §129.** `READROOM`'s instrument `1D` is a
+second run of ten and measures the same `0 1 3 4 6 7 9 11 12 14 15` that §129 could not explain.
+LSDj does not divide per step: it divides once -- `(frames * 256 - 1) / L`, truncated -- and
+truncates the running total as well. Every run length read off the ROM (2, 3, 4, 5, 8, 10, 12, 15)
+matches exactly. `READROOM`'s phrase 17 now plays the ROM's eleven frames and its flat frame, in
+order, on every note.
+
+**Not a bug:** LSDj's wave `LENGTH` and ChipBoy's `Length` are different fields. LSDj's is the run's
+length, stored as `15 - L`; ChipBoy calls that **Frames** and keeps **Length** for the note's own
+`NRx1` counter, which LSDj's wave instruments do not use. Setting ChipBoy's Length to `0A` therefore
+does nothing here, which is what the user found.
+
 ### 2026-09-12 — The nested table runs beside its parent; `W x 0` keeps the length; a bare note steps nothing
 
 `docs/COMMANDS_AND_TEMPO.md` §131, correcting §129 and §130. The user reported the wave channel

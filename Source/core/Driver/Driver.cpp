@@ -791,7 +791,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
             // sounds, drawn or not, because the bank is one flat table (section 103).
             const Wave* w = bank_ ? bank_->waveAt(v.waveSlot) : nullptr;
             const Frame* f = w && !w->frames.empty() ? &w->frames[0] : nullptr;
-            v.frameCount = 0; v.frameDir = 1; v.frameFresh = true; v.kitOn = false; v.streamActive = false;
+            v.frameCount = 0; v.frameDir = 1; v.frameFresh = true; v.frameSilenced = false; v.kitOn = false; v.streamActive = false;
             // The run starts at its first step, which is always frame 0
             // (section 65); the reset above put the voice there, so an F on this
             // very row -- applied with the note's other commands -- still stands.
@@ -2559,7 +2559,15 @@ void Driver::tick(int ch)
                     int next = int(v.frameStep) + v.frameDir;
                     switch (v.inst.frameLoop) {
                         case FrameLoop::Loop:     if (next >= len) next = loop; break;   // the run plays through once, then from its loop step
-                        case FrameLoop::Once:     if (next >= len) next = len - 1; break;
+                        case FrameLoop::Once:
+                            // Section 132: a run that plays **once** does not hold
+                            // its last frame -- one step past the end LSDj writes a
+                            // flat wave and the channel goes quiet.
+                            if (next >= len) {
+                                if (!v.frameSilenced) { v.frameSilenced = true; Frame flat; flat.s.fill(7); loadFrame(ch, flat, false); }
+                                next = len - 1;
+                            }
+                            break;
                         case FrameLoop::PingPong: if (next >= len) { next = len - 2 < loop ? loop : len - 2; v.frameDir = -1; } else if (next < loop) { next = loop + 1 < len ? loop + 1 : loop; v.frameDir = 1; } break;
                     }
                     if (next != int(v.frameStep)) setFrameStep(ch, next, true);

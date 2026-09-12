@@ -332,7 +332,10 @@ TEST_CASE("a format-22 song imports its instruments, tables, phrases and chains"
     // The hat: noise, table 1 (LSDj table 0), 15-bit; its note A-6 lands on the ChipBoy note with NR43 20's clock.
     const auto& hat = bank->instruments[1];
     CHECK(hat.type == bank::InstrumentType::Noise); CHECK(hat.table == 1); CHECK_FALSE(hat.lfsr7);
-    CHECK(hat.env.mode == bank::EnvMode::Shaped); CHECK(hat.env.start == 8); CHECK(hat.env.attackTicks == 9);
+    // Section 132: a stage is its tick count **plus** a fine 1/256, so the whole
+    // part is the floor of what the rounded count used to be.
+    CHECK(hat.env.mode == bank::EnvMode::Shaped); CHECK(hat.env.start == 8);
+    CHECK(hat.env.attackTicks == 8); CHECK(hat.env.attackFine > 128);
     // The bass: wave level 100 %, wave slot 1 holding synth 0's ramp.
     const auto& bass = bank->instruments[2];
     CHECK(bass.type == bank::InstrumentType::Wave); CHECK(bass.waveLevel == 3); CHECK(bass.wave == 1);
@@ -410,7 +413,9 @@ TEST_CASE("the same bytes under the older models take their own envelope, letter
         const auto& env11 = bank->instruments[0].env;
         CHECK(env11.mode == bank::EnvMode::Shaped);
         CHECK(int(env11.start) == 10); CHECK(int(env11.peak) == 0); CHECK(int(env11.sustain) == 0);
-        CHECK(int(env11.attackTicks) == int(std::lround(10 * 5 * 1000.0 / 64.0 / (60000.0 / (165.0 * 24.0)))));
+        // Section 132: ticks plus a fine 1/256, within a 256th of the exact length.
+        const double want11 = 10 * 5 * 1000.0 / 64.0 / (60000.0 / (165.0 * 24.0));
+        CHECK(std::abs(int(env11.attackTicks) + int(env11.attackFine) / 256.0 - want11) < 1.0 / 256.0);
         CHECK(out->phrase(1)->cells[4].cmd1.cmd == bank::Cmd::P);
         bool found = false;
         for (uint8_t slot : out->chain[3]) if (const auto* p = out->phrase(slot)) { found = true; CHECK(noiseClockMatches(*bank, *p, 0, 0xEF)); }   // A-6 writes EF on 8.4.0: a 2.3 Hz click, the deepest the Shift reaches
@@ -484,8 +489,10 @@ TEST_CASE("format 11's envelope is three stages the chip ramps between", "[lsdj]
     REQUIRE(e.mode == bank::EnvMode::Shaped);
     const double tickMs = 60000.0 / (120.0 * 24.0);
     CHECK(int(e.start) == 1); CHECK(int(e.peak) == 4); CHECK(int(e.sustain) == 2);
-    CHECK(int(e.attackTicks) == int(std::lround(3 * 7 * 1000.0 / 64.0 / tickMs)));   // 1 -> 4 at period 7
-    CHECK(int(e.decayTicks) == int(std::lround(2 * 7 * 1000.0 / 64.0 / tickMs)));    // 4 -> 2 at period 7
+    // Section 132: ticks plus a fine 1/256 of a tick, not a rounded tick count.
+    const auto stage = [](int t, int f) { return double(t) + double(f) / 256.0; };
+    CHECK(std::abs(stage(e.attackTicks, e.attackFine) - 3 * 7 * 1000.0 / 64.0 / tickMs) < 1.0 / 256.0);   // 1 -> 4 at period 7
+    CHECK(std::abs(stage(e.decayTicks, e.decayFine) - 2 * 7 * 1000.0 / 64.0 / tickMs) < 1.0 / 256.0);     // 4 -> 2 at period 7
     CHECK(int(e.fadeTicks) == 0);
     // A direction that cannot reach the next amplitude never hands over.
     i0[1] = 0x1F; i0[9] = 0x00;                                                       // rising from 1, target 0

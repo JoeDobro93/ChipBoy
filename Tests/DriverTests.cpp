@@ -1955,7 +1955,10 @@ TEST_CASE("a shaped envelope is one level per tick and never triggers", "[driver
     // envelope's first, so the list begins at the start level rather than a
     // tick into the attack. Measured against the ROM: a shaped stage's first
     // level change lands one envelope period after the note-on, not at it.
-    const std::vector<int> want { 1, 6, 8, 12, 11, 9, 8, 6, 6 };
+    // Section 132: the level is **truncated** along the ramp, not rounded, so
+    // each level is held for its whole step as LSDj holds it -- every reading
+    // sits at or one below the rounded list this used to carry.
+    const std::vector<int> want { 1, 5, 8, 11, 11, 10, 8, 7, 6 };
     CHECK(levels == want);
     // What matters is that it climbs to the peak and settles on the sustain.
     CHECK(*std::max_element(levels.begin(), levels.end()) >= 11);
@@ -2593,7 +2596,7 @@ TEST_CASE("a shaped envelope can start above silence and fade past its sustain",
     CHECK(levels[3] >= 5); CHECK(levels[3] <= 7);                      // the attack has reached the peak of 5
     CHECK(levels[11] >= 11);                                           // the decay is at or near the sustain of 13
     CHECK(*std::max_element(levels.begin(), levels.begin() + 14) == 13);   // and does reach it
-    CHECK(levels[24] == 0);                                            // the fade reached its level at tick 26
+    CHECK(levels[24] <= 1);                                            // the fade is at or one off its level (section 132)
     CHECK(levels[29] == 0);                                            // ... and holds there
     // Without a fade the sustain holds, as it always did.
     i.env.fadeTicks = 0;
@@ -2680,10 +2683,19 @@ TEST_CASE("a wave instrument's frame run takes its length and loops from its own
     uint8_t run[16];
     CHECK(bank::waveRun(16, 4, run) == 4);
     CHECK(int(run[0]) == 0); CHECK(int(run[1]) == 5); CHECK(int(run[2]) == 10); CHECK(int(run[3]) == 15);
-    // Section 129: the steps are spread across the frames' span, so eight of
-    // sixteen are 0, 2, 4, 6, 8, 10, 12, 15 -- the last exactly on the last.
+    // Section 132: the ladder is an 8.8 accumulator, `(frames * 256 - 1) / L`
+    // truncated and the running total truncated too.
     CHECK(bank::waveRun(16, 8, run) == 8);
-    CHECK(int(run[1]) == 2); CHECK(int(run[3]) == 6); CHECK(int(run[4]) == 8); CHECK(int(run[7]) == 15);
+    CHECK(int(run[1]) == 2); CHECK(int(run[3]) == 6); CHECK(int(run[4]) == 9); CHECK(int(run[7]) == 15);
+    // Every run length measured on the ROM, read off the wave-RAM loads.
+    const auto ladder = [&](int len) { uint8_t r[16]; const int n = bank::waveRun(16, len, r); return std::vector<int>(r, r + n); };
+    CHECK(ladder(3)  == std::vector<int>{ 0, 7, 15 });
+    CHECK(ladder(4)  == std::vector<int>{ 0, 5, 10, 15 });
+    CHECK(ladder(5)  == std::vector<int>{ 0, 3, 7, 11, 15 });
+    CHECK(ladder(6)  == std::vector<int>{ 0, 3, 6, 9, 12, 15 });
+    CHECK(ladder(9)  == std::vector<int>{ 0, 1, 3, 5, 7, 9, 11, 13, 15 });
+    CHECK(ladder(11) == std::vector<int>{ 0, 1, 3, 4, 6, 7, 9, 11, 12, 14, 15 });
+    CHECK(ladder(16) == std::vector<int>{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 });
     CHECK(bank::waveRun(16, 1, run) == 1); CHECK(int(run[0]) == 0);
     CHECK(bank::waveRun(16, 0, run) == 16); CHECK(int(run[15]) == 15);
 
@@ -3704,6 +3716,46 @@ TEST_CASE("an A inside a table runs its table beside the one that started it", "
     CHECK(r.drv.view(0).volume == 9);
     // ...and the nested table reached its row 1 and set the pan.
     CHECK(r.drv.view(0).pan == uint8_t(bank::Pan::Left));
+}
+
+TEST_CASE("a wave run that plays once goes quiet at its end", "[driver][wave]")
+{
+    // Section 132: one step past the end of a `PLAY = ONCE` run the ROM writes a
+    // wave of sixteen 0x77 bytes -- a flat line at mid-scale, silent -- where
+    // ChipBoy held the run's last frame and the note would not stop.
+    Rig r(Console::DMG);
+    Chip chip(Console::DMG);
+    r.tickHz = 100.0;
+    r.song.noteSource[2] = tracker::NoteSource::Tracker;
+    auto& w = r.bank.waves[0];
+    w.used = true;
+    for (int f = 0; f < bank::kMaxFrames; ++f) w.frames[size_t(f)].s.fill(uint8_t(f == 0 ? 0 : 15));
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Once");
+    i.used = true; i.wave = 1; i.frameAdvance = 1; i.frameLength = 4;
+    i.frameLoop = bank::FrameLoop::Once; i.frameLoopStep = 3;
+    ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(2, p);
+    chip.feed(r.block({ cellOn(2, 60, 2) }, 480));
+    bool flat = false;
+    for (int k = 0; k < 10 && !flat; ++k) {
+        for (const auto& x : r.block({}, 480))
+            if (x.addr >= 0xFF30 && x.addr <= 0xFF3F && x.value == 0x77) flat = true;
+    }
+    CHECK(flat);                                       // the run ended and wrote its flat wave
+    // A run that loops never writes one -- it goes back to its loop step.
+    Rig r2(Console::DMG);
+    r2.tickHz = 100.0;
+    r2.song.noteSource[2] = tracker::NoteSource::Tracker;
+    r2.bank.waves[0] = w;
+    r2.bank.instruments[1] = i; r2.bank.instruments[1].frameLoop = bank::FrameLoop::Loop;
+    r2.bank.instruments[1].frameLoopStep = 0;
+    r2.drv.setParams(2, p);
+    r2.block({ cellOn(2, 60, 2) }, 480);
+    bool looped = false;
+    for (int k = 0; k < 10; ++k)
+        for (const auto& x : r2.block({}, 480))
+            if (x.addr >= 0xFF30 && x.addr <= 0xFF3F && x.value == 0x77) looped = true;
+    CHECK_FALSE(looped);
 }
 
 TEST_CASE("a bare note does not step a STEP table", "[driver][table]")

@@ -292,6 +292,21 @@ struct Reader {
         const double ms = std::abs(delta) * perLevelMs;
         return std::clamp(int(std::lround(ms / tickMs)), 1, 255);
     }
+    /// Section 132: a stage's length carried to 1/256 of a tick. §121 gave the
+    /// bank and the driver the fine byte; the importer was still rounding each
+    /// stage to a whole tick, which stretched `READROOM`'s instrument 09 from
+    /// 75.4 ms a level to 76.7 and slid every level after the first.
+    void envStage(uint8_t& ticks, uint8_t& fine, int delta, int speed) const
+    {
+        ticks = 0; fine = 0;
+        if (speed == 0 || delta == 0) return;
+        const double perLevelMs = m.envPeriods != nullptr ? double(m.envPeriods[size_t(speed & 15)]) * kPitchClockMs
+                                                          : double(speed & 7) * 1000.0 / 64.0;
+        const double t = std::abs(delta) * perLevelMs / tickMs;
+        const int whole = std::clamp(int(t), 0, 255);
+        int frac = int(std::lround((t - double(whole)) * 256.0));
+        ticks = uint8_t(whole); fine = uint8_t(std::clamp(frac, 0, 255));
+    }
     void envelope(const uint8_t* b, bank::Instrument& o)
     {
         if (m.envelopeLaw == EnvelopeLaw::Chip) {
@@ -319,11 +334,11 @@ struct Reader {
             return;
         }
         o.env.mode = bank::EnvMode::Shaped;
-        o.env.start = uint8_t(a1); o.env.attackTicks = uint8_t(envTicks(a1 - a2, s1)); o.env.peak = uint8_t(a2); o.env.releaseTicks = 0;
-        if (!reaches(b[9], a3, s2)) { o.env.decayTicks = 0; o.env.sustain = uint8_t(a2); o.env.fadeTicks = 0; }
+        o.env.start = uint8_t(a1); envStage(o.env.attackTicks, o.env.attackFine, a1 - a2, s1); o.env.peak = uint8_t(a2); o.env.releaseTicks = 0;
+        if (!reaches(b[9], a3, s2)) { o.env.decayTicks = 0; o.env.decayFine = 0; o.env.sustain = uint8_t(a2); o.env.fadeTicks = 0; o.env.fadeFine = 0; }
         else {
-            o.env.decayTicks = uint8_t(envTicks(a2 - a3, s2)); o.env.sustain = uint8_t(a3);
-            if (s3 && !hw) { o.env.fadeTicks = uint8_t(envTicks(a3, s3)); o.env.fadeTo = 0; }
+            envStage(o.env.decayTicks, o.env.decayFine, a2 - a3, s2); o.env.sustain = uint8_t(a3);
+            if (s3 && !hw) { envStage(o.env.fadeTicks, o.env.fadeFine, a3, s3); o.env.fadeTo = 0; }
         }
         // Sections 116 and 121: the levels are walked on the pitch clock and the
         // stages carry their fraction of a tick, so nothing is rounded away and
