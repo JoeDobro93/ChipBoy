@@ -26,6 +26,59 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-12 — Sub-tick envelope stages, a nested table that runs, and a `Z` that remembers
+
+Four measurements, `docs/COMMANDS_AND_TEMPO.md` §121-§123 and a correction to §113. `SAMESONG`'s
+import notes: 9 to 2.
+
+**§121 -- a shaped envelope's stages carry a fraction of a tick.** §116 fixed the *reading* of the
+envelope (the position runs in 1/256 of a tick, the level is re-read on every pitch clock); the
+stage *lengths* still rounded to whole ticks and clamped to at least one. On `CLAP` at tempo 129 the
+three stages are 1.729, 2.305 and 0.576 ticks and ChipBoy held them for 2, 2 and 1 -- the clap's
+11 ms tail lasted 19. Each stage of `bank::Envelope` gains a fine byte beside its tick count and the
+driver reads `ticks * 256 + fine`; four of `SAMESONG`'s instruments stop warning.
+
+**Departure from the spec:** the note's own tick no longer advances the envelope. It did, so the
+start level had no time at all, which made a stage shorter than a tick finish before it began.
+Measured on the ROM: a shaped stage's first level change lands one envelope period after the
+note-on, not at it. Every shaped envelope therefore shifts one tick later than before, which is what
+the ROM does; the `one level per tick` test carries the new list.
+
+**§122 -- `STEP` is the instrument's own table only.** Measured with a table whose sixteen rows each
+carry an `E`: the table the instrument names advances one row a **trigger** under STEP, but a table
+an `A` starts -- from a cell or from inside another table -- advances one row a **tick** whatever the
+instrument says, and its row 0 is the next tick's rather than the `A`'s own step. ChipBoy froze an
+`A`-started table after row 0 in STEP mode. **This is the user's phrase 14**: instrument 02's table
+`11` starts table `02`, whose `E 02`/`E 03` rows walk `NR32` between 50% and 100% -- the fade heard
+on the ROM while the volume column stayed blank. ChipBoy had the vibrato from row 0 and nothing
+else. `NR32` now matches the ROM's times within 3 ms over more than a second.
+
+**This corrects §113**, which fired an `A`-started table's row 0 at once because in STEP mode no
+next tick ever came. Two things were eating that row: the fire-at-once, and `stepTableLane` holding
+`step` as a reference -- an `A` on the row it was running put every lane back to row 0 and the
+`++step` that ended the outer row then advanced the *new* table past its first.
+
+**§123 -- `Z`'s record outlives the note-on.** The ROM's own help says "REDO LAST CMD WITH RANDOM
+VALUE N ADDED TO LAST CMD VALUE", and measured on 9.2.L the record survives a note-on and even a
+different instrument. ChipBoy cleared `lastCellCmd` at every note-on, so every `Z` after the first
+note did nothing -- phrase 14's five `Z 3F` rows, which on the ROM re-run its `W 20` with a fresh
+random speed and length, were inert. Also checked, because the user asked: the random really is per
+**nibble**, not on the byte -- `E 03` then `Z F0` (the high nibble alone) leaves `NR32` at 100% on
+the ROM for every note, where a whole-byte random would have moved it. §74's rule stands, and
+`Z 0 0` now re-runs a command exactly as the ROM does.
+
+**Also addressed, and not differences at all:** `W` on a pulse keeps only the byte's low two bits
+(swept on the ROM, so ChipBoy's duty is the ROM's); a kit note naming a sample its kit has not got
+is silent on the ROM too; a `NOI` copy of a pulse instrument plays what the ROM plays (§119); and a
+table shared between noise and non-noise instruments only loses something when it carries a letter
+the two channels read differently. Those four notes are gone rather than reworded.
+
+**Found on the way and not fixed:** a cell's `W` on a pulse sets the duty from the **next** register
+write and keeps it until a *different* instrument loads -- `W 03`, a note, the same instrument again
+gives `0 3 3` on the ROM and `3 0` in ChipBoy, which re-latches the instrument's duty at every
+note-on. The duty value is right, its lifetime is not. It is in `docs/HANDOFF.md` with the numbers
+rather than guessed at here.
+
 ### 2026-09-12 — `H F F` ends the channel's timeline
 
 `docs/COMMANDS_AND_TEMPO.md` §120. The last of the user's list.

@@ -296,6 +296,11 @@ private:
         // change has taken it over until the next plain note-on.
         bool     shapedOn = false, shapedTaken = false, shapedRelease = false;
         uint16_t shapedTick = 0;           ///< whole ticks into the envelope, or into the release
+        /// Section 121: pitch clocks since this voice's last tick boundary, its
+        /// own count rather than the driver's -- a note that starts in the
+        /// middle of a tick begins its envelope at zero, not partway in, which
+        /// is what makes a stage shorter than a tick possible at all.
+        uint16_t shapedClocks = 0;
         /// Section 116: the furthest the envelope has got, in 1/256 of a tick.
         /// The tick and the pitch clock both read the position and the tick
         /// resets the fraction, so without this the level would step back at
@@ -345,6 +350,10 @@ private:
         std::array<uint8_t, 16> ram{};
         bool     ramValid = false;
         // kit
+        /// Section 122: this run was started by an `A`, so it advances one row
+        /// a tick whatever the instrument's table mode says. Cleared when the
+        /// instrument's own table (or a cell's TBL column) starts the run.
+        bool     tableTicks = false;
         bool     kitOn = false; uint8_t kitIdx = 0; uint32_t kitPos = 0; uint32_t kitLen = 0; uint32_t kitLoopPoint = 0; bank::KitLoop kitLoop = bank::KitLoop::Once;
         uint32_t kitLoopsStreamed = 0;
         /// The second sample a cell's VEL column names (plan-kit-pairs): its
@@ -524,7 +533,7 @@ private:
     void setFrameStep(int ch, int step, bool live);   ///< put the voice on a run step and load its frame
     /// Start a table run on a channel (section 32): the slot, back to row 0,
     /// and one more on the run counter the view publishes.
-    void beginTableRun(int ch, uint8_t slot);
+    void beginTableRun(int ch, uint8_t slot, bool fromCommand = false);   ///< section 122
     uint16_t tableRowTicks(int ch, int row) const;    ///< the table's own groove, else one tick
     /// One pitch update: the vibrato phase, a slide and a P bend advance, and
     /// the period goes out without a trigger. The 358 Hz clock calls this in

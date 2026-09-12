@@ -1920,7 +1920,11 @@ TEST_CASE("a shaped envelope is one level per tick and never triggers", "[driver
     // on the **pitch clock** now, not once a tick, so reading it at the end of
     // a block catches it most of the way to the next tick's value -- the shape
     // is the same, sampled a fraction of a tick later.
-    const std::vector<int> want { 4, 9, 11, 11, 9, 8, 6, 6, 6 };
+    // Section 121: and not on the tick the note started on -- that tick is the
+    // envelope's first, so the list begins at the start level rather than a
+    // tick into the attack. Measured against the ROM: a shaped stage's first
+    // level change lands one envelope period after the note-on, not at it.
+    const std::vector<int> want { 1, 6, 8, 12, 11, 9, 8, 6, 6 };
     CHECK(levels == want);
     // What matters is that it climbs to the peak and settles on the sustain.
     CHECK(*std::max_element(levels.begin(), levels.end()) >= 11);
@@ -2411,6 +2415,43 @@ TEST_CASE("B gates a cell's note and hops a table's lane", "[driver][commands]")
         CHECK(low > 0);
         CHECK(high > 0);                              // it does not hop *every* time
         CHECK(low > high * 3);                        // but it hops far more often than not
+    }
+}
+
+TEST_CASE("the Z record outlives the note-on", "[driver][commands]")
+{
+    // Section 123, measured on 9.2.L: the cell lane's last command survives a
+    // note-on -- and a different instrument -- so a `Z` on a later row re-runs
+    // it. ChipBoy cleared the record at every note-on, which made every `Z`
+    // after the first note inert; that is `SAMESONG`'s phrase 14.
+    Rig r;
+    r.tickHz = 100.0;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Pad");
+    i.used = true; i.waveLevel = 0;
+    auto& j = r.bank.instruments[2];
+    j = bank::Instrument::defaults(bank::InstrumentType::Wave, "Other");
+    j.used = true; j.waveLevel = 0;
+    ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(2, p);
+    // NR32's volume code: 0 mute, 1 100%, 2 50%, 3 25%.
+    const auto level = [&r](std::vector<NoteEvent> ev) {
+        const auto w = r.block(std::move(ev), 480);
+        const RegWrite* nr = last(w, 0xFF1C);
+        return nr != nullptr ? int((nr->value >> 5) & 3) : -1;
+    };
+    NoteEvent e = cellOn(2, 60, 2);
+    e.cmd1 = { Cmd::E, 0, 2, 0 };                        // 50% on the wave channel
+    CHECK(level({ e }) == 2);
+    CHECK(level({ cellOn(2, 60, 2) }) == 0);             // a plain note: the instrument's own
+    NoteEvent z = cellOn(2, 60, 2);
+    z.cmd1 = { Cmd::Z, 0, 0, 0 };                        // Z 00 re-runs it exactly
+    CHECK(level({ z }) == 2);
+    {   // and across a different instrument
+        CHECK(level({ cellOn(2, 60, 3) }) == 0);
+        NoteEvent z2 = cellOn(2, 60, 3);
+        z2.cmd1 = { Cmd::Z, 0, 0, 0 };
+        CHECK(level({ z2 }) == 2);
     }
 }
 
@@ -3349,12 +3390,53 @@ TEST_CASE("a pulse instrument's finetune detunes PU1 down and PU2 up", "[driver]
     CHECK(withF > pu1Fine);
 }
 
-TEST_CASE("a table a table starts fires its first row at once", "[driver][table]")
+TEST_CASE("a table an A starts runs one row a tick, whatever the instrument says", "[driver][table]")
 {
-    // Section 113: `SAMESONG`'s instrument 02 runs a STEP-mode table whose row 0
-    // starts another table holding the vibrato. In Step mode there is no next
-    // tick to catch the new table's row 0, so leaving it for one meant the
-    // second table never ran and the note sat dead flat.
+    // Section 122, measured on 9.2.L with a table whose rows each carry an `E`:
+    // STEP governs only the table the instrument names. A table an `A` starts --
+    // from a cell or from inside another table -- runs one row a **tick**, and
+    // its row 0 is the next tick's, one behind the row that started it.
+    const auto levels = [](bank::TableMode mode) {
+        auto r = std::make_unique<Rig>();
+        r->tickHz = 100.0;
+        Table first; first.used = true; first.name = "Chain";
+        first.steps[0].cmd1 = { Cmd::A, 7, 0, 0 };           // start table slot 7
+        r->bank.tables[4] = first;                            // slot 5
+        Table second; second.used = true; second.name = "Env";
+        for (int k = 0; k < 4; ++k) second.steps[size_t(k)].cmd1 = { Cmd::E, 0, int16_t(3 - k), 0 };
+        r->bank.tables[6] = second;                           // slot 7
+        auto& i = r->bank.instruments[1];
+        i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Pad");
+        i.used = true; i.table = 5; i.tableMode = mode;
+        i.waveLevel = 0;                                      // so row 0's E 03 is a change
+        ChannelParams p; p.instrument = 2; p.velocityMode = 2; r->drv.setParams(2, p);
+        std::vector<int> out;
+        auto w = r->block({ Rig::on(2, 60, 100) }, 480);
+        for (int k = 0; k < 6; ++k) {
+            const RegWrite* nr = last(w, 0xFF1C);
+            out.push_back(nr != nullptr ? int((nr->value >> 5) & 3) : -1);
+            w = r->block({}, 480);
+        }
+        return out;
+    };
+    // Row 0's E 03 is 100% (NR32 code 1), then 50%, 25% and mute (2, 3, 0). The
+    // note's own tick has the instrument's level; the table's row 0 is the next.
+    for (auto mode : { bank::TableMode::Tick, bank::TableMode::Step }) {
+        const auto seen = levels(mode);
+        INFO("mode " << int(mode) << " levels " << seen[0] << " " << seen[1] << " " << seen[2] << " " << seen[3] << " " << seen[4]);
+        CHECK(seen[0] == 0);                                  // the instrument's own level
+        CHECK(seen[1] == 1);                                  // row 0, a tick later
+        CHECK(seen[2] == 2);
+        CHECK(seen[3] == 3);
+        CHECK(seen[4] == 0);
+    }
+}
+
+TEST_CASE("a table a table starts reaches its vibrato in Step mode too", "[driver][table]")
+{
+    // Section 113, as section 122 leaves it: `SAMESONG`'s instrument 02 runs a
+    // STEP-mode table whose row 0 starts another table holding the vibrato. The
+    // second table has to run for the note to have any shape at all.
     const auto span = [](bank::TableMode mode) {
         auto r = std::make_unique<Rig>();
         r->tickHz = 100.0;
@@ -3456,6 +3538,49 @@ TEST_CASE("U sets the wave run's speed and length", "[driver][wave]")
     // y = 1 is a run of two: the ends.
     const auto two = frames(1, 1, 4);
     CHECK(two[1] == 15); CHECK(two[2] == 0);
+}
+
+TEST_CASE("a shaped envelope stage can be shorter than a tick", "[driver][shaped]")
+{
+    // Section 121: a stage's length is its tick count **and** a fraction of a
+    // tick, so a decay of half a tick reaches the sustain halfway through the
+    // first one and holds -- where a whole-tick count had to round it up to one.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Clap");
+    i.used = true;
+    i.env.mode = bank::EnvMode::Shaped;
+    i.env.start = 12; i.env.peak = 12; i.env.attackTicks = 0; i.env.attackFine = 0;
+    i.env.decayTicks = 0; i.env.decayFine = 128;     // half a tick
+    i.env.sustain = 4; i.env.fadeTicks = 0;
+    ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(0, p);
+    // How many milliseconds until the level lands on the sustain.
+    const auto landsAt = [&p](uint8_t ticks, uint8_t fine) {
+        auto rig = std::make_unique<Rig>();
+        rig->tickHz = 51.6;                           // a tick is 19.4 ms: seven pitch clocks
+        rig->song.noteSource[0] = tracker::NoteSource::Tracker;
+        auto& in = rig->bank.instruments[1];
+        in = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Clap");
+        in.used = true;
+        in.env.mode = bank::EnvMode::Shaped;
+        in.env.start = 12; in.env.peak = 12; in.env.attackTicks = 0;
+        in.env.decayTicks = ticks; in.env.decayFine = fine; in.env.sustain = 4; in.env.fadeTicks = 0;
+        rig->drv.setParams(0, p);
+        rig->block({ cellOn(0, 60, 2) }, 48);
+        for (int ms = 1; ms < 120; ++ms) {
+            if (int(rig->drv.view(0).envVol) == 4) return ms;
+            rig->block({}, 48);
+        }
+        return 999;
+    };
+    const int half = landsAt(0, 128);                 // half a tick: about 10 ms
+    const int two = landsAt(2, 0);                    // two ticks: about 39 ms
+    INFO("half a tick landed at " << half << " ms, two ticks at " << two);
+    CHECK(half < two);
+    CHECK(half <= 16);                                // inside the first tick, not rounded up to one
+    CHECK(two >= 30);
 }
 
 TEST_CASE("a shaped envelope stage shorter than its levels walks through them", "[driver][shaped]")

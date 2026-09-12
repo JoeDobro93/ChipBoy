@@ -410,7 +410,7 @@ void Driver::reloadInstrument(int ch)
     // A shaped instrument brings its envelope with it: the load triggers the
     // channel, so the shape starts again from its attack (sections 26, 27).
     v.shapedOn = core.env.mode == EnvMode::Shaped;
-    v.shapedTaken = false; v.shapedRelease = false; v.shapedTick = 0; v.shapedPosMax = 0; v.shapedFrom = 0;
+    v.shapedTaken = false; v.shapedRelease = false; v.shapedTick = 0; v.shapedClocks = 0; v.shapedPosMax = 0; v.shapedFrom = 0;
     if (v.shapedOn) {
         const uint8_t level = shapedLevel(v);
         if (core.type == InstrumentType::Wave || core.type == InstrumentType::Kit) v.waveLevel = uint8_t(level / 4);
@@ -588,8 +588,8 @@ void Driver::beginRelease(int ch)
     // to silence, one level per tick, over its own curve (section 27). A level
     // change that took the envelope over leaves the chip's release instead.
     if (v.shapedOn && !v.shapedTaken) {
-        if (!v.dacOn || v.inst.env.releaseTicks == 0) { v.shapedOn = false; stopVoice(ch, true); return; }
-        v.shapedRelease = true; v.shapedTick = 0; v.shapedPosMax = 0;
+        if (!v.dacOn || (v.inst.env.releaseTicks == 0 && v.inst.env.releaseFine == 0)) { v.shapedOn = false; stopVoice(ch, true); return; }
+        v.shapedRelease = true; v.shapedTick = 0; v.shapedClocks = 0; v.shapedPosMax = 0;
         v.shapedFrom = (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit)
                        ? uint8_t(v.waveLevel * 5) : v.envVol;
         v.releasing = true;
@@ -639,7 +639,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         // slide in force starts from the pitch the channel is at.
         v.note = note; v.vel = vel; v.active = true;
         const bool was = inNoteOn_; inNoteOn_ = true;
-        if (v.inst.tableMode == TableMode::Step && v.tableOn) stepTable(ch);   // a row per note, bare notes included
+        if (v.inst.tableMode == TableMode::Step && !v.tableTicks && v.tableOn) stepTable(ch);   // a row per note, bare notes included (section 122)
         for (int i = 0; i < 2; ++i) {
             const Command c = slotForNoteOn(ch, i);
             if (perNoteCmd(c.cmd) && c.cmd != Cmd::D) applyCommand(ch, c, false);
@@ -685,7 +685,11 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     v.slideTspFine = 0; v.slideTspHeld = false; v.slideTspDrop = false;   // a note starts on its own pitch (section 71)
     v.drumSlideStep = 0.0; v.drumSlideLeft = 0; v.drumSlideHold = false;   // section 99
     v.chordN = 0; v.chordIdx = 0; v.chordCount = 0;
-    v.dutyIdx = 0; v.kill = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigOnce = false; v.retrigFast = false; v.retrigFastCount = 0; v.envCount = 0; v.lastCellCmd = {}; v.frameStep = 0; v.frameIdx = 0;   // the run starts at its first step (section 65)
+    // Section 123: `lastCellCmd` -- what a `Z` on a later row re-runs -- is
+    // **not** reset here. Measured on 9.2.L: the record outlives the note-on and
+    // even a different instrument, and clearing it made every `Z` after the
+    // first note inert.
+    v.dutyIdx = 0; v.kill = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigOnce = false; v.retrigFast = false; v.retrigFastCount = 0; v.envCount = 0; v.frameStep = 0; v.frameIdx = 0;   // the run starts at its first step (section 65)
     v.rng = v.rng * 1664525u + 1013904223u + note;
     restartPitchClock(ch);
     // volume from velocity: a MIDI note asks the Velocity mode, a cell's VEL is
@@ -697,7 +701,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // envelope holds at period 0 and its direction bit is up, so a level of
     // zero keeps the DAC on and every step of the shape can be a zombie write.
     v.shapedOn = core.env.mode == EnvMode::Shaped;
-    v.shapedTaken = false; v.shapedRelease = false; v.shapedTick = 0; v.shapedPosMax = 0; v.shapedFrom = 0;
+    v.shapedTaken = false; v.shapedRelease = false; v.shapedTick = 0; v.shapedClocks = 0; v.shapedPosMax = 0; v.shapedFrom = 0;
     if (v.shapedOn) {
         const uint8_t level = shapedLevel(v);
         if (core.type == InstrumentType::Wave || core.type == InstrumentType::Kit) v.waveLevel = uint8_t(level / 4);
@@ -706,12 +710,14 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // table
     const uint8_t tbl = v.tableOverride ? v.tableOverride : core.table;
     v.tableSlot = tbl; v.tableOn = tbl && bank_ && bank_->table(tbl);
+    const bool wasFromCmd = v.tableTicks;
+    v.tableTicks = false;                                 // the instrument's own table again (section 122)
     v.tableWait = v.tableWait2 = v.tableWaitE = 0;        // every lane starts its row afresh (section 64)
     if (v.tableOn) ++v.tableRun;                  // a note-on starts a run of its own (section 32)
     // A Step-mode table advances one row per trigger instead of restarting,
     // which is the whole point of it; a table that was not already running
     // starts at its first row (section 7).
-    if (core.tableMode != TableMode::Step || hadTable != tbl) {
+    if (core.tableMode != TableMode::Step || wasFromCmd || hadTable != tbl) {
         v.tableStep = v.tableStep2 = v.tableStepE = 0;
         v.tableRow = v.tableRow2 = v.tableRowE = 0;
         v.tableGroove = 0; v.volLaneOn = true;
@@ -1348,16 +1354,16 @@ uint8_t Driver::shapedLevel(const Voice& v) const
 {
     const Envelope& e = v.inst.env;
     auto clamp15 = [](int x) { return uint8_t(std::clamp(x, 0, 15)); };
-    // Section 116: the stages are whole ticks and the position is in 1/256 of
-    // one -- exact on a tick boundary, interpolated between them from how far
-    // this tick's pitch clocks have got. envSegmentLevel only cares about the
-    // ratio, so scaling both sides leaves the per-tick list as it was and adds
-    // the levels in between.
+    // Section 116: the position is in 1/256 of a tick -- exact on a tick
+    // boundary, interpolated between them from how far this tick's pitch
+    // clocks have got. Section 121: the stages are in the same units, their
+    // tick count plus a fraction, so a stage shorter than a tick is a stage.
     constexpr int F = kShapedFine;
-    const int sub = std::clamp(clocksThisTick_ * F / std::max(1, clocksPerTick_), 0, F - 1);
+    const int sub = std::clamp(int(v.shapedClocks) * F / std::max(1, clocksPerTick_), 0, F - 1);
     const int pos = std::max(int(v.shapedTick) * F + sub, int(v.shapedPosMax));
-    if (v.shapedRelease) return clamp15(envSegmentLevel(v.shapedFrom, 0, int(e.releaseTicks) * F, pos, e.releaseCurve));
-    const int a = int(e.attackTicks) * F, d = int(e.decayTicks) * F, f = int(e.fadeTicks) * F, t = pos;
+    if (v.shapedRelease) return clamp15(envSegmentLevel(v.shapedFrom, 0, int(e.releaseTicks) * F + int(e.releaseFine), pos, e.releaseCurve));
+    const int a = int(e.attackTicks) * F + int(e.attackFine), d = int(e.decayTicks) * F + int(e.decayFine),
+              f = int(e.fadeTicks) * F + int(e.fadeFine), t = pos;
     if (t < a) return clamp15(envSegmentLevel(e.start, e.peak, a, t, e.attackCurve));
     if (t < a + d) return clamp15(envSegmentLevel(e.peak, e.sustain, d, t - a, e.decayCurve));
     // The third stage (section 51): the sustain fades to a level and holds there.
@@ -1376,7 +1382,7 @@ void Driver::emitShapedLevel(int ch)
     if (!v.shapedOn || v.shapedTaken) return;
     {   // the position only ever goes forward (section 116)
         constexpr int F = kShapedFine;
-        const int sub = std::clamp(clocksThisTick_ * F / std::max(1, clocksPerTick_), 0, F - 1);
+        const int sub = std::clamp(int(v.shapedClocks) * F / std::max(1, clocksPerTick_), 0, F - 1);
         v.shapedPosMax = std::max(v.shapedPosMax, uint32_t(int(v.shapedTick) * F + sub));
     }
     const uint8_t level = shapedLevel(v);
@@ -1396,8 +1402,8 @@ void Driver::stepShaped(int ch)
     // the same list of levels (section 27).
     Voice& v = v_[size_t(ch)];
     if (!v.shapedOn || v.shapedTaken) return;
-    ++v.shapedTick;
-    if (v.shapedRelease && int(v.shapedTick) >= int(v.inst.env.releaseTicks)) {
+    ++v.shapedTick; v.shapedClocks = 0;
+    if (v.shapedRelease && int(v.shapedTick) * kShapedFine >= int(v.inst.env.releaseTicks) * kShapedFine + int(v.inst.env.releaseFine)) {
         v.shapedOn = false; v.shapedRelease = false;
         stopVoice(ch, true);
         return;
@@ -1598,22 +1604,15 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
         case Cmd::A:                                  // table select, 0 stops
             if (c.a <= 0) v.tableOn = false;
             else {
-                beginTableRun(ch, uint8_t(std::clamp<int>(c.a, 1, kTableSlots)));
-                // Section 113: the table a table starts takes effect **now** --
-                // its row 0 fires in this same step, not at the next tick,
-                // which is the rule a note-on already follows (section 31).
-                // Measured on 9.2.L: `SAMESONG`'s instrument 02 runs a table
-                // whose row 0 starts another table holding the vibrato, and in
-                // Step mode there is no next tick to catch it, so without this
-                // the second table never runs at all and the note sits dead
-                // flat. The depth guard stops a ring of `A`s running away.
-                // Only from inside a table: a cell's `A` keeps starting at row 0
-                // and firing it on the next tick, which section 32 already pins.
-                if (fromTable && v.tableOn && tableChain_ < kMaxTableChain) {
-                    ++tableChain_;
-                    stepTable(ch);
-                    --tableChain_;
-                }
+                beginTableRun(ch, uint8_t(std::clamp<int>(c.a, 1, kTableSlots)), true);   // section 122: an A runs on ticks
+                // Section 122 corrects section 113: the table an `A` inside
+                // another table starts fires its row 0 on the **next tick**,
+                // one tick later than the table that started it -- measured on
+                // 9.2.L with a table whose rows each carry an `E`. §113 fired
+                // it at once because in STEP mode no next tick ever came; now
+                // that an `A`-started run ticks whatever the instrument says,
+                // the next tick arrives and firing here as well ran two rows in
+                // the first tick and swallowed row 1.
             }
             break;
         case Cmd::C:                                  // 0, x, y one step per chordRate + 1 ticks
@@ -2183,10 +2182,12 @@ uint16_t Driver::tableRowTicks(int ch, int row) const
     return uint16_t(n ? n : 1);
 }
 
-void Driver::beginTableRun(int ch, uint8_t slot)
+void Driver::beginTableRun(int ch, uint8_t slot, bool fromCommand)
 {
     Voice& v = v_[size_t(ch)];
     v.tableSlot = slot; v.tableGroove = 0;
+    v.tableTicks = fromCommand;                 // section 122
+
     // Every lane starts at row 0 with its hop counter clear (section 64).
     v.tableStep = v.tableStep2 = v.tableStepE = 0;
     v.tableRow = v.tableRow2 = v.tableRowE = 0;
@@ -2301,7 +2302,14 @@ void Driver::stepTableLane(int ch, int lane)
         const TableStep& s = t->steps[row];
         const Command raw = lane == 2 ? s.cmd2 : s.cmd1;
         const Command c = raw.cmd == Cmd::Z ? resolveRandom(ch, raw, lane) : raw;
+        const uint16_t runWas = v.tableRun;
         if (c.cmd != Cmd::None) applyCommand(ch, c, true, lane);
+        // Section 122: an `A` on this row started a different table and put
+        // every lane back to row 0. The bookkeeping below belongs to the table
+        // that has just gone, and `step` is now the new one's -- advancing it
+        // here swallowed the new table's row 0. Its first row is the next
+        // tick's, one tick after the row that started it, as the ROM's is.
+        if (v.tableRun != runWas) return;
         wait = tableRowTicks(ch, row);
         if (!v.tableOn) return;                           // the command stopped it
         if (raw.cmd == Cmd::H && step != was) continue;   // hopped: that row plays now
@@ -2386,7 +2394,7 @@ void Driver::tick(int ch)
     // The table: a row per tick, or per the row length a G inside it asked
     // for. A Step-mode table advances at notes instead (section 7).
     if (v.tableJustStarted) v.tableJustStarted = false;      // row 0 fired with the note-on (section 31)
-    else if (v.inst.tableMode == TableMode::Tick) {
+    else if (v.inst.tableMode == TableMode::Tick || v.tableTicks) {   // section 122
         // Each lane counts down its own row (section 64).
         uint16_t* const waits[3] = { &v.tableWaitE, &v.tableWait, &v.tableWait2 };
         for (int lane = 0; lane < 3; ++lane) {
@@ -2397,8 +2405,11 @@ void Driver::tick(int ch)
     }
     if (!v.active) return;
     // The shaped envelope's level for this tick, after the table, which may
-    // just have taken it over (sections 26 and 27).
-    stepShaped(ch);
+    // just have taken it over (sections 26 and 27). Section 121: not on the
+    // tick the note started on -- that tick *is* the envelope's first, and
+    // advancing it here gave the start level no time at all, which made a stage
+    // shorter than a tick finish before it began.
+    if (v.ticks > 1) stepShaped(ch);
     if (!v.active) return;
     // chord: one step every chordRate + 1 ticks -- the instrument's own rate
     // for C, apart from the command rate R and the Tick-speed P and V run on
@@ -2652,7 +2663,9 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
                 // clock as well as on the tick, so a stage shorter than the
                 // levels it crosses walks through every one of them as the ROM
                 // does. The tick still owns the stage, this only fills it in.
-                if (v.active) emitShapedLevel(ch);
+                // Section 121: the voice counts the clocks itself, from the
+                // note-on rather than from the tick boundary.
+                if (v.active) { if (v.shapedOn && !v.shapedTaken) ++v.shapedClocks; emitShapedLevel(ch); }
                 // The instrument's own envelope and R's resync run on the same
                 // clock, whatever the pitch speed is (sections 7 and 8).
                 // Section 109: a channel a K has killed still answers a later E --

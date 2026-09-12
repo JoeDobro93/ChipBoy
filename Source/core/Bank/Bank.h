@@ -160,6 +160,11 @@ struct Envelope {
     uint8_t  fadeTicks = 0;        ///< 0-255; 0 is no fade (section 51), else ticks from the sustain to fadeTo
     uint8_t  fadeTo = 0;           ///< 0-15, held once the fade reaches it
     uint8_t  releaseTicks = 0;     ///< 0-255; 0 is silent at once
+    /// Section 121: the fraction of a tick each stage carries on top of its
+    /// tick count, in 1/256 of a tick. A stage shorter than one tick is 0
+    /// ticks and a fine value. Zero everywhere is the whole-tick envelope
+    /// every bank written before this has.
+    uint8_t  attackFine = 0, decayFine = 0, fadeFine = 0, releaseFine = 0;
     EnvCurve attackCurve = EnvCurve::Linear;
     EnvCurve decayCurve = EnvCurve::Linear;
     EnvCurve fadeCurve = EnvCurve::Linear;

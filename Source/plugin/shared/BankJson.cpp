@@ -96,6 +96,12 @@ var instrumentToVarSlot(const Instrument& i, int slot)
         if (i.env.fadeTicks) { o->setProperty("envFade", int(i.env.fadeTicks)); o->setProperty("envFadeTo", int(i.env.fadeTo)); o->setProperty("envFadeCurve", int(i.env.fadeCurve)); }
         o->setProperty("envAttackCurve", int(i.env.attackCurve)); o->setProperty("envDecayCurve", int(i.env.decayCurve));
         o->setProperty("envReleaseCurve", int(i.env.releaseCurve));
+        // Section 121: the fraction of a tick each stage carries, only when a
+        // stage has one, so a whole-tick envelope reads back as it was written.
+        if (i.env.attackFine) o->setProperty("envAttackFine", int(i.env.attackFine));
+        if (i.env.decayFine) o->setProperty("envDecayFine", int(i.env.decayFine));
+        if (i.env.fadeFine) o->setProperty("envFadeFine", int(i.env.fadeFine));
+        if (i.env.releaseFine) o->setProperty("envReleaseFine", int(i.env.releaseFine));
     }
     o->setProperty("sweepRate", int(i.sweepRate)); o->setProperty("sweepDown", i.sweepDown); o->setProperty("sweepShift", int(i.sweepShift));
     if (i.noiseLsdjMap) o->setProperty("noiseLsdjMap", true);          // section 81
@@ -162,6 +168,11 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.env.attackCurve = EnvCurve(std::clamp(getOr(o, "envAttackCurve", 0), 0, 2));
     i.env.decayCurve = EnvCurve(std::clamp(getOr(o, "envDecayCurve", 0), 0, 2));
     i.env.releaseCurve = EnvCurve(std::clamp(getOr(o, "envReleaseCurve", 0), 0, 2));
+    // Section 121: absent in a bank written before it, which means whole ticks.
+    i.env.attackFine = uint8_t(std::clamp(getOr(o, "envAttackFine", 0), 0, 255));
+    i.env.decayFine = uint8_t(std::clamp(getOr(o, "envDecayFine", 0), 0, 255));
+    i.env.fadeFine = uint8_t(std::clamp(getOr(o, "envFadeFine", 0), 0, 255));
+    i.env.releaseFine = uint8_t(std::clamp(getOr(o, "envReleaseFine", 0), 0, 255));
     i.sweepRate = uint8_t(std::clamp(getOr(o, "sweepRate", 0), 0, 7)); i.sweepDown = bool(o->getProperty("sweepDown")); i.sweepShift = uint8_t(std::clamp(getOr(o, "sweepShift", 0), 0, 7));
     i.noiseLsdjMap = bool(o->getProperty("noiseLsdjMap"));             // section 81
     i.noisePitch = NoisePitch(std::clamp(getOr(o, "noisePitch", 0), 0, 2));                 // section 86

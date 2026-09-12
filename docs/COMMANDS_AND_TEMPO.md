@@ -3213,7 +3213,7 @@ the note in progress, as it always did, and the next note-on brings the instrume
 Byte 11 is the wave instrument's **SPEED** (§65) and means nothing on noise, so this is a pulse
 field only.
 
-## 113. A table a table starts takes effect at once
+## 113. A table a table starts takes effect at once *(corrected by §122)*
 
 `SAMESONG`'s instrument 02 sounded dead flat in ChipBoy where the ROM has a vibrato on it. Its table
 `11` has `A 02` in row 0's second command lane, and table `02` has `V F3` in its own row 0 -- a table
@@ -3238,6 +3238,10 @@ ChipBoy  1837 1837                                                 (flat: nothin
 So the table a table starts fires its **row 0 in the same step**, which is the rule a note-on already
 follows (§31). Only from inside a table: a cell's `A` keeps starting at row 0 and firing it on the
 next tick, which §32 pins. A depth guard stops a ring of `A`s running away.
+
+> **§122 corrects this.** The rate was the real fault: a table an `A` starts runs one row a **tick**
+> whatever the instrument's mode says, so the "next tick" this entry says never comes does come, and
+> its row 0 belongs to it rather than to the `A`'s own step. The fire-at-once below is gone.
 
 ## 114. Every vibrato shape is centred, and shape 3 is off
 
@@ -3498,3 +3502,123 @@ stops the channel it is on and no other.
 stops, so a song that loops round comes back without it; in ChipBoy the rows before the stop are
 still there and play again on the next pass. Expressing that would want a channel state that
 survives the transport's loop, which is a bigger thing than this, and the import notes say so.
+
+## 121. A shaped envelope's stages are not whole ticks either
+
+§116 fixed the *reading* of the shaped envelope -- the position runs in 1/256 of a tick and the
+level is re-read on every pitch clock, so a stage crossing four levels inside one tick walks
+through all four. What it left was the stage's own **length**, which `envTicks` rounded to a whole
+tick and clamped to at least one. On `SAMESONG`'s `CLAP`, at tempo 129:
+
+```
+stage        levels  per level    length      ChipBoy had
+C3 -> 84      12->8   8.377 ms    33.5 ms = 1.729 ticks    2      +16%
+84 -> 41       8->4  11.169 ms    44.7 ms = 2.305 ticks    2      -13%
+41 -> 0        4->0   2.792 ms    11.2 ms = 0.576 ticks    1      +74%
+```
+
+The third stage is the worst: a clap's tail, 11 ms on the ROM, was held for 19. Four of
+`SAMESONG`'s instruments warned about it.
+
+**The fix is to carry the fraction.** Each stage of `bank::Envelope` gains a **fine** byte beside
+its tick count -- `attackFine`, `decayFine`, `fadeFine`, `releaseFine`, each an extra 1/256 of a
+tick -- and the driver, which already works in those units, reads `ticks * 256 + fine` as the
+segment's length. A stage shorter than a tick is `0` ticks and a fine value, which `envTicks`
+could not express at all. Nothing else in the driver changes.
+
+The importer computes each stage's length as `levels x period` in milliseconds, divides by the
+song's tick and splits the result; the warning goes with it. Tempo is baked in, as it already was:
+LSDj's envelope runs on the fixed 2.79 ms pitch clock, ChipBoy's on ticks, so the conversion is
+exact at the song's own tempo and drifts with a `T` that changes it. That is §51's model, not a
+new departure.
+
+**In the editor** the stage steppers stay whole ticks, and setting one clears its fine part -- the
+number shown becomes the truth. An imported envelope that has never been edited keeps the ROM's
+fraction; the Instrument tab's envelope readout prints it (`2.3 ticks`) so it is not invisible.
+
+## 122. `STEP` is the instrument's own table only: an `A` runs one row a tick
+
+An instrument's byte 5 bit 3 picks how its table advances -- one row a **tick**, or one row a
+**trigger**, which §113 called STEP. ChipBoy applied that to whatever table the channel happened to
+be running. It is narrower than that.
+
+Measured on 9.2.L, a wave instrument with bit 3 set and a table whose sixteen rows each carry an
+`E`, read off `NR32`:
+
+```
+instrument's own table (byte 6)   ROM  one row, then nothing      a row a trigger
+a table a cell's `A` starts       ROM  0 1 2 3 1 2 3 ... 19 ms apart   a row a TICK
+a table another table's `A` starts  ROM  the same, 19 ms apart        a row a TICK
+```
+
+ChipBoy froze all three after row 0 when the instrument said STEP. So **`STEP` governs only the
+table the instrument names**; a table an `A` starts -- from a cell or from inside another table --
+runs one row a tick whatever the instrument says.
+
+**This is `SAMESONG`'s phrase 14.** Instrument 02 is a wave instrument in STEP mode whose table
+`11` holds `F 00` and `A 02` on row 0 and `Z 10` with `H 00` on row 1. Table `02` is the one with
+the shape in it: `V F3` on row 0, `E 02` on row 9, `E 03` on row 12, and two `H` rows that loop the
+pair. On the ROM `NR32` walks 100% -> 50% -> 100% every eleven ticks or so -- the fade the user
+heard while the volume column stayed blank. In ChipBoy table `02` started, fired its row 0 (so the
+vibrato was there) and then stood still, so the fade never happened.
+
+`Voice::tableTicks` carries it: set when `Cmd::A` starts the run, cleared when the instrument's own
+table (or a cell's `TBL` column, which overrides that same table) does. The tick handler steps the
+lanes when the instrument says Tick **or** `tableTicks` is set, and a note-on's one-row-per-trigger
+advance is skipped for an `A`-started run.
+
+**And it fires its row 0 one tick later, which corrects §113.** The same measurement, read row by
+row: the instrument's own table plays row 0 *with* the note and rows 1, 2, 3 on the ticks after it,
+while a table an `A` started plays row 0 on the **next tick** and the rest after that -- one tick
+behind the row that started it, every time. §113 fired it at once because in STEP mode there was no
+next tick to fire it on; with that fixed the immediate fire is wrong and goes.
+
+Two things in ChipBoy were eating that row 0. The fire-at-once of §113 was one. The other is that
+`stepTableLane` holds `step` as a **reference** into the voice, and an `A` on the row it is running
+puts every lane back to row 0 -- so the `++step` that ends the outer row was incrementing the *new*
+table's pointer and the new table began at row 1. `beginTableRun` already counts runs, so the lane
+returns when `tableRun` moved rather than bookkeeping a table that has gone.
+
+Measured end to end on `SAMESONG`'s phrase 14, `NR32` against the ROM's, the ROM's 25 ms of
+playback lead-in taken off:
+
+```
+ROM  0  196  235  428  466  662  698  891  929  1123  1161 ms
+CB   0  194  233  426  465  659  698  891  930  1124  1163 ms
+```
+
+## 123. `Z`: what it re-runs, and the record outliving the note
+
+The ROM says it plainly (the command help, bank 01 `$7448`):
+
+```
+Z: RANDOMIZE; REDO LAST CMD WITH RANDOM VALUE N ADDED TO LAST CMD VALUE
+```
+
+§74 measured the lane rule -- `Z` re-runs its own lane's last command, the channel's cell lane or a
+table's column 1 or 2, and `H` and `Z` are never recorded. Three things checked again here, because
+`SAMESONG`'s phrase 14 leans on all of them (`W 20` then five `Z 3F`, and `F 00` then `Z 10` inside
+table `11`).
+
+**The random is per nibble, not on the byte.** On `WAV` an `E` reads only its **low** nibble (§79),
+so `E 03` followed by `Z F0` -- which touches the high nibble alone -- must leave `NR32` where it is
+if the random is per nibble and move it if it is added to the byte. Measured on 9.2.L: `NR32` stays
+at 100% for every note under `Z F0` and walks under `Z 0F`. §74's rule stands.
+
+**`Z 0 0` re-runs the command exactly**, which is the clean way to see what the record holds:
+
+```
+E 02, a note, Z 00, a note, Z 00        ROM NR32  2 0 2 0 2      (50%, the instrument's, 50%, ...)
+E 02, O 03, Z 00                        ROM NR32  2 0 0          O is the last command now
+```
+
+**And the record outlives the note-on** -- it even outlives a different instrument:
+
+```
+E 02, a note on another instrument, Z 00, Z 00    ROM NR32  2 0 2 2
+```
+
+ChipBoy cleared `Voice::lastCellCmd` at every note-on, so a `Z` on a later row had nothing to
+re-run and did nothing at all. That is phrase 14's `Z 3F` rows: on the ROM each of them re-runs the
+`W 20` from step 2 with a fresh random speed and length, and in ChipBoy they were inert. The clear
+goes; nothing inside a channel's playback resets the record.

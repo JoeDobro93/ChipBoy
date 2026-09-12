@@ -165,17 +165,29 @@ public:
         if (mode_ == bank::EnvMode::Shaped) {
             const int start = std::clamp<int>(env_.start, 0, top), peak = std::clamp<int>(env_.peak, 0, top), sus = std::clamp<int>(env_.sustain, 0, top);
             const int fadeTo = std::clamp<int>(env_.fadeTo, 0, top);
-            const int a = env_.attackTicks, d = env_.decayTicks, f = env_.fadeTicks, r = env_.releaseTicks;
+            // Section 121: the stages are a tick count **and** a fraction, so the
+            // curve is drawn in 1/256 of a tick and sampled rather than stepped.
+            constexpr int F = 256;
+            const int a = env_.attackTicks * F + env_.attackFine, d = env_.decayTicks * F + env_.decayFine,
+                      f = env_.fadeTicks * F + env_.fadeFine, r = env_.releaseTicks * F + env_.releaseFine;
             const int held = f > 0 ? fadeTo : sus;
-            const int hold = std::max(6, (a + d + f + r) / 3);
+            const int hold = std::max(6 * F, (a + d + f + r) / 3);
             const int total = std::max(1, a + d + f + hold + r);
             const auto x = [&](int t) { return W * float(t) / float(total); };
-            for (int t = 0; t <= a; ++t) point(x(t), bank::envSegmentLevel(start, peak, a, t, env_.attackCurve));
-            for (int t = 0; t <= d; ++t) point(x(a + t), bank::envSegmentLevel(peak, sus, d, t, env_.decayCurve));
-            for (int t = 0; t <= f; ++t) point(x(a + d + t), bank::envSegmentLevel(sus, held, f, t, env_.fadeCurve));
+            const auto seg = [&](int at, int len, int from, int to, bank::EnvCurve c) {
+                const int n = len <= 0 ? 0 : std::min(64, std::max(2, len / 16));
+                for (int k = 0; k <= n; ++k) {
+                    const int t = n == 0 ? 0 : int(int64_t(len) * k / n);
+                    point(x(at + t), bank::envSegmentLevel(from, to, len, t, c));
+                }
+                if (len <= 0) point(x(at), to);
+            };
+            seg(0, a, start, peak, env_.attackCurve);
+            seg(a, d, peak, sus, env_.decayCurve);
+            seg(a + d, f, sus, held, env_.fadeCurve);
             point(x(a + d + f + hold), held);
-            for (int t = 0; t <= r; ++t) point(x(a + d + f + hold + t), bank::envSegmentLevel(held, 0, r, t, env_.releaseCurve));
-            right = String(a + d + f + r) + " t";
+            seg(a + d + f + hold, r, held, 0, env_.releaseCurve);
+            right = String(double(a + d + f + r) / double(F), 1) + " t";
         } else {
             const double stepS = rate_ > 0 ? rate_ * 0.015625 : 0.0;
             for (int px = 0; px < int(W); ++px) {
@@ -212,7 +224,9 @@ private:
                && i.env.attackTicks == env_.attackTicks && i.env.peak == env_.peak && i.env.decayTicks == env_.decayTicks
                && i.env.sustain == env_.sustain && i.env.releaseTicks == env_.releaseTicks
                && i.env.start == env_.start && i.env.fadeTicks == env_.fadeTicks && i.env.fadeTo == env_.fadeTo && i.env.fadeCurve == env_.fadeCurve
-               && i.env.attackCurve == env_.attackCurve && i.env.decayCurve == env_.decayCurve && i.env.releaseCurve == env_.releaseCurve;
+               && i.env.attackCurve == env_.attackCurve && i.env.decayCurve == env_.decayCurve && i.env.releaseCurve == env_.releaseCurve
+               && i.env.attackFine == env_.attackFine && i.env.decayFine == env_.decayFine
+               && i.env.fadeFine == env_.fadeFine && i.env.releaseFine == env_.releaseFine;
     }
     bank::Envelope env_;
     bank::EnvMode mode_ = bank::EnvMode::Chip;
@@ -737,23 +751,23 @@ void InstrumentPanel::rebuildEditor()
     if (inst.env.mode == bank::EnvMode::Shaped) {
         w_->start = stepper(*env, "Start", "The level the attack begins at: 0 is silence; LSDj's first amplitude otherwise (section 51).", 0, topLevel, 0, {},
                             [topLevel](bank::Instrument& i, int v) { i.env.start = uint8_t(std::clamp(v, 0, topLevel)); });
-        segmentRow(*env, "Attack", "Ticks from the start level to the peak, up or down.",
-                   [](bank::Instrument& i, int v) { i.env.attackTicks = uint8_t(std::clamp(v, 0, 255)); },
+        segmentRow(*env, "Attack", "Ticks from the start level to the peak, up or down. An imported instrument can carry a fraction of a tick as well (section 121); setting this clears it.",
+                   [](bank::Instrument& i, int v) { i.env.attackTicks = uint8_t(std::clamp(v, 0, 255)); i.env.attackFine = 0; },
                    [](bank::Instrument& i, bank::EnvCurve c) { i.env.attackCurve = c; }, &w_->attack, &w_->attackCurve);
         w_->peak = stepper(*env, "Peak", fourLevels ? "The level the attack reaches, of the four NR32 levels." : "The level the attack reaches, 0-15.",
                            0, topLevel, topLevel, {}, [topLevel](bank::Instrument& i, int v) { i.env.peak = uint8_t(std::clamp(v, 0, topLevel)); });
-        segmentRow(*env, "Decay", "Ticks from the peak to the sustain.",
-                   [](bank::Instrument& i, int v) { i.env.decayTicks = uint8_t(std::clamp(v, 0, 255)); },
+        segmentRow(*env, "Decay", "Ticks from the peak to the sustain. An imported instrument can carry a fraction of a tick as well (section 121); setting this clears it.",
+                   [](bank::Instrument& i, int v) { i.env.decayTicks = uint8_t(std::clamp(v, 0, 255)); i.env.decayFine = 0; },
                    [](bank::Instrument& i, bank::EnvCurve c) { i.env.decayCurve = c; }, &w_->decay, &w_->decayCurve);
         w_->sustain = stepper(*env, "Sustain", "The level held while the note is held -- or faded from, when Fade is set.", 0, topLevel, topLevel, {},
                               [topLevel](bank::Instrument& i, int v) { i.env.sustain = uint8_t(std::clamp(v, 0, topLevel)); });
         segmentRow(*env, "Fade", "Ticks from the sustain to the Fade-to level, which is then held; 0 is no fade (section 51).",
-                   [](bank::Instrument& i, int v) { i.env.fadeTicks = uint8_t(std::clamp(v, 0, 255)); },
+                   [](bank::Instrument& i, int v) { i.env.fadeTicks = uint8_t(std::clamp(v, 0, 255)); i.env.fadeFine = 0; },
                    [](bank::Instrument& i, bank::EnvCurve c) { i.env.fadeCurve = c; }, &w_->fade, &w_->fadeCurve);
         w_->fadeTo = stepper(*env, "Fade to", "Where the fade ends and holds: 0 for LSDj's third stage, which fades to silence.", 0, topLevel, 0, {},
                              [topLevel](bank::Instrument& i, int v) { i.env.fadeTo = uint8_t(std::clamp(v, 0, topLevel)); });
         segmentRow(*env, "Release", "Ticks from the level at note-off to silence, when Note-off is Release.",
-                   [](bank::Instrument& i, int v) { i.env.releaseTicks = uint8_t(std::clamp(v, 0, 255)); },
+                   [](bank::Instrument& i, int v) { i.env.releaseTicks = uint8_t(std::clamp(v, 0, 255)); i.env.releaseFine = 0; },
                    [](bank::Instrument& i, bank::EnvCurve c) { i.env.releaseCurve = c; }, &w_->release, &w_->releaseCurve);
     } else if (!fourLevels) {
         const String nr = type == bank::InstrumentType::Noise ? "NR42" : "NR12/22";

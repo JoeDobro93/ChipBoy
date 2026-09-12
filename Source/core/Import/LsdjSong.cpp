@@ -292,7 +292,7 @@ struct Reader {
         const double ms = std::abs(delta) * perLevelMs;
         return std::clamp(int(std::lround(ms / tickMs)), 1, 255);
     }
-    void envelope(const uint8_t* b, bank::Instrument& o, const std::string& name)
+    void envelope(const uint8_t* b, bank::Instrument& o)
     {
         if (m.envelopeLaw == EnvelopeLaw::Chip) {
             // The byte is NRx2: the chip's own envelope, exactly.
@@ -325,19 +325,9 @@ struct Reader {
             o.env.decayTicks = uint8_t(envTicks(a2 - a3, s2)); o.env.sustain = uint8_t(a3);
             if (s3 && !hw) { o.env.fadeTicks = uint8_t(envTicks(a3, s3)); o.env.fadeTo = 0; }
         }
-        // Section 116: a stage faster than a tick a level is no longer flattened
-        // -- the driver steps the shaped envelope on the pitch clock and walks
-        // every level. What is left is the stage's own **length**, which
-        // `envTicks` rounds to a whole tick, so a stage can be up to half a tick
-        // longer or shorter than the ROM's.
-        for (int sp : { s1, s2, s3 }) {
-            const double perLevelMs = m.envPeriods != nullptr ? double(m.envPeriods[size_t(sp & 15)]) * kPitchClockMs : double(sp & 7) * 1000.0 / 64.0;
-            const double stageMs = perLevelMs * 16.0;
-            if (sp && stageMs > 0.0 && std::fabs(std::lround(stageMs / tickMs) * tickMs - stageMs) > tickMs * 0.25) {
-                notes.add("instrument " + name + ": an envelope stage does not land on a whole tick; its length is rounded to one (section 116)");
-                break;
-            }
-        }
+        // Sections 116 and 121: the levels are walked on the pitch clock and the
+        // stages carry their fraction of a tick, so nothing is rounded away and
+        // there is nothing left to warn about.
     }
 
     // --- instruments ------------------------------------------------------
@@ -382,7 +372,13 @@ struct Reader {
             static const char* kKind[4] = { " (PU)", " (WAV)", " (kit)", " (NOI)" };
             o.name += kKind[key.second & 3];
             bank.instruments[size_t(slot - 1)] = o;
-            notes.add("instrument " + hex2(key.first) + " " + bank.instruments[size_t(key.first)].name + " also plays on " + (key.second == 3 ? "NOI" : key.second == 0 ? "PU1/PU2" : "WAV") + ": a " + std::string(kKind[key.second & 3] + 2, std::strlen(kKind[key.second & 3]) - 3) + " variant sits in slot " + hex2(slot - 1));
+            // Section 119: on NOI this is exact -- a pulse instrument played on
+            // the noise channel writes what a noise instrument with the same
+            // bytes writes, measured register for register on 9.2.L -- so the
+            // copy is bookkeeping, not a loss, and says nothing. The other
+            // kinds are not measured yet and still do.
+            if (key.second != 3)
+                notes.add("instrument " + hex2(key.first) + " " + bank.instruments[size_t(key.first)].name + " also plays on " + (key.second == 0 ? "PU1/PU2" : "WAV") + ": ChipBoy's instruments carry a type, so a " + std::string(kKind[key.second & 3] + 2, std::strlen(kKind[key.second & 3]) - 3) + " copy of it sits in slot " + hex2(slot - 1) + "; whether the ROM reads it the same way there is not measured");
             ++sum.instruments;
         }
         for (const auto& [slot, o] : noiseOffset) if (slot >= 1 && slot <= bank::kInstrumentSlots) bank.instruments[size_t(slot - 1)].noiseShift = uint8_t(std::clamp(5 + o, 0, 13));
@@ -427,7 +423,7 @@ struct Reader {
                 bank.noiseMapNote0 = uint8_t(kNoiseMapNote0);
                 bank.noiseMapSet = true;
             }
-            if (t == 0 || t == 3) envelope(b, o, name);
+            if (t == 0 || t == 3) envelope(b, o);
             if (t == 0) {
                 o.duty = uint8_t(b[7] >> 6); o.dutySeqLen = 0; o.pitchSpeed = m.pitchLaw == PitchLaw::Register ? bank::PitchSpeed::Drum : pitchSpeedOf(b[5]);
                 o.pitchRegisterUnits = m.pitchLaw == PitchLaw::Register;      // section 88
@@ -565,7 +561,7 @@ struct Reader {
         auto indexOf = [&](int kitNo, int digit, int len) -> int {
             if (digit == 0 || kitNo < 0 || kitNo >= int(kits->size())) return -1;
             const auto& ks = (*kits)[size_t(kitNo)].samples;
-            if (digit - 1 >= int(ks.size())) { notes.add("kit note " + hex2(noteByte) + " at " + where + " names sample " + std::to_string(digit) + " of kit " + hex2(kitNo) + ", which has " + std::to_string(ks.size()) + "; silent"); return -1; }
+            if (digit - 1 >= int(ks.size())) { notes.add("kit note " + hex2(noteByte) + " at " + where + " names sample " + std::to_string(digit) + " of kit " + hex2(kitNo) + ", which has only " + std::to_string(ks.size()) + ": LSDj reads past the kit's sample list there and streams nothing (measured on 9.2.L), so this step is silent in ChipBoy too"); return -1; }
             const auto key = std::make_pair(kitNo, digit);
             if (auto f = use.sampleOf.find(key); f != use.sampleOf.end()) return f->second;
             if (kit.samples.size() >= 32) { notes.add("kit instrument at " + where + " uses more than 32 different sounds; the rest are silent"); return -1; }
@@ -707,7 +703,8 @@ struct Reader {
                 if (instKind == 1) { out = { Cmd::U, int16_t(x), int16_t(y), 0 }; return true; }
                 // Section 6.18: the ROM masks the byte to its low **two bits**,
                 // so W04 is W00 and W07 is W03; the rest of the byte is ignored.
-                if (v & 0xFC) notes.add("W" + hex2(v) + " at " + where + ": the ROM keeps only the low two bits of the byte, so this is duty " + std::to_string(v & 3));
+                // Measured on 9.2.L across the byte, so ChipBoy's duty is the
+                // ROM's and there is nothing to note.
                 out = { Cmd::W, int16_t(v & 3), 0, 0 }; return true;
             case 'F':
                 // Section 78. WAV: the frame. PU1: a downward finetune of y/32 of a
@@ -763,7 +760,21 @@ struct Reader {
                 // Under LSDj's own table (section 81) the column is semitones and
                 // every note it serves lands right, so there is nothing to say.
                 if (bases.size() > 1 && !mappedNoise()) notes.add("table " + hex2(t) + " is used by several noise notes: its transposes are mapped for the lowest; the others land a little off");
-                if (others) notes.add("table " + hex2(t) + " is used by noise and non-noise instruments: its transposes are mapped for the noise");
+                // Under LSDj's own noise table the transpose column is semitones
+                // for every kind, so a shared table only loses something when it
+                // carries a letter whose reading depends on the channel.
+                if (others) {
+                    bool kindSensitive = false;
+                    for (int r = 0; r < 16 && !kindSensitive; ++r) {
+                        const size_t ti = size_t(t) * 16 + size_t(r);
+                        for (uint8_t code : { at(kTableCmd1 + ti), at(kTableCmd2 + ti) }) {
+                            const char lt = letterOf(code);
+                            if (lt == 'C' || lt == 'E' || lt == 'F' || lt == 'L' || lt == 'P' || lt == 'S' || lt == 'V' || lt == 'W') { kindSensitive = true; break; }
+                        }
+                    }
+                    if (kindSensitive || !mappedNoise())
+                        notes.add("table " + hex2(t) + " is used by noise and non-noise instruments, and carries a letter each channel reads differently: it is converted for the noise");
+                }
             }
             auto& tb = bank.tables[size_t(t)];
             tb = bank::Table{};

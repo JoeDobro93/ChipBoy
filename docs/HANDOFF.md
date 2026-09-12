@@ -432,6 +432,17 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 35 (§121-§123, correcting §113): the four envelope warnings and the user's phrase 14.
+  **§121**: a shaped envelope's stages carry a **fraction of a tick** (`attackFine` and friends, 1/256
+  each) -- `CLAP`'s three stages are 1.729, 2.305 and 0.576 ticks, held for 2, 2 and 1 before -- and
+  the note's own tick no longer advances the envelope, so the start level gets its period as the ROM
+  gives it. **§122**: `STEP` governs only the table the instrument names; a table an `A` starts runs
+  one row a **tick** and fires its row 0 on the tick after the row that started it. That is phrase
+  14: instrument 02's table `11` starts table `02`, whose `E` rows walk `NR32` 50% <-> 100%, the fade
+  the user heard -- now inside 3 ms of the ROM over a second. **§123**: `Z`'s last-command record
+  outlives the note-on (and a different instrument), so phrase 14's `Z 3F` rows re-run its `W 20`
+  instead of doing nothing; the random is per nibble, re-confirmed against the ROM. `SAMESONG`'s
+  import notes: 9 to 2.
 - Round 34 (§120): **`H F F` ends the channel's timeline**. The ROM stops the channel outright and
   ChipBoy let the chain carry on, so `SAMESONG` played a whole channel the ROM had switched off.
   The importer now stops adding rows to that channel at the chain step whose phrase holds the
@@ -654,6 +665,15 @@ design-log section the change touches. Update this file at the end of every chan
   of `SAMESONG`'s phrase 0B are identical to the ROM's, measured in the register traces, so the
   sound is right and this is a drawing convention. `Grids.cpp` puts sample 0 at the left with 0 at
   the bottom; matching LSDj is a one-line change if the user wants the editors to agree.
+- **A cell's `W` on a pulse: the duty's lifetime** (§122's measurements, not fixed). On the ROM the
+  `W`'s own note triggers at the **instrument's** duty and the new one lands on the write after, and
+  it then holds until a *different* instrument loads: `W 03`, a note, the same instrument, another
+  instrument gives `0 3 3 0` on `NR11`. ChipBoy applies it before the trigger and re-latches the
+  instrument's duty at the next note-on: `3 0 0`. The value is right (`byte & 3`, swept), the
+  lifetime is not. The general question behind it is whether ChipBoy should keep LSDj's **working
+  copy** model -- a phrase command writes the instrument's copy and holds until another instrument
+  replaces it -- where ChipBoy re-latches from the instrument at every note-on. `V` and the rest want
+  the same measurement before anything changes, so this is a round of its own.
 - **The noise vibrato's phase, at speeds 3, 4, 9 and F** (§119): fifteen of the ninety-six swept
   `V x y` settings differ from the ROM by one sample of the phase, at the ticks where the ninths
   accumulator lands on a whole unit. `V 3 F` fits `floor((12k - 1) / 9)` where ChipBoy computes
