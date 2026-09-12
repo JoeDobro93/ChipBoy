@@ -1031,7 +1031,11 @@ void Driver::pitchStep(int ch, bool onTick)
         if (every > 1) { if (++v.pitchCount < every) advance = false; else v.pitchCount = 0; }
     }
     bool moving = false;
-    const bool vib = advance && v.vibOn && v.ticks >= v.vibDelay;
+    // Section 119: a noise vibrato moves once a tick and by the Tick table's
+    // step, whatever the instrument's PITCH -- the ROM's noise channel has no
+    // pitch-clock processing, so its V lives in the tick handler.
+    const bool noise = v.inst.type == InstrumentType::Noise;
+    const bool vib = advance && v.vibOn && v.ticks >= v.vibDelay && (onTick || !noise);
     if (vib) moving = true;
     if (v.fineQueued) { v.fineOffset += v.fineQueued; v.fineQueued = 0; moving = true; }
     if (advance) {
@@ -1104,7 +1108,7 @@ void Driver::restartPitchClock(int ch)
     // (section 77); without one its NR43 moves on the tick and nowhere else.
     v.pitchClockOn = (v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Wave
                       || v.inst.type == InstrumentType::Kit
-                      || (v.inst.type == InstrumentType::Noise && ((v.vibOn && v.vibDepth) || v.tableOn)))
+                      || (v.inst.type == InstrumentType::Noise && v.tableOn))
                      && pitchSpeed(v) != PitchSpeed::Tick;
 }
 
@@ -1131,7 +1135,18 @@ void Driver::writePeriod(int ch, bool trigger)
             // between entries, so the vibrato is rounded to a whole semitone.
             int raw = int(v.note) + v.noteTsp + v.p.transpose + tableTransposeOf(v) + v.noiseTsp;
             if (v.chordN) raw += v.chord[v.chordIdx % v.chordN];
-            if (v.vibOn && v.vibDepth) raw += int(std::lround(double(vibratoFine(v)) / 256.0));
+            // Section 119: on noise the depth is in **map entries**, not
+            // semitones -- eight entries per semitone of the depth table, so
+            // `V 1 F` swings five octaves where on a pulse it is eight
+            // semitones. The magnitude rounds **up**, so the shallowest depth
+            // still moves the index by one. Measured for every depth on 9.2.L.
+            if (v.vibOn) {
+                // Floored, not rounded: measured on 9.2.L, `V F 1` swings two
+                // entries down and one up from the same phase. A depth of 0 is
+                // one entry, not none, so the depth is not part of the test.
+                const int fine = vibratoFine(v);
+                raw += fine >= 0 ? fine / 32 : -((-fine + 31) / 32);
+            }
             // The instrument's Shift is an offset from the map's pair (5 is
             // none); it is read from the instrument, not from the pair the last
             // write left in `v.noiseShift`, or a second write would compound it.
@@ -2441,10 +2456,10 @@ void Driver::tick(int ch)
     }
     // With the pitch speed at Tick this tick is the pitch update: the vibrato
     // phase, a slide and a P bend move here rather than on the pitch clock.
-    if (!v.pitchClockOn && (v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Wave
-                            || v.inst.type == InstrumentType::Kit
-                            || (v.inst.type == InstrumentType::Noise && v.vibOn && v.vibDepth))
-        && pitchSpeed(v) == PitchSpeed::Tick) pitchStep(ch, true);
+    if (v.inst.type == InstrumentType::Noise && v.vibOn) pitchStep(ch, true);   // section 119
+    else if (!v.pitchClockOn && (v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Wave
+                                 || v.inst.type == InstrumentType::Kit)
+             && pitchSpeed(v) == PitchSpeed::Tick) pitchStep(ch, true);
     // pitch for this tick. The pitch clock writes the period whenever a pitch
     // effect is moving it; what the *tick* moves -- a chord step, a table's
     // transpose column, the channel's own transpose -- goes out here, and only

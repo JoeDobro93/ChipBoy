@@ -3423,3 +3423,54 @@ entries, so `AIR`+`AIR` is one sample named twice rather than two copies.
 
 The one thing VEL had to be kept clear of is the **keyswitch velocity mode**, which adds `vel / 8`
 to the instrument slot: it now skips a channel whose instrument is a kit.
+
+## 119. `V` on the noise channel is a tick thing, and eight times as deep
+
+§77 let `V` reach the noise channel by reading the same vibrato the pulses read -- the offset in
+1/256 semitones, rounded to a whole one before the map lookup. Two things about that were wrong,
+and together they are what makes `SAMESONG`'s phrase 47 -- instrument 08, a *pulse* instrument,
+played on `NOI` -- sound nothing like the ROM.
+
+**It moves once a tick, not once a pitch clock.** Measured on 9.2.L with `V 2 F` on a noise note:
+`NR43` steps by four map entries every tick (19.4 ms) and by nothing in between. ChipBoy ran the
+phase on the 358 Hz clock, so it swung about seven times too fast.
+
+**Its phase is the Tick table's, whatever the instrument's `PITCH`.** Sweeping `V x 8` over every
+speed gives quarter periods of 24, 18, 16, 12, 9, 8, 6, 4.5, 4, 3, 2.25, 2, 1.5, 1.125, 1 and
+0.75 **ticks** -- exactly `kVibTickStep9`, the table §7 measured for Tick mode, and not the pitch
+clock's `64/(x + 1)`. The noise channel has no pitch-clock processing in the ROM, so its `V` lives
+in the tick handler and takes the tick law with it.
+
+**Its depth is in map entries, not semitones.** Sweeping `V 2 y` over every depth gives swings of
+
+```
+y     0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+map   1  2  3  4  6  8 12 16 20 24 28 32 40 48 56 64      entries
+```
+
+which is `kVibDepth256[y] / 32` exactly -- eight entries per semitone of the depth table the
+pulses use. So the ROM adds the depth to the note **index** without the 1/256 scaling, and `V 1 F`
+on noise is a swing of five octaves where on a pulse it is eight semitones. The index wraps
+(§83), which is why a deep one walks off the end of the map and round again.
+
+ChipBoy takes all three: `writePeriod` divides the vibrato by 32 instead of 256 for a noise voice,
+the tick handler steps a noise vibrato's phase itself whatever the instrument's `PITCH`, and
+`pitchClockOn` no longer turns the pitch clock on for a noise voice that has only a vibrato.
+
+**What is left.** Swept over every speed and six depths, ChipBoy's `NR43` stream is the ROM's
+byte for byte in 81 of the 96 settings. The fifteen that differ are all at speeds 3, 4, 9 and F,
+and they differ by **one sample of the phase** at the ticks where the ninths accumulator lands on
+a whole phase unit -- the ROM holds the old unit for that tick where ChipBoy takes the new one.
+`V 3 F` fits `floor((12k - 1) / 9)` where ChipBoy computes `floor(12k / 9)`, but the same
+correction is wrong at speed 4, so the ROM's accumulator is not simply one behind. Ordering inside
+a tick is also not settled: with a table running as well, the ROM writes the transpose column and
+then the vibrato, and ChipBoy writes them the other way round, so the value the tick ends on can
+differ even when both move at the same rate.
+
+**What this is not.** A mismatched instrument type on a channel needed no work at all: measured on
+9.2.L, a *pulse* instrument played on `NOI` writes the same `NR41`-`NR44` as a noise instrument
+with the same bytes, note for note and tick for tick -- the note goes through the noise map, the
+envelope is byte 1 read as three stages, `NR42` starting at `(byte 1 & F0) | 8`. ChipBoy's import
+already builds a `NOI` variant that does exactly that, and its register stream matches the ROM's
+without a vibrato. LSDj simply does not consult an instrument's type when a channel plays it; the
+type only says which bytes the editor shows.

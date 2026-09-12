@@ -26,6 +26,39 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-12 — `V` on the noise channel, and what a mismatched instrument type really does
+
+`docs/COMMANDS_AND_TEMPO.md` §119. The sixth of the user's list, which asked how LSDj handles an
+instrument played on a channel its type does not match -- `SAMESONG`'s phrase 47 plays instrument
+08, a **pulse** instrument, on `NOI`.
+
+**The answer is that LSDj does not care.** Measured on 9.2.L: a pulse instrument on the noise
+channel writes the same `NR41`-`NR44` as a noise instrument with the same bytes, note for note and
+tick for tick -- the note goes through the noise map, `NR42` starts at `(byte 1 & F0) | 8` and the
+three stages ramp from there. ChipBoy's import already builds a `NOI` variant that does exactly
+that, and with the vibrato taken out of the probe its register stream is the ROM's, byte for byte.
+Nothing needed changing for the mismatch itself.
+
+**What was wrong was `V` on the noise channel**, which §77 had let through with the pulses'
+reading. Three things:
+
+- it moves **once a tick**, not once a pitch clock -- ChipBoy swung about seven times too fast;
+- its phase is the **Tick table's** whatever the instrument's `PITCH` (quarter periods of 24, 18,
+  16, 12, 9, 8, 6, 4.5, 4, 3, 2.25, 2, 1.5, 1.125, 1 and 0.75 ticks, swept over all sixteen
+  speeds);
+- its depth is in **map entries**, not semitones: `kVibDepth256[y] / 32`, so `V 1 F` swings five
+  octaves where the same command on a pulse is eight semitones. Swept over all sixteen depths.
+
+The magnitude **floors** rather than rounds, which is why a depth of 0 still moves the index by
+one -- and why `V x 0` had been silent on noise, since the old guard treated depth 0 as no
+vibrato at all.
+
+**Departure from the spec:** 81 of the 96 swept `V x y` settings now match the ROM's `NR43` stream
+byte for byte. The fifteen that do not are at speeds 3, 4, 9 and F and differ by one sample of the
+phase where the ninths accumulator lands on a whole unit; with a table running as well the two
+also order the transpose and the vibrato differently inside a tick. Both are recorded in §119
+rather than guessed at.
+
 ### 2026-09-12 — A kit note keeps its pair, and the Kits tab can play a sample
 
 `docs/COMMANDS_AND_TEMPO.md` §118, `docs/plan-kit-pairs.md`, `docs/UI_DESIGN.md` D-UI-27 to

@@ -2825,6 +2825,66 @@ TEST_CASE("S and P on noise work on NR43 in the Register domain", "[driver][nois
     }
 }
 
+TEST_CASE("a noise vibrato moves once a tick, in map entries", "[driver][noise]")
+{
+    // Section 119, measured on 9.2.L: V on the noise channel steps once a
+    // **tick** by the Tick table's phase, and its depth is in map entries --
+    // eight per semitone of the depth table, rounded up.
+    Rig r;
+    r.tickHz = 100.0;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    for (int i = 0; i < 128; ++i) r.bank.noiseMap[size_t(i)] = uint8_t(i);
+    r.bank.noiseMapLen = 128; r.bank.noiseMapNote0 = 1; r.bank.noiseMapSet = true;
+    auto& i0 = r.bank.instruments[20];
+    i0 = Instrument::defaults(InstrumentType::Noise, "drum");
+    i0.used = true; i0.noiseLsdjMap = true; i0.noiseShift = 5;
+    ChannelParams p; p.instrument = 21; r.drv.setParams(3, p);
+
+    /// NR43 after each of `n` ticks, and how many times it was written inside one.
+    auto walk = [&](uint8_t x, uint8_t y, int n) {
+        NoteEvent e = cellOn(3, 64, 21);
+        e.cmd1 = { Cmd::V, x, y, 0 };
+        std::vector<int> out; int most = 0;
+        auto w = r.block({ e }, 480);
+        int cur = -1;
+        for (int k = 0; k < n; ++k) {
+            int writes = 0;
+            for (const auto& q : w) if (q.addr == 0xFF22) { ++writes; cur = int(q.value); }
+            most = std::max(most, writes);
+            out.push_back(cur);
+            w = r.block({}, 480);
+        }
+        r.block({ Rig::off(3, 64) }, 480);
+        return std::pair<std::vector<int>, int>{ out, most };
+    };
+    {   // V 2 F: the deepest swing, four entries a tick, sixteen ticks to the peak.
+        const auto [seen, most] = walk(2, 15, 8);
+        CHECK(seen[0] == 63);                     // the note itself
+        CHECK(seen[1] == 59);
+        CHECK(seen[2] == 55);
+        CHECK(seen[3] == 51);
+        CHECK(seen[7] == 35);
+        CHECK(most <= 1);                         // nothing moves between ticks
+    }
+    {   // V 2 0: the shallowest depth still moves the index by one, and holds
+        // it while the triangle is inside one entry.
+        const auto [seen, most] = walk(2, 0, 4);
+        CHECK(seen[0] == 63);
+        CHECK(seen[1] == 62);
+        CHECK(seen[2] == 62);
+        CHECK(most <= 1);
+    }
+    {   // The phase is the Tick table's whatever the instrument's PITCH: at
+        // speed 8 the cycle is sixteen ticks, so the peak comes after four.
+        i0.pitchSpeed = PitchSpeed::Fast;
+        const auto [seen, most] = walk(8, 15, 9);
+        CHECK(seen[0] == 63);
+        CHECK(seen[4] == 63 - 64 + 128);          // the index wraps (section 83)
+        CHECK(seen[8] == 63);
+        CHECK(most <= 1);
+    }
+}
+
 TEST_CASE("noise PITCH decides which pitch change restarts the channel", "[driver][noise]")
 {
     // Sections 82, 86 and 87, measured on 9.3.9. A three-entry map: entry 0 is

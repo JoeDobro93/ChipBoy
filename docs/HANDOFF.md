@@ -582,6 +582,13 @@ design-log section the change touches. Update this file at the end of every chan
   straight onto the pair, so `AIR`+`AIR` is one entry named twice. VEL means one thing at a time:
   the keyswitch velocity mode skips a kit. The Kits tab also gained **Audition** (D-UI-29), which
   plays the selected sample beside the song without touching the driver.
+- Round 26 (§119): **`V` on the noise channel**. A mismatched instrument type needed nothing --
+  measured on 9.2.L, a pulse instrument on `NOI` writes exactly what a noise one with the same
+  bytes writes, and ChipBoy's `NOI` variant already matched. What made `SAMESONG`'s phrase 47 wrong
+  was the vibrato: it moves **once a tick** (ChipBoy ran it on the pitch clock, seven times too
+  fast), its phase is the **Tick table's** whatever the instrument's `PITCH`, and its depth is in
+  **map entries** -- `kVibDepth256[y] / 32`, eight per semitone -- floored, so depth 0 still moves
+  the index by one. 81 of 96 swept settings now match the ROM byte for byte.
 
 ## Open issues
 
@@ -641,6 +648,13 @@ design-log section the change touches. Update this file at the end of every chan
   of `SAMESONG`'s phrase 0B are identical to the ROM's, measured in the register traces, so the
   sound is right and this is a drawing convention. `Grids.cpp` puts sample 0 at the left with 0 at
   the bottom; matching LSDj is a one-line change if the user wants the editors to agree.
+- **The noise vibrato's phase, at speeds 3, 4, 9 and F** (§119): fifteen of the ninety-six swept
+  `V x y` settings differ from the ROM by one sample of the phase, at the ticks where the ninths
+  accumulator lands on a whole unit. `V 3 F` fits `floor((12k - 1) / 9)` where ChipBoy computes
+  `floor(12k / 9)`, but that correction is wrong at speed 4, so the ROM's accumulator is not one
+  behind; it wants reading off the ROM rather than fitting. Ordering inside a tick is open too --
+  with a table running, the ROM writes the transpose column then the vibrato and ChipBoy the other
+  way round, so the value a tick ends on can differ even at the same rate.
 - The chord rate defaults to LSDj's one step a tick; the demo songs' arpeggios still run
   at that speed. Slowing them is a content decision (`make_songs.py` would need a
   `chordRate` field).
