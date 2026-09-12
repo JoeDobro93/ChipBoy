@@ -806,6 +806,41 @@ TEST_CASE("a real save, when one is given, imports every song without a fault", 
     CHECK(imported == int(idx.files.size()));
 }
 
+TEST_CASE("H FF ends the channel's chain", "[lsdj]")
+{
+    // Section 120: the ROM stops the channel outright, so ChipBoy's channel
+    // has no timeline past it -- a playhead dropped beyond finds silence.
+    auto song = blankSong(22);
+    song[kInstAlloc + 0] = 1;
+    song[kPhraseAlloc] |= 0x07;                     // phrases 0, 1 and 2
+    for (int p = 0; p < 3; ++p)
+        for (int st = 0; st < 4; ++st) { song[kNotes + size_t(p) * 16 + size_t(st)] = uint8_t(60 + st); song[kPhraseInst + size_t(p) * 16 + size_t(st)] = 0; }
+    song[kCmd + 2] = 8; song[kCmdV + 2] = 0xFF;     // phrase 0 step 2: H FF
+    song[kChainPhrases + 0] = 0; song[kChainPhrases + 1] = 1; song[kChainPhrases + 2] = 2;
+    song[kRows + 0] = 0; song[kRows + 1] = 0xFF; song[kRows + 2] = 0xFF; song[kRows + 3] = 0xFF;
+    song[kRows + 4] = 0xFF; song[kRows + 5] = 0xFF; song[kRows + 6] = 0xFF; song[kRows + 7] = 0xFF;
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    REQUIRE(importSong(song.data(), song.size(), lsdjLatestModel(), *bank, *out, sum, notes, nullptr));
+    REQUIRE(out->chain[0].size() == 1);             // the two phrases after it are not laid out
+    const auto* p0 = out->phrase(out->chain[0][0]);
+    REQUIRE(p0 != nullptr);
+    CHECK(int(p0->steps) == 2);                     // and the phrase ends at the H
+    CHECK(p0->cells[0].note != 0);
+    for (int ch = 1; ch < 4; ++ch) CHECK(out->chain[size_t(ch)].empty());   // the others are untouched
+    bool said = false;
+    for (const auto& l : notes.lines) if (l.find("HFF") != std::string::npos) said = true;
+    CHECK(said);
+    {   // Without the H FF the same song lays all three phrases out.
+        auto s2 = song;
+        s2[kCmd + 2] = 0; s2[kCmdV + 2] = 0;
+        auto b2 = std::make_unique<bank::Bank>(); auto o2 = std::make_unique<tracker::Song>();
+        ImportSummary m2; ImportNotes n2;
+        REQUIRE(importSong(s2.data(), s2.size(), lsdjLatestModel(), *b2, *o2, m2, n2, nullptr));
+        CHECK(o2->chain[0].size() == 3);
+    }
+}
+
 TEST_CASE("a kit instrument's DIST curve sums its two samples", "[lsdj]")
 {
     using namespace chipboy::lsdj;

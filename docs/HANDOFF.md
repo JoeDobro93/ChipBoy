@@ -432,6 +432,33 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 34 (§120): **`H F F` ends the channel's timeline**. The ROM stops the channel outright and
+  ChipBoy let the chain carry on, so `SAMESONG` played a whole channel the ROM had switched off.
+  The importer now stops adding rows to that channel at the chain step whose phrase holds the
+  `H F F`; a host playhead past it finds no row and nothing plays. What it does not carry is the
+  loop -- the ROM's channel stays off until playback stops, where ChipBoy's rows before the stop
+  play again on the next pass, which the import note says.
+- Round 33 (§119): **`V` on the noise channel**. A mismatched instrument type needed nothing --
+  measured on 9.2.L, a pulse instrument on `NOI` writes exactly what a noise one with the same
+  bytes writes, and ChipBoy's `NOI` variant already matched. What made `SAMESONG`'s phrase 47 wrong
+  was the vibrato: it moves **once a tick** (ChipBoy ran it on the pitch clock, seven times too
+  fast), its phase is the **Tick table's** whatever the instrument's `PITCH`, and its depth is in
+  **map entries** -- `kVibDepth256[y] / 32`, eight per semitone -- floored, so depth 0 still moves
+  the index by one. 81 of 96 swept settings now match the ROM byte for byte.
+- Round 32 (§118, `plan-kit-pairs.md`): a kit note **keeps its pair**. The ChipBoy kit holds the
+  source samples, a cell's **note** column names the first and its **VEL** column the second by
+  index + 1, and the kit's new **`Dist`** (D-UI-28) says how the driver sums them -- the same five
+  curves as §117, live rather than baked at import. The importer maps a note byte's two digits
+  straight onto the pair, so `AIR`+`AIR` is one entry named twice. VEL means one thing at a time:
+  the keyswitch velocity mode skips a kit. The Kits tab also gained **Audition** (D-UI-29), which
+  plays the selected sample beside the song without touching the driver.
+- Round 31 (§117): the kit **`DIST` modes**, read off the ROM rather than guessed. Byte 10 of a
+  kit instrument is the **page of the mixing table** LSDj looks the two samples up in -- `D0` to
+  `D3` -- and each of the four tables is a function of the two nibbles' sum, so each is a curve.
+  All four are in `Source/core/Import/LsdjKitDist.h` in closed form, checked entry for entry
+  against the 47 ROMs in the archive and end to end against the ROM's streamed wave RAM. The list
+  moved at 9.2 (`CLIP/SHAPE/SHAP2/WRAP` became `HARD/SOFT/FOLD/WRAP`), so the model carries the
+  pair. The old sum had no floor, so a quiet passage wrapped round into noise; that is gone.
 - Round 30 (§116): **the shaped envelope steps on the pitch clock**, not once a tracker tick.
   `SAMESONG`'s `CLAP` fades four levels in one tick and ChipBoy emitted one jump; the ROM walks every
   level. The stages stay whole ticks and the position becomes `shapedTick * 256 + sub`, `sub` being
@@ -568,27 +595,6 @@ design-log section the change touches. Update this file at the end of every chan
   **`PITCH` from byte 5** with `P` in period-register units. `SAMESONG`'s pulse channels went from
   agreeing with the ROM 47% and 30% of the time to 85% and 94%. `docs/LSDJ_VERSIONS.md` §6 has
   every song's numbers and what is still wrong.
-- Round 24 (§117): the kit **`DIST` modes**, read off the ROM rather than guessed. Byte 10 of a
-  kit instrument is the **page of the mixing table** LSDj looks the two samples up in -- `D0` to
-  `D3` -- and each of the four tables is a function of the two nibbles' sum, so each is a curve.
-  All four are in `Source/core/Import/LsdjKitDist.h` in closed form, checked entry for entry
-  against the 47 ROMs in the archive and end to end against the ROM's streamed wave RAM. The list
-  moved at 9.2 (`CLIP/SHAPE/SHAP2/WRAP` became `HARD/SOFT/FOLD/WRAP`), so the model carries the
-  pair. The old sum had no floor, so a quiet passage wrapped round into noise; that is gone.
-- Round 25 (§118, `plan-kit-pairs.md`): a kit note **keeps its pair**. The ChipBoy kit holds the
-  source samples, a cell's **note** column names the first and its **VEL** column the second by
-  index + 1, and the kit's new **`Dist`** (D-UI-28) says how the driver sums them -- the same five
-  curves as §117, live rather than baked at import. The importer maps a note byte's two digits
-  straight onto the pair, so `AIR`+`AIR` is one entry named twice. VEL means one thing at a time:
-  the keyswitch velocity mode skips a kit. The Kits tab also gained **Audition** (D-UI-29), which
-  plays the selected sample beside the song without touching the driver.
-- Round 26 (§119): **`V` on the noise channel**. A mismatched instrument type needed nothing --
-  measured on 9.2.L, a pulse instrument on `NOI` writes exactly what a noise one with the same
-  bytes writes, and ChipBoy's `NOI` variant already matched. What made `SAMESONG`'s phrase 47 wrong
-  was the vibrato: it moves **once a tick** (ChipBoy ran it on the pitch clock, seven times too
-  fast), its phase is the **Tick table's** whatever the instrument's `PITCH`, and its depth is in
-  **map entries** -- `kVibDepth256[y] / 32`, eight per semitone -- floored, so depth 0 still moves
-  the index by one. 81 of 96 swept settings now match the ROM byte for byte.
 
 ## Open issues
 

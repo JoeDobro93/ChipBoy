@@ -26,6 +26,26 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-12 — `H F F` ends the channel's timeline
+
+`docs/COMMANDS_AND_TEMPO.md` §120. The last of the user's list.
+
+**Changed:** §80 measured that `H F F` stops the channel on the ROM -- two note-ons over
+thirty-five seconds and then nothing -- and ChipBoy ended the phrase and let the chain carry on, so
+it played a whole channel the ROM had switched off. `SAMESONG`'s phrase 89 step 0 is one.
+
+ChipBoy needs no "stop" command for it. A channel's chain is a flat list of phrase slots and the
+host's timeline is laid out from it, so the faithful expression of "the channel stops here" is that
+the channel's chain **ends** here: the importer stops adding rows to that channel at the chain step
+whose phrase holds the `H F F`, keeping the steps before the `H` in the phrase. A host playhead
+dropped anywhere past it finds no row on that channel and nothing plays -- which is what the user
+asked for -- and the other three channels are untouched, as on the ROM.
+
+**Departure from the spec:** the loop does not carry. On the ROM the channel is dead until playback
+stops, so a song that loops round comes back without it; in ChipBoy the rows before the stop play
+again on the next pass. Expressing that wants a channel state that outlives the transport's loop,
+which is a larger thing than this one; the import note says so rather than leaving it implied.
+
 ### 2026-09-12 — `V` on the noise channel, and what a mismatched instrument type really does
 
 `docs/COMMANDS_AND_TEMPO.md` §119. The sixth of the user's list, which asked how LSDj handles an

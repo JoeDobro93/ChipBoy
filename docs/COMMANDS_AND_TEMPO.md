@@ -3474,3 +3474,27 @@ envelope is byte 1 read as three stages, `NR42` starting at `(byte 1 & F0) | 8`.
 already builds a `NOI` variant that does exactly that, and its register stream matches the ROM's
 without a vibrato. LSDj simply does not consult an instrument's type when a channel plays it; the
 type only says which bytes the editor shows.
+
+## 120. `H F F` ends the channel's timeline
+
+§80 measured it and left it: `H F F` **stops the channel** on the ROM -- two note-ons over
+thirty-five seconds and then nothing at all, where `H 2 F` on the same phrase hops twice and runs
+on. ChipBoy ended the phrase there and let the chain carry on, which is the one thing the ROM does
+not do. `SAMESONG`'s phrase 89 step 0 is an `H F F`, so ChipBoy played a whole channel the ROM
+had switched off.
+
+ChipBoy has no "stop" command and does not need one. A channel's chain is a flat list of phrase
+slots and the host's timeline is laid out from it, so the faithful expression of "the channel
+stops here" is that **the channel's chain ends here**: the importer stops adding rows to that
+channel at the chain step whose phrase holds the `H F F`. The phrase itself keeps the steps before
+the `H` -- they play -- and the chain has nothing after it.
+
+That is what the user asked for, and it falls out of the layout: a host playhead dropped anywhere
+past the stop finds no row on that channel, so nothing plays, exactly as on a ROM that got there
+by playing through. The other channels are untouched, which is also the ROM's behaviour -- `H F F`
+stops the channel it is on and no other.
+
+**The one thing it does not carry** is the loop. On the ROM the channel is dead until playback
+stops, so a song that loops round comes back without it; in ChipBoy the rows before the stop are
+still there and play again on the next pass. Expressing that would want a channel state that
+survives the transport's loop, which is a bigger thing than this, and the import notes say so.

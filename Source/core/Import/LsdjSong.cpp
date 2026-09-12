@@ -93,7 +93,7 @@ struct Reader {
     /// `inst` is the instrument the channel carries (LSDj's is 00 at the
     /// start); `instSeen` whether a cell has named one yet.
     struct ChannelState { int nr43 = -1; int chipNote = 0; int lastMidi = -1; int inst = 0; bool instSeen = false; int noiseSlot = 0; };
-    struct PhraseOut { int slot = 0; ChannelState end; };
+    struct PhraseOut { int slot = 0; ChannelState end; bool stops = false; };   ///< `stops`: an H F F ends the channel here (section 120)
     std::map<std::tuple<int, int, int>, PhraseOut> phraseSlot;   // (LSDj phrase, channel, folded noise transpose) -> ChipBoy phrase slot and the state it leaves
     // LSDj plays any instrument on any channel as the channel's kind -- a
     // pulse on NOI is a noise instrument with the same bytes (section 56).
@@ -824,15 +824,17 @@ struct Reader {
     /// `noiseTsp` is the chain row's transpose when the noise channel folds
     /// it into the note (section 56: before 9 the octave is all that counts,
     /// so the phrase is converted per transpose), else 0.
-    int phraseFor(int p, int channel, ChannelState& state, int noiseTsp)
+    int phraseFor(int p, int channel, ChannelState& state, int noiseTsp, bool* stops = nullptr)
     {
+        if (stops != nullptr) *stops = false;
         const auto key = std::make_tuple(p, channel, noiseTsp);
-        if (auto it = phraseSlot.find(key); it != phraseSlot.end()) { state = it->second.end; return it->second.slot; }
+        if (auto it = phraseSlot.find(key); it != phraseSlot.end()) { state = it->second.end; if (stops != nullptr) *stops = it->second.stops; return it->second.slot; }
         if (phrasesOut >= tracker::kPhraseSlots) { notes.add("more phrase copies than ChipBoy's 255 slots; the rest are left empty"); return 0; }
         const int slot = ++phrasesOut;
         auto& ph = song.phrases[size_t(slot - 1)];
         ph = tracker::Phrase{};
         ph.used = true; ph.steps = 16; ph.groove = 0;
+        bool stopsHere = false;              // section 120: an H F F ends the channel
         int hopStep = -1;                    // an H that ends the phrase (section 56)
         for (int st = 0; st < 16; ++st) {
             const size_t i = size_t(p) * 16 + size_t(st);
@@ -914,7 +916,8 @@ struct Reader {
                     // nothing, where every other `H x F` is an ordinary hop to
                     // step 15. ChipBoy ends the phrase and the chain runs on.
                     if (hopStep < 0) hopStep = st;
-                    notes.add("HFF" + where + " stops the channel on the ROM and nothing plays there again; ChipBoy ends the phrase and the chain carries on (section 80)");
+                    stopsHere = true;
+                    notes.add("HFF" + where + " stops the channel: ChipBoy ends the channel's chain there, as the ROM does, so a playhead past it finds silence. A song that loops brings the rows before it back, where the ROM's channel stays off until playback stops (section 120)");
                     continue;
                 }
                 if (hopStep < 0) {
@@ -933,7 +936,8 @@ struct Reader {
             if (lsdjMidi > 0 && kind != 3) state.lastMidi = lsdjMidi;      // an L on a later row slides from here
         }
         if (hopStep >= 0) { ph.steps = uint8_t(std::max(1, hopStep)); if (hopStep == 0) ph.cells[0] = tracker::Cell{}; }
-        phraseSlot[key] = PhraseOut{ slot, state };
+        phraseSlot[key] = PhraseOut{ slot, state, stopsHere };
+        if (stops != nullptr) *stops = stopsHere;
         return slot;
     }
     void chains(ImportSummary& sum)
@@ -941,11 +945,13 @@ struct Reader {
         static const char* kNames[4] = { "PU1", "PU2", "WAV", "NOI" };
         bool noiseTsp = false;
         std::array<ChannelState, 4> state{};
+        std::array<bool, 4> stopped{};       // section 120: an H F F ended this channel
         for (int r = 0; r < 256; ++r) {
             const uint8_t* row = s + kSongRows + size_t(r) * 4;
             if (row[0] == 0xFF && row[1] == 0xFF && row[2] == 0xFF && row[3] == 0xFF) break;
             ++sum.rows;
             for (int ch = 0; ch < 4; ++ch) {
+                if (stopped[size_t(ch)]) continue;
                 const uint8_t c = row[ch];
                 if (c == 0xFF || c >= kLsdjChains) { notes.add(std::string("song row ") + hex2(r) + " has an empty " + kNames[ch] + " step: LSDj stops that channel there"); continue; }
                 for (int st = 0; st < 16; ++st) {
@@ -953,10 +959,14 @@ struct Reader {
                     if (p == 0xFF || p >= kLsdjPhrases) break;
                     const int tsp = signedByte(at(kChainTsp + size_t(c) * 16 + size_t(st)));
                     const bool fold = ch == 3 && m.noiseRule != NoiseRule::Map;   // section 56: the octave is all that counts, resolved here
-                    const int slot = phraseFor(p, ch, state[size_t(ch)], fold ? tsp : 0);
+                    bool stops = false;
+                    const int slot = phraseFor(p, ch, state[size_t(ch)], fold ? tsp : 0, &stops);
                     auto& chain = song.chain[size_t(ch)];
                     chain.push_back(uint8_t(slot));
                     if (tsp && !fold) { song.setTranspose(ch, int(chain.size()) - 1, int8_t(tsp)); if (ch == 3) noiseTsp = true; }
+                    // Section 120: the channel's timeline ends at the phrase
+                    // whose H F F the ROM stops on; nothing after it is laid out.
+                    if (stops) { stopped[size_t(ch)] = true; break; }
                 }
             }
         }
