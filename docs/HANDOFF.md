@@ -639,6 +639,23 @@ design-log section the change touches. Update this file at the end of every chan
 
 ## Open issues
 
+- **WAV phrases 05/06 in `SAMESONG` (song row 0A, chain 2B): the wave frames do not land where
+  the ROM's do.** Instrument `02` (`01 20 2f 20 ff 0d 31 03 00 02 0c ff`, table `11`, STEP mode)
+  with table 11 = row 0 `F 00` + `A 02`, row 1 `Z 10` + `H 00`, row 2 `H 01`; table 02 = `V F3`,
+  `E 02` (row 9), `E 03` (row C), `H 01`, `H 0E`. Measured with `/root/lsdj/probe/vs_wav.py`
+  (plays the real chain on WAV alone, ROM vs ChipBoy, lists every wave-RAM frame load -- each one
+  comes with an `NR34` trigger on both sides). ROM: after each note the frame goes `20` then steps
+  such as `25 2A 2F` **30 ms apart**, or `30 31 33 35` 57-61 ms apart, or `20 -> 30` **3 ms after
+  the note-on**; steps of +1, +2, +5, +16. ChipBoy: `20 21 22 23 24 25` on a **39 ms (two-tick)
+  grid** with mostly +1, sometimes +5/+8. So both the *timing* (ROM's is not tick-locked -- it
+  looks like the pitch clock / the instrument's own frame speed, §93-§94, §100) and the *value*
+  (`Z 10` on the `F` lane) differ. Not yet separated: the synth's own frame walk (bytes 2/3/9/10:
+  PLAY, LENGTH, SPEED, and §100's flat 256-frame `F`) from what `Z 10` re-rolls every table pass
+  (rows 1-2 loop each two ticks) and from the `A 02` nested run. Next: three isolated ROM probes on
+  instrument 02 -- no table; table 11 without the `Z` row; `Z 10` alone -- read the frame sequence
+  and its clock off each, then the ROM's `Z`-on-`F` range (`02:7E75`-style pctrace on the wave-RAM
+  copy loop), write §129, fix, test. The user also asks whether ChipBoy's `U` (wave-channel `W`)
+  should fold back into `W` -- a design change, its own numbered section first.
 - ~~Table rows: LSDj measured two ticks per row.~~ Closed (§44): re-measured on a 9.3.9
   ROM with a transpose column, a row is **one tick** in LSDj too; the two ticks were the
   envelope nibble. Nothing to change.
