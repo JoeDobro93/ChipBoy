@@ -2680,8 +2680,10 @@ TEST_CASE("a wave instrument's frame run takes its length and loops from its own
     uint8_t run[16];
     CHECK(bank::waveRun(16, 4, run) == 4);
     CHECK(int(run[0]) == 0); CHECK(int(run[1]) == 5); CHECK(int(run[2]) == 10); CHECK(int(run[3]) == 15);
+    // Section 129: the steps are spread across the frames' span, so eight of
+    // sixteen are 0, 2, 4, 6, 8, 10, 12, 15 -- the last exactly on the last.
     CHECK(bank::waveRun(16, 8, run) == 8);
-    CHECK(int(run[1]) == 2); CHECK(int(run[3]) == 6); CHECK(int(run[4]) == 9); CHECK(int(run[7]) == 15);
+    CHECK(int(run[1]) == 2); CHECK(int(run[3]) == 6); CHECK(int(run[4]) == 8); CHECK(int(run[7]) == 15);
     CHECK(bank::waveRun(16, 1, run) == 1); CHECK(int(run[0]) == 0);
     CHECK(bank::waveRun(16, 0, run) == 16); CHECK(int(run[15]) == 15);
 
@@ -3625,9 +3627,9 @@ TEST_CASE("every vibrato shape is centred on the note", "[driver][commands]")
 
 TEST_CASE("U sets the wave run's speed and length", "[driver][wave]")
 {
-    // Section 115, measured on 9.2.L: LSDj's `W` on a wave instrument is the
-    // run -- x ticks a frame, y + 1 frames, y = 0 all sixteen -- and x = 0
-    // leaves the speed alone. ChipBoy's `W` is the wave slot, so this is `U`.
+    // Sections 115 and 129, measured on 9.2.L: LSDj's `W` on a wave instrument
+    // is the run -- x ticks a frame, y the run's length -- and x = 0 leaves the
+    // speed alone. ChipBoy's `W` is the wave slot, so this is `U`.
     const auto frames = [](int x, int y, int blocks) {
         auto r = std::make_unique<Rig>();
         r->tickHz = 100.0;
@@ -3646,18 +3648,75 @@ TEST_CASE("U sets the wave run's speed and length", "[driver][wave]")
         for (int k = 0; k < blocks; ++k) { r->block({}, 480); seen.push_back(int(r->drv.view(2).frame) - 1); }
         return seen;
     };
-    // x = 1 is a frame a tick, so every block moves one on.
-    const auto fast = frames(1, 0, 6);
+    // x = 1 is a frame a tick, so every block moves one on. y = F is the run
+    // of all sixteen; section 129 -- y = 0 is not.
+    const auto fast = frames(1, 15, 6);
     CHECK(fast[1] == 1); CHECK(fast[2] == 2); CHECK(fast[3] == 3);
     // x = 2 is a frame every two.
-    const auto half = frames(2, 0, 6);
+    const auto half = frames(2, 15, 6);
     CHECK(half[1] == 0); CHECK(half[2] == 1); CHECK(half[4] == 2);
+    // Section 129: `y = 0` is a run of one step -- it never moves, where it
+    // used to start a sixteen frame sweep. The ROM writes no frame at all.
+    const auto still = frames(1, 0, 6);
+    for (int k = 0; k < int(still.size()); ++k) { INFO("step " << k); CHECK(still[size_t(k)] == 0); }
     // y = 3 is a run of four spread across the sixteen: 0, 5, 10, 15.
     const auto four = frames(1, 3, 6);
     CHECK(four[1] == 5); CHECK(four[2] == 10); CHECK(four[3] == 15);
     // y = 1 is a run of two: the ends.
     const auto two = frames(1, 1, 4);
     CHECK(two[1] == 15); CHECK(two[2] == 0);
+    // y = 4 is a run of five: 0, 3, 7, 11, 15 -- the ROM's ladder, where the
+    // old spacing gave 0, 4, 8, 12, 15 (section 129).
+    const auto five = frames(1, 4, 6);
+    CHECK(five[1] == 3); CHECK(five[2] == 7); CHECK(five[3] == 11); CHECK(five[4] == 15);
+}
+
+TEST_CASE("an A inside a table moves only its own lane", "[driver][table]")
+{
+    // Section 130: `SAMESONG`'s wave instrument runs a table whose CMD 2 starts
+    // another table while CMD 1 goes on re-rolling its own `F`. Restarting every
+    // lane on the `A`'s table lost the `F` and the `Z` with it.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    auto& a = r.bank.tables[0]; a.used = true; a.end = TableEnd::Stop;   // slot 1
+    a.steps[0].cmd2 = { Cmd::A, 2, 0, 0 };                              // CMD 2 leaves for slot 2
+    a.steps[1].cmd1 = { Cmd::E, 9, 0, 0 };                              // CMD 1 stays here
+    auto& b = r.bank.tables[1]; b.used = true; b.end = TableEnd::Stop;   // slot 2
+    b.steps[1].cmd1 = { Cmd::O, 1, 0, 0 };
+    r.bank.instruments[0].table = 1;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    r.block({ cellOn(0, 69, 1) }, 480);
+    r.block({}, 480);
+    r.block({}, 480);
+    // CMD 1 reached its own row 1 and set the level, which it could not have
+    // done from the table the `A` went to.
+    CHECK(r.drv.view(0).volume == 9);
+}
+
+TEST_CASE("a Z plays what it rolled without remembering it", "[driver][commands][table]")
+{
+    // Section 130: the lane's record is the last command actually **written**,
+    // so a `Z` re-rolls from the same place every pass. ChipBoy wrote the rolled
+    // value back, so `Z 10` on an `E 00` recorded `E 10`, then rolled from that
+    // to `E 20` -- the level climbing a step a pass however the dice fell. The
+    // check does not depend on the random: after the fix the level can only ever
+    // be the record's 0 plus the one nibble `Z 1 0` rolls.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    auto& t = r.bank.tables[0]; t.used = true; t.end = TableEnd::Stop;
+    t.steps[0].cmd1 = { Cmd::E, 0, 0, 0 };                  // the record: level 0
+    t.steps[1].cmd1 = { Cmd::Z, 1, 0, 0 };                  // re-run it, 0..1 on the high nibble
+    t.steps[2].cmd1 = { Cmd::H, 0, 1, 0 };                  // back to the Z for ever
+    r.bank.instruments[0].table = 1;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    r.block({ cellOn(0, 69, 1) }, 480);
+    for (int k = 0; k < 12; ++k) {
+        r.block({}, 480);
+        INFO("pass " << k);
+        CHECK(r.drv.view(0).volume <= 1);
+    }
 }
 
 TEST_CASE("a shaped envelope stage can be shorter than a tick", "[driver][shaped]")

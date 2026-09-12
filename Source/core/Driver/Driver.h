@@ -259,6 +259,12 @@ private:
         /// TSP and CMD 1, lane 2 is CMD 2, lane E is VOL and LEN.
         uint8_t  tableSlot = 0, tableStep = 0, tableRow = 0; bool tableOn = false;
         uint8_t  tableStep2 = 0, tableRow2 = 0, tableStepE = 0, tableRowE = 0;
+        /// The table each lane is reading, and whether that lane runs on
+        /// ticks (section 130): an `A` inside a table row starts its new
+        /// table in its **own lane**, leaving the others on the table they
+        /// were already walking. 0 = VOL, 1 = TSP and CMD 1, 2 = CMD 2.
+        uint8_t  laneSlot[3] = { 0, 0, 0 };
+        bool     laneTicks[3] = { false, false, false };
         bool     volLaneOn = false;                   ///< the volume lane ends at its first empty row (section 64)
         uint16_t tableRun = 0;                        ///< counts this channel's table runs (section 32)
         uint16_t tableWait = 0;                       ///< ticks left of lane 1's row
@@ -468,7 +474,7 @@ private:
     /// changed (measured), which is what `force` is for.
     void writeNr51(bool force = false);
     void writeNr50(uint8_t l, uint8_t r);
-    void applyCommand(int ch, const bank::Command& c, bool fromTable, int lane = 1);
+    void applyCommand(int ch, const bank::Command& c, bool fromTable, int lane = 1, bool fromZ = false);
     /// A letter going back to where the instrument left it: what a slot going
     /// to none does, and what a cell's revert form (Command::c = kRevert)
     /// does. One function, so the two can never disagree (section 3).
@@ -541,7 +547,7 @@ private:
     void setFrameStep(int ch, int step, bool live);   ///< put the voice on a run step and load its frame
     /// Start a table run on a channel (section 32): the slot, back to row 0,
     /// and one more on the run counter the view publishes.
-    void beginTableRun(int ch, uint8_t slot, bool fromCommand = false);   ///< section 122
+    void beginTableRun(int ch, uint8_t slot, bool fromCommand = false, int lane = -1);   ///< sections 122 and 130; lane -1 = every lane
     uint16_t tableRowTicks(int ch, int row) const;    ///< the table's own groove, else one tick
     /// One pitch update: the vibrato phase, a slide and a P bend advance, and
     /// the period goes out without a trigger. The 358 Hz clock calls this in

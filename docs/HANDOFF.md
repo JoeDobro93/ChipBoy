@@ -432,6 +432,18 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 39 (§129-§130): the user's **`SAMESONG` phrases 05 and 06 on WAV** -- "ChipBoy doesn't seem
+  to quite land on the same frames that LSDj tends to". Five faults. **§129**, LSDj's `W` on a wave
+  instrument (ChipBoy's `U`): `y` is the run's **length** and its ladder is `15 * k / L` truncated,
+  ending exactly on the last frame, where `bank::waveRun` spread its steps a frame too wide and
+  clamped; `y = 0` is a run of one step that never moves, not a sixteen-frame sweep; and the command
+  writes **no frame**, leaving the wave where it sounds. **§130**, an `A` inside a table row starts
+  its table in **its own lane** -- each lane now carries its own slot and clock -- where §122 had it
+  restart every lane and so lost the `Z` in the lane beside it; and a `Z` plays what it rolled
+  **without remembering it**, where writing the rolled value back grew the step by sixteen frames a
+  note. `F` itself was re-checked and needed nothing (§92, §103), and a bare note correctly neither
+  reloads the wave nor steps a `STEP` table. Four tests, each failing without its fix. `U` keeps its
+  own letter: ChipBoy's `W` on WAV is the wave slot.
 - Round 38 (§128): the user's **phrase 5F on PU1** and its neighbour **70 on PU2** -- "the envelope
   isn't dropping the level as quickly as in LSDj, making it feel more legato while the original has a
   slight staccato feel". The `E` was exact; the `K 00` on the table row after it was a tick late.
@@ -639,23 +651,14 @@ design-log section the change touches. Update this file at the end of every chan
 
 ## Open issues
 
-- **WAV phrases 05/06 in `SAMESONG` (song row 0A, chain 2B): the wave frames do not land where
-  the ROM's do.** Instrument `02` (`01 20 2f 20 ff 0d 31 03 00 02 0c ff`, table `11`, STEP mode)
-  with table 11 = row 0 `F 00` + `A 02`, row 1 `Z 10` + `H 00`, row 2 `H 01`; table 02 = `V F3`,
-  `E 02` (row 9), `E 03` (row C), `H 01`, `H 0E`. Measured with `/root/lsdj/probe/vs_wav.py`
-  (plays the real chain on WAV alone, ROM vs ChipBoy, lists every wave-RAM frame load -- each one
-  comes with an `NR34` trigger on both sides). ROM: after each note the frame goes `20` then steps
-  such as `25 2A 2F` **30 ms apart**, or `30 31 33 35` 57-61 ms apart, or `20 -> 30` **3 ms after
-  the note-on**; steps of +1, +2, +5, +16. ChipBoy: `20 21 22 23 24 25` on a **39 ms (two-tick)
-  grid** with mostly +1, sometimes +5/+8. So both the *timing* (ROM's is not tick-locked -- it
-  looks like the pitch clock / the instrument's own frame speed, §93-§94, §100) and the *value*
-  (`Z 10` on the `F` lane) differ. Not yet separated: the synth's own frame walk (bytes 2/3/9/10:
-  PLAY, LENGTH, SPEED, and §100's flat 256-frame `F`) from what `Z 10` re-rolls every table pass
-  (rows 1-2 loop each two ticks) and from the `A 02` nested run. Next: three isolated ROM probes on
-  instrument 02 -- no table; table 11 without the `Z` row; `Z 10` alone -- read the frame sequence
-  and its clock off each, then the ROM's `Z`-on-`F` range (`02:7E75`-style pctrace on the wave-RAM
-  copy loop), write §129, fix, test. The user also asks whether ChipBoy's `U` (wave-channel `W`)
-  should fold back into `W` -- a design change, its own numbered section first.
+- **WAV phrases 05/06: the `U`-and-`F` pair under a randomised `W`.** Round 39 (§129-§130) fixed
+  five faults there and the frames now follow the ROM's shape -- both reach the group above, on the
+  same notes to begin with -- but they drift apart later in the phrase and ChipBoy reaches a group
+  the ROM never does. `U` (LSDj's `W` on a wave instrument) and `F` share `frameIdx` and `waveSlot`;
+  which of them owns the base an `F` counts from is not measured. Reproduce with
+  `/root/lsdj/probe/vs_wav6.py` (`p05_both`, phrase 05 alone on WAV, ROM against ChipBoy, every
+  wave-RAM frame listed as an index into the bank's flat 256). Probe an `F` after a `U` that has
+  changed the length, and an `F` after a `U` with `y = 0`, before writing a rule.
 - ~~Table rows: LSDj measured two ticks per row.~~ Closed (§44): re-measured on a 9.3.9
   ROM with a transpose column, a row is **one tick** in LSDj too; the two ticks were the
   envelope nibble. Nothing to change.

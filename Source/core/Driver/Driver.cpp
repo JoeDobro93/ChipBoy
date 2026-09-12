@@ -642,7 +642,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         if (v.inst.tableMode == TableMode::Step && !v.tableTicks && v.tableOn) stepTable(ch);   // a row per note, bare notes included (section 122)
         for (int i = 0; i < 2; ++i) {
             const Command c = slotForNoteOn(ch, i);
-            if (perNoteCmd(c.cmd) && c.cmd != Cmd::D) applyCommand(ch, c, false);
+            if (perNoteCmd(c.cmd) && c.cmd != Cmd::D) applyCommand(ch, c, false, 1, v.slot[size_t(i)].cmd == Cmd::Z);
         }
         // The cell's own commands, once, at this step: a persistent letter
         // written on a bare note changes the running state and stays until a
@@ -712,6 +712,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     v.tableSlot = tbl; v.tableOn = tbl && bank_ && bank_->table(tbl);
     const bool wasFromCmd = v.tableTicks;
     v.tableTicks = false;                                 // the instrument's own table again (section 122)
+    for (int i = 0; i < 3; ++i) { v.laneSlot[size_t(i)] = tbl; v.laneTicks[size_t(i)] = false; }   // section 130
     v.tableWait = v.tableWait2 = v.tableWaitE = 0;        // every lane starts its row afresh (section 64)
     if (v.tableOn) ++v.tableRun;                  // a note-on starts a run of its own (section 32)
     // A Step-mode table advances one row per trigger instead of restarting,
@@ -1594,7 +1595,7 @@ int masterFromArg(int x, int cur)
 
 } // namespace
 
-void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
+void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, bool fromZ)
 {
     Voice& v = v_[size_t(ch)];
     const Command c = cIn;
@@ -1609,7 +1610,10 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
     // Section 74: the record is per **lane** -- this channel's cell/slot lane,
     // or the running table's column 1 or 2, each table keeping its own. `H` and
     // `Z` are never recorded, as on the ROM.
-    if (c.cmd != Cmd::H)
+    // Section 130: what a `Z` rolled is played, not remembered -- the record
+    // stays the last command actually written, so a `Z` on an `F` re-rolls the
+    // same step every time instead of walking the wave away.
+    if (c.cmd != Cmd::H && !fromZ)
         if (bank::Command* rec = zSlot(ch, fromTable, lane)) *rec = c;
     const bool pulse = v.inst.type == InstrumentType::Pulse;
     const bool wave = v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit;
@@ -1621,7 +1625,9 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
         case Cmd::A:                                  // table select, 0 stops
             if (c.a <= 0) v.tableOn = false;
             else {
-                beginTableRun(ch, uint8_t(std::clamp<int>(c.a, 1, kTableSlots)), true);   // section 122: an A runs on ticks
+                // Section 130: from a table row the new table is this lane's alone;
+                // a cell's `A` still restarts every lane.
+                beginTableRun(ch, uint8_t(std::clamp<int>(c.a, 1, kTableSlots)), true, fromTable ? lane : -1);   // section 122: an A runs on ticks
                 // Section 122 corrects section 113: the table an `A` inside
                 // another table starts fires its row 0 on the **next tick**,
                 // one tick later than the table that started it -- measured on
@@ -1984,15 +1990,18 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
             if (live) writePeriod(ch, false);
             break;
         case Cmd::U:
-            // Section 115: LSDj's `W` on a wave instrument is the **run** -- x
-            // ticks a frame and y + 1 frames of it, y = 0 being all sixteen --
-            // measured on 9.2.L by sweeping both nibbles. ChipBoy's own `W` is
-            // the wave slot, so the run has its own letter. x = 0 leaves the
-            // speed as it is, which is what the ROM does.
+            // LSDj's `W` on a wave instrument is the **run**: x ticks a frame,
+            // y the run's length. ChipBoy's own `W` is the wave slot, so the
+            // run has its own letter (section 129). x = 0 leaves the speed as
+            // it is, which is what the ROM does.
             if (v.inst.type == InstrumentType::Wave) {
                 if (c.a) v.inst.frameAdvance = uint8_t(c.a & 15);
-                v.inst.frameLength = uint8_t(c.b ? (int(c.b & 15) + 1) : 0);
-                setFrameStep(ch, 0, live);
+                // Section 129: a run of y steps is y + 1 frames, and `y = 0` is
+                // one frame -- a run that never moves, not every frame. The
+                // command writes no frame: the wave keeps sounding where it is
+                // and the next speed period steps to the ladder's second frame.
+                v.inst.frameLength = uint8_t(int(c.b & 15) + 1);
+                v.frameStep = 0; v.frameCount = 0; v.frameDir = 1;
             }
             break;
         case Cmd::W: {
@@ -2084,8 +2093,9 @@ void Driver::applyCellCommands(int ch, const Command& c1, const Command& c2)
     for (int i = 0; i < 2; ++i) {
         Command c = *in[i];
         if (c.cmd == Cmd::None || c.cmd == Cmd::D) continue;
-        if (c.cmd == Cmd::Z) c = resolveRandom(ch, c, 0);       // the cell lane (section 74)
-        applyCommand(ch, c, false);
+        const bool z = c.cmd == Cmd::Z;                          // the cell lane (section 74)
+        if (z) c = resolveRandom(ch, c, 0);
+        applyCommand(ch, c, false, 1, z);
     }
 }
 
@@ -2112,8 +2122,9 @@ Command* Driver::zSlot(int ch, bool fromTable, int lane)
 {
     Voice& v = v_[size_t(ch)];
     if (!fromTable) return &v.lastCellCmd;
-    if (v.tableSlot == 0 || v.tableSlot > kTableSlots) return nullptr;
-    return &zRec_[size_t(v.tableSlot - 1)][lane == 2 ? 1 : 0];
+    const uint8_t slot = v.laneSlot[size_t(lane) % 3];          // section 130
+    if (slot == 0 || slot > kTableSlots) return nullptr;
+    return &zRec_[size_t(slot - 1)][lane == 2 ? 1 : 0];
 }
 
 /// Z re-runs the last command **in its own lane** (section 74): a cell's Z the
@@ -2147,7 +2158,7 @@ void Driver::fireSlots(int ch, bool live)
     for (int i = 0; i < 2; ++i) {
         const Command c = slotForNoteOn(ch, i);
         if (c.cmd == Cmd::None || c.cmd == Cmd::D) continue;   // D was read before the note started
-        applyCommand(ch, c, false);
+        applyCommand(ch, c, false, 1, v_[size_t(ch)].slot[size_t(i)].cmd == Cmd::Z);
     }
     inNoteOn_ = was;
 }
@@ -2208,11 +2219,28 @@ uint16_t Driver::tableRowTicks(int ch, int row) const
     return uint16_t(n ? n : 1);
 }
 
-void Driver::beginTableRun(int ch, uint8_t slot, bool fromCommand)
+void Driver::beginTableRun(int ch, uint8_t slot, bool fromCommand, int lane)
 {
     Voice& v = v_[size_t(ch)];
+    if (lane >= 0) {
+        // Section 130: an `A` inside a table row starts its table in the lane
+        // that ran it. The other lanes keep walking the table they were on --
+        // measured on 9.2.L, where the `Z` in the lane beside an `A 02` goes on
+        // firing from its own table while the `A`'s table runs its envelope.
+        v.laneSlot[size_t(lane)] = slot; v.laneTicks[size_t(lane)] = fromCommand;
+        uint8_t* const steps[3] = { &v.tableStepE, &v.tableStep, &v.tableStep2 };
+        uint8_t* const rows[3]  = { &v.tableRowE,  &v.tableRow,  &v.tableRow2 };
+        uint16_t* const waits[3] = { &v.tableWaitE, &v.tableWait, &v.tableWait2 };
+        *steps[lane] = 0; *rows[lane] = 0; *waits[lane] = 0;
+        if (lane == 1) { v.hopLeft = 0; v.hopFrom = 0xFF; }
+        if (lane == 2) { v.hopLeft2 = 0; v.hopFrom2 = 0xFF; }
+        if (lane == 0) v.volLaneOn = true;
+        if (slot != 0 && bank_ && bank_->table(slot)) { v.tableOn = true; ++v.tableRun; }
+        return;
+    }
     v.tableSlot = slot; v.tableGroove = 0;
     v.tableTicks = fromCommand;                 // section 122
+    for (int i = 0; i < 3; ++i) { v.laneSlot[size_t(i)] = slot; v.laneTicks[size_t(i)] = fromCommand; }
 
     // Every lane starts at row 0 with its hop counter clear (section 64).
     v.tableStep = v.tableStep2 = v.tableStepE = 0;
@@ -2256,8 +2284,10 @@ void Driver::setFrameStep(int ch, int step, bool live)
 
 void Driver::stepTable(int ch)
 {
-    // Kept for the note-on, which fires every lane's row 0 together.
-    stepTableLane(ch, 0); stepTableLane(ch, 1); stepTableLane(ch, 2);
+    // Kept for the note-on, which fires every lane's row 0 together. Section
+    // 130: a lane an `A` started runs on ticks, so a note does not step it.
+    Voice& v = v_[size_t(ch)];
+    for (int lane = 0; lane < 3; ++lane) if (!v.laneTicks[size_t(lane)]) stepTableLane(ch, lane);
 }
 
 /// One lane of the table (section 64): 1 is the transpose column and CMD 1,
@@ -2266,8 +2296,9 @@ void Driver::stepTableLane(int ch, int lane)
 {
     Voice& v = v_[size_t(ch)];
     if (!v.tableOn) return;
-    const Table* t = bank_ ? bank_->table(v.tableSlot) : nullptr;
-    if (!t) { v.tableOn = false; return; }
+    const uint8_t slot = v.laneSlot[size_t(lane)];              // section 130
+    const Table* t = bank_ ? bank_->table(slot) : nullptr;
+    if (!t) { if (slot == v.tableSlot) v.tableOn = false; return; }
     if (v.delay > 0) { --v.delay; return; }
     uint8_t& step = lane == 2 ? v.tableStep2 : lane == 0 ? v.tableStepE : v.tableStep;
     uint8_t& row  = lane == 2 ? v.tableRow2  : lane == 0 ? v.tableRowE  : v.tableRow;
@@ -2327,9 +2358,10 @@ void Driver::stepTableLane(int ch, int lane)
         const uint8_t was = step;
         const TableStep& s = t->steps[row];
         const Command raw = lane == 2 ? s.cmd2 : s.cmd1;
-        const Command c = raw.cmd == Cmd::Z ? resolveRandom(ch, raw, lane) : raw;
+        const bool z = raw.cmd == Cmd::Z;
+        const Command c = z ? resolveRandom(ch, raw, lane) : raw;
         const uint16_t runWas = v.tableRun;
-        if (c.cmd != Cmd::None) applyCommand(ch, c, true, lane);
+        if (c.cmd != Cmd::None) applyCommand(ch, c, true, lane, z);
         // Section 122: an `A` on this row started a different table and put
         // every lane back to row 0. The bookkeeping below belongs to the table
         // that has just gone, and `step` is now the new one's -- advancing it
@@ -2423,10 +2455,14 @@ void Driver::tick(int ch)
     // The table: a row per tick, or per the row length a G inside it asked
     // for. A Step-mode table advances at notes instead (section 7).
     if (v.tableJustStarted) v.tableJustStarted = false;      // row 0 fired with the note-on (section 31)
-    else if (v.inst.tableMode == TableMode::Tick || v.tableTicks) {   // section 122
-        // Each lane counts down its own row (section 64).
+    else {
+        // Each lane counts down its own row (section 64) on its own clock: a
+        // lane an `A` started runs on ticks whatever the instrument says, and a
+        // lane still on the instrument's table follows its mode (sections 122
+        // and 130).
         uint16_t* const waits[3] = { &v.tableWaitE, &v.tableWait, &v.tableWait2 };
         for (int lane = 0; lane < 3; ++lane) {
+            if (v.inst.tableMode != TableMode::Tick && !v.laneTicks[size_t(lane)]) continue;
             if (*waits[lane] > 1) { --*waits[lane]; continue; }
             stepTableLane(ch, lane);
             if (!v.active) return;

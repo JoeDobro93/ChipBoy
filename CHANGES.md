@@ -26,6 +26,50 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-12 — The wave run's `W`, a table's `A`, and a `Z` that forgets
+
+`docs/COMMANDS_AND_TEMPO.md` §129-§130. The user's `SAMESONG` phrases `05` and `06` on `WAV`:
+"ChipBoy doesn't seem to quite land on the same frames that LSDj tends to". Five faults, each
+measured against the ROM on 9.2.L and each now covered by a test that fails without its fix.
+
+**§129, `W` on a wave instrument (ChipBoy's `U`).** §115 read the argument as "x ticks a frame and
+y + 1 frames of it, y = 0 being all sixteen". The speed half stands; three things around it were
+wrong. `y` is the run's **length**, and its ladder is `15 * k / L` truncated for `k = 0..L`, ending
+exactly on the last frame -- `bank::waveRun` spread its steps `i * 16 / (len - 1)` and clamped the
+overshoot, which agrees with the ROM only where the divisor happens to suit (`W 24` gave
+`0 4 8 12 15` against the ROM's `0 3 7 11 15`). `y = 0` is a run of **one** step, which never moves,
+where ChipBoy started a sixteen-frame sweep -- the loud one, since `Z 3F` re-rolls `y` over the whole
+nibble and the phrase's literal `W 20` carries it on every note. And the command **writes no frame**:
+it resets the run and leaves the wave sounding where it is, where ChipBoy jumped to frame 0 at once.
+
+**§130, an `A` inside a table row.** §122 had it restart every lane on the new table. Measured with
+the `A` removed and with the `Z` beside it removed, one at a time: both lanes go on running, the `A`'s
+table writing `NR32` while the lane beside it re-rolls its own `F`. So each lane now carries its own
+table slot and its own clock -- a lane an `A` started runs a row a tick, a lane still on the
+instrument's table follows the instrument's mode, and a note steps only the lanes in `STEP`. A
+**cell**'s `A` is unchanged and still restarts every lane, which is what §115's `A 20` rests on.
+
+**§130, what a `Z` remembers.** ChipBoy wrote the rolled command back into the lane's record, so a
+`Z 10` on an `F 00` recorded `F 10` and the next pass rolled from there -- a step growing by sixteen
+frames a note. The record is now the last command actually written. Over 45 notes the ROM jumps
+`+16` on 24 and holds on 21, an even coin on the high nibble's `0..1` (§74's rule) and never `+32`;
+ChipBoy now measures 28 of 48 and agrees note for note for the first twelve before the two random
+streams part.
+
+`F` was re-checked and needed nothing: it advances the frame every time it runs, across the group
+boundary and through the flat table (§92, §103), and does not accumulate across notes only because a
+plain note reloads the instrument's frame 0 first -- a **bare** note does neither, which ChipBoy
+already had right.
+
+**Not done, and deliberately:** `U` keeps its own letter rather than folding back into `W`. ChipBoy's
+`W` on the wave channel is the wave slot, which LSDj has no command for; merging them would make one
+letter mean two things by argument and change what `W` does to every song already written.
+
+**Still open:** with the phrase's `W 20` and `Z 3F` cells in play, ChipBoy's frames follow the ROM's
+shape and diverge later in the phrase, reaching a group the ROM never does. That is the `U`-and-`F`
+pair under a randomised `W` -- they share `frameIdx` and `waveSlot`, and which owns the base an `F`
+counts from is not measured yet. `docs/HANDOFF.md` carries it.
+
 ### 2026-09-12 — A `K` dies on a moment, not after a count
 
 `docs/COMMANDS_AND_TEMPO.md` §128. The user's phrase `5F` on `PU1` and its neighbour `70` on `PU2`:

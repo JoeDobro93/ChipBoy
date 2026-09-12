@@ -360,7 +360,10 @@ inline int waveRun(int n, int frameLength, uint8_t* out)
     int len = frameLength <= 0 || frameLength > frames ? frames : frameLength;
     if (len < 1) len = 1;
     for (int i = 0; i < len; ++i) {
-        const int f = len == 1 ? 0 : (i * frames) / (len - 1);
+        // Section 129: the run's steps are spread across the frames' own span,
+        // `frames - 1`, so the last step lands exactly on the last frame. The
+        // old `i * frames` was a frame too wide and needed a clamp.
+        const int f = len == 1 ? 0 : (i * (frames - 1)) / (len - 1);
         out[i] = uint8_t(f < frames - 1 ? f : frames - 1);
     }
     return len;

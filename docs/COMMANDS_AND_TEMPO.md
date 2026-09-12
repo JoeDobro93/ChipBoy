@@ -3810,3 +3810,108 @@ silence about 16 ms before the next one starts, and ChipBoy's kill landed on the
 tick and was swallowed by its trigger. Every note ran into the next -- legato where the ROM is
 staccato. A looping table made it worse: a `K` whose count is the table's own length never reached
 zero at all, because the row came round and re-armed it one tick before it fired.
+
+## 129. `W` on a wave instrument: `y` is the run's length, `y = 0` never moves, and the command loads nothing
+
+§115 read `W x y` on a wave instrument as "x ticks a frame and y + 1 frames of it, y = 0 being all
+sixteen". The speed half is right. The rest is not, and the difference is what the user heard in
+`SAMESONG`'s phrases `05` and `06`, where instrument `02`'s cells carry `W 20` and `Z 3F` -- a `W`
+whose two digits are re-rolled at every note.
+
+Measured on 9.2.L at tempo 129, instrument `02` (`SAMESONG`'s own, run length 4, speed 3 ticks)
+sounding a note, then a bare row carrying one `W`. The frames are the wave's own sixteen, written
+as the index within them:
+
+```
+no command      0 5 10 15, then still          the instrument's own run, once through
+W 21            15                             1 step
+W 22            7 15                           2
+W 23            5 10 15                        3
+W 24            3 7 11 15                      4
+W 25            3 6 9 12 15                    5
+W 28            1 3 5 7 9 11 13 15             8
+W 2F            1 2 3 4 5 6 7 8 ... 15         15
+W 20 / 30 / 40 / 50 / 00    nothing at all
+```
+
+Three separate corrections come out of that.
+
+**`y` is the run's length, and the ladder ends exactly on the last frame.** A run of `L` steps
+visits `15 * k / L` truncated, for `k = 0..L` -- `L + 1` frames, the first frame and the last always
+among them. `bank::waveRun` spread its frames `i * 16 / (len - 1)` and clamped the overshoot, which
+lands on the same ladder only when `len - 1` divides 16 evenly *and* the clamp does no work: the
+instrument's own four-frame run (`0 5 10 15`) agreed, `W 24` did not (ChipBoy `0 4 8 12 15`, the ROM
+`0 3 7 11 15`), and `W 28` did not (ChipBoy `0 2 4 6 8 10 12 14 15`, the ROM `0 1 3 5 7 9 11 13 15`).
+The fix is one term: the frames are spread across `frames - 1`, not `frames`. The clamp then never
+fires, which is the tell that the old spacing was a frame too wide.
+
+**`y = 0` is a run of one step, not sixteen.** The ROM writes no frame at all and the run never
+moves again; the speed `x` still lands, which `W 40` then `W 0F` shows -- the later command walks at
+four ticks a frame, the instrument's own three without the `W 40` before it. ChipBoy read `y = 0` as
+"every frame" and started a sixteen-frame walk, so a `W x 0` turned a held wave into a sweep. This
+is the loud one: `Z 3F` re-rolls `y` over the whole nibble, so one note in sixteen carries a `W x 0`,
+and in `SAMESONG` the literal `W 20` on the phrase rows carries it every time.
+
+**The command loads no frame.** It resets the run to step 0 and leaves the wave sounding where it
+is; the next speed period steps to the ladder's second frame. `W 2F` sent at 116 ms, with the run
+sitting on frame 5, wrote nothing then and frame 1 at 163 ms -- the next of its two-tick periods.
+ChipBoy called `setFrameStep(ch, 0, live)`, which wrote frame 0 immediately: an audible jump to the
+bottom of the wave on every `W`, and the reason ChipBoy's frames in those phrases sat at the start
+of the run where the ROM's were spread through it.
+
+**Not settled**, and left as it is: the ladder's rounding at half steps for `L` of 10 and 12. `W 2A`
+measured `1 3 4 6 7 9 11 12` where `15 * k / L` truncated gives `1 3 4 6 7 9 10 12`, and `W 2C`
+measured `1 2 3 5 6 7 9 10` against `1 2 3 5 6 7 8 10` -- one index high, at one step, in both. Every
+`L` up to 8 matches exactly. It is a half-frame in a randomised command; a rule wants more than two
+disagreeing cases behind it.
+
+**`U` keeps its own letter.** ChipBoy's `W` on the wave channel is the wave slot, which LSDj has no
+command for, so the run came in as `U` and stays there: folding them together would need one letter
+to mean two things by argument, and would change what `W` does to every song already written.
+
+## 130. An `A` inside a table starts its table in **its own lane**, and a `Z` does not remember what it rolled
+
+`SAMESONG`'s wave instrument `02` runs table `11`, whose row 0 carries `F 00` in CMD 1 and `A 02`
+in CMD 2, row 1 a `Z 10` in CMD 1, and row 2 an `H 01` that hops back to it. §122 had an `A` restart
+**every** lane on the new table, which put ChipBoy's CMD 1 lane on table `02` -- where it found no
+`F` to re-roll and no `Z` at all. The channel played the instrument's plain four-frame run on every
+note and never moved off it; the ROM jumps a whole sixteen-frame group on half of them.
+
+Measured on 9.2.L, phrase `05` on `WAV` with its cells stripped to notes, reading the wave-RAM
+writes as an index into the bank's flat 256 frames, and the wave level off `NR32`:
+
+```
+table 11 as it stands   frames  20 | 20 30 35 3A 3F | 20 30 35 3A 3F | ...   NR32 also 20 C0 per note
+the A 02 removed        frames  20 | 20 30 35 3A 3F | 20 30 35 3A 3F | ...   NR32 only 20
+the Z 10 removed        frames  20 | 20 25 2A 2F    | 20 25 2A 2F    | ...   NR32 also 20 C0
+```
+
+Both lanes are running at once. Taking the `A` away leaves the frames alone and takes the second
+`NR32` write with it -- so table `02`, which the `A` starts, is what writes the level; taking the
+`Z` away leaves the level alone and takes the `+16` frame jumps with it -- so table `11`'s CMD 1
+lane is still walking its own rows while CMD 2 walks the `A`'s. **A lane keeps the table it is on
+until something in that lane moves it.** Each lane therefore carries its own table slot and its own
+clock: a lane an `A` started runs a row a tick (§122), a lane still on the instrument's table
+follows the instrument's mode, and a note steps only the lanes in `STEP`. A cell's `A` is unchanged
+-- it restarts every lane, which is what §115's `A 20` rests on.
+
+**And a `Z` plays what it rolled without remembering it.** ChipBoy wrote the resolved command back
+into the lane's record, so a `Z 10` sitting on an `F 00` recorded `F 10`, and the next pass rolled
+from *that*: `F 10` then `F 20`, a step of sixteen frames growing by sixteen every note. Over 45
+notes the ROM's jump is `+16` on 24 of them and nothing on 21 -- an even coin on the high nibble's
+`0..1`, which is §74's rule, and never `+32`. ChipBoy now matches: 28 of 48, and the first twelve
+notes agree one for one before the two random streams part. The record keeps the last command
+actually **written** in that lane.
+
+`F` itself was re-checked and is as §92 and §103 have it: it **advances** the frame and does it
+every time it runs -- a table of `F 01` rows on a tick-mode instrument walks `20 21 22 23 24 ...`
+across the group boundary, `F 10` walks `20 30 40 50 ...` through the whole flat table. It does not
+accumulate across notes because a plain note reloads the instrument's own frame 0 first. A **bare**
+note does neither: measured with a bare row between two plain ones, the ROM writes no frame and does
+not step the `STEP` table, which is what ChipBoy already did.
+
+**Still out:** with the phrase's own `W 20` and `Z 3F` cells back in, ChipBoy's frames follow the
+ROM's shape -- both reach the group above, on the same notes to begin with -- but drift apart later
+in the phrase, ChipBoy reaching a group the ROM never does. That is the `U`-and-`F` pair under a
+randomised `W`, and it wants its own round: the two commands share `frameIdx` and `waveSlot`, and
+which of them owns the base an `F` counts from is not measured yet.
