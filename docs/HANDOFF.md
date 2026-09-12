@@ -432,6 +432,16 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 37 (§125-§127): the user's **phrase 6C on PU1** -- `EGUIT` "pops and clicks, no note
+  content" -- was three faults stacked. **§125**: a pitch effect off the bottom of the note table
+  **clamps the period register at 0** on the ROM and keeps sounding, where ChipBoy read "below the
+  chip's range" at the note-on and killed the voice; and the note-on's trigger carries the **plain**
+  note, the vibrato reaching the channel on the update after (§84's rule widened from the table's
+  transpose column). **§126**: `V 0 0` turns the vibrato **off** -- ChipBoy left an eighth of a
+  semitone on the note -- while `V x 0` is a vibrato of depth zero and speed zero is the slowest, not
+  a stop. **§127**: an `S` on a note's own row writes `NR10` after the burst and **retriggers**, the
+  one behavioural difference §124's ordering measurement had left. All re-measured unchanged on
+  9.3.9 and 9.4.2.
 - Round 36 (§124, withdrawing round 35's open issue): **there is no working copy.** The claim that a
   phrase command holds until another instrument loads was a misread trace. Re-measured per note on
   9.2.L -- `E`, `W`, `O`, `S`, `V` -- every letter goes back to the instrument's own value on the

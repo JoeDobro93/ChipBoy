@@ -3662,3 +3662,89 @@ channel to start the sweep. ChipBoy folds a cell's command into the note's own b
 §3's deliberate choice, so a command on a note's row costs neither a second burst nor a pop. The
 steady state is identical either way; what the ROM has and ChipBoy does not is that extra
 `S`-on-a-note retrigger. On a **bare** row (no note) the two agree exactly, retrigger included.
+
+## 125. A pitch effect below the note table clamps the register; it does not silence the note
+
+`SAMESONG`'s phrase 6C on PU1 plays instrument `1A` (`EGUIT`) on note byte `02` -- MIDI 37, near the
+bottom of the pulse range -- and its table `13` opens with `V F9`, a vibrato three semitones deep.
+Three semitones below MIDI 37 is off the bottom of the note table. ChipBoy computed the note-on's
+period *with* the vibrato at its trough, got "below the chip's range", and killed the voice: the
+whole measure was the `O` commands moving `NR51` and nothing else. The user heard pops and clicks
+where the ROM has a sound.
+
+Measured on 9.2.L, the same note and vibrato, reading the period register:
+
+```
+note 02, V F9    157  157  0  157  457  157  0  157  457 ...
+note 02, V FF    157  157  0  157  856  157  0  157  856 ...
+```
+
+157 is MIDI 37. `V F9` is three semitones, so the top of the swing is MIDI 40 = 457 and the bottom
+would be MIDI 34 = **-200**, which the ROM writes as **0**: the register clamps at the bottom and the
+note goes on sounding. `V FF` is eight semitones and the top is MIDI 45 = 856, the bottom 0 again.
+Not a wrap -- -200 would wrap to 1848, and the ROM writes 0.
+
+So a pitch effect that runs off the bottom of the table **clamps the period register at 0**. Only a
+note whose *own* pitch is out of range does not sound, which is C4's rule and stays. `computePeriod`
+now tests the plain note -- the cell's note with its transposes, chord and table column, without the
+vibrato, `P` or a slide -- for that, and clamps the effects on top of it.
+
+The high end needs no rule: the note table compresses towards 2047 (a `V F9` on note byte `60` only
+moves the register between 2038 and 2041), and the register is clamped to 2047 as it always was.
+
+## 126. `V 0 0` turns the vibrato off; `V x 0` is a vibrato of depth zero
+
+Two more things phrase 6C's table settles, both measured on 9.2.L with the same low note (MIDI 37,
+period 157) so a fraction of a semitone is tens of register units and easy to read.
+
+**The trigger carries the plain note.** Instrument `1A`'s vibrato shape is **square**, which swings
+the full depth from phase zero (§114), so at the note-on the offset is already three semitones down.
+The ROM triggers at 157 anyway and the swing appears on the update after:
+
+```
+ROM   0 ms: 157 (TRIGGER)   2 ms: 0   5 ms: 0   8 ms: 457 ...
+```
+
+That is §84's rule -- the note-on writes the **plain** note -- widened from the table's transpose
+column to the vibrato as well. `Driver::plainVib_` is scoped to every trigger, where `plainTrigger_`
+is scoped to a trigger that started a table.
+
+**And `V 0 0` is off.** Table `13` turns its vibrato off on row 1 with `V 00`, and the ROM's period
+goes back to the plain note. A depth of zero on its own does not: `V 2 0` leaves a vibrato running
+at the depth table's smallest swing, an eighth of a semitone.
+
+```
+table V F9 then V 00    ROM  ... 19: 457   22: 157   25: 157      the note itself
+table V F9 then V 20    ROM  ... 19: 457   22: 170   25: 170      157 + 1/8 semitone
+```
+
+ChipBoy set `vibOn` for any `V` at all, so `V 00` left an eighth of a semitone on the note for ever.
+The whole byte being zero is what turns it off -- speed zero alone is the *slowest* vibrato, not a
+stopped one (§119's `V 0 F` sweeps a fifth of the noise map), and depth zero alone is the smallest.
+
+Both rules re-measured unchanged on **9.3.9** and **9.4.2**: `157 (trigger), 0, 0, 457 ... 157` for
+`V 00` and `... 170` for `V 20`, register for register.
+
+## 127. An `S` on a note's own row writes `NR10` after the trigger, and retriggers
+
+§124 measured the order of a cell's commands against its own note and found one behavioural
+difference, this one. ChipBoy applies a cell's commands inside the note-on so the note's own burst
+carries them -- §3's choice, so a command slot firing at every note costs neither a second burst nor
+a pop. The ROM agrees for `E` (the envelope the trigger uses is the command's) but not for `S`:
+
+```
+S 71 on a note's own row   ROM  NR10=00, TRIGGER, NR10=9F, TRIGGER (+0.35 ms)
+                           CB   NR10=9F, TRIGGER
+```
+
+The sweep unit reloads on a trigger, so LSDj writes `NR10` after the note and triggers again to
+start the sweep from there. ChipBoy folded the write into the burst and never emitted that second
+trigger, so the note's phase was not restarted where the ROM restarts it. On a **bare** row -- an
+`S` with no note -- ChipBoy already did both, and matched.
+
+So a cell's `S` on `PU1` now writes `NR10` and retriggers **after** the note's burst, as it does on a
+bare row. Nothing else moves: `E`, `W`, `O` and `V` keep folding into the burst, which is what the
+ROM's registers show for `E` and is inaudible for the rest (`W`'s duty differs for the 0.3 ms
+between the trigger and the ROM's own write). A **slot**'s `S` is left alone: slots are ChipBoy's
+automation with no LSDj counterpart, and one firing on every note would cost a retrigger on every
+note.

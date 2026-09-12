@@ -747,6 +747,9 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     fireSlots(ch);
     // Then the cell's own two commands, once (section 12): they are this
     // step's, not the lane's, so they are not left in force behind the note.
+    // Section 127: an `S` among them writes NR10 and retriggers **after** the
+    // note's burst, which is what the ROM does; the rest fold into the burst.
+    const bool cellSweep = v.noteCmd[0].cmd == Cmd::S || v.noteCmd[1].cmd == Cmd::S;
     {
         const bool was = inNoteOn_; inNoteOn_ = true;
         applyCellCommands(ch, v.noteCmd[0], v.noteCmd[1]);
@@ -772,6 +775,10 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
             emit(regAddr(ch, 1), uint8_t((v.duty << 6) | (len & 0x3F)), true);
             writeEnvelope(ch, false);   // the whole register; the trigger follows with the period
             writePeriod(ch, true);
+            // Section 127: the sweep unit reloads on a trigger, so an `S` on
+            // this row writes NR10 again after the note and triggers with it,
+            // exactly as it does on a row of its own.
+            if (ch == 0 && cellSweep) { emit(0xFF10, uint8_t(~v.sweepByte), true); writePeriod(ch, true); }
             break;
         }
         case InstrumentType::Wave: {
@@ -1012,10 +1019,16 @@ int Driver::computePeriod(int ch)
     }
     // period = periodOf(noteFine) (section 7): the note, the vibrato, P and a
     // slide are all semitones outside Drum, so the whole pitch is one number.
-    const double note = noteOfVoice(ch) + double(vibratoFine(v)) / 256.0;
+    const double note = noteOfVoice(ch) + (plainVib_ ? 0.0 : double(vibratoFine(v)) / 256.0);
     const int per = periodForNote(note, wave);
-    if (per < 0) return -1;
-    return std::clamp(per, 0, 2047);
+    if (per >= 0) return std::clamp(per, 0, 2047);
+    // Section 125: off the bottom of the note table. A pitch **effect** that
+    // takes it there clamps the register at 0 and the note keeps sounding --
+    // measured on 9.2.L, `V F9` on MIDI 37 writes 0 where the arithmetic asks
+    // for -200, and 0 is not a wrap of it. Only a note whose own pitch is out
+    // of range does not sound (C4), so the plain note is what decides that.
+    const double plain = noteOfVoice(ch) - double(v.fineOffset + slideResidual(v)) / 256.0;
+    return periodForNote(plain, wave) < 0 ? -1 : 0;
 }
 
 /// One pitch update: the vibrato phase, a slide and a P bend move on, and the
@@ -1131,6 +1144,10 @@ void Driver::writePeriod(int ch, bool trigger)
         PlainScope(bool& x, bool on) : f(x), was(x) { f = on; }
         ~PlainScope() { f = was; }
     } scope(plainTrigger_, plain);
+    // Section 125: and the vibrato is out of every trigger, not only one that
+    // starts a table -- measured on 9.2.L, a square vibrato's first swing shows
+    // up on the update after the note, never on the note's own write.
+    PlainScope vibScope(plainVib_, trigger);
     if (v.inst.type == InstrumentType::Noise) {
         uint8_t s, d;
         if (v.inst.noiseManual) { s = v.noiseShift; d = v.noiseDiv; }
@@ -1953,7 +1970,11 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
             // has to run for the channel, which a noise note-on does not start.
             v.vibSpeed = uint8_t(std::clamp<int>(c.a, 0, 15));
             v.vibDepth = uint8_t(std::clamp<int>(c.b, 0, 15));
-            v.vibDelay = 0; v.vibOn = true;
+            // Section 126: `V 0 0` -- the whole byte zero -- turns it off. Speed
+            // zero alone is the slowest vibrato and depth zero alone the
+            // shallowest (an eighth of a semitone), so neither nibble stops it
+            // by itself; only both together do.
+            v.vibDelay = 0; v.vibOn = (c.a & 15) != 0 || (c.b & 15) != 0;
             if (noise && v.vibDepth && pitchSpeed(v) != PitchSpeed::Tick) v.pitchClockOn = true;
             if (live) writePeriod(ch, false);
             break;

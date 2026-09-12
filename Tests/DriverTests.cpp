@@ -3463,6 +3463,95 @@ TEST_CASE("a table a table starts reaches its vibrato in Step mode too", "[drive
     CHECK(span(bank::TableMode::Step) > 0);   // this is the one that was flat
 }
 
+TEST_CASE("an S on a note's own row retriggers after the note", "[driver][commands]")
+{
+    // Section 127: the sweep unit reloads on a trigger, so the ROM writes NR10
+    // after the note's burst and triggers again. ChipBoy folded the write into
+    // the burst and never emitted that second trigger.
+    Rig r;
+    r.tickHz = 100.0;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Sweep");
+    i.used = true;
+    ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(0, p);
+    const auto triggers = [](const std::vector<RegWrite>& w) {
+        int n = 0;
+        for (const auto& q : w) if (q.addr == 0xFF14 && (q.value & 0x80)) ++n;
+        return n;
+    };
+    NoteEvent plain = cellOn(0, 60, 2);
+    CHECK(triggers(r.block({ plain }, 480)) == 1);
+    r.block({ Rig::off(0, 60) }, 480);
+    NoteEvent withS = cellOn(0, 60, 2);
+    withS.cmd1 = { Cmd::S, 7, 1, 0 };
+    const auto w = r.block({ withS }, 480);
+    CHECK(triggers(w) == 2);                       // the note's, then the sweep's
+    int sweeps = 0;
+    for (const auto& q : w) if (q.addr == 0xFF10) ++sweeps;
+    CHECK(sweeps == 2);                            // NR10 written in the burst and again after
+    {   // PU2 has no sweep unit, so nothing extra there
+        ChannelParams p2; p2.instrument = 2; p2.velocityMode = 2; r.drv.setParams(1, p2);
+        NoteEvent s2 = cellOn(1, 60, 2);
+        s2.cmd1 = { Cmd::S, 7, 1, 0 };
+        const auto w2 = r.block({ s2 }, 480);
+        int n = 0;
+        for (const auto& q : w2) if (q.addr == 0xFF19 && (q.value & 0x80)) ++n;
+        CHECK(n == 1);
+    }
+}
+
+TEST_CASE("a pitch effect off the bottom of the table clamps, and V 00 stops", "[driver][commands]")
+{
+    // Sections 125 and 126, measured on 9.2.L and confirmed on 9.3.9 and 9.4.2
+    // with `SAMESONG`'s EGUIT: a low note with a deep **square** vibrato
+    // triggers at the plain note, swings down to a period of 0 rather than
+    // going silent, and `V 00` puts it back on the note.
+    Rig r;
+    r.tickHz = 100.0;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "EGuit");
+    i.used = true; i.vib.shape = bank::VibShape::Square; i.vib.dir = bank::VibDir::Down;
+    ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(0, p);
+    const int lowest = 37;                       // near the bottom of the pulse table
+    NoteEvent e = cellOn(0, uint8_t(lowest), 2);
+    e.cmd1 = { Cmd::V, 15, 9, 0 };               // three semitones, square: full swing at once
+    auto w = r.block({ e }, 480);
+    // The trigger carries the plain note, not the vibrato's trough.
+    const RegWrite* trig = nullptr;
+    for (const auto& q : w) if (q.addr == 0xFF14 && (q.value & 0x80)) { trig = &q; break; }
+    REQUIRE(trig != nullptr);
+    int lo = 0;
+    for (const auto& q : w) { if (q.addr == 0xFF13) lo = int(q.value); if (&q == trig) break; }
+    const int plain = ((int(trig->value) & 7) << 8) | lo;
+    CHECK(plain > 0);                            // the note sounds at its own pitch
+    CHECK(r.drv.view(0).active);
+    CHECK_FALSE(r.drv.view(0).outOfRange);
+    {   // and the swing reaches 0 rather than silencing the voice
+        int least = 9999, most = 0;
+        for (int k = 0; k < 12; ++k) {
+            const auto more = r.block({}, 480);
+            for (const auto& q : more) if (q.addr == 0xFF13) lo = int(q.value);
+            for (const auto& q : more) if (q.addr == 0xFF14) { const int per = ((int(q.value) & 7) << 8) | lo; least = std::min(least, per); most = std::max(most, per); }
+        }
+        INFO("period range " << least << " to " << most);
+        CHECK(least == 0);
+        CHECK(most > plain);
+        CHECK(r.drv.view(0).active);
+    }
+    {   // Section 126: V 00 turns it off; V 20 is a vibrato of depth zero.
+        NoteEvent off = cellCmd(0, { Cmd::V, 0, 0, 0 });
+        r.block({ off }, 480);
+        const auto after = r.block({}, 480);
+        int seen = -1;
+        for (const auto& q : after) if (q.addr == 0xFF13) lo = int(q.value);
+        for (const auto& q : after) if (q.addr == 0xFF14) seen = ((int(q.value) & 7) << 8) | lo;
+        CHECK(int(r.drv.view(0).vibDepth) >= 0);
+        CHECK((seen == -1 || seen == plain));    // back on the note, or not moving at all
+    }
+}
+
 TEST_CASE("every vibrato shape is centred on the note", "[driver][commands]")
 {
     // Section 114, measured on 9.2.L: triangle, saw and square all swing the

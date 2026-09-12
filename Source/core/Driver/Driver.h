@@ -505,6 +505,10 @@ private:
     /// around the note's own period write and only when the table started with
     /// that note; the update after the trigger picks the column up.
     bool plainTrigger_ = false;
+    /// Section 125: a note-on's trigger carries the **plain** note -- the
+    /// vibrato reaches the channel on the next pitch update, as the table's
+    /// transpose column does (section 84). Scoped to writePeriod's trigger.
+    bool plainVib_ = false;
     bank::Command* zSlot(int ch, bool fromTable, int lane);
     /// Section 73: a cell's `B`. Each nibble is an independent roll that passes
     /// `n` times in **15**, and the note sounds if either passes -- so `B00`

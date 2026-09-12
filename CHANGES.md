@@ -26,6 +26,43 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-12 — A vibrato off the bottom of the table, `V 00`, and the sweep's own trigger
+
+`docs/COMMANDS_AND_TEMPO.md` §125-§127. The user's phrase 6C on PU1 -- instrument `1A` (`EGUIT`) --
+"just pops and clicks, no note content" where the ROM has a sound. It was three faults stacked, all
+measured on 9.2.L and re-measured unchanged on **9.3.9** and **9.4.2**.
+
+**§125 -- a pitch effect below the note table clamps the register; it does not silence the note.**
+`EGUIT` plays note byte `02` (MIDI 37, near the bottom of the pulse range) and its table opens with
+`V F9`, three semitones deep. ChipBoy computed the note-on's period *with* the vibrato at its trough,
+got "below the chip's range" and killed the voice: the whole measure was the `O` commands moving
+`NR51` and nothing else. The ROM writes the period register as **0** where the arithmetic asks for
+-200 -- a clamp, not a wrap -- and goes on sounding. Only a note whose *own* pitch is out of range
+does not sound, which is C4's rule and stays; `computePeriod` tests the plain note for that now.
+
+**§125 also -- the trigger carries the plain note.** `EGUIT`'s vibrato shape is **square**, which
+swings the full depth from phase zero (§114), so at the note-on the offset is already three semitones
+down. The ROM triggers at the note anyway and the swing appears on the update after -- §84's rule for
+the table's transpose column, widened to the vibrato.
+
+**§126 -- `V 0 0` turns the vibrato off.** Table `13` stops its vibrato with `V 00` on row 1 and the
+ROM's period goes back to the note; ChipBoy left an eighth of a semitone on it for ever, because it
+set `vibOn` for any `V` at all. Depth zero on its own does not stop it: `V 2 0` is a vibrato at the
+depth table's smallest swing (`157` against the note's `170` at this pitch), and speed zero alone is
+the *slowest*, not a stopped one.
+
+**§127 -- an `S` on a note's own row retriggers.** §124's ordering measurement left exactly one
+behavioural difference, and this is it: the sweep unit reloads on a trigger, so LSDj writes `NR10`
+after the note's burst and triggers again 0.35 ms later. ChipBoy folded the write into the burst and
+never emitted that second trigger.
+
+**Departure from the spec:** §3 folds a cell's commands into the note's own burst so a command slot
+firing at every note costs neither a second burst nor a pop, and that stays for `E`, `W`, `O` and
+`V` -- the ROM's registers show `E` folded in too, and `W`'s duty differs only for the 0.3 ms
+between the trigger and the ROM's own write. Only a **cell's** `S` on `PU1` is moved out; a slot's
+`S` is left alone, since slots are ChipBoy's automation with no LSDj counterpart and one would cost
+a retrigger on every note.
+
 ### 2026-09-12 — No working copy: a phrase command does not outlive its note
 
 `docs/COMMANDS_AND_TEMPO.md` §124, which **withdraws** the open issue the previous entry raised.
