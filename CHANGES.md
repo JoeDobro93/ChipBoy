@@ -26,6 +26,26 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-12 — No working copy: a phrase command does not outlive its note
+
+`docs/COMMANDS_AND_TEMPO.md` §124, which **withdraws** the open issue the previous entry raised.
+
+The claim was that LSDj keeps a working copy of the instrument -- a phrase command writing it and
+holding until another instrument replaces it -- where ChipBoy re-latches from the instrument at
+every note-on. It came from a trace read wrong: three `NR11` writes that all belonged to the *first*
+note were counted as one each for the first three notes, which made the duty look as though it held.
+
+Re-measured per note, with a row that carries the command, a plain note on the same instrument, a
+note on a different one and a note back on the first: `E`, `W`, `O`, `S` and `V` all go back to the
+instrument's own value on the very next note **on the ROM as well**, and ChipBoy's registers match
+it note for note. There is nothing to adopt and nothing was changed.
+
+What the measurement did turn up is sub-millisecond and in §124: the ROM triggers on the
+instrument's value and lets a row's own command land about 0.3 ms later, and on `S` that second
+write costs a second trigger. ChipBoy folds a cell's command into the note's burst instead, which
+§3 chose on purpose so a command on a note's row costs neither a second burst nor a pop. On a bare
+row the two agree exactly, retrigger included.
+
 ### 2026-09-12 — Sub-tick envelope stages, a nested table that runs, and a `Z` that remembers
 
 Four measurements, `docs/COMMANDS_AND_TEMPO.md` §121-§123 and a correction to §113. `SAMESONG`'s
@@ -73,11 +93,11 @@ is silent on the ROM too; a `NOI` copy of a pulse instrument plays what the ROM 
 table shared between noise and non-noise instruments only loses something when it carries a letter
 the two channels read differently. Those four notes are gone rather than reworded.
 
-**Found on the way and not fixed:** a cell's `W` on a pulse sets the duty from the **next** register
-write and keeps it until a *different* instrument loads -- `W 03`, a note, the same instrument again
-gives `0 3 3` on the ROM and `3 0` in ChipBoy, which re-latches the instrument's duty at every
-note-on. The duty value is right, its lifetime is not. It is in `docs/HANDOFF.md` with the numbers
-rather than guessed at here.
+**Found on the way and not fixed:** a cell's `W` on a pulse appeared to keep its duty until a
+different instrument loaded, where ChipBoy re-latches at every note-on. ***Withdrawn the same day:
+that was a misread trace and §124 has the measurement that settles it*** -- three `NR11` writes
+that all belonged to the first note were counted as one each for the first three. No letter
+outlives its note on the ROM either.
 
 ### 2026-09-12 — `H F F` ends the channel's timeline
 

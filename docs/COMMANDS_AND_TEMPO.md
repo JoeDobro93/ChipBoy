@@ -3622,3 +3622,43 @@ ChipBoy cleared `Voice::lastCellCmd` at every note-on, so a `Z` on a later row h
 re-run and did nothing at all. That is phrase 14's `Z 3F` rows: on the ROM each of them re-runs the
 `W 20` from step 2 with a fresh random speed and length, and in ChipBoy they were inert. The clear
 goes; nothing inside a channel's playback resets the record.
+
+## 124. A phrase command does **not** outlive its note -- the working copy is reloaded at every note-on
+
+§122's round reported the opposite, from a trace read wrong: three `NR11` writes that all belonged
+to the *first* note were counted as one each for the first three, which made the duty look as though
+it held. It does not. Measured properly on 9.2.L -- row 0 a note with the command, row 1 a plain note
+on the same instrument, row 2 a note on a **different** instrument, row 3 back to the first -- and
+the register read once per note:
+
+```
+                    ROM              ChipBoy
+E  pulse  NR12   18 F8 F8 F8      18 F8 F8 F8
+W  pulse  NR11   C0 00 00 00      C0 00 00 00
+O  pulse  NR51   FE FF FF FF      FE FF FF FF
+S  pulse  NR10   9F 00 00 00      9F 00 00 00
+V  pulse  NR14   07 07 07 07      07 07 07 07
+E  wave   NR32   C0 03 03 03      40 00 -- --
+```
+
+Every letter goes back to the instrument's own value on the very next note, on both sides. LSDj
+reloads the instrument at each note-on exactly as ChipBoy's `latch` does, so **there is no
+working-copy model to adopt** and nothing here to change. The `NR32` row differs only in bits the
+chip does not use -- `C0` and `40` both carry volume code 2, `03` and `00` both carry 0 -- and in the
+ROM re-writing the register at every note where ChipBoy writes it when it changes.
+
+**What is really different is the order inside the note**, and it is sub-millisecond:
+
+```
+W 03 on a note's own row    ROM  NR11=00, TRIGGER, NR11=C0 (+0.3 ms)
+                            CB   NR11=C0, TRIGGER
+S 71 on a note's own row    ROM  NR10=00, TRIGGER, NR10=9F, TRIGGER (+0.35 ms)
+                            CB   NR10=9F, TRIGGER
+```
+
+The ROM triggers on the instrument's value and lets the row's command land a fraction of a
+millisecond later; on `S` that second write costs a second trigger, because LSDj restarts the
+channel to start the sweep. ChipBoy folds a cell's command into the note's own burst instead --
+§3's deliberate choice, so a command on a note's row costs neither a second burst nor a pop. The
+steady state is identical either way; what the ROM has and ChipBoy does not is that extra
+`S`-on-a-note retrigger. On a **bare** row (no note) the two agree exactly, retrigger included.

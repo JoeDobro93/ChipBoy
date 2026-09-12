@@ -432,6 +432,12 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 36 (§124, withdrawing round 35's open issue): **there is no working copy.** The claim that a
+  phrase command holds until another instrument loads was a misread trace. Re-measured per note on
+  9.2.L -- `E`, `W`, `O`, `S`, `V` -- every letter goes back to the instrument's own value on the
+  next note on the ROM too, and ChipBoy's registers match it note for note. Nothing changed. The
+  residue is sub-millisecond ordering inside a note's own row, and one `S`-on-a-note retrigger the
+  ROM emits and ChipBoy does not.
 - Round 35 (§121-§123, correcting §113): the four envelope warnings and the user's phrase 14.
   **§121**: a shaped envelope's stages carry a **fraction of a tick** (`attackFine` and friends, 1/256
   each) -- `CLAP`'s three stages are 1.729, 2.305 and 0.576 ticks, held for 2, 2 and 1 before -- and
@@ -665,15 +671,16 @@ design-log section the change touches. Update this file at the end of every chan
   of `SAMESONG`'s phrase 0B are identical to the ROM's, measured in the register traces, so the
   sound is right and this is a drawing convention. `Grids.cpp` puts sample 0 at the left with 0 at
   the bottom; matching LSDj is a one-line change if the user wants the editors to agree.
-- **A cell's `W` on a pulse: the duty's lifetime** (§122's measurements, not fixed). On the ROM the
-  `W`'s own note triggers at the **instrument's** duty and the new one lands on the write after, and
-  it then holds until a *different* instrument loads: `W 03`, a note, the same instrument, another
-  instrument gives `0 3 3 0` on `NR11`. ChipBoy applies it before the trigger and re-latches the
-  instrument's duty at the next note-on: `3 0 0`. The value is right (`byte & 3`, swept), the
-  lifetime is not. The general question behind it is whether ChipBoy should keep LSDj's **working
-  copy** model -- a phrase command writes the instrument's copy and holds until another instrument
-  replaces it -- where ChipBoy re-latches from the instrument at every note-on. `V` and the rest want
-  the same measurement before anything changes, so this is a round of its own.
+- **Withdrawn (§124): there is no working-copy difference.** The round before reported that a
+  cell's `W` on a pulse held its duty until a different instrument loaded, and that ChipBoy
+  re-latched too eagerly. That came from reading three `NR11` writes that all belonged to the first
+  note as one each for the first three. Re-measured per note: every letter -- `E`, `W`, `O`, `S`,
+  `V` -- goes back to the instrument's own value on the very next note on the **ROM as well**, and
+  ChipBoy's registers match it note for note. What is left is sub-millisecond ordering inside a
+  note's own row: the ROM triggers on the instrument's value and lets the command land 0.3 ms
+  later, and on `S` that costs a second trigger ChipBoy does not emit. §3 folds a cell's command
+  into the note's burst on purpose; the extra `S` retrigger is the one thing a register-exact
+  replay would still miss.
 - **The noise vibrato's phase, at speeds 3, 4, 9 and F** (§119): fifteen of the ninety-six swept
   `V x y` settings differ from the ROM by one sample of the phase, at the ticks where the ninths
   accumulator lands on a whole unit. `V 3 F` fits `floor((12k - 1) / 9)` where ChipBoy computes
