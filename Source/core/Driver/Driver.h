@@ -362,7 +362,11 @@ private:
         bool     kitPair = false; uint8_t kitIdxB = 0; uint32_t kitPosB = 0; uint32_t kitLenB = 0; uint32_t kitLoopPointB = 0;
         bank::KitDist kitDist = bank::KitDist::Clip;
         // counters
-        int16_t  delay = -1, kill = -1;
+        int16_t  delay = -1;
+        /// The tick a `K` asked the voice to die on (section 128): an
+        /// absolute tick index, -1 for none. A countdown would be re-armed
+        /// by a looping table's own row one tick before it fired.
+        int64_t  killAt = -1;
         /// `R`: the interval in **ticks** (section 76), and the one shot a `y = 0`
         /// still owes -- LSDj retriggers once and stops there, it does not run on.
         uint8_t  retrigEvery = 0; uint16_t retrigCount = 0; bool retrigOn = false, retrigOnce = false;

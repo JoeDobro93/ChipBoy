@@ -28,7 +28,7 @@ packed byte.
 | F | frame | frame 1–16 | – | – | yes | – | until cleared or a new instrument loads |
 | G | groove | groove slot 1–16, 0 straight | – | tracker timing (Player) | | | until cleared |
 | H | hop | times 0–15, 0 = for ever | row 0–15 to hop to | tables only | | | – |
-| K | kill | ticks after note-on | – | yes | yes | yes | no (per note) |
+| K | kill | ticks after the tick it is read on (section 128) | – | yes | yes | yes | no (per note) |
 | L | slide | x + 1 updates, linear in semitones: ticks in Tick pitch speed, pitch-clock updates otherwise | – | yes | yes | – | no (per note: portamento from the previous note) |
 | M | master volume | left 0–15: 0–7 absolute, 8/12 no change, 9–11 up 1–3, 13–15 down 1–3 | right, the same 0–15 scheme | global | | | until cleared |
 | O | pan | 0 off, 1 L, 2 R, 3 both | – | yes | yes | yes | until cleared or a new instrument loads |
@@ -3748,3 +3748,65 @@ ROM's registers show for `E` and is inaudible for the rest (`W`'s duty differs f
 between the trigger and the ROM's own write). A **slot**'s `S` is left alone: slots are ChipBoy's
 automation with no LSDj counterpart, and one firing on every note would cost a retrigger on every
 note.
+
+## 128. A table's `K` counts from the row's own tick, not the tick after it
+
+`K xx` kills the note `xx` ticks later, counted from the tick the command was **read** on. §3 made
+that a countdown on the voice, stepped once at the top of every tick. A phrase cell is read before
+the tick body, so a cell's `K` was exact; a table row is read inside it, after the step, so every
+`K` in a table fired one tick late.
+
+Measured on 9.2.L at tempo 129 (a tick is 19.4 ms), an instrument whose table holds one `K` on row
+3 and nothing else, the levels read off `NR12`'s zombie triples:
+
+```
+K 00 at table row 3     ROM  kill at 59 ms  (tick 3)      CB  77 ms  (tick 4)
+K 01                    ROM        78 ms   (tick 4)       CB  97 ms  (tick 5)
+K 02                    ROM        98 ms   (tick 5)       CB 116 ms  (tick 6)
+K 0F                    ROM       349 ms   (tick 18)      CB 368 ms  (tick 19)
+K 10                    ROM       368 ms   (tick 19)      CB  never
+K 00 in the phrase cell ROM         0 ms                  CB   0 ms
+K 01 in the phrase cell ROM        19 ms                  CB  19 ms
+K 02 in the phrase cell ROM        39 ms                  CB  39 ms
+```
+
+The whole byte is the count -- `K 10` is sixteen ticks, not one -- and it is the same on all four
+channels: `PU1`, `PU2` and `NOI` were measured identically, and `WAV`'s `NR30` clears at the same
+tick. In the ROM the only per-channel part is the volume walk itself (`02:7E75`), which picks a
+shadow byte and a register off the channel index at `02:7E7A` and is otherwise one routine; the
+silence that a kill asks for is `02:5F5F` on `PU1`, writing the shadow and calling the walk with a
+target of zero.
+
+That walk is worth naming, because it is what a `K` and an `E` share. `02:7E75` takes a target
+volume in the high nibble and steps the channel's shadow byte towards it one level at a time,
+`09/11/18` for a step down and `08` for a step up -- the zombie writes. Both `E` and `K` set a
+target and let the walk run; `K`'s target is zero, and it stops the channel afterwards. So a row
+carrying **both** is not ambiguous: the row's lanes are read, the last target wins, and one walk
+runs. A table row with `E 40` and `K 00` on it walks 13 -> 0 on the ROM in a single burst; ChipBoy,
+applying the lanes in order and then killing, writes 13 -> 4 and 4 -> 0 back to back -- the same
+thirteen decrements, in the same tick, so the registers agree.
+
+**A countdown cannot express this, and moving it does not help.** Stepping it after the table's
+rows instead of before them fixes the common cases and breaks `K 10`: sixteen ticks in a sixteen
+row table, so the row that armed it comes round on the very tick it is due, and re-arming it first
+means it never fires at all. The ROM kills there, at tick 19 -- so the kill is due *before* the row
+is read, while a `K 00` on a row is due *after* it. Neither order is the whole rule.
+
+**What LSDj has is a moment, not a count.** So the voice keeps `killAt`, the absolute tick index a
+`K` asked it to die on: reading `K n` sets `killAt = <this tick> + n`, and the voice dies on the
+first tick that has reached it. Both places a `K` can be read agree on what "this tick" is --
+`tickCount_` is the tick being processed whether the read came from a note event, which runs before
+the tick body, or from a table row inside it -- so a phrase cell and a table row count from the
+same place, which is what the measurements say. The due test runs twice in the tick, once at the
+top and once after the table's rows, and each case picks the one that comes first: `K 10`'s
+sixteenth tick is caught at the top, before its row can re-arm it, and a row's own `K 00` is caught
+after the rows, because the top of that tick had nothing to look at yet. Table row 0, which fires
+with the note-on rather than on a tick, lands on the note's own tick either way, which is where the
+ROM puts it.
+
+The late kill was audible. `SAMESONG`'s `EGUIT` (instrument `1A`) ends its table with `E 30` on row
+4 and `K 00` on row 5, and its phrases are rows of sixteenth notes: the ROM drops each note to
+silence about 16 ms before the next one starts, and ChipBoy's kill landed on the next note's own
+tick and was swallowed by its trigger. Every note ran into the next -- legato where the ROM is
+staccato. A looping table made it worse: a `K` whose count is the table's own length never reached
+zero at all, because the row came round and re-armed it one tick before it fired.

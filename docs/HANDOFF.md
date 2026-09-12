@@ -432,6 +432,20 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 38 (§128): the user's **phrase 5F on PU1** and its neighbour **70 on PU2** -- "the envelope
+  isn't dropping the level as quickly as in LSDj, making it feel more legato while the original has a
+  slight staccato feel". The `E` was exact; the `K 00` on the table row after it was a tick late.
+  `K xx` kills `xx` ticks after the tick the command is **read** on, and §3's countdown was stepped
+  at the top of the tick -- before a table row is read, after a phrase cell is -- so every `K` inside
+  a table fired late. `SAMESONG`'s `EGUIT` ends its table `E 30`, `K 00` over sixteenth notes, so
+  each note's silence landed on the next note's own tick and was swallowed by its trigger. Moving the
+  countdown after the table's rows is **not** the fix: `K 10` in a sixteen-row table is due on the
+  tick its row comes round, and re-arming it first means it never fires -- the ROM kills there. The
+  voice now keeps `killAt`, the **absolute tick** the `K` named (`tickCount_ + n`, read the same way
+  from a cell and from a table row), tested at the top of the tick and again after the table's rows.
+  Every measured case -- table `K 00`/`01`/`02`/`0F`/`10`, cell `K 00`/`01`/`02`, all four channels --
+  now lands within a millisecond of the ROM, and phrases `5F` and `70` match its level curve note for
+  note. ROM addresses: the volume walk `E` and `K` share at `02:7E75`, `PU1`'s silence at `02:5F5F`.
 - Round 37 (§125-§127): the user's **phrase 6C on PU1** -- `EGUIT` "pops and clicks, no note
   content" -- was three faults stacked. **§125**: a pitch effect off the bottom of the note table
   **clamps the period register at 0** on the ROM and keeps sounding, where ChipBoy read "below the

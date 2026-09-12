@@ -26,6 +26,40 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-12 — A `K` dies on a moment, not after a count
+
+`docs/COMMANDS_AND_TEMPO.md` §128. The user's phrase `5F` on `PU1` and its neighbour `70` on `PU2`:
+the `E` commands "aren't dropping the level as quickly as in LSDj, making it feel more legato while
+the original has a slight staccato feel". The `E` was exact; what was late was the `K 00` on the row
+after it.
+
+`K xx` kills the note `xx` ticks after the tick the command is **read** on. §3 made that a countdown
+on the voice, stepped once at the top of the tick. A phrase cell is read before the tick body, so a
+cell's `K` was exact; a **table row** is read inside it, after the step, so every `K` in a table
+fired one tick late. `SAMESONG`'s `EGUIT` (instrument `1A`) ends its table with `E 30` then `K 00`,
+over rows of sixteenth notes: the ROM silences each note about 16 ms before the next one starts, and
+ChipBoy's kill landed on the next note's own tick and was swallowed by its trigger. Every note ran
+into the next.
+
+Moving the countdown after the table's rows was tried first and is wrong. `K 10` -- sixteen ticks,
+in a sixteen row table -- is due on the very tick its row comes round, and re-arming it first means
+it never fires at all; the ROM kills there, at tick 19. So the kill is due *before* the row is read
+in one case and *after* it in another, and no single place for a countdown satisfies both.
+
+**What LSDj has is a moment.** The voice keeps `killAt`, the absolute tick index the `K` asked it to
+die on (`Voice::kill`, an `int16_t` countdown, becomes `Voice::killAt`, an `int64_t` tick index, -1
+for none). Reading `K n` sets `killAt = tickCount_ + n` -- and `tickCount_` is the tick being
+processed whether the read came from a note event, which runs before the tick body, or from a table
+row inside it, so both count from the same place. The due test runs twice in the tick, at the top
+and after the table's rows, and each case is caught by whichever comes first.
+
+Measured on 9.2.L at tempo 129, table `K` values `00`/`01`/`02`/`0F`/`10` and cell `K` values
+`00`/`01`/`02`, on all four channels: every case now lands within a millisecond of the ROM, where
+the table cases were a tick (19.4 ms) late and `K 10` never fired. `SAMESONG`'s phrases `5F` and `70`
+match the ROM's level curve note for note. The ROM addresses that settled it are the volume walk at
+`02:7E75` -- the routine `E` and `K` share, which steps the channel's shadow volume towards a target
+with the zombie writes -- and `PU1`'s silence at `02:5F5F`.
+
 ### 2026-09-12 — A vibrato off the bottom of the table, `V 00`, and the sweep's own trigger
 
 `docs/COMMANDS_AND_TEMPO.md` §125-§127. The user's phrase 6C on PU1 -- instrument `1A` (`EGUIT`) --

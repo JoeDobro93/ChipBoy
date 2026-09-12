@@ -689,7 +689,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // **not** reset here. Measured on 9.2.L: the record outlives the note-on and
     // even a different instrument, and clearing it made every `Z` after the
     // first note inert.
-    v.dutyIdx = 0; v.kill = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigOnce = false; v.retrigFast = false; v.retrigFastCount = 0; v.envCount = 0; v.frameStep = 0; v.frameIdx = 0;   // the run starts at its first step (section 65)
+    v.dutyIdx = 0; v.killAt = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigOnce = false; v.retrigFast = false; v.retrigFastCount = 0; v.envCount = 0; v.frameStep = 0; v.frameIdx = 0;   // the run starts at its first step (section 65)
     v.rng = v.rng * 1664525u + 1013904223u + note;
     restartPitchClock(ch);
     // volume from velocity: a MIDI note asks the Velocity mode, a cell's VEL is
@@ -897,7 +897,7 @@ void Driver::allNotesOff(int ch)
         ++keep;
     }
     pendingCount_ = keep;
-    v.delay = -1; v.kill = -1;
+    v.delay = -1; v.killAt = -1;
     v.heldCmdOn = false; v.heldDelay = 0; v.heldCmd[0] = {}; v.heldCmd[1] = {};
     v.hybridSlide = {};
     v.retrigEvery = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigOnce = false; v.retrigFast = false; v.retrigFastCount = 0;
@@ -1747,7 +1747,12 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane)
                 else if (left > 0) { if (--left > 0) step = uint8_t(row); else from = 0xFF; }
             }
             break;
-        case Cmd::K: v.kill = int16_t(std::clamp<int>(c.a, 0, 255)); break;
+            // Section 128: `K n` dies n ticks after **this** tick -- the tick
+            // the cell or the table row was read on -- so the target is
+            // absolute. tickCount_ is the tick being processed whether the
+            // read came from a note event (before the tick body) or from a
+            // table row (inside it).
+        case Cmd::K: v.killAt = int64_t(tickCount_) + std::clamp<int>(c.a, 0, 255); break;
         case Cmd::L: {
             // A slide takes **x + 1 pitch updates** and is **linear in
             // semitones**: the note walks from where the channel is to the
@@ -2410,8 +2415,11 @@ void Driver::tick(int ch)
     // ... so the comparison leaves the pitch effects' own offsets out of it.
     const auto tickNote = [&] { return noteOfVoice(ch) - double(v.fineOffset + slideResidual(v)) / 256.0; };
     const double noteBeforeTick = tickNote();
-    // kill countdown
-    if (v.kill >= 0) { if (v.kill == 0) { killLevel(ch); stopVoice(ch, false); v.kill = -1; return; } --v.kill; }
+    // A K comes due **before** the table's rows are read (section 128), so a
+    // looping table whose own row re-arms the K cannot keep it from ever
+    // firing -- `K 10` in a sixteen row table dies on the tick the row comes
+    // round, as the ROM's does.
+    if (v.killAt >= 0 && int64_t(tickCount_) >= v.killAt) { killLevel(ch); stopVoice(ch, false); v.killAt = -1; return; }
     // The table: a row per tick, or per the row length a G inside it asked
     // for. A Step-mode table advances at notes instead (section 7).
     if (v.tableJustStarted) v.tableJustStarted = false;      // row 0 fired with the note-on (section 31)
@@ -2425,6 +2433,10 @@ void Driver::tick(int ch)
         }
     }
     if (!v.active) return;
+    // A K that came due while the table was running this tick's rows (section
+    // 128): a row's own `K 00` dies on that row's tick, and a row read after
+    // the check at the top of the tick would otherwise wait for the next one.
+    if (v.killAt >= 0 && int64_t(tickCount_) >= v.killAt) { killLevel(ch); stopVoice(ch, false); v.killAt = -1; return; }
     // The shaped envelope's level for this tick, after the table, which may
     // just have taken it over (sections 26 and 27). Section 121: not on the
     // tick the note started on -- that tick *is* the envelope's first, and

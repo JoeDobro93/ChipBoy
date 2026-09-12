@@ -621,6 +621,37 @@ TEST_CASE("a K cell kills its own note and no other", "[driver][commands]")
     CHECK(r.drv.view(0).active);                                   // the K did not follow the note
 }
 
+TEST_CASE("a table row's K counts from that row's own tick", "[driver][commands][table]")
+{
+    // Section 128: `K n` dies n ticks after the tick it was **read** on. A
+    // table row is read inside the tick, so a row's `K 00` dies on that row's
+    // own tick -- ChipBoy's countdown, stepped at the top of the tick, made it
+    // the next one, which ran every note of `SAMESONG`'s EGUIT into the next.
+    const auto diesAfter = [](int killValue, int row) {
+        Rig r;
+        r.tickHz = 100.0;
+        r.song.noteSource[0] = tracker::NoteSource::Tracker;
+        auto& t = r.bank.tables[0]; t.used = true; t.end = TableEnd::Stop;
+        t.steps[size_t(row)].cmd1 = { Cmd::K, int16_t(killValue), 0, 0 };
+        r.bank.instruments[0].table = 1;
+        ChannelParams p; p.instrument = 1; r.drv.setParams(0, p);
+        r.block({ cellOn(0, 69, 1) }, 480);            // tick 0: the note, and the table's row 0
+        for (int tick = 1; tick < 40; ++tick) {
+            if (!r.drv.view(0).active) return tick - 1;
+            r.block({}, 480);
+        }
+        return r.drv.view(0).active ? -1 : 39;
+    };
+    CHECK(diesAfter(0, 3) == 3);                       // the row's own tick
+    CHECK(diesAfter(1, 3) == 4);
+    CHECK(diesAfter(2, 3) == 5);
+    CHECK(diesAfter(0, 0) == 0);                       // row 0 fires with the note-on
+    // A `K` whose count is the table's own length is due on the tick its row
+    // comes round again: a countdown would be re-armed a tick before it fired
+    // and the note would never die. Measured on the ROM at tick 19.
+    CHECK(diesAfter(16, 3) == 19);
+}
+
 TEST_CASE("the command octave fires the slots without sounding", "[driver][commands]")
 {
     // Section 13: MIDI notes 0-11 never sound and never join the held stack.
