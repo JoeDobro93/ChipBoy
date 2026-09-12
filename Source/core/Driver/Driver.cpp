@@ -2609,8 +2609,10 @@ void Driver::retrigger(int ch, bool full)
         return;
     }
     // `x` is a signed nibble of volume change: 1-7 up by that much, 9-15 down
-    // by sixteen minus it (measured: R A steps the level down by six).
-    if (v.retrigStep && !noise) v.envVol = uint8_t(std::clamp<int>(int(v.envVol) + v.retrigStep, 0, 15));
+    // by sixteen minus it (measured: R A steps the level down by six). Section
+    // 133: **on the noise channel too** -- the guard that skipped it there had
+    // nothing measured behind it, and it is what silenced `READROOM`'s rolls.
+    if (v.retrigStep) v.envVol = uint8_t(std::clamp<int>(int(v.envVol) + v.retrigStep, 0, 15));
     if (pulse) {
         if (ch == 0) emit(0xFF10, uint8_t(~v.sweepByte), true);
         emit(regAddr(ch, 1), uint8_t((v.duty << 6) | lengthCode6(v.inst.length)), true);

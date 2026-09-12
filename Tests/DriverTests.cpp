@@ -3718,6 +3718,37 @@ TEST_CASE("an A inside a table runs its table beside the one that started it", "
     CHECK(r.drv.view(0).pan == uint8_t(bank::Pan::Left));
 }
 
+TEST_CASE("R steps the level on the noise channel too", "[driver][commands][noise]")
+{
+    // Section 133: `x` is a signed nibble of volume change -- 1-7 up, 9-15 down
+    // by sixteen minus it -- and it applies on noise, which the driver used to
+    // refuse. `READROOM`'s noise rolls retriggered at a flat level without it.
+    // `x = 0` gives the level the same note reaches with no step, so the checks
+    // read as the step itself whatever the instrument's own level is.
+    const auto level = [](int x) {
+        Rig r;
+        r.tickHz = 100.0;
+        r.song.noteSource[3] = tracker::NoteSource::Tracker;
+        auto& i = r.bank.instruments[1];
+        i = bank::Instrument::defaults(bank::InstrumentType::Noise, "Roll");
+        i.used = true; i.env.mode = bank::EnvMode::Chip; i.envRate = 0;
+        ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(3, p);
+        NoteEvent e = cellOn(3, 60, 2);
+        e.cmd1 = { Cmd::R, int16_t(x), 0, 0 };          // one retrigger
+        r.block({ e }, 480);
+        r.block({}, 480);
+        return int(r.drv.view(3).volume);
+    };
+    const int base = level(0x0);
+    REQUIRE(base >= 8);                                 // room to step either way
+    CHECK(level(0xF) == base - 1);
+    CHECK(level(0xE) == base - 2);
+    CHECK(level(0x9) == base - 7);
+    CHECK(level(0x1) == base + 1);
+    CHECK(level(0x3) == base + 3);
+    CHECK(level(0x8) == base);                          // 8 is the resync, no step
+}
+
 TEST_CASE("a wave run that plays once goes quiet at its end", "[driver][wave]")
 {
     // Section 132: one step past the end of a `PLAY = ONCE` run the ROM writes a

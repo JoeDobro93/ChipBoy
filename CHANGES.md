@@ -26,6 +26,21 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-12 — `R`'s volume step applies on the noise channel
+
+`docs/COMMANDS_AND_TEMPO.md` §133. The user heard no `R` at all on `READROOM`'s phrase `1A`, which
+carries `R F0` on two rows and `R F3` on a third. The retriggers were there and on the right ticks;
+what was missing is that the ROM's retrigger writes a **lower level** each time and ChipBoy rewrote
+the same one -- `NR42` `68` then `58` on the ROM, `68` then `68` in ChipBoy.
+
+§76 already had the law and `retrigVolStep` already computed it: `x` is a signed nibble, 1-7 up by
+that much and 9-15 down by sixteen minus it. The driver simply refused to apply it to noise --
+`if (v.retrigStep && !noise)` -- with nothing in the design log behind the guard. Swept on 9.2.L, a
+noise instrument retriggered once by `R x 0` steps its level by exactly that nibble in both
+directions (from 15: `9` to 8, `A` to 9, `F` to 14; from 4: `1` to 5, `3` to 7, `7` to 11), and
+`x = 8` is still the resync and still changes no level. The guard is gone and phrase `1A`'s levels
+now match the ROM's register for register.
+
 ### 2026-09-12 — A wave run that plays once goes quiet, and an envelope level is held rather than rounded
 
 `docs/COMMANDS_AND_TEMPO.md` §132, closing §129's open half-step. From the user's `READROOM`.

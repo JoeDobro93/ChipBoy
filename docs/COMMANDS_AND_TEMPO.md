@@ -4047,3 +4047,28 @@ nibble -- instrument `1D`'s `05` is the `A` the editor shows. ChipBoy calls that
 frames, `L + 1`, so it reads 11) and keeps **Length** for the note's own length counter, `NRx1`,
 which LSDj's wave instruments do not use. Setting ChipBoy's Length to `0A` therefore does nothing for
 this instrument, which is what the user found; the run's `PLAY` is what stops the sound.
+
+## 133. `R`'s volume step applies on the noise channel as well
+
+`READROOM`'s phrase `1A` on `NOI` carries `R F0` on two rows and `R F3` on a third, and the user
+heard no `R` at all in ChipBoy. The retriggers were there -- both sides trigger on the same ticks --
+but the ROM's retrigger writes a **lower level** each time and ChipBoy's rewrote the same one:
+
+```
+row 2, R F0   ROM  NR42 68, trigger; NR42 58, trigger      volume 6 -> 5
+              CB   NR42 68, trigger; NR42 68, trigger      no change
+```
+
+§76 already had the law -- `x` is a signed nibble, 1-7 up by that much and 9-15 down by sixteen
+minus it -- and `retrigVolStep` computes it correctly. The driver simply refused to apply it to
+noise: `if (v.retrigStep && !noise)`. Nothing in the design log justifies the `!noise`, and the ROM
+contradicts it. Swept on 9.2.L, a noise instrument retriggered once by `R x 0`:
+
+```
+from volume 15   x 0-7  15 (clamped)   x 8  resync, no change
+                 x 9 -> 8   A -> 9   B -> 10   C -> 11   D -> 12   E -> 13   F -> 14
+from volume 4    x 1 -> 5   2 -> 6   3 -> 7    5 -> 9    7 -> 11
+```
+
+Both halves, exactly `retrigVolStep`. The guard is gone. `x = 8` is still the resync and still
+changes no level, which is what makes `R 8 y` a plain roll.

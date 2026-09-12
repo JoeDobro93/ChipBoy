@@ -432,6 +432,13 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 42 (§133), from the user's **`READROOM` phrase `1A` on `NOI`**: the `R` command "wasn't
+  working". The retriggers were there on the right ticks; what was missing is `R`'s **volume step**,
+  which the driver applied on every channel but noise (`if (v.retrigStep && !noise)`, with nothing
+  measured behind the guard). §76's law was already right and `retrigVolStep` already computed it;
+  swept on 9.2.L a noise instrument steps its level by the signed nibble in both directions, and
+  `x = 8` remains the resync with no step. Phrase `1A`'s levels now match the ROM register for
+  register. One test.
 - Round 41 (§132, closing §129's open half-step), from the user's **`READROOM`**: **`WAV` phrase 17,
   instrument `1D`** stopped on the ROM and sustained in ChipBoy -- its `PLAY` is **ONCE**, and one
   step past the end of the run the ROM writes a wave of sixteen `77` bytes (a flat line at mid-scale,
