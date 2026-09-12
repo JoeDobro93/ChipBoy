@@ -3004,6 +3004,52 @@ TEST_CASE("a table's H costs no tick", "[driver][commands]")
     r.bank.instruments[0].table = 0;
 }
 
+TEST_CASE("a kit note's VEL column names a second sample, summed through the kit's curve", "[driver][kit]")
+{
+    // docs/plan-kit-pairs.md: the note column picks one sample, VEL the other
+    // by index + 1, and the driver sums them the way LSDj's mixer does (S117).
+    Rig r;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    auto& k = r.bank.kits[0];
+    k = bank::Kit{};
+    k.used = true; k.name = "Pair"; k.period = 1865;
+    std::vector<uint8_t> ramp(256), full(256, uint8_t(15));
+    for (size_t i = 0; i < ramp.size(); ++i) ramp[i] = uint8_t((i + 1) % 16);
+    bank::KitSample a; a.note = 60; a.data = ramp;
+    bank::KitSample b; b.note = 61; b.data = full;
+    k.samples.push_back(a); k.samples.push_back(b);
+    auto& i0 = r.bank.instruments[1];
+    i0 = Instrument::defaults(InstrumentType::Kit, "Pair");
+    i0.used = true; i0.kit = 1;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(2, p);
+
+    /// The sixteen bytes of the first chunk, as 32 nibbles.
+    auto firstChunk = [&](uint8_t vel) {
+        auto w = r.block({ cellOn(2, 60, 2, vel) }, 64);
+        std::array<int, 16> byteOf{}; byteOf.fill(-1);
+        for (const auto& x : w) if (x.addr >= 0xFF30 && x.addr <= 0xFF3F && byteOf[size_t(x.addr - 0xFF30)] < 0) byteOf[size_t(x.addr - 0xFF30)] = x.value;
+        std::vector<int> nib;
+        for (int j = 0; j < 16; ++j) { nib.push_back(byteOf[size_t(j)] >> 4); nib.push_back(byteOf[size_t(j)] & 15); }
+        r.block({ Rig::off(2, 60) }, 64);
+        return nib;
+    };
+    for (auto mode : { bank::KitDist::Clip, bank::KitDist::Soft, bank::KitDist::Fold, bank::KitDist::Fold2, bank::KitDist::Wrap }) {
+        k.dist = mode;
+        const auto got = firstChunk(2);
+        REQUIRE(got.size() == 32);
+        for (int j = 0; j < 32; ++j) CHECK(got[size_t(j)] == int(bank::kitMix(mode, j, ramp[size_t(j)], 15)));
+    }
+    k.dist = bank::KitDist::Clip;
+    // A VEL past the end of the kit -- every ordinary velocity -- plays one sample.
+    const auto alone = firstChunk(100);
+    for (int j = 0; j < 32; ++j) CHECK(alone[size_t(j)] == int(ramp[size_t(j)]));
+    // And the note still ends with the **first** sample, however long the second is.
+    k.samples[1].data.assign(4096, uint8_t(8));
+    r.block({ cellOn(2, 60, 2, 2) }, 64);
+    for (int j = 0; j < 12; ++j) r.block({}, 4800);
+    CHECK_FALSE(r.drv.view(2).active);
+}
+
 TEST_CASE("P on a kit moves the period register, not the note", "[driver][kit]")
 {
     // Section 97: the byte is period-register units -- three of them once under

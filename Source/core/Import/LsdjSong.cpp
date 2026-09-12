@@ -11,6 +11,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <utility>
 #include <tuple>
 #include <vector>
 
@@ -57,8 +58,14 @@ struct KitUse {
     KitDist dist = KitDist::Clip;    ///< how a note's two samples are summed (section 117)
     int distByte = -1;               ///< byte 10 when it names no table of LSDj's, else -1
     int lenA = 0, lenB = 0;          ///< frames of 32 samples, 0 whole
-    std::map<int, uint8_t> noteOf;   ///< LSDj note byte -> the MIDI note its sample sits on
+    /// (LSDj kit number, sample digit) -> the ChipBoy sample's index in the
+    /// slot. An instrument whose two kits are the same one shares them, so a
+    /// note that plays a sample against itself names the one entry twice.
+    std::map<std::pair<int, int>, int> sampleOf;
 };
+/// What a kit note byte becomes: the note column names one sample and the VEL
+/// column the second, by index + 1 (docs/plan-kit-pairs.md).
+struct KitCell { uint8_t note = 0; uint8_t vel = 0; };
 
 struct Reader {
     const uint8_t* s;
@@ -535,55 +542,52 @@ struct Reader {
         const int distPage = int(b[10]) - int(kKitDistFirstPage);
         if (distPage >= 0 && distPage < kKitDistPages && m.kitDist != nullptr) use.dist = m.kitDist[distPage];
         else use.distByte = int(b[10]);
+        k.dist = use.dist;
         kitUse[i] = use;
         if (b[12] || b[13]) notes.add("kit instrument " + name + ": the sample offsets (" + hex2(b[12]) + ", " + hex2(b[13]) + ") are not mapped; samples play from their start");
         if (b[5] & 0x40) notes.add("kit instrument " + name + ": a half-speed flag in byte 5 is not mapped");
         return true;
     }
-    /// The MIDI note a kit note byte plays on: the sample -- or the two, mixed
-    /// through the instrument's DIST curve (section 117) -- is added to the
-    /// instrument's ChipBoy kit the first time the byte is seen.
-    uint8_t kitNote(int inst, int noteByte, const std::string& where)
+    /// What a kit note byte plays: its high digit names a sample of the
+    /// instrument's first kit and its low digit one of the second, and each is
+    /// added to the instrument's ChipBoy kit the first time it is seen
+    /// (docs/plan-kit-pairs.md). The note column carries the first and the VEL
+    /// column the second, by index + 1; the driver sums them through the kit's
+    /// own `dist`, which is what the ROM's table does (section 117).
+    KitCell kitNote(int inst, int noteByte, const std::string& where)
     {
         auto it = kitUse.find(inst);
-        if (it == kitUse.end()) return 0;
+        if (it == kitUse.end()) return {};
         KitUse& use = it->second;
-        if (auto found = use.noteOf.find(noteByte); found != use.noteOf.end()) return found->second;
-        const int hi = noteByte >> 4, lo = noteByte & 15;
-        auto sampleOf = [&](int kit, int digit, int len) -> const LsdjKitSample* {
-            if (digit == 0 || kit < 0 || kit >= int(kits->size())) return nullptr;
-            const auto& ks = (*kits)[size_t(kit)].samples;
-            if (digit - 1 >= int(ks.size())) { notes.add("kit note " + hex2(noteByte) + " at " + where + " names sample " + std::to_string(digit) + " of kit " + hex2(kit) + ", which has " + std::to_string(ks.size()) + "; silent"); return nullptr; }
-            (void)len;
-            return &ks[size_t(digit - 1)];
-        };
-        const LsdjKitSample* a = sampleOf(use.kitA, hi, use.lenA);
-        const LsdjKitSample* b = sampleOf(use.kitB, lo, use.lenB);
-        bank::KitSample out;
-        auto cut = [](std::vector<uint8_t> v, int frames) { if (frames > 0 && size_t(frames) * 32 < v.size()) v.resize(size_t(frames) * 32); return v; };
-        if (a && b) {
-            // Both kits at once, through the instrument's DIST curve (section
-            // 117). A sample the other outlives reads as silence, which is 8.
-            const auto da = cut(a->nibbles, use.lenA), db = cut(b->nibbles, use.lenB);
-            const size_t n = std::max(da.size(), db.size());
-            out.data.resize(n);
-            for (size_t k = 0; k < n; ++k)
-                out.data[k] = kitMix(use.dist, int(k), k < da.size() ? int(da[k]) : 8, k < db.size() ? int(db[k]) : 8);
-            out.name = a->name + "+" + b->name;
-            if (use.distByte >= 0)
-                notes.add("kit instrument " + hex2(inst) + ": DIST is " + hex2(use.distByte) + ", which names none of LSDj's four mixing tables -- the ROM reads unrelated memory there and streams noise; notes that play two samples are clipped instead");
-        } else if (a || b) {
-            const auto* one = a ? a : b;
-            out.data = cut(one->nibbles, a ? use.lenA : use.lenB);
-            out.name = one->name;
-        } else return 0;
         auto& kit = bank.kits[size_t(use.kitSlot - 1)];
-        if (kit.samples.size() >= 32) { notes.add("kit instrument at " + where + " uses more than 32 different sounds; the rest are silent"); return 0; }
-        out.note = uint8_t(36 + int(kit.samples.size()));
-        out.loopPoint = 0;
-        kit.samples.push_back(std::move(out));
-        use.noteOf[noteByte] = kit.samples.back().note;
-        return kit.samples.back().note;
+        auto cut = [](std::vector<uint8_t> v, int frames) { if (frames > 0 && size_t(frames) * 32 < v.size()) v.resize(size_t(frames) * 32); return v; };
+        // The ChipBoy index of one kit's sample, adding it the first time.
+        auto indexOf = [&](int kitNo, int digit, int len) -> int {
+            if (digit == 0 || kitNo < 0 || kitNo >= int(kits->size())) return -1;
+            const auto& ks = (*kits)[size_t(kitNo)].samples;
+            if (digit - 1 >= int(ks.size())) { notes.add("kit note " + hex2(noteByte) + " at " + where + " names sample " + std::to_string(digit) + " of kit " + hex2(kitNo) + ", which has " + std::to_string(ks.size()) + "; silent"); return -1; }
+            const auto key = std::make_pair(kitNo, digit);
+            if (auto f = use.sampleOf.find(key); f != use.sampleOf.end()) return f->second;
+            if (kit.samples.size() >= 32) { notes.add("kit instrument at " + where + " uses more than 32 different sounds; the rest are silent"); return -1; }
+            bank::KitSample out;
+            out.name = ks[size_t(digit - 1)].name;
+            out.data = cut(ks[size_t(digit - 1)].nibbles, len);
+            out.note = uint8_t(36 + int(kit.samples.size()));
+            out.loopPoint = 0;
+            kit.samples.push_back(std::move(out));
+            const int at = int(kit.samples.size()) - 1;
+            use.sampleOf[key] = at;
+            return at;
+        };
+        const int a = indexOf(use.kitA, noteByte >> 4, use.lenA);
+        const int b = indexOf(use.kitB, noteByte & 15, use.lenB);
+        if (a < 0 && b < 0) return {};
+        if (a >= 0 && b >= 0 && use.distByte >= 0)
+            notes.add("kit instrument " + hex2(inst) + ": DIST is " + hex2(use.distByte) + ", which names none of LSDj's four mixing tables -- the ROM reads unrelated memory there and streams noise; ChipBoy clips instead");
+        KitCell out;
+        out.note = kit.samples[size_t(a >= 0 ? a : b)].note;
+        out.vel = (a >= 0 && b >= 0) ? uint8_t(b + 1) : uint8_t(0);
+        return out;
     }
 
     // --- commands (sections 34, 46, 49) -----------------------------------
@@ -854,8 +858,8 @@ struct Reader {
                 notes.add(std::string(channelName(channel)) + " plays notes before any cell names an instrument: LSDj's instrument 00 is used for them");
             }
             if (n && kind == 2) {
-                const uint8_t kn = kitNote(cur, int(n), "phrase " + hex2(p) + " step " + std::to_string(st));
-                if (kn) c.note = kn;
+                const KitCell kn = kitNote(cur, int(n), "phrase " + hex2(p) + " step " + std::to_string(st));
+                if (kn.note) { c.note = kn.note; c.vel = kn.vel; }
             } else if (n) {
                 int midi = lsdjMidi;
                 // Section 49: the top note this instrument reaches on PU2, so

@@ -860,48 +860,54 @@ TEST_CASE("a kit instrument's DIST curve sums its two samples", "[lsdj]")
         const auto kits = readKits(rom.data(), rom.size());
         REQUIRE(kits.size() == 2);
 
-        auto mixed = [&](uint8_t distByte, int format, const LsdjModel& model) {
-            auto song = blankSong(format);
-            song[kInstAlloc + 0] = 1;
-            uint8_t* i0 = song.data() + kInst;
+        // The import keeps the pair rather than baking it (plan-kit-pairs): the
+        // kit holds both source samples, the note column names the first and
+        // the VEL column the second, and the kit carries the curve.
+        struct Imported { std::unique_ptr<bank::Bank> bank; std::unique_ptr<tracker::Song> song; };
+        auto importPair = [&](uint8_t distByte, int format, const LsdjModel& model, uint8_t noteByte) {
+            auto s2 = blankSong(format);
+            s2[kInstAlloc + 0] = 1;
+            uint8_t* i0 = s2.data() + kInst;
             i0[0] = 2; i0[1] = 0xF0; i0[2] = 0x00; i0[7] = 3; i0[9] = 0x01; i0[10] = distByte;
-            song[kPhraseAlloc] |= 1;
-            song[kNotes + 0] = 0x11; song[kPhraseInst + 0] = 0;   // sample 1 of each kit
-            song[kChainPhrases + 0] = 0;
-            song[kRows + 0] = 0xFF; song[kRows + 1] = 0xFF; song[kRows + 2] = 0; song[kRows + 3] = 0xFF;
-            auto b = std::make_unique<bank::Bank>(); auto o = std::make_unique<tracker::Song>();
+            s2[kPhraseAlloc] |= 1;
+            s2[kNotes + 0] = noteByte; s2[kPhraseInst + 0] = 0;
+            s2[kChainPhrases + 0] = 0;
+            s2[kRows + 0] = 0xFF; s2[kRows + 1] = 0xFF; s2[kRows + 2] = 0; s2[kRows + 3] = 0xFF;
+            Imported out{ std::make_unique<bank::Bank>(), std::make_unique<tracker::Song>() };
             ImportSummary sum; ImportNotes notes;
-            REQUIRE(importSong(song.data(), song.size(), model, *b, *o, sum, notes, &kits));
-            REQUIRE(b->kits[0].samples.size() == 1);
-            return b->kits[0].samples[0].data;
+            REQUIRE(importSong(s2.data(), s2.size(), model, *out.bank, *out.song, sum, notes, &kits));
+            return out;
         };
-        // Sample k of the ramp is (k + 1) % 16 against a flat 15, so s = a + 7.
-        const auto hard = mixed(0xD0, 22, lsdjLatestModel());
-        REQUIRE(hard.size() == 64);
-        CHECK(hard[0] == 8);            // a = 1, s = 8
-        CHECK(hard[8] == 15);           // a = 9, s = 16 -> clamped
-        CHECK(hard[14] == 15);          // a = 15, s = 22 -> clamped
-        const auto wrap = mixed(0xD3, 22, lsdjLatestModel());
-        CHECK(wrap[0] == 8);
-        CHECK(wrap[8] == 0);            // s = 16 wraps
-        CHECK(wrap[14] == 6);           // s = 22
-        const auto fold = mixed(0xD2, 22, lsdjLatestModel());
-        CHECK(fold[0] == 8);
-        CHECK(fold[8] == 14);           // s = 16 mirrors to 14
-        CHECK(fold[14] == 8);           // s = 22
-        const auto soft = mixed(0xD1, 22, lsdjLatestModel());
-        CHECK(soft[0] == 8);
-        CHECK(soft[7] == 13);           // a = 8, s = 15
-        CHECK(soft[14] == 15);          // s = 22
-        // Before 9.2 the same byte names the curve one place up the list: D1 is
-        // the mirror and D2 the steep one.
+        {   // note 11: sample 1 of each kit
+            auto in = importPair(0xD0, 22, lsdjLatestModel(), 0x11);
+            const auto& kit = in.bank->kits[0];
+            REQUIRE(kit.samples.size() == 2);
+            CHECK(kit.samples[0].data == ramp);
+            CHECK(kit.samples[1].data == full);
+            CHECK(kit.dist == bank::KitDist::Clip);
+            const auto* ph = in.song->phrase(1);
+            REQUIRE(ph != nullptr);
+            CHECK(ph->cells[0].note == kit.samples[0].note);
+            CHECK(ph->cells[0].vel == 2);                  // the second sample, index + 1
+        }
+        {   // one digit only: no second sample
+            auto in = importPair(0xD0, 22, lsdjLatestModel(), 0x10);
+            REQUIRE(in.bank->kits[0].samples.size() == 1);
+            CHECK(in.song->phrase(1)->cells[0].vel == 0);
+            auto lo = importPair(0xD0, 22, lsdjLatestModel(), 0x01);
+            REQUIRE(lo.bank->kits[0].samples.size() == 1);
+            CHECK(lo.bank->kits[0].samples[0].data == full);
+            CHECK(lo.song->phrase(1)->cells[0].vel == 0);
+        }
+        // Each page names its curve, and the list moved at 9.2: before it, D1
+        // is the mirror and D2 the steep one.
+        CHECK(importPair(0xD1, 22, lsdjLatestModel(), 0x11).bank->kits[0].dist == bank::KitDist::Soft);
+        CHECK(importPair(0xD2, 22, lsdjLatestModel(), 0x11).bank->kits[0].dist == bank::KitDist::Fold);
+        CHECK(importPair(0xD3, 22, lsdjLatestModel(), 0x11).bank->kits[0].dist == bank::KitDist::Wrap);
         const LsdjModel* old = lsdjModelNamed("LSDj 8.4.0 - 8.5.1 (format 11)");
         REQUIRE(old != nullptr);
-        CHECK(mixed(0xD1, 11, *old) == fold);
-        const auto steep = mixed(0xD2, 11, *old);
-        CHECK(steep[0] == 8);
-        CHECK(steep[8] == 13);          // s = 16 -> 15 - 2
-        CHECK(steep[14] == 1);          // s = 22 -> 15 - 14
+        CHECK(importPair(0xD1, 11, *old, 0x11).bank->kits[0].dist == bank::KitDist::Fold);
+        CHECK(importPair(0xD2, 11, *old, 0x11).bank->kits[0].dist == bank::KitDist::Fold2);
     }
 }
 

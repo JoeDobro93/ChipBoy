@@ -575,6 +575,13 @@ design-log section the change touches. Update this file at the end of every chan
   against the 47 ROMs in the archive and end to end against the ROM's streamed wave RAM. The list
   moved at 9.2 (`CLIP/SHAPE/SHAP2/WRAP` became `HARD/SOFT/FOLD/WRAP`), so the model carries the
   pair. The old sum had no floor, so a quiet passage wrapped round into noise; that is gone.
+- Round 25 (§118, `plan-kit-pairs.md`): a kit note **keeps its pair**. The ChipBoy kit holds the
+  source samples, a cell's **note** column names the first and its **VEL** column the second by
+  index + 1, and the kit's new **`Dist`** (D-UI-28) says how the driver sums them -- the same five
+  curves as §117, live rather than baked at import. The importer maps a note byte's two digits
+  straight onto the pair, so `AIR`+`AIR` is one entry named twice. VEL means one thing at a time:
+  the keyswitch velocity mode skips a kit. The Kits tab also gained **Audition** (D-UI-29), which
+  plays the selected sample beside the song without touching the driver.
 
 ## Open issues
 

@@ -26,6 +26,44 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-12 — A kit note keeps its pair, and the Kits tab can play a sample
+
+`docs/COMMANDS_AND_TEMPO.md` §118, `docs/plan-kit-pairs.md`, `docs/UI_DESIGN.md` D-UI-27 to
+D-UI-29. The fifth of the user's list.
+
+**Changed:** the importer summed a kit note's two samples once and stored the result, one entry per
+distinct note byte. The song played, but the second sample was gone — it could not be changed,
+removed, or put on another note, and a kit a song used eight pairs of filled eight of the slot's
+thirty-two entries with near-duplicates of six sounds. A ChipBoy kit now keeps the **sources**, and
+a cell names two of them: the note column picks the first, the **VEL column** the second by
+index + 1, and the kit's new **`Dist`** says how the driver sums them. That is the user's own
+suggestion — LSDj grows a second column on a kit instrument, and VEL was the column with nothing to
+do there (`velToVolume` only reaches Pulse and Noise).
+
+**Departure from the spec:** VEL means one thing at a time. The global *Velocity mode = keyswitch*,
+which adds `vel / 8` to the instrument slot, now skips a channel whose instrument is a kit.
+Considered a sixth cell column instead; rejected — it would widen the lane for one instrument type,
+and every LSDj kit note fits the pair the VEL column already has room for.
+
+Nothing that played before plays differently: an old bank's kits hold baked samples, their cells
+have a blank VEL, and a blank VEL is `kDefaultVelocity` (100), past the end of every kit, which
+plays one sample. A bank written before this reads its kits as `Dist = Clip`, which is what they
+were summed with.
+
+**Added:** *Audition* → *Play* on the Kits tab. The audio thread reads the selected sample out of
+the live bank at the kit's own rate, through the DAC's curve (§106), and mixes it in after the
+render, so it never touches the driver and the song plays on.
+
+**Also:** this is what the user heard as "blowing raspberries" on `SAMESONG`'s `IYKAIR` kit. The
+kit was mapped correctly all along; §117's missing floor was turning a quarter of the sample into
+noise.
+
+Checked end to end: a probe save whose kit note plays a sample from each of two kits, imported and
+played by ChipBoy, streams **the same wave RAM bytes as the ROM** under all four of LSDj's DIST
+pages. `SAMESONG` is unchanged where it was already right (90.0 / 90.7 / 81.8 / 95.4 % of the time
+on the ROM's own pitch, as before), and its `IYKAIR` kit is now one `AIR` named twice rather than a
+baked `AIR+AIR`.
+
 ### 2026-09-12 — A kit note's two samples are summed the way LSDj sums them
 
 `docs/COMMANDS_AND_TEMPO.md` §117, the fourth of the user's list. A kit note plays one sample from

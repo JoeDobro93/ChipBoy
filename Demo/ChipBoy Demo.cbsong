@@ -4467,6 +4467,7 @@
         "name": "909-ish",
         "period": 1865,
         "loop": 0,
+        "dist": "clip",
         "samples": [
           {
             "name": "KICK",

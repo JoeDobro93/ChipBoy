@@ -180,6 +180,15 @@ public:
     bool channelMute(int ch) const { return (muteMask_.load() >> (ch & 3)) & 1; }
     void setChannelSolo(int ch, bool on) { uint32_t m = soloMask_.load(); m = on ? (m | (1u << (ch & 3))) : (m & ~(1u << (ch & 3))); soloMask_.store(m); }
     bool channelSolo(int ch) const { return (soloMask_.load() >> (ch & 3)) & 1; }
+    /// Audition one kit sample (docs/UI_DESIGN.md D-UI-29): the audio thread
+    /// reads it straight out of the live bank and mixes it in after the render,
+    /// so it never touches the driver and the song plays on. Pressing it again
+    /// starts over; slot 0 stops it.
+    void previewKitSample(int slot, int sample)
+    {
+        const uint32_t req = (uint32_t(slot & 63) << 8) | uint32_t(sample & 63) | (uint32_t(++previewSeq_ & 0x3FFFF) << 14);
+        previewReq_.store(req, std::memory_order_release);
+    }
 
     // tracker
     void setRecordArm(bool on) { recordArm_.store(on); }
@@ -299,6 +308,14 @@ private:
     std::atomic<int> focusRequest_{ -1 };
 
     std::atomic<uint32_t> muteMask_{ 0 }, soloMask_{ 0 };
+    // The kit auditioner (D-UI-29). The request is one word so the message
+    // thread can post it without a lock; the rest is the audio thread's alone.
+    std::atomic<uint32_t> previewReq_{ 0 };
+    uint32_t previewSeq_ = 0, previewSeen_ = 0;
+    int      previewSlot_ = 0, previewIdx_ = 0;
+    double   previewPos_ = 0.0, previewStep_ = 0.0;
+    bool     previewOn_ = false;
+    void mixPreview(float* left, float* right, int n);
     void applyWrites();
 
     // tracker / record

@@ -444,6 +444,22 @@ int main()
                   "a table written before them reads as the volume column stepping with the row");
         }
 
+        // Section 117: a kit's mixing curve survives a round trip, and a bank
+        // written before it reads as the sum clipped, which is what it did.
+        {
+            auto bk = std::make_unique<chipboy::bank::Bank>();
+            auto& kt = bk->kits[2];
+            kt.used = true; kt.name = "Pair"; kt.dist = chipboy::bank::KitDist::Fold2;
+            chipboy::bank::KitSample ks; ks.name = "AIR"; ks.note = 40; ks.data.assign(8, uint8_t(5));
+            kt.samples.push_back(ks);
+            auto back = std::make_unique<chipboy::bank::Bank>();
+            const bool ok = bankFromJson(bankToJson(*bk), *back);
+            check(ok && back->kits[2].dist == chipboy::bank::KitDist::Fold2, "a kit's Dist survives a round trip");
+            auto older = std::make_unique<chipboy::bank::Bank>();
+            const bool oldOk = bankFromJson("{\"format\":\"chipboy-bank\",\"kits\":[{\"slot\":3,\"name\":\"K\",\"samples\":[]}]}", *older);
+            check(oldOk && older->kits[2].dist == chipboy::bank::KitDist::Clip, "and a kit written before it reads as Clip");
+        }
+
         // Section 61: the song's own transpose and a chain row's are stored
         // apart, so a round trip does not add the song's to every row.
         const auto tspOwned = song();

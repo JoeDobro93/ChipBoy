@@ -1451,7 +1451,7 @@ struct PhraseGrid::Impl {
         auto& cell = cells[size_t(c.ch)][size_t(row)];
         const tracker::Cell before = cell;
         if (c.kind == Kind::Note) { if (cell.note == 0 || cell.note == tracker::kNoteOff) return; cell.note = uint8_t(juce::jlimit(1, 127, want)); }
-        else if (c.kind == Kind::Vel) cell.vel = uint8_t(wrapRange(want, 0, 127));
+        else if (c.kind == Kind::Vel) cell.vel = uint8_t(wrapRange(want, 0, velTop(c.ch, row)));
         else if (c.kind == Kind::Inst) cell.inst = uint8_t(wrapRange(want, 0, bank::kInstrumentSlots));
         else if (c.kind == Kind::Table) cell.table = uint8_t(wrapRange(want, 0, bank::kTableSlots));
         else if (c.kind == Kind::Cmd) {
@@ -1470,7 +1470,7 @@ struct PhraseGrid::Impl {
         const tracker::Cell before = cell;
         bool done = false;
         if (col.kind == Kind::Note) { done = editNote(cell.note, k, octave); if (done) noteEntered(col.ch, core.curRow, before); }
-        else if (col.kind == Kind::Vel) done = editSlot(cell.vel, 127, k, core.entry);
+        else if (col.kind == Kind::Vel) done = editSlot(cell.vel, velTop(col.ch, core.curRow), k, core.entry);
         else if (col.kind == Kind::Inst) done = editSlot(cell.inst, bank::kInstrumentSlots, k, core.entry);
         else if (col.kind == Kind::Table) done = editSlot(cell.table, bank::kTableSlots, k, core.entry);
         else if (col.kind == Kind::Cmd) done = editCmd(cmdSlot(core.curCol) == 0 ? cell.cmd1 : cell.cmd2, k, core.entry);
@@ -1519,7 +1519,7 @@ struct PhraseGrid::Impl {
         const int ch = c.ch;
         const auto& cell = cells[size_t(ch)][size_t(row)];
         const int cur = kind == Kind::Vel ? int(cell.vel) : kind == Kind::Inst ? int(cell.inst) : int(cell.table);
-        const int hi = kind == Kind::Vel ? 127 : kind == Kind::Inst ? bank::kInstrumentSlots : bank::kTableSlots;
+        const int hi = kind == Kind::Vel ? velTop(ch, row) : kind == Kind::Inst ? bank::kInstrumentSlots : bank::kTableSlots;
         core.setCursor(row, col);
         box.begin(owner, core.cellRect(row, col).reduced(1), cur == 0 ? juce::String() : ValueFormat::slot(cur), juce::Justification::centredLeft,
                   [this, row, ch, kind, hi](const juce::String& text) {
@@ -1543,7 +1543,7 @@ struct PhraseGrid::Impl {
         auto& cell = cells[size_t(c.ch)][size_t(row)];
         const tracker::Cell before = cell;
         core.entry.restart();
-        if (c.kind == Kind::Vel) cell.vel = uint8_t(wrapRange(int(cell.vel) + delta, 0, 127));
+        if (c.kind == Kind::Vel) cell.vel = uint8_t(wrapRange(int(cell.vel) + delta, 0, velTop(c.ch, row)));
         else if (c.kind == Kind::Inst) cell.inst = uint8_t(wrapRange(int(cell.inst) + delta, 0, bank::kInstrumentSlots));
         else if (c.kind == Kind::Table) cell.table = uint8_t(wrapRange(int(cell.table) + delta, 0, bank::kTableSlots));
         else if (c.kind == Kind::Cmd) nudgeCommand(cmdSlot(col) == 0 ? cell.cmd1 : cell.cmd2, core.entry.arg, delta);
@@ -1783,11 +1783,43 @@ struct PhraseGrid::Impl {
                        ? juce::String("The cell's note, dimmed: Hybrid takes its notes from MIDI, and the columns beside them still fire. A blank shows the note the host sent.")
                        : juce::String("The cell's note, dimmed: this channel plays MIDI. Set it to Trkr to play and type these notes. A blank shows the note the host sent.");
         if (c.kind == Kind::Note) return "The note this step plays. Shift+arrows move it (left/right a semitone, up/down an octave), a drag moves it, a double click types it; minus is a note off.";
-        if (c.kind == Kind::Vel) return "Velocity, 1-127; blank is " + juce::String(int(tracker::kDefaultVelocity)) + ". Type it, double-click for a box, Shift+arrows move it.";
+        if (c.kind == Kind::Vel) {
+            if (const bank::Kit* k = kitAt(c.ch, row)) {
+                juce::String t = "Second sample: 1-" + juce::String(int(k->samples.size())) + " names another of kit " + juce::String(k->name)
+                                 + "'s samples, summed with this note through the kit's Dist. Blank plays one sample.";
+                const int v = int(cell.vel);
+                if (v >= 1 && v <= int(k->samples.size())) t += " Now: " + juce::String(k->samples[size_t(v - 1)].name) + ".";
+                return t;
+            }
+            return "Velocity, 1-127; blank is " + juce::String(int(tracker::kDefaultVelocity)) + ". Type it, double-click for a box, Shift+arrows move it.";
+        }
         if (c.kind == Kind::Inst) return "Instrument at this step. Type it, double-click opens it in its tab, right-click lists the bank.";
         if (c.kind == Kind::Table) return "Table override at this step. Type it, double-click opens it in its tab, right-click lists the bank.";
         if (c.kind == Kind::Cmd) return cmdTooltip(cmdSlot(col) == 0 ? cell.cmd1 : cell.cmd2);
         return {};
+    }
+
+    /// The kit the instrument at this step plays, or nullptr: a kit's VEL
+    /// column names the note's second sample (docs/plan-kit-pairs.md), so the
+    /// column means something else there. The instrument is the nearest one at
+    /// or above the row -- what the Player would have loaded inside this bar.
+    const bank::Kit* kitAt(int ch, int row) const
+    {
+        if (!bank || ch < 0 || ch > 3) return nullptr;
+        for (int r = juce::jlimit(0, kMax - 1, row); r >= 0; --r) {
+            const int slot = int(cells[size_t(ch)][size_t(r)].inst);
+            if (slot == 0) continue;
+            const bank::Instrument* in = bank->instrument(slot);
+            if (in == nullptr || in->type != bank::InstrumentType::Kit) return nullptr;
+            return bank->kit(in->kit);
+        }
+        return nullptr;
+    }
+    /// How far the VEL column counts on this row: a kit's sample list, else 127.
+    int velTop(int ch, int row) const
+    {
+        const bank::Kit* k = kitAt(ch, row);
+        return k != nullptr ? int(k->samples.size()) : 127;
     }
 
     void openGrooveMenu(int ch)

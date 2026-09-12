@@ -3392,3 +3392,34 @@ nibble the other way round.
 **What ChipBoy does.** The importer builds one ChipBoy sample per note byte, so the mix happens
 once, at import, with the model's mode: `kitMix` in `Source/core/Import/LsdjKitDist.h`. Nothing in
 the engine changes -- a ChipBoy kit sample is still plain nibbles.
+
+## 118. A ChipBoy kit note carries the pair, not the sum
+
+§117 settled how LSDj **sums** a kit note's two samples. This is what ChipBoy does with the pair.
+
+The importer used to sum them once and store the result as a single sample, one entry per distinct
+note byte. The song played, but the second sample was gone: it could not be changed, removed or put
+on another note, and a kit a song used eight pairs of filled eight of the slot's thirty-two entries
+with near-duplicates of six sounds.
+
+Now a ChipBoy kit keeps the **sources** and a cell names two of them:
+
+- the **note** column picks the first, by nearest note, as it always did;
+- the **VEL** column picks the second by **index + 1** -- `00` blank plays one sample, `01` is the
+  kit's first, up to its last;
+- the kit's **`Dist`** says how they are summed: `Clip`, `Soft`, `Fold`, `Fold2`, `Wrap`, which are
+  §117's five curves under ChipBoy's own names.
+
+The driver runs a second cursor beside the first and writes `kitMix(dist, i, a, b)` into the chunk.
+The second sample never ends the note -- past its end it reads as silence, 8 -- so a note's length
+is the first sample's, which is what the ROM does. A VEL past the end of the kit, which every
+ordinary MIDI velocity is, plays one sample, so nothing that played before this change plays
+differently.
+
+The importer maps a note byte `hi lo` straight onto that: `hi` names a sample of the kit in
+instrument byte 2 and becomes the cell's note, `lo` one of the kit in byte 9 and becomes its VEL. A
+note with one digit gets a blank VEL. An instrument whose two kits are the same one shares the
+entries, so `AIR`+`AIR` is one sample named twice rather than two copies.
+
+The one thing VEL had to be kept clear of is the **keyswitch velocity mode**, which adds `vel / 8`
+to the instrument slot: it now skips a channel whose instrument is a kit.

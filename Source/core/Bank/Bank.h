@@ -5,6 +5,8 @@
 // so a note-on never allocates on the audio thread. Names live outside it.
 #pragma once
 
+#include "core/Bank/KitDist.h"
+
 #include <array>
 #include <cstdint>
 #include <string>
@@ -371,6 +373,9 @@ struct Kit {
     std::vector<KitSample> samples;  ///< up to 32
     uint16_t    period = 1865;       ///< NR33/34 value: 2097152 / (2048 - period) samples per second
     KitLoop     loop = KitLoop::Once;
+    /// How a cell that names two samples -- one in the note column, one in VEL
+    /// -- sums them (section 117, plan-kit-pairs).
+    KitDist     dist = KitDist::Clip;
 };
 
 struct Bank {

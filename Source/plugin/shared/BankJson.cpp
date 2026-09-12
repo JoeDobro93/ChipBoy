@@ -299,6 +299,7 @@ var kitToVarImpl(const Kit& k, int slot)
 {
     auto* o = new DynamicObject();
     o->setProperty("slot", slot); o->setProperty("name", String(k.name)); o->setProperty("period", int(k.period)); o->setProperty("loop", int(k.loop));
+    o->setProperty("dist", String(kitDistName(k.dist)));   /* section 117 */
     Array<var> samples;
     for (const auto& s : k.samples) {
         auto* so = new DynamicObject();
@@ -315,6 +316,12 @@ void kitFromVarImpl(const var& v, Kit& k)
 {
     auto* o = v.getDynamicObject(); if (!o) return;
     k.used = true; k.name = o->getProperty("name").toString().toStdString(); k.period = uint16_t(std::clamp(getOr(o, "period", 1865), 0, 2047)); k.loop = KitLoop(std::clamp(getOr(o, "loop", 0), 0, 2));
+    // A bank written before section 117 has no `dist`: it summed and clipped.
+    k.dist = KitDist::Clip;
+    {
+        const String d = o->getProperty("dist").toString();
+        for (int m = 0; m < kKitDistCount; ++m) if (d == kitDistName(KitDist(m))) { k.dist = KitDist(m); break; }
+    }
     k.samples.clear();
     if (auto* samples = o->getProperty("samples").getArray())
         for (const auto& sv : *samples) {

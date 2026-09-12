@@ -347,6 +347,11 @@ private:
         // kit
         bool     kitOn = false; uint8_t kitIdx = 0; uint32_t kitPos = 0; uint32_t kitLen = 0; uint32_t kitLoopPoint = 0; bank::KitLoop kitLoop = bank::KitLoop::Once;
         uint32_t kitLoopsStreamed = 0;
+        /// The second sample a cell's VEL column names (plan-kit-pairs): its
+        /// own cursor, summed into the first through the kit's `dist`. It
+        /// never ends the note -- past its end it reads as silence, 8.
+        bool     kitPair = false; uint8_t kitIdxB = 0; uint32_t kitPosB = 0; uint32_t kitLenB = 0; uint32_t kitLoopPointB = 0;
+        bank::KitDist kitDist = bank::KitDist::Clip;
         // counters
         int16_t  delay = -1, kill = -1;
         /// `R`: the interval in **ticks** (section 76), and the one shot a `y = 0`

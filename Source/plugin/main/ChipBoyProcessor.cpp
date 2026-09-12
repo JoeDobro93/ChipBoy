@@ -1052,12 +1052,40 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     if (R) renderer_.render(apu_, L, R, n);
     else renderer_.render(apu_, L, L, n);
     scopes_.master.push(L, R, uint32_t(n));
+    mixPreview(L, R ? R : L, n);
     const float gain = 0.25f * Decibels::decibelsToGain(pTrim_ ? pTrim_->load() : -6.0f);
     buffer.applyGain(gain);
 
     frames_ += uint64_t(n);
     prevBlock_ = n;
     lastHostFrame_ = hostFrame;
+}
+
+void ChipBoyProcessor::mixPreview(float* left, float* right, int n)
+{
+    // D-UI-29: the Kits tab's audition. The nibbles are read from the live bank
+    // -- the same pointer the driver reads -- at the kit's own rate, through the
+    // DAC's own curve (section 106), so what is heard is the 4-bit result.
+    const uint32_t req = previewReq_.load(std::memory_order_acquire);
+    if (req != previewSeen_) {
+        previewSeen_ = req;
+        previewSlot_ = int((req >> 8) & 63); previewIdx_ = int(req & 63);
+        previewPos_ = 0.0; previewOn_ = previewSlot_ > 0;
+    }
+    if (!previewOn_) return;
+    const auto* b = bankPtr_.load(std::memory_order_acquire);
+    const bank::Kit* k = b ? b->kit(previewSlot_) : nullptr;
+    if (!k || previewIdx_ < 0 || previewIdx_ >= int(k->samples.size())) { previewOn_ = false; return; }
+    const auto& data = k->samples[size_t(previewIdx_)].data;
+    if (data.empty() || sampleRate_ <= 0.0) { previewOn_ = false; return; }
+    const double step = bank::sampleRateForPeriod(k->period) / sampleRate_;
+    for (int i = 0; i < n; ++i) {
+        const size_t at = size_t(previewPos_);
+        if (at >= data.size()) { previewOn_ = false; break; }
+        const float dac = -(float(data[at]) - 7.5f) / 7.5f;
+        left[i] += dac; if (right != left) right[i] += dac;
+        previewPos_ += step;
+    }
 }
 
 void ChipBoyProcessor::applyWrites()

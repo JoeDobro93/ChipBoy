@@ -43,6 +43,8 @@ private:
     ui::Stepper* loopPoint_ = nullptr;
     ui::Stepper* rate_ = nullptr;
     ui::Segmented* loop_ = nullptr;
+    ui::Segmented* dist_ = nullptr;
+    juce::TextButton* playBtn_ = nullptr;
     TextLine* info_ = nullptr;
     int slot_ = 1, sample_ = 0;
     int builtSlot_ = -1, builtCount_ = -1, builtSample_ = -1;

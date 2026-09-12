@@ -315,7 +315,12 @@ int Driver::resolveSlot(int ch, uint8_t vel) const
     // A cell's instrument column has already named one -- the recorder writes
     // the slot the note really loaded (section 9.4) -- so it is taken as it is
     // and the bank is not applied a second time.
-    if (p.velocityMode == 1 && slot && !v.ksFromCell) slot += vel / 8;
+    if (p.velocityMode == 1 && slot && !v.ksFromCell) {
+        // Not on a kit: there the VEL column names the note's second sample
+        // (plan-kit-pairs), so it must not also step through the bank.
+        const Instrument* base = bank_ ? bank_->instrument(slot) : nullptr;
+        if (base == nullptr || base->type != InstrumentType::Kit) slot += vel / 8;
+    }
     return slot;
 }
 
@@ -781,7 +786,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         }
         case InstrumentType::Kit: {
             const Kit* kit = bank_ ? bank_->kit(core.kit) : nullptr;
-            v.kitOn = false; v.streamActive = false;
+            v.kitOn = false; v.kitPair = false; v.streamActive = false;
             if (!kit || kit->samples.empty()) { stopVoice(ch, true); break; }
             // the sample mapped to this note, else the nearest below
             int best = -1; int bestDist = 1000;
@@ -791,6 +796,14 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
             v.kitLoopPoint = std::min(kit->samples[size_t(best)].loopPoint, v.kitLen);
             v.kitLoop = core.kitLoop;
             v.kitOn = v.kitLen > 0;
+            // The VEL column names a second sample by index + 1 (plan-kit-pairs):
+            // out of range -- which every ordinary velocity is -- plays one.
+            v.kitDist = kit->dist;
+            const int second = int(v.vel) - 1;
+            v.kitPair = second >= 0 && second < int(kit->samples.size());
+            v.kitIdxB = uint8_t(v.kitPair ? second : 0); v.kitPosB = 0;
+            v.kitLenB = v.kitPair ? uint32_t(kit->samples[size_t(v.kitIdxB)].data.size()) : 0;
+            v.kitLoopPointB = v.kitPair ? std::min(kit->samples[size_t(v.kitIdxB)].loopPoint, v.kitLenB) : 0;
             std::array<uint8_t, 16> chunk{}; bool ended = false;
             kitNextChunk(ch, chunk, ended);
             Frame f; for (int i = 0; i < 16; ++i) { f.s[size_t(i * 2)] = uint8_t(chunk[size_t(i)] >> 4); f.s[size_t(i * 2 + 1)] = uint8_t(chunk[size_t(i)] & 15); }
@@ -846,7 +859,7 @@ void Driver::killDac(int ch)
 void Driver::stopVoice(int ch, bool kill)
 {
     Voice& v = v_[size_t(ch)];
-    v.active = false; v.tableOn = false; v.sliding = false; v.slideTspFine = 0; v.slideTspHeld = false; v.slideTspDrop = false; v.chordN = 0; v.kitOn = false; v.streamActive = false; v.pendingOn = false;
+    v.active = false; v.tableOn = false; v.sliding = false; v.slideTspFine = 0; v.slideTspHeld = false; v.slideTspDrop = false; v.chordN = 0; v.kitOn = false; v.kitPair = false; v.streamActive = false; v.pendingOn = false;
     v.pitchClockOn = false; v.releasing = false; v.pulseReleasing = false;
     v.shapedOn = false; v.shapedRelease = false; v.tableJustStarted = false;
     // A kill or a stop ends the phrase: a key released afterwards must not
@@ -1438,12 +1451,23 @@ void Driver::kitNextChunk(int ch, std::array<uint8_t, 16>& chunk, bool& ended)
     ended = false;
     if (!kit || v.kitIdx >= kit->samples.size()) { chunk.fill(0x88); ended = true; return; }
     const auto& data = kit->samples[v.kitIdx].data;
+    const bool pair = v.kitPair && v.kitIdxB < kit->samples.size();
+    const std::vector<uint8_t>* dataB = pair ? &kit->samples[v.kitIdxB].data : nullptr;
     for (int i = 0; i < 32; ++i) {
         uint8_t s = 8;
         if (v.kitPos < v.kitLen) s = data[v.kitPos++];
         else if (v.kitLoop == KitLoop::Loop) { v.kitPos = 0; s = v.kitLen ? data[v.kitPos++] : 8; }
         else if (v.kitLoop == KitLoop::FromPoint && v.kitLoopPoint < v.kitLen) { v.kitPos = v.kitLoopPoint; s = data[v.kitPos++]; }
         else ended = true;
+        if (dataB != nullptr) {
+            // The second sample follows the same loop rule but never ends the
+            // note: past its end it is silence (plan-kit-pairs).
+            uint8_t b = 8;
+            if (v.kitPosB < v.kitLenB) b = (*dataB)[v.kitPosB++];
+            else if (v.kitLoop == KitLoop::Loop && v.kitLenB) { v.kitPosB = 0; b = (*dataB)[v.kitPosB++]; }
+            else if (v.kitLoop == KitLoop::FromPoint && v.kitLoopPointB < v.kitLenB) { v.kitPosB = v.kitLoopPointB; b = (*dataB)[v.kitPosB++]; }
+            s = bank::kitMix(v.kitDist, i, s, b);
+        }
         if (i & 1) chunk[size_t(i >> 1)] = uint8_t(chunk[size_t(i >> 1)] | (s & 15));
         else chunk[size_t(i >> 1)] = uint8_t(s << 4);
     }

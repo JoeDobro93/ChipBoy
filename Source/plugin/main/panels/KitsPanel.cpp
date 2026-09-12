@@ -242,8 +242,25 @@ void KitsPanel::rebuildContent()
         loop_ = grid->addField("Loop", "whole kit", std::move(s), h, w);
     }
     {
+        // Section 117: a cell that names a second sample in its VEL column is
+        // summed through this curve, which is what LSDj's DIST table does.
+        auto s = std::make_unique<Segmented>(StringArray{ "Clip", "Soft", "Fold", "Fold2", "Wrap" });
+        s->setMini(true);
+        s->setTooltip("How a cell that names two samples sums them: Clip clamps, Soft halves the slope past a knee, Fold mirrors at the limits, Fold2 mirrors twice as steeply, Wrap wraps round");
+        s->onChange = [this](int v) { editKit("dist", [v](bank::Kit& k) { k.dist = bank::KitDist(std::clamp(v, 0, bank::kKitDistCount - 1)); }); };
+        const int h = s->preferredHeight(), w = s->preferredWidth();
+        dist_ = grid->addField("Dist", "two samples at once", std::move(s), h, w);
+    }
+    {
         auto t = std::make_unique<TextLine>(String(), Fonts::mono(12.0f), colours::text);
         info_ = grid->addField("Length", "the 4-bit result", std::move(t), Stepper::kHeight, 0);
+    }
+    {
+        // D-UI-29: hear the selected sample without disturbing the song.
+        auto btn = std::make_unique<TextButton>("Play");
+        btn->setTooltip("Play the selected sample once at the kit's rate. It mixes in beside the song; it does not stop it.");
+        btn->onClick = [this] { processor.previewKitSample(slot_, sample_); };
+        playBtn_ = grid->addField("Audition", "4-bit, kit rate", std::move(btn), Stepper::kHeight, 80);
     }
     stack->add(std::move(grid));
     auto preview = std::make_unique<Preview>();
@@ -275,6 +292,7 @@ void KitsPanel::syncValues()
     }
     if (rate_) rate_->setValue(std::clamp(int(kit.used ? kit.period : uint16_t(1865)), kMinPeriod, kMaxPeriod), dontSendNotification);
     if (loop_) loop_->setSelected(int(kit.loop), dontSendNotification);
+    if (dist_) dist_->setSelected(int(kit.dist), dontSendNotification);
     if (info_) info_->setText(s ? withThousands(int(s->data.size())) + " smp" + middot() + seconds(s->data.size(), rate) : String(CharPointer_UTF8("\xe2\x80\x94")));
     if (preview_) preview_->set(b, slot_, sample_);
     scroll_.relayout();
