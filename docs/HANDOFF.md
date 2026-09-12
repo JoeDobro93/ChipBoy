@@ -432,6 +432,20 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 40 (§131, correcting §129 and §130): the user reported the wave channel **worse** after round
+  39 -- "not getting to the vibrato or the E commands in the nested table". §130's lane model was
+  wrong. An `A` inside a table row starts a **second, nested run** beside the instrument's own (its
+  own slot, its own three lanes, a row a tick), rather than retargeting the lane that ran it: the
+  nested table's `E`s are in CMD 1 and reach `NR32` while the parent's CMD 1 goes on re-rolling its
+  `F`, which one lane cannot do. A cell's `A` still replaces the run; a note-on clears the nest. Also
+  **`W x 0` leaves the run's length alone** (§129 had measured it only on a run that had already
+  finished, so "nothing happened" was misread as "the run stops"), and the run's **loop keeps the
+  frame** it returned to rather than its step number, so a lengthened run still holds its last frame
+  instead of oscillating. And **a bare note does not step a `STEP` table** -- the ROM writes no frame
+  at one, where stepping fired the row's `F` again with no instrument reload to count from and walked
+  the wave a group further off every pass. That was round 39's drift. Phrase `05` now keeps to the
+  ROM's two frame groups; what is left is the `Z`'s dice and §3's folding of the note's frame writes
+  into one burst. Three tests, each failing without its fix.
 - Round 39 (§129-§130): the user's **`SAMESONG` phrases 05 and 06 on WAV** -- "ChipBoy doesn't seem
   to quite land on the same frames that LSDj tends to". Five faults. **§129**, LSDj's `W` on a wave
   instrument (ChipBoy's `U`): `y` is the run's **length** and its ladder is `15 * k / L` truncated,
@@ -651,14 +665,6 @@ design-log section the change touches. Update this file at the end of every chan
 
 ## Open issues
 
-- **WAV phrases 05/06: the `U`-and-`F` pair under a randomised `W`.** Round 39 (§129-§130) fixed
-  five faults there and the frames now follow the ROM's shape -- both reach the group above, on the
-  same notes to begin with -- but they drift apart later in the phrase and ChipBoy reaches a group
-  the ROM never does. `U` (LSDj's `W` on a wave instrument) and `F` share `frameIdx` and `waveSlot`;
-  which of them owns the base an `F` counts from is not measured. Reproduce with
-  `/root/lsdj/probe/vs_wav6.py` (`p05_both`, phrase 05 alone on WAV, ROM against ChipBoy, every
-  wave-RAM frame listed as an index into the bank's flat 256). Probe an `F` after a `U` that has
-  changed the length, and an `F` after a `U` with `y = 0`, before writing a rule.
 - ~~Table rows: LSDj measured two ticks per row.~~ Closed (§44): re-measured on a 9.3.9
   ROM with a transpose column, a row is **one tick** in LSDj too; the two ticks were the
   envelope nibble. Nothing to change.

@@ -3630,7 +3630,7 @@ TEST_CASE("U sets the wave run's speed and length", "[driver][wave]")
     // Sections 115 and 129, measured on 9.2.L: LSDj's `W` on a wave instrument
     // is the run -- x ticks a frame, y the run's length -- and x = 0 leaves the
     // speed alone. ChipBoy's `W` is the wave slot, so this is `U`.
-    const auto frames = [](int x, int y, int blocks) {
+    const auto runs = [](int x, int y, int blocks, int ownLength, int ownLoopStep) {
         auto r = std::make_unique<Rig>();
         r->tickHz = 100.0;
         r->song.noteSource[2] = tracker::NoteSource::Tracker;
@@ -3639,7 +3639,8 @@ TEST_CASE("U sets the wave run's speed and length", "[driver][wave]")
         for (int f = 0; f < bank::kMaxFrames; ++f) w.frames[size_t(f)].s.fill(uint8_t(f));
         auto& i = r->bank.instruments[1];
         i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Run");
-        i.used = true; i.wave = 1; i.frameAdvance = 8; i.frameLength = 0;
+        i.used = true; i.wave = 1; i.frameAdvance = 8;
+        i.frameLength = uint8_t(ownLength); i.frameLoopStep = uint8_t(ownLoopStep);
         ChannelParams p; p.instrument = 2; p.velocityMode = 2; r->drv.setParams(2, p);
         NoteEvent on = cellOn(2, 60, 2);
         on.cmd1 = { Cmd::U, int16_t(x), int16_t(y), 0 };
@@ -3648,6 +3649,7 @@ TEST_CASE("U sets the wave run's speed and length", "[driver][wave]")
         for (int k = 0; k < blocks; ++k) { r->block({}, 480); seen.push_back(int(r->drv.view(2).frame) - 1); }
         return seen;
     };
+    const auto frames = [&](int x, int y, int blocks) { return runs(x, y, blocks, 0, 0); };
     // x = 1 is a frame a tick, so every block moves one on. y = F is the run
     // of all sixteen; section 129 -- y = 0 is not.
     const auto fast = frames(1, 15, 6);
@@ -3655,10 +3657,18 @@ TEST_CASE("U sets the wave run's speed and length", "[driver][wave]")
     // x = 2 is a frame every two.
     const auto half = frames(2, 15, 6);
     CHECK(half[1] == 0); CHECK(half[2] == 1); CHECK(half[4] == 2);
-    // Section 129: `y = 0` is a run of one step -- it never moves, where it
-    // used to start a sixteen frame sweep. The ROM writes no frame at all.
-    const auto still = frames(1, 0, 6);
-    for (int k = 0; k < int(still.size()); ++k) { INFO("step " << k); CHECK(still[size_t(k)] == 0); }
+    // Section 131: `y = 0` leaves the run's **length** as it stands, as x = 0
+    // leaves its speed. With the instrument's own four-step run that is still
+    // 0, 5, 10, 15 -- not the sixteen §115 read it as, and not the frozen run
+    // §129 read it as.
+    const auto own = runs(1, 0, 6, 4, 3);
+    CHECK(own[1] == 5); CHECK(own[2] == 10); CHECK(own[3] == 15);
+    // The loop keeps the **frame** it returned to, not its step number: a run
+    // holding its last frame goes on holding it when a `U` lengthens it, where
+    // a stale step index left it oscillating between the last two (section 131).
+    const auto held = runs(1, 4, 8, 4, 3);
+    CHECK(held[1] == 3); CHECK(held[2] == 7); CHECK(held[3] == 11); CHECK(held[4] == 15);
+    for (int k = 5; k < int(held.size()); ++k) { INFO("step " << k); CHECK(held[size_t(k)] == 15); }
     // y = 3 is a run of four spread across the sixteen: 0, 5, 10, 15.
     const auto four = frames(1, 3, 6);
     CHECK(four[1] == 5); CHECK(four[2] == 10); CHECK(four[3] == 15);
@@ -3671,27 +3681,56 @@ TEST_CASE("U sets the wave run's speed and length", "[driver][wave]")
     CHECK(five[1] == 3); CHECK(five[2] == 7); CHECK(five[3] == 11); CHECK(five[4] == 15);
 }
 
-TEST_CASE("an A inside a table moves only its own lane", "[driver][table]")
+TEST_CASE("an A inside a table runs its table beside the one that started it", "[driver][table]")
 {
-    // Section 130: `SAMESONG`'s wave instrument runs a table whose CMD 2 starts
-    // another table while CMD 1 goes on re-rolling its own `F`. Restarting every
-    // lane on the `A`'s table lost the `F` and the `Z` with it.
+    // Section 131: `SAMESONG`'s wave instrument runs a table whose CMD 2 starts
+    // another while CMD 1 goes on re-rolling its own `F`, and the started
+    // table's own CMD 1 reaches the registers too -- so both tables are running
+    // whole. §122 replaced the run and lost the first; §130's lane-scoping kept
+    // it but lost the second, which is what silenced the nested table's `E`s.
     Rig r;
     r.tickHz = 100.0;
     r.song.noteSource[0] = tracker::NoteSource::Tracker;
     auto& a = r.bank.tables[0]; a.used = true; a.end = TableEnd::Stop;   // slot 1
-    a.steps[0].cmd2 = { Cmd::A, 2, 0, 0 };                              // CMD 2 leaves for slot 2
+    a.steps[0].cmd2 = { Cmd::A, 2, 0, 0 };                              // CMD 2 starts slot 2
     a.steps[1].cmd1 = { Cmd::E, 9, 0, 0 };                              // CMD 1 stays here
     auto& b = r.bank.tables[1]; b.used = true; b.end = TableEnd::Stop;   // slot 2
-    b.steps[1].cmd1 = { Cmd::O, 1, 0, 0 };
+    b.steps[1].cmd1 = { Cmd::O, 1, 0, 0 };                              // and its own CMD 1 runs
     r.bank.instruments[0].table = 1;
     ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
     r.block({ cellOn(0, 69, 1) }, 480);
-    r.block({}, 480);
-    r.block({}, 480);
-    // CMD 1 reached its own row 1 and set the level, which it could not have
-    // done from the table the `A` went to.
+    for (int k = 0; k < 3; ++k) r.block({}, 480);
+    // The table that started the `A` reached its own row 1 and set the level...
     CHECK(r.drv.view(0).volume == 9);
+    // ...and the nested table reached its row 1 and set the pan.
+    CHECK(r.drv.view(0).pan == uint8_t(bank::Pan::Left));
+}
+
+TEST_CASE("a bare note does not step a STEP table", "[driver][table]")
+{
+    // Section 131: a bare note writes only the period -- no trigger, no reload,
+    // no table restart (section 8) -- and it does not step the table either.
+    // Stepping it fired the row's `F` again from wherever the wave had got to,
+    // with no instrument reload to count from, so the frame walked away.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[2] = tracker::NoteSource::Tracker;
+    auto& w = r.bank.waves[0];
+    w.used = true;
+    for (int f = 0; f < bank::kMaxFrames; ++f) w.frames[size_t(f)].s.fill(uint8_t(f));
+    auto& t = r.bank.tables[0]; t.used = true; t.end = TableEnd::Stop;
+    t.steps[0].cmd1 = { Cmd::F, 0, 1, 0 };                  // every row: one frame on
+    t.steps[1].cmd1 = { Cmd::F, 0, 1, 0 };
+    t.steps[2].cmd1 = { Cmd::H, 0, 1, 0 };
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Step");
+    i.used = true; i.wave = 1; i.frameAdvance = 0; i.table = 1; i.tableMode = bank::TableMode::Step;
+    ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(2, p);
+    r.block({ cellOn(2, 60, 2) }, 480);
+    CHECK(int(r.drv.view(2).frame) - 1 == 1);               // the plain note stepped row 0
+    NoteEvent bare = cellOn(2, 62, 2); bare.inst = 0;       // a note with no instrument column
+    r.block({ bare }, 480);
+    CHECK(int(r.drv.view(2).frame) - 1 == 1);               // and the bare note stepped nothing
 }
 
 TEST_CASE("a Z plays what it rolled without remembering it", "[driver][commands][table]")

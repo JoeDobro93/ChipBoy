@@ -26,6 +26,41 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-12 — The nested table runs beside its parent; `W x 0` keeps the length; a bare note steps nothing
+
+`docs/COMMANDS_AND_TEMPO.md` §131, correcting §129 and §130. The user reported the wave channel
+sounding **worse** after the previous entry, "like it's not getting to the vibrato or the E commands
+in the nested table any more". It was not: §130's lane model was wrong, and it silenced them.
+
+**An `A` inside a table starts a second run, it does not move a lane.** §130 had the `A` retarget the
+lane that ran it, which explained the measurement -- `SAMESONG`'s instrument `02` carries `A 02` in
+CMD 2 of its table's row 0, and both that table and the one that started it go on having effects --
+but not the part of the measurement it had not looked at: the `A`'s table has its `E 02` and `E 03`
+in **CMD 1**, and they reach `NR32`. One lane cannot read two tables' CMD 1. Both tables run whole.
+The voice now carries a **nested run** beside the instrument's: its own slot, its own three lanes,
+a row a tick (§122). A cell's `A` still replaces the run outright (§115's `A 20`), and a note-on
+clears the nest. That is the regression fixed, and the `Z`-on-`F` frame jumps kept.
+
+**`W x 0` leaves the run's length alone.** §129 called it a run of one step that never moves, because
+every `W x 0` it measured was sent to a run that had already finished -- "nothing happened" meant
+nothing was left to do. Sent to a running instrument the speed lands and the run walks on, and a
+`W 50` after a `W 2F` keeps the sixteen-step run and changes only the speed. So `y = 0` is to the
+length what `x = 0` is to the speed. The run's **loop** also keeps the frame it returned to rather
+than its step number: every wave instrument in the user's save holds its last frame, and a stored
+step index pointed into the middle of a lengthened ladder, leaving the run oscillating where the ROM
+holds.
+
+**A bare note does not step a `STEP` table.** Measured with a bare row between two plain ones and an
+`F 10` on the table's rows: the ROM writes no frame there at all. Stepping it fired the `F` again
+from wherever the wave had reached, and a bare note reloads no instrument, so there was no frame 0 to
+count from -- the wave climbed a whole group on every pass. That was the drift the previous entry
+left open. The spec's bare note (§8) already promised no trigger, no reload and no table restart.
+
+`SAMESONG`'s phrase `05` now keeps to the two frame groups the ROM keeps to, every note starting from
+the instrument's own frame 0. What is left between the two is the `Z`'s own dice and one write: the
+ROM loads the instrument's frame and the table's `F` reloads it a fraction of a millisecond later,
+where ChipBoy folds both into the note's one burst -- §3's choice, unchanged.
+
 ### 2026-09-12 — The wave run's `W`, a table's `A`, and a `Z` that forgets
 
 `docs/COMMANDS_AND_TEMPO.md` §129-§130. The user's `SAMESONG` phrases `05` and `06` on `WAV`:

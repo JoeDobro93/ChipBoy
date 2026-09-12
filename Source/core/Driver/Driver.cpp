@@ -639,7 +639,11 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         // slide in force starts from the pitch the channel is at.
         v.note = note; v.vel = vel; v.active = true;
         const bool was = inNoteOn_; inNoteOn_ = true;
-        if (v.inst.tableMode == TableMode::Step && !v.tableTicks && v.tableOn) stepTable(ch);   // a row per note, bare notes included (section 122)
+        // Section 131: a **bare** note does not step a STEP table. Measured on
+        // 9.2.L with a bare row between two plain ones and an `F 10` on the
+        // table's rows: the ROM writes no frame there at all, where stepping
+        // fired the `F` again and walked the wave a group further off on every
+        // pass. The spec's bare note already promised no table restart.
         for (int i = 0; i < 2; ++i) {
             const Command c = slotForNoteOn(ch, i);
             if (perNoteCmd(c.cmd) && c.cmd != Cmd::D) applyCommand(ch, c, false, 1, v.slot[size_t(i)].cmd == Cmd::Z);
@@ -709,10 +713,10 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     }
     // table
     const uint8_t tbl = v.tableOverride ? v.tableOverride : core.table;
+    v.nestOn = false; v.nestSlot = 0; v.nestJustStarted = false;   // section 131
     v.tableSlot = tbl; v.tableOn = tbl && bank_ && bank_->table(tbl);
     const bool wasFromCmd = v.tableTicks;
     v.tableTicks = false;                                 // the instrument's own table again (section 122)
-    for (int i = 0; i < 3; ++i) { v.laneSlot[size_t(i)] = tbl; v.laneTicks[size_t(i)] = false; }   // section 130
     v.tableWait = v.tableWait2 = v.tableWaitE = 0;        // every lane starts its row afresh (section 64)
     if (v.tableOn) ++v.tableRun;                  // a note-on starts a run of its own (section 32)
     // A Step-mode table advances one row per trigger instead of restarting,
@@ -1623,11 +1627,10 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
     const bool live = v.active && !inNoteOn_;
     switch (c.cmd) {
         case Cmd::A:                                  // table select, 0 stops
-            if (c.a <= 0) v.tableOn = false;
+            if (c.a <= 0) { if (nestLane_) v.nestOn = false; else v.tableOn = false; }
+            else if (fromTable) beginNestedRun(ch, uint8_t(std::clamp<int>(c.a, 1, kTableSlots)));   // section 131
             else {
-                // Section 130: from a table row the new table is this lane's alone;
-                // a cell's `A` still restarts every lane.
-                beginTableRun(ch, uint8_t(std::clamp<int>(c.a, 1, kTableSlots)), true, fromTable ? lane : -1);   // section 122: an A runs on ticks
+                beginTableRun(ch, uint8_t(std::clamp<int>(c.a, 1, kTableSlots)), true);   // section 122: an A runs on ticks
                 // Section 122 corrects section 113: the table an `A` inside
                 // another table starts fires its row 0 on the **next tick**,
                 // one tick later than the table that started it -- measured on
@@ -1652,7 +1655,7 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             // letter is the note's gate and was read at the note-on, so there is
             // nothing left to do here.
             if (fromTable && randomArg(ch, 255) < int16_t((c.a & 15) * 16)) {
-                uint8_t& step = lane == 2 ? v.tableStep2 : v.tableStep;
+                uint8_t& step = nestLane_ ? v.nestStep[size_t(lane)] : lane == 2 ? v.tableStep2 : v.tableStep;
                 step = uint8_t(c.b & 15);
                 v.tableHopped = true;
             }
@@ -1744,10 +1747,11 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             if (fromTable) {
                 // Each command column hops its own lane (section 64).
                 const int times = std::clamp<int>(c.a, 0, 15), row = std::clamp<int>(c.b, 0, 15);
-                uint8_t& step = lane == 2 ? v.tableStep2 : v.tableStep;
-                uint8_t& left = lane == 2 ? v.hopLeft2 : v.hopLeft;
-                uint8_t& from = lane == 2 ? v.hopFrom2 : v.hopFrom;
-                const uint8_t here = lane == 2 ? v.tableRow2 : v.tableRow;
+                // Section 131: the nested run hops its own lanes.
+                uint8_t& step = nestLane_ ? v.nestStep[size_t(lane)] : lane == 2 ? v.tableStep2 : v.tableStep;
+                uint8_t& left = nestLane_ ? v.nestHopLeft[lane == 2 ? 1 : 0] : lane == 2 ? v.hopLeft2 : v.hopLeft;
+                uint8_t& from = nestLane_ ? v.nestHopFrom[lane == 2 ? 1 : 0] : lane == 2 ? v.hopFrom2 : v.hopFrom;
+                const uint8_t here = nestLane_ ? v.nestRow[size_t(lane)] : lane == 2 ? v.tableRow2 : v.tableRow;
                 if (times == 0) { step = uint8_t(row); left = 0; }
                 else if (left == 0 && from != here) { from = here; left = uint8_t(times); step = uint8_t(row); }
                 else if (left > 0) { if (--left > 0) step = uint8_t(row); else from = 0xFF; }
@@ -1996,11 +2000,28 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             // it is, which is what the ROM does.
             if (v.inst.type == InstrumentType::Wave) {
                 if (c.a) v.inst.frameAdvance = uint8_t(c.a & 15);
-                // Section 129: a run of y steps is y + 1 frames, and `y = 0` is
-                // one frame -- a run that never moves, not every frame. The
-                // command writes no frame: the wave keeps sounding where it is
-                // and the next speed period steps to the ladder's second frame.
-                v.inst.frameLength = uint8_t(int(c.b & 15) + 1);
+                // Section 131: `y = 0` leaves the run's length as it stands,
+                // exactly as `x = 0` leaves its speed -- §129 read it as a run
+                // of one step because it was only ever measured on a run that
+                // had already finished. A run of y steps is y + 1 frames.
+                if (c.b & 15) {
+                    // The loop keeps the **frame** it was returning to, not its
+                    // step number: a run told to hold its last frame goes on
+                    // holding it when the length changes under it, which is what
+                    // every wave instrument in the user's save asks for.
+                    uint8_t was[16]; const int lenWas = waveRunOf(ch, was);
+                    const uint8_t loopFrame = was[size_t(std::clamp<int>(v.inst.frameLoopStep, 0, lenWas - 1))];
+                    v.inst.frameLength = uint8_t(int(c.b & 15) + 1);
+                    uint8_t now[16]; const int lenNow = waveRunOf(ch, now);
+                    int best = 0, bestD = 256;
+                    for (int k = 0; k < lenNow; ++k) {
+                        const int d = std::abs(int(now[size_t(k)]) - int(loopFrame));
+                        if (d < bestD) { bestD = d; best = k; }
+                    }
+                    v.inst.frameLoopStep = uint8_t(best);
+                }
+                // Section 129: the command writes no frame -- the wave keeps
+                // sounding where it is and the next speed period steps on.
                 v.frameStep = 0; v.frameCount = 0; v.frameDir = 1;
             }
             break;
@@ -2122,7 +2143,7 @@ Command* Driver::zSlot(int ch, bool fromTable, int lane)
 {
     Voice& v = v_[size_t(ch)];
     if (!fromTable) return &v.lastCellCmd;
-    const uint8_t slot = v.laneSlot[size_t(lane) % 3];          // section 130
+    const uint8_t slot = nestLane_ ? v.nestSlot : v.tableSlot;   // section 131
     if (slot == 0 || slot > kTableSlots) return nullptr;
     return &zRec_[size_t(slot - 1)][lane == 2 ? 1 : 0];
 }
@@ -2219,28 +2240,31 @@ uint16_t Driver::tableRowTicks(int ch, int row) const
     return uint16_t(n ? n : 1);
 }
 
-void Driver::beginTableRun(int ch, uint8_t slot, bool fromCommand, int lane)
+/// Section 131: an `A` inside a table starts its table **beside** the one that
+/// started it. Measured on 9.2.L: `SAMESONG`'s wave instrument has an `A 02` in
+/// CMD 2 of its table's row 0, and both the `A`'s table (its `E`s reach `NR32`)
+/// and the table that started it (its `Z` on an `F` goes on jumping the wave a
+/// group) run -- taking either away takes only its own effect with it. §122
+/// replaced the run, which lost whichever of the two was not the `A`'s.
+void Driver::beginNestedRun(int ch, uint8_t slot)
 {
     Voice& v = v_[size_t(ch)];
-    if (lane >= 0) {
-        // Section 130: an `A` inside a table row starts its table in the lane
-        // that ran it. The other lanes keep walking the table they were on --
-        // measured on 9.2.L, where the `Z` in the lane beside an `A 02` goes on
-        // firing from its own table while the `A`'s table runs its envelope.
-        v.laneSlot[size_t(lane)] = slot; v.laneTicks[size_t(lane)] = fromCommand;
-        uint8_t* const steps[3] = { &v.tableStepE, &v.tableStep, &v.tableStep2 };
-        uint8_t* const rows[3]  = { &v.tableRowE,  &v.tableRow,  &v.tableRow2 };
-        uint16_t* const waits[3] = { &v.tableWaitE, &v.tableWait, &v.tableWait2 };
-        *steps[lane] = 0; *rows[lane] = 0; *waits[lane] = 0;
-        if (lane == 1) { v.hopLeft = 0; v.hopFrom = 0xFF; }
-        if (lane == 2) { v.hopLeft2 = 0; v.hopFrom2 = 0xFF; }
-        if (lane == 0) v.volLaneOn = true;
-        if (slot != 0 && bank_ && bank_->table(slot)) { v.tableOn = true; ++v.tableRun; }
-        return;
-    }
+    v.nestSlot = slot;
+    for (int i = 0; i < 3; ++i) { v.nestStep[size_t(i)] = 0; v.nestRow[size_t(i)] = 0; v.nestWait[size_t(i)] = 0; }
+    v.nestHopLeft[0] = v.nestHopLeft[1] = 0; v.nestHopFrom[0] = v.nestHopFrom[1] = 0xFF;
+    v.nestVolOn = true;
+    v.nestOn = slot != 0 && bank_ && bank_->table(slot);
+    // Its row 0 is the **next** tick's, one tick after the row that started it,
+    // as the ROM's is (section 122).
+    v.nestJustStarted = v.nestOn;
+}
+
+void Driver::beginTableRun(int ch, uint8_t slot, bool fromCommand)
+{
+    Voice& v = v_[size_t(ch)];
+    v.nestOn = false; v.nestSlot = 0; v.nestJustStarted = false;   // section 131
     v.tableSlot = slot; v.tableGroove = 0;
     v.tableTicks = fromCommand;                 // section 122
-    for (int i = 0; i < 3; ++i) { v.laneSlot[size_t(i)] = slot; v.laneTicks[size_t(i)] = fromCommand; }
 
     // Every lane starts at row 0 with its hop counter clear (section 64).
     v.tableStep = v.tableStep2 = v.tableStepE = 0;
@@ -2284,26 +2308,29 @@ void Driver::setFrameStep(int ch, int step, bool live)
 
 void Driver::stepTable(int ch)
 {
-    // Kept for the note-on, which fires every lane's row 0 together. Section
-    // 130: a lane an `A` started runs on ticks, so a note does not step it.
-    Voice& v = v_[size_t(ch)];
-    for (int lane = 0; lane < 3; ++lane) if (!v.laneTicks[size_t(lane)]) stepTableLane(ch, lane);
+    // Kept for the note-on, which fires every lane's row 0 together.
+    stepTableLane(ch, 0); stepTableLane(ch, 1); stepTableLane(ch, 2);
 }
 
 /// One lane of the table (section 64): 1 is the transpose column and CMD 1,
 /// 2 is CMD 2, 0 is the volume column and its LEN. Each keeps its own row.
-void Driver::stepTableLane(int ch, int lane)
+void Driver::stepTableLane(int ch, int lane, bool nest)
 {
     Voice& v = v_[size_t(ch)];
-    if (!v.tableOn) return;
-    const uint8_t slot = v.laneSlot[size_t(lane)];              // section 130
-    const Table* t = bank_ ? bank_->table(slot) : nullptr;
-    if (!t) { if (slot == v.tableSlot) v.tableOn = false; return; }
+    // Section 131: the nested run an `A` started keeps its own pointers, so the
+    // table that started it goes on walking its own rows beside it.
+    bool& on = nest ? v.nestOn : v.tableOn;
+    if (!on) return;
+    const Table* t = bank_ ? bank_->table(nest ? v.nestSlot : v.tableSlot) : nullptr;
+    if (!t) { on = false; return; }
     if (v.delay > 0) { --v.delay; return; }
-    uint8_t& step = lane == 2 ? v.tableStep2 : lane == 0 ? v.tableStepE : v.tableStep;
-    uint8_t& row  = lane == 2 ? v.tableRow2  : lane == 0 ? v.tableRowE  : v.tableRow;
-    uint16_t& wait = lane == 2 ? v.tableWait2 : lane == 0 ? v.tableWaitE : v.tableWait;
-    if (lane == 0 && !v.volLaneOn) return;
+    uint8_t& step = nest ? v.nestStep[size_t(lane)] : lane == 2 ? v.tableStep2 : lane == 0 ? v.tableStepE : v.tableStep;
+    uint8_t& row  = nest ? v.nestRow[size_t(lane)]  : lane == 2 ? v.tableRow2  : lane == 0 ? v.tableRowE  : v.tableRow;
+    uint16_t& wait = nest ? v.nestWait[size_t(lane)] : lane == 2 ? v.tableWait2 : lane == 0 ? v.tableWaitE : v.tableWait;
+    bool& volOn = nest ? v.nestVolOn : v.volLaneOn;
+    const bool wasNest = nestLane_; nestLane_ = nest;
+    struct Restore { bool& f; bool was; ~Restore() { f = was; } } restore{ nestLane_, wasNest };
+    if (lane == 0 && !volOn) return;
     if (lane == 0) {
         // The volume lane runs its own little program: it ends at its first
         // empty row, and its hop costs nothing unless the row carries a LEN,
@@ -2312,7 +2339,7 @@ void Driver::stepTableLane(int ch, int lane)
         for (int guard = 0; guard <= kTableSteps; ++guard) {
             row = step;
             const TableStep& s = t->steps[row];
-            if (s.vol < 0 && s.volHop < 0 && s.volTicks == 0) { v.volLaneOn = false; return; }
+            if (s.vol < 0 && s.volHop < 0 && s.volTicks == 0) { volOn = false; return; }
             if (s.volHop >= 0) {
                 step = uint8_t(std::clamp<int>(s.volHop, 0, kTableSteps - 1));
                 if (s.volTicks == 0) continue;                // free: the row it lands on plays now
@@ -2342,11 +2369,11 @@ void Driver::stepTableLane(int ch, int lane)
             switch (t->end) {
                 case TableEnd::Loop: step = 0; break;
                 case TableEnd::Hop:  step = uint8_t(std::clamp<int>(t->hopStep - 1, 0, 15)); break;
-                case TableEnd::Stop: v.volLaneOn = false; break;
+                case TableEnd::Stop: volOn = false; break;
             }
             return;
         }
-        v.volLaneOn = false;                                   // nothing but hops
+        volOn = false;                                         // nothing but hops
         return;
     }
     // Section 95: a command lane's `H` costs no tick -- the row it lands on runs
@@ -2369,14 +2396,14 @@ void Driver::stepTableLane(int ch, int lane)
         // tick's, one tick after the row that started it, as the ROM's is.
         if (v.tableRun != runWas) return;
         wait = tableRowTicks(ch, row);
-        if (!v.tableOn) return;                           // the command stopped it
+        if (!on) return;                                  // the command stopped it
         if (raw.cmd == Cmd::H && step != was) continue;   // hopped: that row plays now
         if (v.tableHopped) { v.tableHopped = false; return; }   // a B took its hop (section 73)
         if (step + 1 < kTableSteps) { ++step; return; }
         switch (t->end) {
             case TableEnd::Loop: step = 0; break;
             case TableEnd::Hop:  step = uint8_t(std::clamp<int>(t->hopStep - 1, 0, 15)); break;
-            case TableEnd::Stop: v.tableOn = false; break;
+            case TableEnd::Stop: on = false; break;
         }
         return;
     }
@@ -2455,16 +2482,22 @@ void Driver::tick(int ch)
     // The table: a row per tick, or per the row length a G inside it asked
     // for. A Step-mode table advances at notes instead (section 7).
     if (v.tableJustStarted) v.tableJustStarted = false;      // row 0 fired with the note-on (section 31)
-    else {
-        // Each lane counts down its own row (section 64) on its own clock: a
-        // lane an `A` started runs on ticks whatever the instrument says, and a
-        // lane still on the instrument's table follows its mode (sections 122
-        // and 130).
+    else if (v.inst.tableMode == TableMode::Tick || v.tableTicks) {   // section 122
+        // Each lane counts down its own row (section 64).
         uint16_t* const waits[3] = { &v.tableWaitE, &v.tableWait, &v.tableWait2 };
         for (int lane = 0; lane < 3; ++lane) {
-            if (v.inst.tableMode != TableMode::Tick && !v.laneTicks[size_t(lane)]) continue;
             if (*waits[lane] > 1) { --*waits[lane]; continue; }
             stepTableLane(ch, lane);
+            if (!v.active) return;
+        }
+    }
+    // Section 131: the nested run walks a row a tick of its own, whatever the
+    // instrument's table mode is, beside the run that started it.
+    if (v.nestJustStarted) v.nestJustStarted = false;
+    else if (v.nestOn) {
+        for (int lane = 0; lane < 3; ++lane) {
+            if (v.nestWait[size_t(lane)] > 1) { --v.nestWait[size_t(lane)]; continue; }
+            stepTableLane(ch, lane, true);
             if (!v.active) return;
         }
     }

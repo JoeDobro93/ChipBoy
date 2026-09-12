@@ -3811,7 +3811,7 @@ tick and was swallowed by its trigger. Every note ran into the next -- legato wh
 staccato. A looping table made it worse: a `K` whose count is the table's own length never reached
 zero at all, because the row came round and re-armed it one tick before it fired.
 
-## 129. `W` on a wave instrument: `y` is the run's length, `y = 0` never moves, and the command loads nothing
+## 129. `W` on a wave instrument: `y` is the run's length, and the command loads nothing *(`y = 0` corrected by §131)*
 
 §115 read `W x y` on a wave instrument as "x ticks a frame and y + 1 frames of it, y = 0 being all
 sixteen". The speed half is right. The rest is not, and the difference is what the user heard in
@@ -3869,7 +3869,7 @@ disagreeing cases behind it.
 command for, so the run came in as `U` and stays there: folding them together would need one letter
 to mean two things by argument, and would change what `W` does to every song already written.
 
-## 130. An `A` inside a table starts its table in **its own lane**, and a `Z` does not remember what it rolled
+## 130. An `A` inside a table does not replace the run, and a `Z` does not remember what it rolled *(the lane reading is corrected by §131)*
 
 `SAMESONG`'s wave instrument `02` runs table `11`, whose row 0 carries `F 00` in CMD 1 and `A 02`
 in CMD 2, row 1 a `Z 10` in CMD 1, and row 2 an `H 01` that hops back to it. §122 had an `A` restart
@@ -3915,3 +3915,58 @@ ROM's shape -- both reach the group above, on the same notes to begin with -- bu
 in the phrase, ChipBoy reaching a group the ROM never does. That is the `U`-and-`F` pair under a
 randomised `W`, and it wants its own round: the two commands share `frameIdx` and `waveSlot`, and
 which of them owns the base an `F` counts from is not measured yet.
+
+## 131. The table an `A` starts runs **beside** the one that started it; `W`'s `y = 0` keeps the length; a bare note steps nothing
+
+Three corrections, all from the same evidence: the user's `SAMESONG` phrases `05` and `06` still did
+not land on the ROM's wave frames, and §130's first fix made the channel worse to listen to.
+
+**§130 read the lane wrong.** It had an `A` inside a table row start its table in *that lane only*,
+leaving the others where they were. That explains the measurement -- `SAMESONG`'s instrument `02` has
+`A 02` in CMD 2 of its table's row 0, and both the `A`'s table and the table that started it go on
+having effects -- but it cannot be how the ROM does it, because the `A`'s table has its `E 02` and
+`E 03` in **CMD 1**, and those reach `NR32`. A lane cannot be reading table `02`'s CMD 1 and table
+`11`'s CMD 1 at once. **Both tables are running, whole.** An `A` inside a table starts a second,
+**nested** run beside the first: its own slot, its own three lanes, a row a tick (§122). The table
+that started it keeps its own pointers and its own clock. Taking the `A` away leaves the frames
+alone and takes the second `NR32` write with it; taking the `Z` away leaves the level alone and
+takes the frame jumps with it. Nothing else changes: a **cell**'s `A` still replaces the run
+outright, which is what §115's `A 20` rests on, and a note-on clears the nest.
+
+Lane-scoping it silenced the `E`s, which is what the user heard as the channel getting worse. That is
+the cost of shipping a model that explains a measurement without being checked against the parts of
+the measurement it does not touch.
+
+**§129 read `y = 0` wrong.** It had a run of one step, which never moves. Every `W x 0` in §129's
+table was sent to a run that had already reached its end, so "nothing happened" meant nothing was
+left to do -- not that the command had stopped it. Sent to a **running** instrument the speed lands
+and the run goes on walking:
+
+```
+W 20 at the note   ROM  frames 0 5 10 15, ~40 ms apart   the instrument's own four-step run at speed 2
+W 50 at the note   ROM  frames 0 5 10 15, ~97 ms apart   the same run at speed 5
+W 2F then W 50     ROM  +1 a frame, 40 ms, then +1 a frame at 97 ms
+```
+
+The last one settles it: `W 50` kept the sixteen-step run `W 2F` had set and changed only the speed.
+So **`y = 0` leaves the length as it stands, exactly as `x = 0` leaves the speed.**
+
+And the run's **loop keeps the frame it returned to, not its step number**. Every wave instrument in
+the user's save stores its loop at the run's last step -- "hold the last frame". Lengthen the run
+with a `W` and a stored step index points into the middle of the new ladder, which left ChipBoy
+oscillating between the last two frames where the ROM holds. The loop step is now re-derived from
+the frame it was on, so holding goes on holding.
+
+**A bare note steps nothing.** ChipBoy advanced a `STEP` table on bare notes as well as plain ones.
+Measured with a bare row between two plain ones and an `F 10` on the table's rows, the ROM writes no
+frame at the bare note at all -- its run just keeps walking. Stepping there fired the `F` again from
+wherever the wave had got to, and since a bare note reloads no instrument there was no frame 0 to
+count from: the wave walked a whole group further away on every pass, which is the drift §130 left
+behind. The spec's bare note (§8) already promised no trigger, no reload and no table restart; it
+does not step the table either.
+
+With the three in, `SAMESONG`'s phrase `05` keeps to the two frame groups the ROM keeps to, every
+note starting from the instrument's own frame 0 and the run walking inside the group, where before it
+climbed a group at a time. What is left between the two is the `Z`'s own dice and one write: the ROM
+loads the instrument's frame and then the table's `F` reloads it a few hundred microseconds later,
+where ChipBoy folds both into the note's one burst (§3).

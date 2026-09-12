@@ -259,12 +259,13 @@ private:
         /// TSP and CMD 1, lane 2 is CMD 2, lane E is VOL and LEN.
         uint8_t  tableSlot = 0, tableStep = 0, tableRow = 0; bool tableOn = false;
         uint8_t  tableStep2 = 0, tableRow2 = 0, tableStepE = 0, tableRowE = 0;
-        /// The table each lane is reading, and whether that lane runs on
-        /// ticks (section 130): an `A` inside a table row starts its new
-        /// table in its **own lane**, leaving the others on the table they
-        /// were already walking. 0 = VOL, 1 = TSP and CMD 1, 2 = CMD 2.
-        uint8_t  laneSlot[3] = { 0, 0, 0 };
-        bool     laneTicks[3] = { false, false, false };
+        /// Section 131: the table an `A` **inside another table** starts runs
+        /// beside the one that started it, not instead of it -- its own slot
+        /// and its own three lane pointers, on ticks (section 122).
+        uint8_t  nestSlot = 0, nestStep[3] = { 0, 0, 0 }, nestRow[3] = { 0, 0, 0 };
+        uint16_t nestWait[3] = { 0, 0, 0 };
+        uint8_t  nestHopLeft[2] = { 0, 0 }, nestHopFrom[2] = { 0xFF, 0xFF };
+        bool     nestOn = false, nestVolOn = true, nestJustStarted = false;
         bool     volLaneOn = false;                   ///< the volume lane ends at its first empty row (section 64)
         uint16_t tableRun = 0;                        ///< counts this channel's table runs (section 32)
         uint16_t tableWait = 0;                       ///< ticks left of lane 1's row
@@ -542,12 +543,13 @@ private:
     static bank::InstrumentType defaultType(int ch);
     static bool typeFits(int ch, bank::InstrumentType t);
     void stepTable(int ch);
-    void stepTableLane(int ch, int lane);              ///< 1 = TSP and CMD 1, 2 = CMD 2, 0 = VOL (section 64)
+    void stepTableLane(int ch, int lane, bool nest = false);   ///< 1 = TSP and CMD 1, 2 = CMD 2, 0 = VOL (section 64); nest = the run an `A` started (section 131)
     int  waveRunOf(int ch, uint8_t* out) const;       ///< the run's frames, section 65; returns its length
     void setFrameStep(int ch, int step, bool live);   ///< put the voice on a run step and load its frame
     /// Start a table run on a channel (section 32): the slot, back to row 0,
     /// and one more on the run counter the view publishes.
-    void beginTableRun(int ch, uint8_t slot, bool fromCommand = false, int lane = -1);   ///< sections 122 and 130; lane -1 = every lane
+    void beginTableRun(int ch, uint8_t slot, bool fromCommand = false);   ///< section 122
+    void beginNestedRun(int ch, uint8_t slot);        ///< the run an `A` inside a table starts (section 131)
     uint16_t tableRowTicks(int ch, int row) const;    ///< the table's own groove, else one tick
     /// One pitch update: the vibrato phase, a slide and a P bend advance, and
     /// the period goes out without a trigger. The 358 Hz clock calls this in
@@ -595,6 +597,7 @@ private:
     /// before any note (LSDj does it while its interface is still up).
     bool mixerInit_ = false;
     uint64_t tickCount_ = 0;
+    bool     nestLane_ = false;          ///< a table row of the nested run is applying a command (section 131)
     /// The pitch clock: one for the driver, free-running, never restarted at a
     /// note (docs/LSDJ_PARITY.md section 1). `pitchClockAt_` is the cycle of
     /// its next update.
