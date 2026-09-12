@@ -441,6 +441,11 @@ struct Reader {
             if (t == 0 || t == 3) envelope(b, o);
             if (t == 0) {
                 o.duty = uint8_t(b[7] >> 6); o.dutySeqLen = 0; o.pitchSpeed = m.pitchLaw == PitchLaw::Register ? bank::PitchSpeed::Drum : pitchSpeedOf(b[5]);
+                // Section 134: a pulse instrument's LENGTH, which was never read
+                // at all. Byte 3's low six bits are NR11's length code and bit 6
+                // enables the counter -- a short length with the bit set is what
+                // makes `READROOM`'s `R` rolls stutter instead of ringing on.
+                if (b[3]) { o.length = uint16_t(64 - int(b[3] & 63)); o.lengthLatent = (b[3] & 0x40) == 0; }
                 o.pitchRegisterUnits = m.pitchLaw == PitchLaw::Register;      // section 88
                 const int nr10 = (~b[4]) & 0xFF;
                 o.sweepRate = uint8_t((nr10 >> 4) & 7); o.sweepDown = (nr10 & 8) != 0; o.sweepShift = uint8_t(nr10 & 7);
@@ -509,10 +514,11 @@ struct Reader {
                 } else {
                     o.noisePitch = b[size_t(m.noisePitchByte)] ? bank::NoisePitch::Safe : bank::NoisePitch::Free;
                 }
-                // Section 87: LENGTH goes into NR41 and stays there, but the
-                // note-on never enables the counter -- only a pitch restart
-                // does, and then the note is cut that many steps later.
-                if (b[3]) { o.length = uint16_t(64 - int(b[3] & 63)); o.lengthLatent = true; }
+                // Section 134, correcting §87: byte 3's low six bits are the
+                // length code and **bit 6 enables the counter** at the note-on.
+                // §87 saw only instruments with the bit clear, which is the
+                // latent case -- the code sits in NR41 and nothing arms it.
+                if (b[3]) { o.length = uint16_t(64 - int(b[3] & 63)); o.lengthLatent = (b[3] & 0x40) == 0; }
             }
             o.used = true;
             return true;

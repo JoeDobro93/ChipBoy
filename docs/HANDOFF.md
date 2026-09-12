@@ -432,6 +432,17 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 43 (§134), from the user's **`READROOM`**: `R` still "not working" on `PU1` phrase `3C` and
+  `NOI` `1A` -- "should sound like stuttering glitchy beats". Two faults. A **pulse instrument's
+  `LENGTH` was never imported**: byte 3's low six bits are `NR11`'s length code and **bit 6 enables
+  the counter**, so `READROOM`'s instrument `13` (`b3 = 7B`) makes every retrigger a 20 ms blip --
+  the stutter. The same rule holds on noise, where §87 had always marked the length latent because it
+  only ever saw the bit clear. And **`R` retriggers on the command's own tick**, then every `y`; the
+  old code counted `y` from the command, missing the first and running a tick early after it
+  (`R 03` measured `2 5 8 11` against the ROM's `0 3 6 9`). `y = 0` is that immediate retrigger with
+  nothing to repeat. Beside a note the ROM emits two triggers a fraction of a millisecond apart, so a
+  cell's `R` is flushed after the burst like §127's `S`. Both phrases match the ROM trigger for
+  trigger. Three tests.
 - Round 42 (§133), from the user's **`READROOM` phrase `1A` on `NOI`**: the `R` command "wasn't
   working". The retriggers were there on the right ticks; what was missing is `R`'s **volume step**,
   which the driver applied on every channel but noise (`if (v.retrigStep && !noise)`, with nothing

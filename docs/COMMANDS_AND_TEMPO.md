@@ -4072,3 +4072,54 @@ from volume 4    x 1 -> 5   2 -> 6   3 -> 7    5 -> 9    7 -> 11
 
 Both halves, exactly `retrigVolStep`. The guard is gone. `x = 8` is still the resync and still
 changes no level, which is what makes `R 8 y` a plain roll.
+
+## 134. `R` fires on its own tick, and a pulse instrument has a `LENGTH`
+
+The user's `READROOM`: `R` "isn't working" on `PU1`'s phrase `3C` and on `NOI`'s `1A` -- "it should
+sound like stuttering glitchy beats, but instead they are just normal hits". Two faults, and the
+second is the one that makes it sound like nothing is happening at all.
+
+### A pulse instrument's `LENGTH` was never imported
+
+Phrase `3C` row 4 is `note 31 inst 13 R 03`. Instrument `13` is a pulse whose byte 3 is `7B`. The
+ROM's note-on writes `NR11 = BB` and `NR14 = C7`; ChipBoy wrote `80` and `87`. The low six bits of
+that byte are `NR11`'s length code -- `7B & 3F` = 59, a sound length of five, about 20 ms -- and
+**bit 6 enables the length counter**, which is `NR14`'s bit 6. So every retrigger is a 20 ms blip
+that cuts itself off: the stutter. ChipBoy played each one as a note that rings until the next row.
+
+Swept on 9.2.L, a pulse instrument's byte 3 against the registers its note-on writes:
+
+```
+b3  00 -> NR11 80, NR14 87      3F -> NR11 BF, NR14 87      bit 6 clear: the code is written, nothing arms it
+b3  40 -> NR11 80, NR14 C7      7B -> NR11 BB, NR14 C7      bit 6 set: the counter runs
+b3  80 -> NR11 80, NR14 87      BB -> NR11 BB, NR14 87      bit 7 is ignored
+b3  FF -> NR11 BF, NR14 C7
+```
+
+The importer read byte 3 only for **noise** instruments, and there it always marked the length
+latent (§87). The same sweep on noise gives the same answer -- `NR41` takes the low six bits and
+`NR44`'s bit 6 follows byte 3's -- so §87 saw only instruments with the bit clear, which is the
+latent case and not the rule. Both types now read `length = 64 - (b3 & 63)` and
+`lengthLatent = (b3 & 0x40) == 0`.
+
+### `R` retriggers on the command's own tick
+
+With the length in, the stutter appeared but a tick out of step. Measured on `PU1` at tempo 150,
+the retriggers after an `R` row, in ticks from that row:
+
+```
+R 03 on a bare row    ROM  0.14  3.13  6.14  9.15  12.0     ChipBoy  2  5  8  11  14
+R 03 beside a note    ROM  0.11(note) 0.17  3.13  6.14      ChipBoy  0(note) 2  5  8
+R 00 beside a note    ROM  0.11(note) 0.16                  ChipBoy  0(note) 1
+```
+
+The ROM fires a retrigger **on the tick the command is read**, then every `y` ticks; ChipBoy counted
+`y` ticks from the command and so missed the first one and ran a tick early ever after. `y = 0` is
+not a special case at all -- it is the immediate retrigger with nothing to repeat, which is what §76
+described as "retriggers once". The voice now keeps `retrigNext`, the absolute tick the next one is
+due on, and the command fires one as it is read.
+
+Beside a note the ROM emits **two** triggers a fraction of a millisecond apart -- the note's own
+burst and then the `R`'s -- so a cell's `R` is flushed after the burst, exactly as §127's `S` is.
+
+With both in, `READROOM`'s phrase `3C` and phrase `1A` match the ROM trigger for trigger.

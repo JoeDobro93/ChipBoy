@@ -583,7 +583,7 @@ void Driver::beginRelease(int ch)
 {
     Voice& v = v_[size_t(ch)];
     v.active = false; v.tableOn = false; v.sliding = false; v.slideTspFine = 0; v.slideTspHeld = false; v.slideTspDrop = false; v.chordN = 0;
-    v.pitchClockOn = false; v.retrigEvery = 0; v.retrigOn = false; v.retrigOnce = false; v.retrigFast = false; v.retrigFastCount = 0; v.bendSpeed = 0;
+    v.pitchClockOn = false; v.retrigEvery = 0; v.retrigOn = false; v.retrigFast = false; v.retrigFastCount = 0; v.bendSpeed = 0;
     // A shaped envelope has its own release: from the level the note-off found
     // to silence, one level per tick, over its own curve (section 27). A level
     // change that took the envelope over leaves the chip's release instead.
@@ -693,7 +693,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // **not** reset here. Measured on 9.2.L: the record outlives the note-on and
     // even a different instrument, and clearing it made every `Z` after the
     // first note inert.
-    v.dutyIdx = 0; v.killAt = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigOnce = false; v.retrigFast = false; v.retrigFastCount = 0; v.envCount = 0; v.frameStep = 0; v.frameIdx = 0;   // the run starts at its first step (section 65)
+    v.dutyIdx = 0; v.killAt = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigPending = false; v.retrigFast = false; v.retrigFastCount = 0; v.envCount = 0; v.frameStep = 0; v.frameIdx = 0;   // the run starts at its first step (section 65)
     v.rng = v.rng * 1664525u + 1013904223u + note;
     restartPitchClock(ch);
     // volume from velocity: a MIDI note asks the Velocity mode, a cell's VEL is
@@ -847,6 +847,10 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // LSDj writes the pan at every note-on whether or not it moved (measured,
     // docs/LSDJ_PARITY.md section 2): a driver sets the mixer with the note.
     writeNr51(true);
+    // Section 134: an `R` among the note's own commands owes a retrigger, and
+    // the ROM emits it **after** the note's burst -- two triggers a fraction of
+    // a millisecond apart, as section 127's `S` does.
+    if (v.retrigPending) { v.retrigPending = false; retrigger(ch, true); }
 }
 
 /// K, and the end of a note: LSDj takes the level to zero with the same
@@ -905,7 +909,7 @@ void Driver::allNotesOff(int ch)
     v.delay = -1; v.killAt = -1;
     v.heldCmdOn = false; v.heldDelay = 0; v.heldCmd[0] = {}; v.heldCmd[1] = {};
     v.hybridSlide = {};
-    v.retrigEvery = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigOnce = false; v.retrigFast = false; v.retrigFastCount = 0;
+    v.retrigEvery = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigFast = false; v.retrigFastCount = 0;
     v.bendSpeed = 0; v.slideLeft = 0; v.chordIdx = 0; v.chordCount = 0;
     stopVoice(ch, true);
 }
@@ -1936,16 +1940,21 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             // **y + 1 pitch clocks** and `R 8 F` **stops** a running retrigger
             // rather than starting one -- which is how a roll is ended.
             if ((c.a & 15) == 8 && (c.b & 15) == 15) {
-                v.retrigOn = false; v.retrigFast = false; v.retrigOnce = false;
+                v.retrigOn = false; v.retrigFast = false; 
                 v.retrigCount = 0; v.retrigFastCount = 0;
                 break;
             }
             v.retrigEvery = uint8_t(std::clamp<int>(c.b, 0, 15));
-                    v.retrigOn = true;
             v.retrigFast = (c.a & 15) == 8;
-            v.retrigOnce = !v.retrigFast && v.retrigEvery == 0;
             v.retrigStep = retrigVolStep(c.a);
             v.retrigCount = 0; v.retrigFastCount = 0;
+            // Section 134: the retrigger fires on the command's **own** tick and
+            // then every `y` ticks -- `y = 0` is that one alone. ChipBoy counted
+            // from the command instead, so the first landed a tick early and the
+            // immediate one was missing altogether.
+            v.retrigOn = v.retrigFast || v.retrigEvery > 0;
+            v.retrigNext = int64_t(tickCount_) + int64_t(v.retrigEvery);
+            if (live) retrigger(ch, true); else v.retrigPending = true;
             break;
         case Cmd::S: {
             // PU1's sweep; on NOI a transpose through the map that adds up
@@ -2539,9 +2548,9 @@ void Driver::tick(int ch)
     // measured on 9.3.9). x = 8 resyncs instead: the retrigger runs on the pitch
     // clock, and pitchBefore() does it.
     bool retrig = false;
-    if (v.retrigOn && !v.retrigFast) {
-        if (v.retrigOnce) { v.retrigOnce = false; v.retrigOn = false; retrig = true; }
-        else if (++v.retrigCount >= uint16_t(v.retrigEvery)) { v.retrigCount = 0; retrig = true; }
+    if (v.retrigOn && !v.retrigFast && v.retrigEvery > 0 && int64_t(tickCount_) >= v.retrigNext) {
+        v.retrigNext = int64_t(tickCount_) + int64_t(v.retrigEvery);       // section 134
+        retrig = true;
     }
     // wave frames
     if (v.inst.type == InstrumentType::Wave && v.inst.frameAdvance) {

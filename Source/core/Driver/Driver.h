@@ -269,6 +269,11 @@ private:
         /// Section 132: a `PLAY = ONCE` run has already written its flat
         /// silencing frame, so it is not written again every tick.
         bool     frameSilenced = false;
+        /// Section 134: `R` fires a retrigger on the command's own tick and
+        /// then every y ticks. `retrigNext` is the absolute tick the next one
+        /// is due on; `retrigPending` is one the note-on owes after its burst.
+        int64_t  retrigNext = 0;
+        bool     retrigPending = false;
         bool     volLaneOn = false;                   ///< the volume lane ends at its first empty row (section 64)
         uint16_t tableRun = 0;                        ///< counts this channel's table runs (section 32)
         uint16_t tableWait = 0;                       ///< ticks left of lane 1's row
@@ -379,7 +384,7 @@ private:
         int64_t  killAt = -1;
         /// `R`: the interval in **ticks** (section 76), and the one shot a `y = 0`
         /// still owes -- LSDj retriggers once and stops there, it does not run on.
-        uint8_t  retrigEvery = 0; uint16_t retrigCount = 0; bool retrigOn = false, retrigOnce = false;
+        uint8_t  retrigEvery = 0; uint16_t retrigCount = 0; bool retrigOn = false;
         uint16_t retrigFastCount = 0;                 ///< pitch clocks since the last fast retrigger (section 90)
         bool     releasing = false;                   ///< Release note-off: WAV/KIT steps the level down
         bool     pulseReleasing = false;              ///< ... and PU/NOI let the software envelope finish

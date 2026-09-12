@@ -1179,6 +1179,34 @@ TEST_CASE("before LSDj 9 a table's G holds the groove's first step", "[lsdj]")
     CHECK(told);
 }
 
+TEST_CASE("a pulse instrument's LENGTH comes off byte 3, enable bit and all", "[import][instrument]")
+{
+    // Section 134: byte 3's low six bits are the length code and bit 6 enables
+    // the counter. The importer read the byte only for noise, and there always
+    // marked it latent; both types follow the same rule.
+    auto song = testSong(22);
+    auto bank = std::make_unique<bank::Bank>();
+    auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    uint8_t* i0 = song.data() + kInst;
+    const auto readBack = [&](uint8_t b3, bool noise) {
+        std::fill(i0, i0 + 16, uint8_t(0));
+        i0[0] = noise ? 3 : 0; i0[1] = 0xF0; i0[3] = b3; i0[7] = 3;
+        REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes));
+        const auto& in = bank->instruments[0];
+        return std::pair<int, bool>{ int(in.length), in.lengthLatent };
+    };
+    for (int which = 0; which < 2; ++which) {
+        const bool noise = which == 1;
+        INFO(std::string(noise ? "noise" : "pulse") + " instrument");
+        CHECK(readBack(0x00, noise) == std::pair<int, bool>{ 0, false });       // no length at all
+        CHECK(readBack(0x3B, noise) == std::pair<int, bool>{ 5, true });        // the code, not armed
+        CHECK(readBack(0x7B, noise) == std::pair<int, bool>{ 5, false });       // and armed
+        CHECK(readBack(0x40, noise) == std::pair<int, bool>{ 64, false });
+        CHECK(readBack(0xBB, noise) == std::pair<int, bool>{ 5, true });        // bit 7 is ignored
+    }
+}
+
 TEST_CASE("a cell with a blank instrument column keeps its note", "[lsdj]")
 {
     // Section 101, measured on 3.6.5, 4.0.4 and 9.2.L. From 4.0.4 such a cell

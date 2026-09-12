@@ -26,6 +26,31 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-12 — `R` fires on its own tick, and a pulse instrument has a `LENGTH`
+
+`docs/COMMANDS_AND_TEMPO.md` §134. The user's `READROOM`: `R` "isn't working" on `PU1`'s phrase `3C`
+or `NOI`'s `1A` -- "it should sound like stuttering glitchy beats, but instead they are just normal
+hits". Two faults, and the second is what made it sound like nothing was happening.
+
+**A pulse instrument's `LENGTH` was never imported.** Phrase `3C` row 4 plays instrument `13`, whose
+byte 3 is `7B`: the ROM's note-on writes `NR11 = BB` and `NR14 = C7`, ChipBoy wrote `80` and `87`.
+The low six bits are `NR11`'s length code -- five, about 20 ms -- and **bit 6 enables the length
+counter**. Every retrigger is a 20 ms blip that cuts itself off; that is the stutter, and without it
+each retrigger rang on until the next row. Swept across byte 3 on 9.2.L, bit 7 is ignored and the
+same rule holds on **noise**, where the importer read the byte but always marked the length latent
+(§87 saw only instruments with bit 6 clear, which is the latent case, not the rule). Both types now
+read `length = 64 - (b3 & 63)` and `lengthLatent = (b3 & 0x40) == 0`.
+
+**`R` retriggers on the tick the command is read**, then every `y` ticks. ChipBoy counted `y` from
+the command, so it missed the first retrigger and ran a tick early ever after -- `R 03` on a bare row
+measured `2 5 8 11` against the ROM's `0 3 6 9`. `y = 0` is not a special case: it is that immediate
+retrigger with nothing to repeat, which is what §76 called "retriggers once". The voice now keeps
+`retrigNext`, the absolute tick the next one is due on. Beside a note the ROM emits **two** triggers
+a fraction of a millisecond apart -- the note's burst, then the `R`'s -- so a cell's `R` is flushed
+after the burst as §127's `S` is.
+
+`READROOM`'s phrases `3C` and `1A` now match the ROM trigger for trigger.
+
 ### 2026-09-12 — `R`'s volume step applies on the noise channel
 
 `docs/COMMANDS_AND_TEMPO.md` §133. The user heard no `R` at all on `READROOM`'s phrase `1A`, which

@@ -1373,8 +1373,10 @@ TEST_CASE("R retriggers and steps the volume", "[driver][commands]")
         ChannelParams p; p.instrument = 1; p.velocityMode = 2;
         p.cmd[0] = { Cmd::E, 8, 0, 0 }; p.cmd[1] = { Cmd::R, x, 2, 0 };
         r.drv.setParams(0, p);
+        // Section 134: the slot's `R` fires its first retrigger on the note's
+        // own tick, so the note-on block already carries one.
         r.block({ Rig::on(0, 60, 100) }, 480);
-        std::vector<int> out;
+        std::vector<int> out{ int(r.drv.view(0).envVol) };
         for (int i = 0; i < 24; ++i) {
             auto w = r.block({}, 480);
             if (anyTrigger(w, 0xFF14)) out.push_back(int(r.drv.view(0).envVol));
@@ -3716,6 +3718,32 @@ TEST_CASE("an A inside a table runs its table beside the one that started it", "
     CHECK(r.drv.view(0).volume == 9);
     // ...and the nested table reached its row 1 and set the pan.
     CHECK(r.drv.view(0).pan == uint8_t(bank::Pan::Left));
+}
+
+TEST_CASE("R fires a retrigger on the command's own tick", "[driver][commands]")
+{
+    // Section 134: the ROM retriggers on the tick the `R` is read and then every
+    // y ticks. ChipBoy counted y from the command, so it missed the first and
+    // ran a tick early after it; `y = 0` is that first one with nothing to
+    // repeat, not a special case.
+    const auto ticksOf = [](int y, int rows) {
+        Rig r;
+        r.tickHz = 100.0;
+        r.song.noteSource[0] = tracker::NoteSource::Tracker;
+        ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+        NoteEvent e = cellOn(0, 60, 1);
+        e.cmd1 = { Cmd::R, 0, int16_t(y), 0 };
+        std::vector<int> at;
+        if (anyTrigger(r.block({ e }, 480), 0xFF14)) at.push_back(0);
+        for (int k = 1; k <= rows; ++k)
+            if (anyTrigger(r.block({}, 480), 0xFF14)) at.push_back(k);
+        return at;
+    };
+    // Tick 0 carries the note and its retrigger together; then every y.
+    CHECK(ticksOf(3, 12) == std::vector<int>{ 0, 3, 6, 9, 12 });
+    CHECK(ticksOf(2, 8) == std::vector<int>{ 0, 2, 4, 6, 8 });
+    CHECK(ticksOf(1, 4) == std::vector<int>{ 0, 1, 2, 3, 4 });
+    CHECK(ticksOf(0, 6) == std::vector<int>{ 0 });        // the one, and no more
 }
 
 TEST_CASE("R steps the level on the noise channel too", "[driver][commands][noise]")
