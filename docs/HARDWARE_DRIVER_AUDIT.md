@@ -116,7 +116,7 @@ console could **not** have done was the quiet-edge marker, and it is gone.
 | **The 64 Hz envelope phase** | Not modelled in the driver (see above). It is not needed for §26 in its intended use. |
 | **The pitch clock's phase against a note** | The clock free-runs, so where a note falls inside its 11712 cycles depends on when playback started — exactly as a ROM's timer does. It is no longer deterministic, which is the point: a driver cannot restart the interrupt it is serviced by. The first update after a note-on always writes the period once, whether or not anything is moving it. |
 | **An instrument reload on a sounding channel** (a cell's instrument column, Live follow) keeps its trigger | It is not a level change: it re-lays duty, length, envelope, pan and table, which is a note-on in everything but the note. |
-| **A groove in force does not change a row's length** | The rows lie end to end on a table built when the song was published, so a G — a cell's or a slot's — re-lays the steps *inside* the row and never moves the rows. A step that would start at or past the row's end does not fire, and a groove that ends early leaves the last note sustaining (§9.2). A ROM counting ticks per row would do the same. |
+| **A G *slot* does not change a row's length** | A cell's `G` does, and the rows are laid out from it: the groove a `G` puts in force is the channel's until the next one, and §135 measures the ROM doing the same. The **slot** is a live parameter instead, so it cannot move a table built when the song was published: it re-lays the steps *inside* the row, a step that would start at or past the row's end does not fire, and a groove that ends early leaves the last note sustaining (§9.2). |
 
 ## 10. What a playback ROM needs
 

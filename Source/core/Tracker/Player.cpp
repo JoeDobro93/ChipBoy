@@ -35,12 +35,25 @@ uint8_t Player::groove(int ch) const
 
 int Player::stepTicks(const Phrase* p, int* start, uint8_t* stepOf, uint8_t grooveSlot) const
 {
+    GrooveWalk w{ grooveSlot, 0 };
+    return stepTicks(p, start, stepOf, w);
+}
+
+int Player::stepTicks(const Phrase* p, int* start, uint8_t* stepOf, GrooveWalk& w) const
+{
     if (!song_) {
         const int n = kEmptyRowTicks / kTicksPerStep;
         for (int i = 0; i <= n; ++i) { start[i] = i * kTicksPerStep; if (stepOf) stepOf[i] = uint8_t(std::min(i, n - 1)); }
         return n;
     }
-    return stepStartTicks(*song_, p, grooveSlot, start, stepOf);
+    return stepStartTicks(*song_, p, w, start, stepOf);
+}
+
+GrooveWalk Player::walkFor(int ch, int row) const
+{
+    const uint8_t slot = grooveParam_[size_t(ch & 3)];
+    if (slot != kGrooveNone) return GrooveWalk{ slot, 0, true };
+    return song_ != nullptr ? song_->walkAt(ch, row) : GrooveWalk{};
 }
 
 void Player::allNotesOff(int ch, uint32_t offset, std::vector<NoteEvent>& out)
@@ -157,7 +170,9 @@ void Player::process(const TickPoint* ticks, size_t nTicks, bool playing, std::v
             rowAtTick(*song_, ch, tick, row, inRow);
             const uint8_t slot = song_->phraseAt(ch, row);
             const Phrase* ph = song_->phrase(slot);
-            const int length = phraseTicks(*song_, ph);
+            // The row's own length, off the table: with a `G` in force it is
+            // not the phrase's straight length (section 135).
+            const int length = int(rowStartTick(*song_, ch, row + 1) - rowStartTick(*song_, ch, row));
             if (!ph) {
                 // A row with no phrase is one note-off at its start.
                 if (inRow == 0 && (row != firedRow_[ch] || firedStep_[ch] < 0)) {
@@ -166,9 +181,12 @@ void Player::process(const TickPoint* ticks, size_t nTicks, bool playing, std::v
                 }
                 continue;
             }
-            const uint8_t g = groove(ch);
+            // The grid the row tables were measured from (section 135), so a
+            // locate into the middle of a song lands on the same steps.
+            const uint8_t g = grooveParam_[size_t(ch)];
             if (builtRow[ch] != row || builtGroove[ch] != g) {
-                builtCount[ch] = stepTicks(ph, starts[ch], stepOf[ch], g);
+                GrooveWalk w = walkFor(ch, row);
+                builtCount[ch] = stepTicks(ph, starts[ch], stepOf[ch], w);
                 builtRow[ch] = row; builtGroove[ch] = g;
             }
             // Positions in the phrase's play order, not steps (section 102):
@@ -205,11 +223,12 @@ bool Player::quantise(int ch, double tick, int& row, int& step, int64_t& stepTic
     rowAtTick(*song_, ch, int64_t(std::floor(tick)), row, inRowInt);
     const Phrase* p = song_->phrase(song_->phraseAt(ch, row));
     const double rowStart = double(rowStartTick(*song_, ch, row));
-    const int length = phraseTicks(*song_, p);
+    const int length = int(rowStartTick(*song_, ch, row + 1) - rowStartTick(*song_, ch, row));
     const double inRow = tick - rowStart;
     int starts[kMaxPlaySteps + 1];
     uint8_t stepOf[kMaxPlaySteps + 1];
-    const int steps = stepTicks(p, starts, stepOf, groove(ch));
+    GrooveWalk w = walkFor(ch, row);
+    const int steps = stepTicks(p, starts, stepOf, w);
     int best = -1; double bestD = 1e18;
     for (int s = 0; s < steps; ++s) {
         if (starts[s] >= length) break;                 // that position never fires
@@ -219,7 +238,8 @@ bool Player::quantise(int ch, double tick, int& row, int& step, int64_t& stepTic
     if (best < 0 || double(length) - inRow < bestD) {
         // Nearer the row's end: that is the next row's first step.
         ++row;
-        const int n = stepTicks(song_->phrase(song_->phraseAt(ch, row)), starts, stepOf, groove(ch));
+        GrooveWalk next = walkFor(ch, row);
+        const int n = stepTicks(song_->phrase(song_->phraseAt(ch, row)), starts, stepOf, next);
         step = n > 0 ? int(stepOf[0]) : 0;
         stepTick = rowStartTick(*song_, ch, row) + starts[0];
         return true;
@@ -235,10 +255,11 @@ bool Player::stepAt(int ch, int64_t tick, int& row, int& step) const
     int inRow = 0;
     rowAtTick(*song_, ch, tick, row, inRow);
     const Phrase* p = song_->phrase(song_->phraseAt(ch, row));
-    const int length = phraseTicks(*song_, p);
+    const int length = int(rowStartTick(*song_, ch, row + 1) - rowStartTick(*song_, ch, row));
     int starts[kMaxPlaySteps + 1];
     uint8_t stepOf[kMaxPlaySteps + 1];
-    const int steps = stepTicks(p, starts, stepOf, groove(ch));
+    GrooveWalk w = walkFor(ch, row);
+    const int steps = stepTicks(p, starts, stepOf, w);
     for (int s = 0; s < steps; ++s) {
         if (starts[s] >= length) break;
         if (starts[s] == inRow) { step = int(stepOf[s]); return true; }
@@ -252,20 +273,22 @@ bool Player::nextStep(int ch, int& row, int& step, int64_t& stepTick) const
     int starts[kMaxPlaySteps + 1];
     uint8_t stepOf[kMaxPlaySteps + 1];
     const Phrase* p = song_->phrase(song_->phraseAt(ch, row));
-    const int steps = stepTicks(p, starts, stepOf, groove(ch));
+    GrooveWalk w = walkFor(ch, row);
+    const int steps = stepTicks(p, starts, stepOf, w);
     // The **first** position that plays this step, so stepping through an `H`
     // loop in the editor walks the order rather than sticking (section 102).
     int pos = -1;
     for (int s = 0; s < steps; ++s) if (int(stepOf[s]) == step) { pos = s; break; }
     if (pos >= 0 && pos + 1 < steps) {
-        if (starts[pos + 1] < phraseTicks(*song_, p)) {
+        if (starts[pos + 1] < int(rowStartTick(*song_, ch, row + 1) - rowStartTick(*song_, ch, row))) {
             step = int(stepOf[pos + 1]);
             stepTick = rowStartTick(*song_, ch, row) + starts[pos + 1];
             return true;
         }
     }
     ++row;
-    const int n = stepTicks(song_->phrase(song_->phraseAt(ch, row)), starts, stepOf, groove(ch));
+    GrooveWalk next = walkFor(ch, row);
+    const int n = stepTicks(song_->phrase(song_->phraseAt(ch, row)), starts, stepOf, next);
     step = n > 0 ? int(stepOf[0]) : 0;
     stepTick = rowStartTick(*song_, ch, row) + starts[0];
     return true;

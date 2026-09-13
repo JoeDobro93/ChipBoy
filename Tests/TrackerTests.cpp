@@ -143,20 +143,110 @@ TEST_CASE("a phrase lasts as long as its groove makes it", "[tracker][groove]")
     CHECK(out.back().a == 75);
 }
 
-TEST_CASE("a groove that ends early leaves the last note sustaining", "[tracker][groove]")
+TEST_CASE("a G cell makes the row longer, a G slot leaves the last note sustaining", "[tracker][groove]")
 {
-    // A G in force can make the steps longer than the phrase's own groove
-    // does; the row's length is the phrase's, so the steps past its end do
-    // not fire (section 9.2 as section 25 counts it).
+    // Section 135: a cell's G puts a groove in force and the row lasts what
+    // that groove makes of it, so every step still fires. A G *slot* is a live
+    // parameter instead: it re-lays the steps inside a row the table already
+    // measured, and the steps past the row's end do not fire (section 9.2).
     const auto owned = demoSong(); Song& s = *owned;
     s.grooves[1].ticks = { 8, 8 };                     // slot 2, in force through a G cell
     for (int i = 0; i < 16; ++i) s.phrases[0].cells[size_t(i)].note = uint8_t(60 + i);
     s.phrases[0].cells[0].cmd1 = { bank::Cmd::G, 2, 0, 0 };
     buildRowTables(s);
-    CHECK(phraseTicks(s, &s.phrases[0]) == 96);        // the phrase's own groove is straight
-    Player p; p.prepare(48000.0); p.setSong(&s); const auto out = ticks(p, 0, 96);
+    CHECK(rowTicks(s, 0, 0) == 128);                   // sixteen steps of eight ticks
+    CHECK(phraseTicks(s, &s.phrases[0]) == 96);        // the phrase's own groove, with no G in force
+    {
+        Player p; p.prepare(48000.0); p.setSong(&s); const auto out = ticks(p, 0, 128);
+        CHECK(countOf(out, NoteEvent::NoteOn) == 16);
+        CHECK(out.back().a == 75);
+    }
+    // The same groove from the slot: the row stays 96 ticks and cuts the grid.
+    s.phrases[0].cells[0].cmd1 = bank::Command{};
+    buildRowTables(s);
+    CHECK(rowTicks(s, 0, 0) == 96);
+    Player p; p.prepare(48000.0); p.setSong(&s); p.setGrooveSlot(0, 2);
+    const auto out = ticks(p, 0, 96);
     CHECK(countOf(out, NoteEvent::NoteOn) == 12);      // steps 0-11 start inside the row
     CHECK(out.back().a == 71);
+}
+
+TEST_CASE("a G cell's groove is in force until the next one, and moves the rows", "[tracker][groove]")
+{
+    // Section 135, measured on the ROM: the groove a `G` names lasts from the
+    // step that carries it, through the rest of the phrase and into the
+    // channel's next rows, and what it changes is how long each step lasts.
+    const auto owned = blankSong(); Song& s = *owned;
+    s.noteSource[0] = NoteSource::Tracker;
+    s.grooves[2].ticks = { 3 };                        // slot 3: one step of three ticks
+    auto& a = s.phrases[0]; a.used = true;             // slot 1: the G at step 8
+    for (int i = 0; i < 16; ++i) a.cells[size_t(i)].note = uint8_t(60 + i);
+    a.cells[8].cmd1 = { bank::Cmd::G, 3, 0, 0 };
+    auto& b = s.phrases[1]; b.used = true;             // slot 2: no G at all
+    for (int i = 0; i < 16; ++i) b.cells[size_t(i)].note = uint8_t(40 + i);
+    s.chain[0] = { 1, 2, 2 };
+    buildRowTables(s);
+    // Steps 0-7 straight, 8-15 at three ticks: 48 + 24.
+    CHECK(rowTicks(s, 0, 0) == 72);
+    // The next rows are the same groove's, and it is not their phrase's own.
+    CHECK(rowTicks(s, 0, 1) == 48);
+    CHECK(rowTicks(s, 0, 2) == 48);
+    CHECK(rowStartTick(s, 0, 3) == 72 + 48 + 48);
+    CHECK(s.walkAt(0, 1).slot == 3);
+
+    Player p; p.prepare(48000.0); p.setSong(&s);
+    std::vector<std::pair<int64_t, uint8_t>> notes;
+    for (int64_t t = 0; t < 120; ++t)
+        for (const auto& e : ticks(p, t, 1))
+            if (e.kind == NoteEvent::NoteOn) notes.push_back({ t, e.a });
+    REQUIRE(notes.size() >= 18);
+    CHECK(notes[7] == std::make_pair<int64_t, uint8_t>(42, 67));    // step 7, still straight
+    CHECK(notes[8] == std::make_pair<int64_t, uint8_t>(48, 68));    // the G's own step
+    CHECK(notes[9] == std::make_pair<int64_t, uint8_t>(51, 69));    // three ticks later
+    CHECK(notes[16] == std::make_pair<int64_t, uint8_t>(72, 40));   // the next row, on the G's groove
+    CHECK(notes[17] == std::make_pair<int64_t, uint8_t>(75, 41));
+}
+
+TEST_CASE("the groove's index walks across the rows and restarts at a G", "[tracker][groove]")
+{
+    // Section 135: `Q`'s first step takes the entry after `P`'s last, and the
+    // step carrying a G takes the groove's first entry whatever came before.
+    const auto owned = blankSong(); Song& s = *owned;
+    s.noteSource[0] = NoteSource::Tracker;
+    s.grooves[6].ticks = { 2, 4, 8 };                  // slot 7, three entries
+    auto& a = s.phrases[0]; a.used = true; a.steps = 4;
+    a.cells[0].cmd1 = { bank::Cmd::G, 7, 0, 0 };
+    auto& b = s.phrases[1]; b.used = true; b.steps = 4;
+    s.chain[0] = { 1, 2 };
+    buildRowTables(s);
+    // Four steps from the groove's start: 2 + 4 + 8 + 2.
+    CHECK(rowTicks(s, 0, 0) == 16);
+    // The walk is one entry in, so the next row is 4 + 8 + 2 + 4.
+    CHECK(s.walkAt(0, 1).index == 1);
+    CHECK(rowTicks(s, 0, 1) == 18);
+    // A G on a later step restarts the index there.
+    a.cells[0].cmd1 = bank::Command{};
+    a.cells[2].cmd1 = { bank::Cmd::G, 7, 0, 0 };
+    buildRowTables(s);
+    CHECK(rowTicks(s, 0, 0) == 6 + 6 + 2 + 4);
+}
+
+TEST_CASE("a G is in force on its own channel only", "[tracker][groove]")
+{
+    // Section 135: measured on the ROM, PU2 ran three-tick rows while PU1 ran
+    // six-tick rows in the same song.
+    const auto owned = blankSong(); Song& s = *owned;
+    s.grooves[2].ticks = { 3 };
+    auto& a = s.phrases[0]; a.used = true;
+    a.cells[0].cmd1 = { bank::Cmd::G, 3, 0, 0 };
+    auto& b = s.phrases[1]; b.used = true;
+    s.chain[0] = { 1, 1 };
+    s.chain[1] = { 2, 2 };
+    buildRowTables(s);
+    CHECK(rowTicks(s, 0, 0) == 48);
+    CHECK(rowTicks(s, 0, 1) == 48);
+    CHECK(rowTicks(s, 1, 0) == 96);
+    CHECK(s.walkAt(1, 1).slot == kGrooveNone);
 }
 
 TEST_CASE("a groove's entries are ticks, whatever the phrase's length", "[tracker][groove]")
@@ -306,19 +396,25 @@ TEST_CASE("the groove in force is the slot, then the last cell, then the phrase"
     auto& ph = s.phrases[0]; ph.used = true; ph.groove = 0;
     ph.cells[0].cmd1 = { bank::Cmd::G, 2, 0, 0 };
     s.chain[0] = { 1, 1 };
-    Player p; p.prepare(48000.0); p.setSong(&s); CHECK(p.groove(0) == kGrooveNone);                 // the phrase's own, straight
+    Player p; p.prepare(48000.0); p.setSong(&s); CHECK(p.groove(0) == kGrooveNone);                 // no slot, no cell yet
     int st[kMaxPlaySteps + 1];
-    p.stepTicks(&ph, st, nullptr, p.groove(0));
-    CHECK(st[1] == 6);
+    // Section 135: the walk reads the cells, so the G at step 0 is already in
+    // force on the step that carries it -- slot 2's four ticks, not six.
+    GrooveWalk w = p.walkFor(0, 0);
+    p.stepTicks(&ph, st, nullptr, w);
+    CHECK(st[1] == 4);
 
     ticks(p, 0, 1);                                     // the G cell at step 0 plays
     CHECK(p.groove(0) == 2);
-    p.stepTicks(&ph, st, nullptr, p.groove(0));
+    w = p.walkFor(0, 0);
+    p.stepTicks(&ph, st, nullptr, w);
     CHECK(st[1] == 4);
 
     p.setGrooveSlot(0, 1);                              // a G slot wins over the cell
     CHECK(p.groove(0) == 1);
-    p.stepTicks(&ph, st, nullptr, p.groove(0));
+    w = p.walkFor(0, 0);
+    CHECK(w.locked);
+    p.stepTicks(&ph, st, nullptr, w);
     CHECK(st[1] == 8);
 
     p.setGrooveSlot(0, kGrooveNone);                    // the slot goes to none
@@ -347,8 +443,10 @@ TEST_CASE("a mid-bar G moves the steps that follow it", "[tracker][groove]")
     REQUIRE(notes.size() >= 4);
     CHECK(notes[0] == std::make_pair<int64_t, uint8_t>(0, 60));
     CHECK(notes[1] == std::make_pair<int64_t, uint8_t>(6, 62));
-    CHECK(notes[2] == std::make_pair<int64_t, uint8_t>(12, 64));   // still on the straight grid
-    CHECK(notes[3].first == 36);                                   // 12 + 12 ticks from the G
+    CHECK(notes[2] == std::make_pair<int64_t, uint8_t>(12, 64));   // the steps before it are where they were
+    // Section 135: the step that carries the G takes the new groove's first
+    // entry, so step 3 is twelve ticks after step 2 and not six.
+    CHECK(notes[3].first == 24);
 }
 
 /* ------------------------------------------------------------------ notes */

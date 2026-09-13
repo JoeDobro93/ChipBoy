@@ -82,6 +82,13 @@ public:
     /// and the step each position plays (section 102). Returns how many
     /// positions there are; both arrays must hold kMaxPlaySteps + 1.
     int  stepTicks(const Phrase* p, int* startTicks, uint8_t* stepOf = nullptr, uint8_t grooveSlot = kGrooveNone) const;
+    /// The same, from a groove walk (section 135): `w` goes out as the walk the
+    /// next row begins with.
+    int  stepTicks(const Phrase* p, int* startTicks, uint8_t* stepOf, GrooveWalk& w) const;
+    /// The walk a channel's row begins with: the song's, unless a `G` **slot**
+    /// is set -- that is a live parameter and overrides every cell (section 9.2),
+    /// re-laying the steps inside the row without moving the rows (section 135).
+    GrooveWalk walkFor(int ch, int row) const;
 
 private:
     void fireStep(int ch, int row, int step, uint8_t phraseSlot, uint32_t offset, std::vector<driver::NoteEvent>& out);

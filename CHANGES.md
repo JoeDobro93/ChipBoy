@@ -3528,3 +3528,46 @@ specific to saves built from nothing by `lsdjref_sav.py`, not to bootstrapped on
 **Added:** `docs/plan-lsdj-version-sweep.md` — the plan for the next two stages: validate the
 command matrix on the 9.3.9 ROM, then sweep every older version against it, with the three-way
 same / value / kind decision per command and where each answer lands in the code.
+
+### 2026-09-13 (READROOM) — a `G` moves the rows, not just the steps inside one (§135)
+
+**Reported:** from LSDj song row `04` on, "everything goes totally out of whack and doesn't line
+up and it just sounds chaotic because they are not looping on `H` commands as expected."
+
+**Measured:** the `H`s are exact. A two-phrase chain probe (`/root/lsdj/probe/hop2.py`,
+`hop3.py`) put the ROM's play order beside ChipBoy's for `H 00`, `H 21`, `H 71` and `H 10`, at the
+end of a phrase and with the same phrase twice in a chain: every one agrees step for step,
+including that `H 00` ends the phrase and advances the chain rather than hopping for ever, and
+that a hop count starts again when the phrase plays again.
+
+What `READROOM` row `04` actually hangs on is `G`. Its grooves 1 to C are single entries of 1 to C
+ticks, and `PU2`'s phrases open with `G 03`, the noise channel's with `G 0C`. ChipBoy laid the
+steps inside the row at that groove and kept the row's own length at six ticks a step, so `PU2`
+reached its second chain row at 4049 ms where the ROM reached it at 2023 ms, and the noise
+channel's twelve-tick steps ran off the end of an eleven-position row and stopped firing.
+
+**Changed** (§135, measured on the ROM with `/root/lsdj/probe/groove.py` and `groove2.py`): the
+groove a cell's `G` names is **in force on that channel** — from the step that carries it, through
+the rest of the phrase, into the next chain row, and on until another `G` — and it sets how long
+each step lasts, which is how long the row lasts. A channel walks one groove, a slot and an index
+into it: the `G` restarts the index, and the index otherwise continues across the row boundary
+rather than starting again (shown with a `2 4 8` groove, where the next row's first step takes the
+entry after the last row's last). It is per channel: in the same run `PU2` ran three-tick rows
+while `PU1` ran six.
+
+`GrooveWalk { slot, index, locked }` is that state. It is static — the play order is fixed (§102)
+and the `G`s are in cells — so `buildRowTables()` threads one walk down each channel's chain and
+stores it per row in `Song::rowWalk`; the Player lays a row's steps from that, so a locate lands
+on the grid the table was built from, and `buildTempoMap()` places a `T` on it too.
+
+**Departures from the spec, deliberate:** §9.2's "a `G` re-lays the steps inside the row and never
+moves the rows" and the matching row of `docs/HARDWARE_DRIVER_AUDIT.md` were wrong; both now say
+so. Two rules keep every song written before this sounding as it did: a phrase's **own** groove is
+not the walk (where no `G` is in force the row takes the phrase's groove from its first entry, as
+it always has), and a `G` **slot** — a live parameter, which cannot move a published table —
+still only re-lays the steps inside the row, which is where "a groove that ends early leaves the
+last note sustaining" now lives. `locked` is what carries §9.2's "the slot outranks the cells".
+
+**Fixed in passing:** `playingStepOf()` in `PanelCommon.cpp` passed a 65-entry array to
+`stepStartTicks()`, which writes one entry per **position** — up to 257 of them once a cell's `H`
+loops (§102). It was a stack overrun on any phrase with a hop.

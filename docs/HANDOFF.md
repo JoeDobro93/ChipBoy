@@ -432,6 +432,24 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 44 (§135), from the user's **`READROOM`** song row `04`: "everything goes totally out of
+  whack ... because they are not looping on `H` commands as expected". The `H`s are exact -- a
+  two-phrase chain probe (`probe/hop2.py`, `hop3.py`) agreed with the ROM step for step on `H 00`
+  (which ends the phrase and advances the chain), `H 21`, `H 71` and `H 10`, and on a hop count
+  starting again when the phrase plays again. The fault is **`G`**: the groove a cell's `G` names is
+  in force on that channel from the step carrying it until the next `G`, across phrases and chain
+  rows, and it sets **how long each step lasts** -- so it moves the rows, which §9.2 and the
+  hardware audit both denied. `READROOM`'s grooves 1 to C are single entries of 1 to C ticks, so
+  `PU2`'s `G 03` halved its row lengths and the noise channel's `G 0C` doubled them; ChipBoy kept
+  six ticks a step and `PU2` reached its second chain row at 4049 ms against the ROM's 2023. A
+  channel now walks one groove (`GrooveWalk { slot, index, locked }`), restarted by a `G` and
+  continuing across the row boundary; `buildRowTables()` threads it down each chain and stores it
+  per row in `Song::rowWalk`. Measured after: `PU1` and `PU2` agree with the ROM on every trigger
+  of song row `04` (no delta over 30 ms). A phrase's own groove is not the walk and a `G` **slot**,
+  being live, still only re-lays the steps inside the row, so songs written before this are
+  unmoved. Fixed in passing: `playingStepOf()` passed a 65-entry array where `stepStartTicks()`
+  writes one per position -- a stack overrun on any phrase with an `H`.
+
 - Round 43 (§134), from the user's **`READROOM`**: `R` still "not working" on `PU1` phrase `3C` and
   `NOI` `1A` -- "should sound like stuttering glitchy beats". Two faults. A **pulse instrument's
   `LENGTH` was never imported**: byte 3's low six bits are `NR11`'s length code and **bit 6 enables
@@ -801,9 +819,22 @@ design-log section the change touches. Update this file at the end of every chan
   (16.78 ms), not a drift. The tempo itself is right: the ROM's tick for every tempo byte measured
   (85 to 190) is within 0.016% of `1 / (0.4 x bpm)`, and DELIVERY's grooves are all 6/6 with no `G`
   or `T` anywhere. So one row in about a hundred is taking a tick longer in ChipBoy. Find which.
+- **`READROOM`'s noise channel triggers where ChipBoy does not, and sits about 2 dB low.** On song
+  row `04` `PU1` and `PU2` now agree with the ROM on every trigger (§135); `NOI` agrees for
+  seventeen and then the ROM fires a trigger ChipBoy does not. Phrase `89` under `G 0C` puts its
+  rows 184 ms apart; the ROM triggers twice at row 2 (`note 34`, instrument `15`, `E 35`) and once
+  at row 3 (no note, `E 24`), ChipBoy once and none. It is **not** `E` itself: a bare `E xy` on a
+  sounding noise channel emits no trigger on the ROM, measured five ways in
+  `probe/vs_Enoi.py` (`E 35`, `E 24`, `E 30`, an `E` on the note's own row, and the same on `PU1`)
+  -- all one trigger, ROM and ChipBoy alike. So it is something about instrument `15`
+  (`b3 = 6F`: a length of 17 with the counter **on**) or its neighbours; instrument `0F` has no
+  length and row 4 pairs in both. Phrase `1A` rendering about 2 dB down in every band with the note
+  timing right is likely the same thread: fewer restarts means the envelope decays from wherever
+  the last note left it. Start from `probe/rrrow.py rr04b 04 20`, which prints the first delta.
 - **`READROOM` comes apart at about thirty seconds.** Its first five windows are 89-99% on every
-  channel since §102 gave a phrase's `H` its loop; before that it was 3-6% from the first bar. What
-  goes wrong at 30 s has not been looked at.
+  channel since §102 gave a phrase's `H` its loop; before that it was 3-6% from the first bar. §135
+  moves every channel that carries a `G`, so this wants re-measuring from the top before anything
+  else is concluded from it.
 - **`DELIVERY` and `READROOM` come apart part way through.** `DELIVERY` agrees with the ROM on
   every channel until about 50 s and on none after; `READROOM` never agrees on three channels at
   all and its noise channel triples the ROM's note count (1032 against 3093). Neither is a

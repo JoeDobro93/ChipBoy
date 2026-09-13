@@ -118,6 +118,24 @@ inline bool cellsPlay(NoteSource s) { return s == NoteSource::Tracker || s == No
 /// The channel's notes come from its cells; under Hybrid they come from MIDI.
 inline bool cellNotes(NoteSource s) { return s == NoteSource::Tracker; }
 
+/// The slot in force: 0 straight, 1-16 the song's grooves, kGrooveNone the
+/// phrase's own.
+constexpr uint8_t kGrooveNone = 255;
+
+/// Where a channel's groove walk stands (section 135): the slot a `G` has put
+/// in force -- kGrooveNone while none has -- and how far into that groove the
+/// next position is. A `G` sets the slot and restarts the index; the index
+/// then advances one entry per position, through the rest of the phrase and
+/// into the channel's next rows, until another `G`. A row whose groove is the
+/// phrase's own instead takes it from its first entry, as it always has.
+struct GrooveWalk {
+    uint8_t slot = kGrooveNone;
+    uint8_t index = 0;
+    /// The slot was set by a `G` **slot**, which outranks every cell (section
+    /// 9.2): the cells' own `G`s are not read while this is set.
+    bool locked = false;
+};
+
 struct Song {
     std::array<Phrase, kPhraseSlots> phrases;         ///< slot n is phrases[n-1]
     std::array<std::vector<uint8_t>, 4> chain;        ///< per channel: row -> phrase slot (0 none)
@@ -148,6 +166,10 @@ struct Song {
     /// is published so the audio thread never walks the phrases (section 25).
     /// One entry per row plus the end. Not part of the file.
     std::array<std::vector<int32_t>, 4> rowStartTicks;
+    /// Per channel, the groove walk each of its rows begins with (section 135),
+    /// built beside `rowStartTicks` so the Player lays a row's steps on the
+    /// same grid the table was measured from. Not part of the file.
+    std::array<std::vector<GrooveWalk>, 4> rowWalk;
 
     const Phrase* phrase(int slot) const { return slot >= 1 && slot <= kPhraseSlots && phrases[size_t(slot - 1)].used ? &phrases[size_t(slot - 1)] : nullptr; }
     uint8_t phraseAt(int ch, int row) const { const auto& c = chain[size_t(ch & 3)]; return row >= 0 && size_t(row) < c.size() ? c[size_t(row)] : 0; }
@@ -180,11 +202,17 @@ struct Song {
     /// The steps a channel's row plays: its phrase's length, or the sixteen an
     /// empty row is counted as.
     int stepsOfRow(int ch, int row) const { const Phrase* p = phrase(phraseAt(ch, row)); return p ? p->length() : kEmptyRowTicks / kTicksPerStep; }
+    /// The groove walk a channel's row begins with (section 135). Rows past
+    /// the table are empty rows, which leave the walk alone, so the last entry
+    /// answers for all of them.
+    GrooveWalk walkAt(int ch, int row) const
+    {
+        const auto& w = rowWalk[size_t(ch & 3)];
+        if (w.empty() || row < 0) return GrooveWalk{};
+        return w[size_t(std::min<size_t>(size_t(row), w.size() - 1))];
+    }
 };
 
-/// The slot in force: 0 straight, 1-16 the song's grooves, kGrooveNone the
-/// phrase's own.
-constexpr uint8_t kGrooveNone = 255;
 /// The groove that slot resolves to on a phrase.
 Groove grooveFor(const Song& s, const Phrase* p, uint8_t slot);
 
@@ -208,13 +236,19 @@ int phrasePlayOrder(const Phrase* p, uint8_t* order, int cap);
 /// past the row's own ticks does not fire, which is how a groove that does not
 /// fill the row leaves its last note sustaining (section 9.2).
 int stepStartTicks(const Song& s, const Phrase* p, uint8_t groove, int* start, uint8_t* step = nullptr);
+/// The same, walking the groove (section 135): `w` comes in as the walk at the
+/// row's start and goes out as the walk the next row begins with, each `G` in
+/// the play order setting the slot and restarting the index as it is reached.
+int stepStartTicks(const Song& s, const Phrase* p, GrooveWalk& w, int* start, uint8_t* step = nullptr);
 
-/// How long a row of this phrase lasts: its groove's ticks over its length,
-/// or kEmptyRowTicks for a row with no phrase (section 25). This is the
-/// phrase's own groove -- a G cell or a G slot re-lays the steps inside the
-/// row, and never moves the rows (docs/HARDWARE_DRIVER_AUDIT.md).
+/// How long a row of this phrase lasts: the ticks of the groove in force over
+/// its play order, or kEmptyRowTicks for a row with no phrase (section 25).
+/// The walk comes in as the row's and goes out as the next row's (section 135).
+int phraseTicks(const Song& s, const Phrase* p, GrooveWalk& w);
+/// How long a row of this phrase lasts under its own groove, with no `G` in
+/// force: what the editor measures a phrase against.
 int phraseTicks(const Song& s, const Phrase* p);
-/// How long a channel's row lasts.
+/// How long a channel's row lasts, the `G`s before it in force (section 135).
 int rowTicks(const Song& s, int ch, int row);
 
 /// The prefix tables of row starts, per channel, in ticks from the song

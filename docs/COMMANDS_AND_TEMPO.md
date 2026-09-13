@@ -405,8 +405,10 @@ groove does not fill the bar.
 
 The groove in force on a channel is: the slot's G if set, else the last G cell, else the
 phrase's own, recomputed every tick (no stateful override that can disagree with a
-cell). G inside a table sets that table run's row lengths from the groove (default one
-tick per row). Recording quantises a note to the nearest step start of the channel's own
+cell). A cell's G changes **how long the rows last** from the step that carries it, and
+walks on into the channel's next rows until another G (§135); the slot, being live, only
+re-lays the steps inside a row. G inside a table sets that table run's row lengths from
+the groove (default one tick per row). Recording quantises a note to the nearest step start of the channel's own
 grid (its phrase, its groove in force) — not channel 0's.
 
 ### 9.3 Tempo map
@@ -4123,3 +4125,81 @@ Beside a note the ROM emits **two** triggers a fraction of a millisecond apart -
 burst and then the `R`'s -- so a cell's `R` is flushed after the burst, exactly as §127's `S` is.
 
 With both in, `READROOM`'s phrase `3C` and phrase `1A` match the ROM trigger for trigger.
+
+## 135. A `G` puts a groove in force on its channel: it changes how long the rows last, and it walks
+
+`READROOM`'s song row `04` falls apart in ChipBoy a few seconds in, and not because of `H`:
+measured against the ROM, the hops are exact. The chains of that row, their phrases' play
+orders and what ChipBoy made of them:
+
+```
+PU1 0D  3C 3E 3C 40 41 42 3C 44 3C 3E 3C 48      3C: 16 positions, G 00 at row 0
+PU2 1A  45 45 46 46 45 27                        45/46: H 71 at row 5 -> 44 positions, G 03 at row 0
+WAV 7F  FE FE FE FE FE FE                        FE: H 10 at row 6 -> 22 positions
+NOI 1B  89 59 59 59 47 59                        89/59: H 00 at row B -> 11 positions, G 0C at row 0
+```
+
+`READROOM`'s grooves 1 to C are single entries of 1 to C ticks -- the composer's speed slots --
+so `G 03` asks for rows of three ticks and `G 0C` for rows of twelve, against the straight six.
+Taken from the same save, the first note of each `PU2` row:
+
+```
+ROM  20  64  112  156  204  248  296  ...   (46 ms apart: three ticks at tempo 163)
+CB    0  46   92  138  184  230  276  ...   (46 ms apart)
+```
+
+ChipBoy lays the steps *inside* the row at the groove in force and agrees for the first seven --
+and then the row's own length, 44 positions of **six** ticks, runs out of steps at half time and
+the channel waits through the other half. `PU2` reaches its second chain row at 4049 ms where the
+ROM reaches it at 2023 ms, and two seconds in the channels no longer line up. The noise channel
+fails the other way: `G 0C` lays twelve-tick steps into a row of eleven six-tick positions, so
+positions 6 to A fall past the row's end and never fire.
+
+This is §9.2's "a G re-lays the steps inside the row and never moves the rows", and
+`docs/HARDWARE_DRIVER_AUDIT.md`'s row of the same name. Both are wrong. Measured on the ROM at
+tempo 150, a sixteen-step phrase `P` (chain row 0) followed by `Q` (chain row 1), each step's
+duration in milliseconds, 100 ms being the straight six ticks:
+
+```
+no G                 100 100 100 100 100 100 100 100 100 ...        (through P and Q alike)
+G 03 at P's step 8   100 100 100 100 100 100 100 100  50  50 ...    (50 ms to the end of Q and past it)
+G 0C at P's step 8   100 100 100 100 100 100 100 100 201 201 ...
+```
+
+So the groove a `G` names is **in force on that channel** -- from the step that carries it, through
+the rest of the phrase, into the next chain row, and on until another `G` -- and what it changes
+is how long each step lasts, which is how long the row lasts. It is per channel, not per song: in
+the same `READROOM` run `PU2` was running three-tick rows while `PU1` ran six-tick rows.
+
+A groove of more than one entry shows where the groove's own index sits. With groove 7 set to
+`2 4 8` (33, 67 and 133 ms):
+
+```
+G 07 at P's step 8   100 x8   33 67 134  33 67 134  ...
+G 07 at P's step 0    33 67 134  33 67 134 ... 33 [64 134 33] ...
+                                        P's step 15 ^  ^ Q's step 0
+```
+
+The step that carries the `G` takes the groove's **first** entry, so the `G` restarts the walk; and
+`Q`'s first step takes the entry after `P`'s last, so the walk **continues across the row** rather
+than starting again. A channel therefore walks one groove: a slot and an index into it, advanced
+one entry per position, restarted only by a `G`.
+
+### As built
+
+`GrooveWalk { slot, index }` is that state, `slot` being `kGrooveNone` when no `G` has spoken.
+`stepStartTicks()` takes it by reference, applies each position's `G` as it reaches it, and leaves
+it as the row ends; `phraseTicks()` the same. The walk is **static** -- the play order is fixed
+(§102) and the `G`s are in cells -- so `buildRowTables()` threads one walk down each channel's
+chain, storing the row lengths as before and, beside them, `Song::rowWalk[ch]`, the walk as each
+row begins. The Player starts a row's layout from that, so a locate into the middle of a song
+lands on the same grid the table was built from, and `buildTempoMap()` places a `T` on it too.
+
+Two rules keep every song written before this one sounding as it did:
+
+- A phrase's **own** groove is not the walk: where no `G` is in force the row takes the phrase's
+  groove from its first entry, as it always has. Only a groove a `G` put in force walks on.
+- A row with no phrase is 96 ticks and leaves the walk alone, as §25 has it.
+
+`G 0` -- ChipBoy's revert, which LSDj cannot write (its groove 00 imports as slot 1) -- clears the
+walk back to the phrase's own and restarts the index.

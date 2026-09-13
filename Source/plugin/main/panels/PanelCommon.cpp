@@ -534,12 +534,15 @@ int playingStepOf(const ChipBoyProcessor& p, const tracker::Song& s, int ch, int
 {
     const tracker::Phrase* phrase = s.phrase(s.phraseAt(ch, row));
     const int steps = s.stepsOfRow(ch, row);
-    int start[tracker::kMaxSteps + 1];
-    tracker::stepStartTicks(s, phrase, p.player().groove(ch), start);
-    const int length = tracker::phraseTicks(s, phrase);
+    // Positions, not steps: an `H` can put more of them in a row than the
+    // phrase has cells (section 102), so the array is the play order's.
+    std::vector<int> start(size_t(tracker::kMaxPlaySteps) + 1, 0);
+    tracker::GrooveWalk w = p.player().walkFor(ch, row);
+    tracker::stepStartTicks(s, phrase, w, start.data());
+    const int length = int(tracker::rowStartTick(s, ch, row + 1) - tracker::rowStartTick(s, ch, row));
     int step = -1;
     for (int i = 0; i < steps; ++i) {
-        if (start[i] >= length || start[i] > inRow) break;     // that step never fires, or has not come yet
+        if (start[size_t(i)] >= length || start[size_t(i)] > inRow) break;   // that step never fires, or has not come yet
         step = i;
     }
     return step;
