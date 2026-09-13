@@ -432,6 +432,24 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 54 (§145, correcting §144), from the two things round 53 left measured and not settled: the
+  transpose column **belongs to the run that is live**. §144's "they add" came from four readings at
+  the top of the noise map, where +12 from the probe's note wraps into the 7-bit region and two sums
+  print one byte; on **PU1**, where a period is a number, the called table's row is in force alone
+  (1995, +12, not the 2006 a sum gives), the parent's +4 is gone on the next tick, its later rows never
+  arrive, and its row 0 coming round on the sixteenth tick does not reach the note either -- and the
+  `A` in CMD 2 traces identically to the `A` in CMD 1, so it is the *run* that owns the column, not a
+  lane. On **noise** the same four probes say the opposite (`A0` held six hundred milliseconds against
+  an empty called table), so §144's sum is real and noise's alone. That settles both of round 53's
+  open items at once: what looked like a transpose "reverting" differently was the parent's column
+  being held on noise. The tick is settled too -- the called table's row 0 lands on the tick after the
+  `A`'s, which `Voice::nestRowLive` now waits for, where §144 read `nestRow[1]` the moment
+  `beginNestedRun` set it. After: all ten probes are the ROM's trace value for value and tick for tick
+  (`probe/vs_tsplife.py`, `vs_tsplane.py`, `vs_tspfreeze.py`, `vs_tspnoi.py`, and §144's four). One
+  choice is recorded as a choice in §145: reading the same `A` again leaves a live run alone, because a
+  restart would put its row 0 on a tick the ROM has nothing on and its own loop already lands on the
+  next.
+
 - Round 53 (§144), closing the last of round 45's open questions and the noise-table item: a
   **nested table run's transpose column never reached the note**. `READROOM`'s noise channel was the
   last thing on song row `04` not matching, and the note about it -- "the table steps a tick early" --
@@ -927,17 +945,18 @@ design-log section the change touches. Update this file at the end of every chan
   (16.78 ms), not a drift. The tempo itself is right: the ROM's tick for every tempo byte measured
   (85 to 190) is within 0.016% of `1 / (0.4 x bpm)`, and DELIVERY's grooves are all 6/6 with no `G`
   or `T` anywhere. So one row in about a hundred is taking a tick longer in ChipBoy. Find which.
-- ~~`READROOM`'s noise table steps a tick early~~ -- **mostly settled by §144**, and the cause was
-  not stepping. The cluster inside phrase `89`'s rows 1-2 comes from table `0x20`, which table `05`'s
-  row F calls with an `A 20`, and a **nested run's transpose column never reached the note** at all --
-  ChipBoy was arriving at a similar-looking cluster by another route. It now does, and the parent's and
-  nested transposes add. What is genuinely left is narrower: the nested run's **first** row is a tick
-  early (ROM tick `0.9`, ChipBoy `0.2`) and `nestJustStarted`, the flag that holds the nested lanes
-  back for that tick (§122), is measured **not** to be what delays it -- gating the transpose on it put
-  the first effect at `0.0`. Whatever the ROM waits for there wants reading off the ROM. Related and
-  also open: a transpose **reverts** on the next row in ChipBoy where the ROM holds it (`3:30  15:40`
-  against `1:30` alone) -- a question about the row after a transpose. `probe/vs_nesttsp.py` measures
-  both; `probe/rrrow.py rr04b 04 20` still prints the song-level delta.
+- **`READROOM`'s noise row `04` is one `P` step out, and that is all that is left of "the noise table
+  steps a tick early".** §§144 and 145 settled the table (every transpose probe is now the ROM's trace),
+  and re-measuring the song row afterwards localises what remains to one tick in one command. The
+  cluster inside phrase `89`'s rows 1-2 is not the table at all: row 1 is `note=00 inst=FF P FB`, and
+  the cluster is that **`P` bend walking the noise map a map entry a tick**, each step a retrigger.
+  Aligned on its first step the two traces are identical -- `1D 2B 1F 2D 3B 2F 68 4B 3F 78 4D`, 15-16 ms
+  apart in both -- but the ROM's first step lands **one tick after the row begins** where ChipBoy's
+  lands on the row's own tick, so ChipBoy fits twelve steps into the twelve-tick row where the ROM fits
+  eleven (the "one step more" of the old note). Next: measure whether it is `P`'s first step that waits
+  a tick (§66) or a cell carrying only a command (`note=00 inst=FF`) that lands a tick late, with `P FB`
+  beside a note and on a blank row. `probe/rrrow.py rr04 04 20` prints the row; the register dump either
+  side of its first delta is what showed this.
 - ~~`R` with `x = 8`, the fast roll~~ -- **settled by §143.** The interval (`y + 1` pitch clocks) and
   the level (the envelope where it has got to, not reset) were already right; the one fault was
   ChipBoy firing a retrigger as the command was read, which the ROM does not for `x = 8`.

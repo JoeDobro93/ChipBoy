@@ -3798,3 +3798,47 @@ one, and both orderings of the two transposes give the ROM's clock.
 - Where a transpose **reverts** differs. With the parent holding one on row 0 and nothing after, the
   ROM writes `NR43` once and holds it; ChipBoy writes it and puts it back on the next row (`3:30
   15:40` against `1:30` alone). A question about the row after a transpose, not about nesting.
+
+### 2026-09-13 — the transpose column belongs to the run that is live (§145, correcting §144)
+
+**Measured:** §144's "a nested run's transpose adds to its parent's" came from four readings of `NR43`
+at the top of the noise map, where +12 from the probe's note lands in the 7-bit region and two
+different sums print the same byte. Re-measured on **PU1**, where a period is a number: the called
+table's row is in force **alone**, and the parent's column is not read at all while the nested run
+lasts.
+
+```
+PU1, base 1943, +4 1964, +8 1982, +12 1995, +16 2006; ticks from the note
+no `A` at all, rows 0 +4              ROM 0.1:1964  1.0:1943      -- the row's own, and it reverts
+parent 0 `A`+4, 4 +8 / called 0 +12   ROM 0.1:1964  1.0:1995  2.0:1943  17.0:1995
+the same `A` in CMD 2 instead of CMD 1 ROM 0.1:1964  1.0:1995  2.0:1943  17.0:1995
+parent 0 `A`+4 / called empty         ROM 0.1:1964  1.0:1943      -- and nothing more in 0.6 s
+```
+
+1995 is +12, not the 2006 a sum would give; the parent's +4 is gone by tick 2; its row 4's +8 never
+arrives; and its row 0 coming round on the sixteenth tick does not reach the note either, where §144's
+code re-applied it. CMD 1 and CMD 2 print the same trace, so this is about which **run** owns the
+column, not which lane. On **noise** the same four probes say the opposite -- `A0` (+4) held for six
+hundred milliseconds against an empty called table, `70` (+16) where the pulse gave +12 -- so §144's
+sum is real and it is noise's alone. The called table's row 0 lands on the tick **after** the `A`'s
+(`0.9` against §144's `0.2`), which is the tick §144 left open: §122 already held the nested *lanes*
+back for it and the column was read straight off `nestRow[1]`, which `beginNestedRun` had already set.
+
+**Changed** (§145): `tableTransposeOf()` does not read the parent's column while a nested run is live.
+Until that run reaches its first row (`Voice::nestRowLive`, set when the nested lane 1 steps) the value
+in force is `Voice::nestTspHeld`, the parent column's value on the `A`'s own tick -- which is how that
+row transposes its own tick -- and after it the nested row's, plus `nestTspHeld` again on noise.
+`beginNestedRun` leaves a run already on that slot alone, so the parent's row reading the same `A` a
+second time does not hand the column back for a tick. Nothing stops the parent's lanes: §131's two runs
+still walk side by side.
+
+After: every one of the ten probes is the ROM's trace, value for value and tick for tick -- the four of
+§144 included, where the numbers were right for the wrong reason. The differences left are the two
+already known: CB folds a row's effect into the note's own burst (§3), which puts the first write at
+0.2 ticks where the ROM has 0.1, and the pitch clock's 0.07%.
+
+**A choice, not a measurement:** leaving a live nested run alone when its `A` is read again. A restart
+would put the called table's row 0 on that tick where the ROM has nothing, and the run's own sixteen-row
+loop already lands on the next one, so the two cannot be told apart here. A parent whose rows loop
+sooner than the called table's would separate them; `READROOM`'s `A 20` sits on a phrase cell, and its
+table `05`'s `A 20` on that table's last row, where the two coincide.

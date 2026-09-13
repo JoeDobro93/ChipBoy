@@ -780,6 +780,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // is overwritten, so it is filed under the table it belongs to.
     parkStep(ch);
     v.nestOn = false; v.nestSlot = 0; v.nestJustStarted = false;   // section 131
+    v.nestRowLive = false; v.nestTspHeld = 0;                      // section 145
     v.tableSlot = tbl; v.tableOn = tbl && bank_ && bank_->table(tbl);
     const bool wasFromCmd = v.tableTicks;
     v.tableTicks = false;                                 // the instrument's own table again (section 122)
@@ -1075,27 +1076,30 @@ int Driver::tableTransposeOf(const Voice& v) const
 {
     if (plainTrigger_) return 0;                   // section 84
     if (!bank_) return 0;
-    // Section 144: the run an `A` started carries a transpose column of its own
-    // and the two **add** -- measured, a parent's +4 beside a nested +12 gives
-    // the noise clock for +16. Section 131 gave the nested run its own pointers
-    // and this was still reading only the parent's.
     auto rowOf = [this](uint8_t slot, uint8_t row) {
         const Table* t = bank_->table(slot);
         if (!t) return 0;
         const auto& st = t->steps[row];
         return st.hasTranspose ? int(st.transpose) : 0;
     };
-    int tsp = 0;
-    if (v.tableOn) tsp += rowOf(v.tableSlot, v.tableRow);
-    // Lane 1 is the one a row's own columns belong to, as for the parent.
-    //
-    // The ROM's first nested row lands a tick later than this does -- tick 0.9
-    // against 0.2, measured -- and gating this on `nestJustStarted`, which is
-    // what holds the nested *lanes* back for that tick (section 122), does not
-    // move it: it put the transpose at 0.0 instead. So the tick is still open,
-    // and it is written down in docs/HANDOFF.md rather than guessed at here.
-    if (v.nestOn) tsp += rowOf(v.nestSlot, v.nestRow[1]);
-    return tsp;
+    // Section 145: the column has one owner at a time. While a nested run is live
+    // the parent's own column is not read at all -- measured on PU1, a parent's
+    // +4 beside a called +12 gives the period for +12 and not the sum, the +4 is
+    // gone on the next tick, and neither the parent's later rows nor its row 0
+    // coming round again reach the note.
+    if (v.nestOn) {
+        // Its first row is the tick **after** the `A`'s (section 122), which is
+        // what `nestRowLive` waits for. Until then the column the `A`'s own row
+        // carried is the one in force, which is how that row transposes its own
+        // tick. On **noise** it stays added to the nested run's rows for as long
+        // as the run lasts (section 144's sum, which the noise map's 7-bit top
+        // had made look like the general law).
+        if (!v.nestRowLive) return int(v.nestTspHeld);
+        const int held = v.inst.type == InstrumentType::Noise ? int(v.nestTspHeld) : 0;
+        return held + rowOf(v.nestSlot, v.nestRow[1]);
+    }
+    // Lane 1 is the one a row's own columns belong to.
+    return v.tableOn ? rowOf(v.tableSlot, v.tableRow) : 0;
 }
 
 int Driver::computePeriod(int ch)
@@ -2388,6 +2392,13 @@ uint16_t Driver::tableRowTicks(int ch, int row) const
 void Driver::beginNestedRun(int ch, uint8_t slot)
 {
     Voice& v = v_[size_t(ch)];
+    // Section 145: the row that carried the `A` comes round again -- every
+    // sixteenth tick for a table that runs its length -- and the ROM's note does
+    // not go back to the parent's transpose column when it does. Reading the same
+    // `A` again while its own run is live leaves that run walking, which is also
+    // what keeps the called table's rows on the ROM's ticks: its loop and the
+    // parent's row land together, so the two cannot be told apart there.
+    if (v.nestOn && v.nestSlot == slot) return;
     v.nestSlot = slot;
     for (int i = 0; i < 3; ++i) { v.nestStep[size_t(i)] = 0; v.nestRow[size_t(i)] = 0; v.nestWait[size_t(i)] = 0; }
     v.nestHopLeft[0] = v.nestHopLeft[1] = 0; v.nestHopFrom[0] = v.nestHopFrom[1] = 0xFF;
@@ -2396,12 +2407,24 @@ void Driver::beginNestedRun(int ch, uint8_t slot)
     // Its row 0 is the **next** tick's, one tick after the row that started it,
     // as the ROM's is (section 122).
     v.nestJustStarted = v.nestOn;
+    // Section 145: and so is its transpose column -- the parent's is still the
+    // live one for this tick. On noise what the parent's column has in force now
+    // stays added for as long as the nested run lasts.
+    v.nestRowLive = false;
+    v.nestTspHeld = 0;
+    if (v.tableOn && bank_) {
+        if (const Table* parent = bank_->table(v.tableSlot)) {
+            const auto& st = parent->steps[v.tableRow];      // lane 1's row: the column in force
+            if (st.hasTranspose) v.nestTspHeld = int8_t(st.transpose);
+        }
+    }
 }
 
 void Driver::beginTableRun(int ch, uint8_t slot, bool fromCommand)
 {
     Voice& v = v_[size_t(ch)];
     v.nestOn = false; v.nestSlot = 0; v.nestJustStarted = false;   // section 131
+    v.nestRowLive = false; v.nestTspHeld = 0;                      // section 145
     v.tableSlot = slot; v.tableGroove = 0;
     v.tableTicks = fromCommand;                 // section 122
 
@@ -2636,6 +2659,9 @@ void Driver::tick(int ch)
     else if (v.nestOn) {
         for (int lane = 0; lane < 3; ++lane) {
             if (v.nestWait[size_t(lane)] > 1) { --v.nestWait[size_t(lane)]; continue; }
+            // Section 145: lane 1 carries the transpose column, so reaching its
+            // first row is what hands the column over from the parent.
+            if (lane == 1) v.nestRowLive = true;
             stepTableLane(ch, lane, true);
             if (!v.active) return;
         }

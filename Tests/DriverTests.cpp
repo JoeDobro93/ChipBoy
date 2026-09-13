@@ -1941,53 +1941,93 @@ TEST_CASE("a shaped envelope's first step lands on its own pitch clock", "[drive
     CHECK(steps[0].first > 3.0);
 }
 
-TEST_CASE("a nested run's transpose adds to its parent's", "[driver][table]")
+TEST_CASE("a nested run owns the transpose column, and on noise the A's row stays added", "[driver][table]")
 {
-    // Section 144: an `A` in a table row starts a run beside its parent (§131),
-    // and that run's transpose column reaches the note as well -- measured on the
-    // ROM, a parent's +4 beside a nested +12 gives the clock for +16. ChipBoy read
-    // only the parent's row, so `READROOM`'s table `20`, which an `A 20` calls and
-    // which holds nothing but transposes, did nothing at all. Read on a pulse,
-    // where the transpose reaches the period without the noise map in between.
-    auto periodOf = [](int parentTsp, int nestTsp) {
+    // Sections 144 and 145: an `A` in a table row starts a run beside its parent
+    // (§131) and that run's transpose column is the one the note reads -- from the
+    // tick **after** the `A`, not on it. On a pulse the parent's column is then not
+    // read at all; on **noise** what it had in force on the `A`'s tick stays added,
+    // which is the sum §144 measured at the top of the noise map and took for the
+    // general law. Each step below is one tick (tickHz 100, 480 samples at 48 kHz),
+    // and the register is read after each.
+    auto seq = [](int ch, uint16_t addr, int parentTsp, int nestTsp, int ticks = 4) {
         Rig r;
-        auto& t1 = r.bank.tables[4];                       // slot 5: the parent
-        t1.used = true; t1.name = "parent"; t1.end = TableEnd::Stop;
+        // Both tables start empty: the factory bank's own slots hold presets, and
+        // a preset's commands would sweep the period under the test.
+        // Both run their sixteen rows and loop, as LSDj's do: the parent's row 0 is
+        // then back on the sixteenth tick and the called table's on the seventeenth.
+        auto& t1 = r.bank.tables[4] = Table{};             // slot 5: the parent
+        t1.used = true; t1.name = "parent"; t1.end = TableEnd::Loop;
         t1.steps[0].cmd2 = Command{ Cmd::A, 6, 0, 0 };     // CMD 2 calls slot 6 (section 131)
-        for (int k = 0; k < 4; ++k)
-            if (parentTsp != 0) { t1.steps[k].hasTranspose = true; t1.steps[k].transpose = int8_t(parentTsp); }
-        auto& t2 = r.bank.tables[5];                       // slot 6: the one it calls
-        t2.used = true; t2.name = "nested"; t2.end = TableEnd::Stop;
+        // The parent's transpose is on the `A`'s row alone, which is what the ROM
+        // probe had: its later rows are what a held column and a live one differ on.
+        if (parentTsp != 0) { t1.steps[0].hasTranspose = true; t1.steps[0].transpose = int8_t(parentTsp); }
+        auto& t2 = r.bank.tables[5] = Table{};             // slot 6: the one it calls
+        t2.used = true; t2.name = "nested"; t2.end = TableEnd::Loop;
         for (int k = 0; k < 4; ++k)
             if (nestTsp != 0) { t2.steps[k].hasTranspose = true; t2.steps[k].transpose = int8_t(nestTsp); }
         r.tickHz = 100.0;
-        r.song.noteSource[0] = tracker::NoteSource::Tracker;
+        r.song.noteSource[size_t(ch)] = tracker::NoteSource::Tracker;
+        // A bare instrument, not whichever factory preset sits in slot 1: a
+        // preset's own vibrato would move the period between the ticks read here.
         auto& i = r.bank.instruments[0];
-        i.table = 5;
-        ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
-        int lo = -1, hi = -1;
-        for (int k = 0; k < 4; ++k) {
-            const auto w = r.block(k == 0 ? std::vector<NoteEvent>{ cellOn(0, 48, 1) } : std::vector<NoteEvent>{}, 480);
-            if (const RegWrite* x = last(w, 0xFF13)) lo = int(x->value);
-            if (const RegWrite* x = last(w, 0xFF14)) hi = int(x->value & 7);
+        i = Instrument::defaults(ch == 3 ? InstrumentType::Noise : InstrumentType::Pulse, "probe");
+        i.pan = Pan::Both; i.table = 5;
+        ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(ch, p);
+        std::vector<int> out;
+        int held = -1;
+        for (int k = 0; k < ticks; ++k) {
+            const auto w = r.block(k == 0 ? std::vector<NoteEvent>{ cellOn(ch, 48, 1) } : std::vector<NoteEvent>{}, 480);
+            if (const RegWrite* x = last(w, addr)) held = int(x->value);
+            out.push_back(held);
         }
-        return hi >= 0 && lo >= 0 ? (hi << 8) | lo : -1;
+        return out;
     };
-    const int plain = periodOf(0, 0);
-    const int parentOnly = periodOf(4, 0);
-    const int both = periodOf(4, 12);
-    const int swapped = periodOf(12, 4);
-    INFO("plain " << plain << " parent " << parentOnly
-         << " both " << both << " swapped " << swapped);
-    REQUIRE(plain > 0);
-    CHECK(parentOnly != plain);                            // the parent's counts
-    CHECK(both == swapped);                                // +4 with +12 is +12 with +4
-    CHECK(both != parentOnly);                             // so they add, not override
-    CHECK(both != plain);
-    // A nested transpose with no parent transpose beside it is not asserted here:
-    // on a pulse it does not itself force a period write, and what the ROM does
-    // in that case was measured on **noise** (`probe/vs_nesttsp.py`), where the
-    // clock is rewritten every update. Asserting it on a pulse would be a guess.
+    auto show = [](const char* n, const std::vector<int>& x) {
+        std::string out = n; out += " ";
+        for (int k : x) out += std::to_string(k) + " ";
+        return out;
+    };
+    SECTION("a pulse reads the called table's row alone")
+    {
+        // NR13 is the low byte of the period, which these transposes move without
+        // wrapping it.
+        // Eighteen ticks: the parent's row 0 comes round on the sixteenth, where
+        // the ROM's note stays on the called table's column and does not go back.
+        const auto plain      = seq(0, 0xFF13, 0, 0, 18);
+        const auto parentOnly = seq(0, 0xFF13, 4, 0, 18);
+        const auto nestOnly   = seq(0, 0xFF13, 0, 12, 18);
+        const auto both       = seq(0, 0xFF13, 4, 12, 18);
+        const auto sum        = seq(0, 0xFF13, 0, 16, 18); // +4 and +12 together, if they added
+        INFO(show("plain", plain) << show("parent", parentOnly) << show("nest", nestOnly)
+             << show("both", both) << show("+16", sum));
+        REQUIRE(plain[0] > 0);
+        CHECK(plain[2] == plain[0]);                       // nothing else moves the period here
+        CHECK(parentOnly[0] != plain[0]);                  // the `A`'s own row transposes its own tick
+        CHECK(both[0] == parentOnly[0]);
+        CHECK(nestOnly[1] != plain[1]);                    // and the called table's row the next one
+        CHECK(both[1] == nestOnly[1]);                     // the parent's is not read beside it
+        CHECK(both[1] != sum[1]);                          // so the two do not add here
+        CHECK(parentOnly[2] == plain[2]);                  // nor does the parent hold its own
+        CHECK(both[16] == plain[16]);                      // nor when its row 0 comes round again
+        CHECK(both[17] == nestOnly[1]);                    // where the called table's row 0 is due
+    }
+    SECTION("noise keeps the A's row added")
+    {
+        // NR43 is the noise clock, which the map moves a whole entry at a time.
+        const auto plain  = seq(3, 0xFF22, 0, 0);
+        const auto parent = seq(3, 0xFF22, 4, 0);
+        const auto four   = seq(3, 0xFF22, 0, 4);
+        const auto eight  = seq(3, 0xFF22, 0, 8);
+        const auto both   = seq(3, 0xFF22, 4, 4);
+        INFO(show("plain", plain) << show("parent", parent) << show("+4", four)
+             << show("+8", eight) << show("both", both));
+        REQUIRE(four[2] > 0);
+        REQUIRE(four[2] != eight[2]);                      // the two are distinguishable here
+        CHECK(both[2] == eight[2]);                        // +4 held beside the called +4 is +8
+        CHECK(both[2] != four[2]);
+        CHECK(parent[2] != plain[2]);                      // and it is held with nothing called at all
+    }
 }
 
 TEST_CASE("a STEP table's position is the instrument's own", "[driver][table]")

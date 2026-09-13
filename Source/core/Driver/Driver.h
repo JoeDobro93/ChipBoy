@@ -275,6 +275,13 @@ private:
         uint16_t nestWait[3] = { 0, 0, 0 };
         uint8_t  nestHopLeft[2] = { 0, 0 }, nestHopFrom[2] = { 0xFF, 0xFF };
         bool     nestOn = false, nestVolOn = true, nestJustStarted = false;
+        /// Section 145: the transpose column belongs to the nested run once it
+        /// has reached its first row, which is the tick after the `A`'s, not the
+        /// `A`'s own. `nestTspHeld` is what the parent's column had in force on
+        /// that tick: on noise it stays added to the nested run's, everywhere
+        /// else it is zero.
+        bool     nestRowLive = false;
+        int8_t   nestTspHeld = 0;
         /// Section 132: a `PLAY = ONCE` run has already written its flat
         /// silencing frame, so it is not written again every tick.
         bool     frameSilenced = false;
