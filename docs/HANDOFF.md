@@ -954,6 +954,40 @@ design-log section the change touches. Update this file at the end of every chan
   of the time (§97). Whole notes are missing, among them every one whose note byte names a sample
   one of its two kits does not have -- the ROM plays the other kit's, `kitNote()` gives up on both
   and returns silence. Start there; it is a few lines.
+- **An imported envelope follows the host tempo and LSDj's does not.** The user: "the tempo of the
+  project is affecting the pitch ... raise FL's tempo and the pitch shifts." Measured, the pitch itself
+  is clean -- `CASTSHDW` traced at its own 132 BPM and at 200 gives **identical** note-on periods on
+  `PU1` (36), `PU2` (27) and `NOI` (61), a kit's rate comes off its own period byte, its streaming is
+  driven by the wave timer in cycles, and `P` and `V` on a pulse are real time on the ROM *and* in
+  ChipBoy (the period at 50/100/200/400 ms after the note is the same at T120 and T200 in both,
+  `probe/vs_tempopitch.py`). What does move is the **envelope**: `CASTSHDW`'s first level step lands
+  357 ms after the note at 132 BPM and 234 ms at 200 -- the ratio of the tempos -- because the importer
+  converts LSDj's real-time stages into **ticks** (`tickMs`, §121, §132) and the driver then measures
+  them against the tick in force. §141 measured the ROM's envelope as tempo-independent byte for byte
+  (T163 against T81), so every imported decay, fade and drum body is wrong as soon as the host tempo
+  differs from the song's. Fixing it is a design decision, not a patch: the stage lengths want a real
+  unit (LSDj's 2.79 ms pitch clock) rather than a tick, which is a song-format change and a change to
+  the Instrument tab, so it waits on the user's call. `--tempo BPM` on `chipboy_recordtest
+  --trace-song` plays a song at another tempo, which is how this was measured.
+- **`CASTSHDW`'s intro: two pitch-effect clocks are wrong, and that is what the user hears as the tempo
+  moving the pitch.** Their process: FL at 129 BPM, ChipBoy on Host tempo, import `CASTSHDW`, raise FL
+  to 132 -- "the intro sounded way off ... the pitch kept dropping", and "lowering and raising the tempo
+  in FL also changed the pitch real time". Traced, the note pitches themselves never move with the tempo
+  (above), and **both** the ROM and ChipBoy run a wave DRUM sweep in real time, so a tempo change does
+  legitimately land it somewhere else in the row -- in LSDj too. What is wrong is where the effects go:
+  - **DRUM on a wave instrument** (phrase `3B` row 0, instrument `10`, byte 5 = `0x60`): the ROM falls
+    `1958 1470 1202 891` over three ticks and then **holds 891** until the next note; ChipBoy falls
+    `1810 1401 1120 793 465 137` and keeps going, wrapping at 2048 (§110). The runaway is the dropping
+    pitch, and it is why any tempo change makes the intro land somewhere new. Measure what stops the
+    ROM's sweep -- a floor, a step count, or the note's own envelope -- before changing it.
+  - **STEP on a kit** (row 1, instrument `0F`, byte 5 = `0xE9`): the ROM moves the period three times in
+    the six-tick row, `1811` at tick 0, `1764` at tick 2.9, `1561` at tick 5.9, **at the same ticks at
+    132 BPM and at 200** -- so STEP is musical where DRUM and FAST are real time. ChipBoy holds `1811`
+    for the whole row: §97 read it as "three times the byte **once**" and the driver does that
+    (`drumOffset += 3 * speed; bendSpeed = 0`).
+  `probe/vs_wavtempo.py` prints the period per musical tick for both at two tempos; `vs_kittempo.py` the
+  kit row; `vs_tempopitch.py` the FAST case that is already right.
+
 - **`SAMESONG` phrase 2F's row E falls 4 % short a step.** Note `49` on instrument `00` (`WAV`, byte
   5 = `0x60`) carries no command and its period still falls over the row: the ROM `1362 1158 953 748
   544`, ChipBoy `1308 1115 923 731 538` -- the same shape, every step a little small. It is the

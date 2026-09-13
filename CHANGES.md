@@ -3878,3 +3878,12 @@ After: all three probes are the ROM's, and `SAMESONG`'s 2E and 2F agree on **186
 instrument `00`, whose own pitch effect falls `1362 1158 953 748 544` on the ROM against ChipBoy's
 `1308 1115 923 731 538`, about 4 % short a step. That is the instrument's vibrato or sweep shape, not
 a command, and it wants its own measurement.
+
+### 2026-09-13 — `--tempo` on `--trace-song` (tooling)
+
+`chipboy_recordtest --trace-song FILE OUT.csv [seconds] --tempo BPM` plays the song at another tempo,
+which is what a host's tempo does to it. Added to measure the user's report that the tempo affects the
+pitch: a note's pitch does not -- `CASTSHDW`'s note-on periods are identical at 132 and 200 BPM on
+every channel that writes one -- but two things that move a pitch are on the wrong clock (a wave DRUM
+sweep that never stops, a kit STEP bend applied once instead of every tick) and the **envelope** follows
+the tempo where LSDj's does not. All three are in `docs/HANDOFF.md` with their numbers.
