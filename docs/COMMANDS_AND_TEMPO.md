@@ -4642,3 +4642,58 @@ R 80   ROM 351 over a second                           CB  359
 
 The few extra over a second are the pitch clock's own 0.07%: `kPitchCycles` is 11712 where the ROM's
 music clock is 11704, which `docs/HANDOFF.md` has separately.
+
+## 144. A nested table run's transpose column counts too, and adds to its parent's
+
+`READROOM`'s noise channel was the last thing on song row `04` not matching, and the note about it --
+"the table steps a tick early" -- was wrong about the cause. The cluster it disagrees on is table
+`0x20`, which table `05`'s row F calls with an `A 20`, and `0x20` is nothing but a transpose column.
+Probed with a table whose only content is an `A`, calling one whose rows carry transposes, counting
+the retriggers a noise transpose makes:
+
+```
+the transposes in the instrument's own table   ROM 5, at ticks 0.0  0.1  16.1  32.1  48.1
+                                              CB  5, at ticks 0.0  0.2  16.0  32.0  48.0
+the same transposes in the table an `A` calls  ROM 5, at ticks 0.0  0.9  17.0  33.0  49.0
+                                              CB  1, at tick  0.0
+```
+
+So a **nested run's transpose column never reaches the note**: `tableTransposeOf()` reads
+`v.tableSlot` and `v.tableRow`, the parent's, and §131 gave the nested run pointers of its own that
+nothing consults for this. The ROM's first nested row lands one tick after the row carrying the `A`,
+which is where `READROOM`'s apparent one-tick offset came from -- ChipBoy was reaching a
+similar-looking cluster by another route rather than stepping this one early.
+
+What happens when both tables carry one, `NR43` on noise:
+
+```
+parent / nested      ROM                          CB
+none / +12           14:DC  31:40  (every 16)     nothing
++4   / none           1:30                         3:30  15:40
++4   / +12            1:30  14:DA  31:30           3:30  15:40
++12  / +4             1:DC  14:DA  31:DC           3:DC  15:40
+```
+
+`+12` alone is `DC` and `+4` alone is `30`, while `+4` with `+12` and `+12` with `+4` are both `DA` --
+the clock for +16. **They add**, and the nested one applies on the tick its own row is on.
+
+### As built
+
+`tableTransposeOf()` adds the nested run's row to the parent's, reading `nestSlot` and `nestRow[1]`
+the way it reads `tableSlot` and `tableRow` -- lane 1 being the one the row's own columns belong to,
+as for the parent.
+
+### Left measured, not settled
+
+Where a transpose **reverts** still differs. With the parent holding one on its row 0 and nothing
+after, the ROM writes `NR43` once and holds it where ChipBoy writes it and then puts it back on the
+next row (`3:30  15:40` against the ROM's `1:30` alone). That is a question about the row after a
+transpose, not about the nested run, and it wants its own measurement.
+
+The nested run's **first** row is also still a tick early. With the transpose reaching the note, the
+five retriggers land on ROM ticks `0.0 0.9 17.0 33.0 49.0` against ChipBoy's `0.0 0.2 16.0 32.0 48.0`:
+the ROM holds the row carrying the `A` for a whole tick before the called table's row 0 has any effect,
+where ChipBoy starts it a fifth of a tick in. Gating the transpose on `nestJustStarted`, which is what
+holds the nested *lanes* back for that tick (§122), does **not** fix it -- measured, the first effect
+moved to tick `0.0`, marginally worse -- so whatever delays the nested run's first row in the ROM is
+not that flag, and it is written down rather than guessed at.

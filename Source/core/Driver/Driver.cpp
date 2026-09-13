@@ -1074,11 +1074,28 @@ double Driver::noteOfVoice(int ch) const
 int Driver::tableTransposeOf(const Voice& v) const
 {
     if (plainTrigger_) return 0;                   // section 84
-    if (!v.tableOn || !bank_) return 0;
-    const Table* t = bank_->table(v.tableSlot);
-    if (!t) return 0;
-    const auto& st = t->steps[v.tableRow];
-    return st.hasTranspose ? int(st.transpose) : 0;
+    if (!bank_) return 0;
+    // Section 144: the run an `A` started carries a transpose column of its own
+    // and the two **add** -- measured, a parent's +4 beside a nested +12 gives
+    // the noise clock for +16. Section 131 gave the nested run its own pointers
+    // and this was still reading only the parent's.
+    auto rowOf = [this](uint8_t slot, uint8_t row) {
+        const Table* t = bank_->table(slot);
+        if (!t) return 0;
+        const auto& st = t->steps[row];
+        return st.hasTranspose ? int(st.transpose) : 0;
+    };
+    int tsp = 0;
+    if (v.tableOn) tsp += rowOf(v.tableSlot, v.tableRow);
+    // Lane 1 is the one a row's own columns belong to, as for the parent.
+    //
+    // The ROM's first nested row lands a tick later than this does -- tick 0.9
+    // against 0.2, measured -- and gating this on `nestJustStarted`, which is
+    // what holds the nested *lanes* back for that tick (section 122), does not
+    // move it: it put the transpose at 0.0 instead. So the tick is still open,
+    // and it is written down in docs/HANDOFF.md rather than guessed at here.
+    if (v.nestOn) tsp += rowOf(v.nestSlot, v.nestRow[1]);
+    return tsp;
 }
 
 int Driver::computePeriod(int ch)

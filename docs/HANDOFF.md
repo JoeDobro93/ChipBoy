@@ -432,6 +432,26 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 53 (§144), closing the last of round 45's open questions and the noise-table item: a
+  **nested table run's transpose column never reached the note**. `READROOM`'s noise channel was the
+  last thing on song row `04` not matching, and the note about it -- "the table steps a tick early" --
+  had the cause wrong: the cluster it disagrees on is table `0x20`, which table `05`'s row F calls
+  with an `A 20`, and `0x20` is nothing but a transpose column. `tableTransposeOf()` read `v.tableSlot`
+  and `v.tableRow`, the parent's, where §131 gave the nested run pointers of its own that nothing
+  consulted for this -- five retriggers on the ROM against ChipBoy's one (`probe/vs_nesttsp.py`). It
+  now adds the nested run's row to the parent's, lane 1 being the row's own as for the parent, and the
+  two **add**: `+4` beside `+12` and `+12` beside `+4` both give `NR43 = DA`, the clock for +16, where
+  `+12` alone is `DC` and `+4` alone is `30`, all ROM-measured. The apparent one-tick offset was
+  ChipBoy reaching a similar-looking cluster by another route, not stepping this one early. **Two
+  things left measured, not settled** (§144): the nested run's **first** row is still a tick early
+  (ROM tick `0.9`, ChipBoy `0.2`), and gating the transpose on `nestJustStarted` -- the flag that
+  holds the nested *lanes* back for that tick (§122) -- does **not** fix it, measured: the first
+  effect moved to `0.0`, marginally worse, so it was reverted rather than shipped with a comment the
+  measurement denies. And where a transpose **reverts** differs: with the parent holding one on row 0
+  and nothing after, the ROM writes `NR43` once and holds it, ChipBoy writes it and puts it back on the
+  next row (`3:30  15:40` against `1:30`) -- a question about the row after a transpose, not about
+  nesting.
+
 - Round 52 (§143), closing §136's `x = 8` question: the fast roll's **interval** (`y + 1` pitch
   clocks, measured across `y` = 0, 1, 2, 4, 8) and its **level** (the instrument's envelope where it
   has got to, never reset -- the fast path goes through `retrigger(ch, false)`, which §136's restart
@@ -907,11 +927,17 @@ design-log section the change touches. Update this file at the end of every chan
   (16.78 ms), not a drift. The tempo itself is right: the ROM's tick for every tempo byte measured
   (85 to 190) is within 0.016% of `1 / (0.4 x bpm)`, and DELIVERY's grooves are all 6/6 with no `G`
   or `T` anywhere. So one row in about a hundred is taking a tick longer in ChipBoy. Find which.
-- **`READROOM`'s noise table steps a tick early.** §138 closed the missing triggers; what is left on
-  song row `04` is that the table-driven cluster inside phrase `89`'s rows 1-2 starts a tick early in
-  ChipBoy (a constant 35 ms offset against the ROM's 21 ms play-start offset, so about 14 ms = one
-  tick) and carries one step more. Start from `probe/rrrow.py rr04b 04 20`, which prints the first
-  delta, then the register dump either side of it.
+- ~~`READROOM`'s noise table steps a tick early~~ -- **mostly settled by §144**, and the cause was
+  not stepping. The cluster inside phrase `89`'s rows 1-2 comes from table `0x20`, which table `05`'s
+  row F calls with an `A 20`, and a **nested run's transpose column never reached the note** at all --
+  ChipBoy was arriving at a similar-looking cluster by another route. It now does, and the parent's and
+  nested transposes add. What is genuinely left is narrower: the nested run's **first** row is a tick
+  early (ROM tick `0.9`, ChipBoy `0.2`) and `nestJustStarted`, the flag that holds the nested lanes
+  back for that tick (§122), is measured **not** to be what delays it -- gating the transpose on it put
+  the first effect at `0.0`. Whatever the ROM waits for there wants reading off the ROM. Related and
+  also open: a transpose **reverts** on the next row in ChipBoy where the ROM holds it (`3:30  15:40`
+  against `1:30` alone) -- a question about the row after a transpose. `probe/vs_nesttsp.py` measures
+  both; `probe/rrrow.py rr04b 04 20` still prints the song-level delta.
 - ~~`R` with `x = 8`, the fast roll~~ -- **settled by §143.** The interval (`y + 1` pitch clocks) and
   the level (the envelope where it has got to, not reset) were already right; the one fault was
   ChipBoy firing a retrigger as the command was read, which the ROM does not for `x = 8`.

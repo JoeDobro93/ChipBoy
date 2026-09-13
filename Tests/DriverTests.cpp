@@ -1941,6 +1941,55 @@ TEST_CASE("a shaped envelope's first step lands on its own pitch clock", "[drive
     CHECK(steps[0].first > 3.0);
 }
 
+TEST_CASE("a nested run's transpose adds to its parent's", "[driver][table]")
+{
+    // Section 144: an `A` in a table row starts a run beside its parent (§131),
+    // and that run's transpose column reaches the note as well -- measured on the
+    // ROM, a parent's +4 beside a nested +12 gives the clock for +16. ChipBoy read
+    // only the parent's row, so `READROOM`'s table `20`, which an `A 20` calls and
+    // which holds nothing but transposes, did nothing at all. Read on a pulse,
+    // where the transpose reaches the period without the noise map in between.
+    auto periodOf = [](int parentTsp, int nestTsp) {
+        Rig r;
+        auto& t1 = r.bank.tables[4];                       // slot 5: the parent
+        t1.used = true; t1.name = "parent"; t1.end = TableEnd::Stop;
+        t1.steps[0].cmd2 = Command{ Cmd::A, 6, 0, 0 };     // CMD 2 calls slot 6 (section 131)
+        for (int k = 0; k < 4; ++k)
+            if (parentTsp != 0) { t1.steps[k].hasTranspose = true; t1.steps[k].transpose = int8_t(parentTsp); }
+        auto& t2 = r.bank.tables[5];                       // slot 6: the one it calls
+        t2.used = true; t2.name = "nested"; t2.end = TableEnd::Stop;
+        for (int k = 0; k < 4; ++k)
+            if (nestTsp != 0) { t2.steps[k].hasTranspose = true; t2.steps[k].transpose = int8_t(nestTsp); }
+        r.tickHz = 100.0;
+        r.song.noteSource[0] = tracker::NoteSource::Tracker;
+        auto& i = r.bank.instruments[0];
+        i.table = 5;
+        ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+        int lo = -1, hi = -1;
+        for (int k = 0; k < 4; ++k) {
+            const auto w = r.block(k == 0 ? std::vector<NoteEvent>{ cellOn(0, 48, 1) } : std::vector<NoteEvent>{}, 480);
+            if (const RegWrite* x = last(w, 0xFF13)) lo = int(x->value);
+            if (const RegWrite* x = last(w, 0xFF14)) hi = int(x->value & 7);
+        }
+        return hi >= 0 && lo >= 0 ? (hi << 8) | lo : -1;
+    };
+    const int plain = periodOf(0, 0);
+    const int parentOnly = periodOf(4, 0);
+    const int both = periodOf(4, 12);
+    const int swapped = periodOf(12, 4);
+    INFO("plain " << plain << " parent " << parentOnly
+         << " both " << both << " swapped " << swapped);
+    REQUIRE(plain > 0);
+    CHECK(parentOnly != plain);                            // the parent's counts
+    CHECK(both == swapped);                                // +4 with +12 is +12 with +4
+    CHECK(both != parentOnly);                             // so they add, not override
+    CHECK(both != plain);
+    // A nested transpose with no parent transpose beside it is not asserted here:
+    // on a pulse it does not itself force a period write, and what the ROM does
+    // in that case was measured on **noise** (`probe/vs_nesttsp.py`), where the
+    // clock is rewritten every update. Asserting it on a pulse would be a guess.
+}
+
 TEST_CASE("a STEP table's position is the instrument's own", "[driver][table]")
 {
     // Section 140: measured on the ROM, two instruments keep their own position
