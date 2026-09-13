@@ -1395,6 +1395,51 @@ TEST_CASE("R retriggers and steps the volume", "[driver][commands]")
     for (int v : flat) CHECK(v == 8);
 }
 
+TEST_CASE("a retrigger starts a fading envelope again", "[driver][commands]")
+{
+    // Section 136: ChipBoy added `R`'s step to the level the software envelope
+    // had already faded to, so a fading instrument's roll was silent. A
+    // retrigger is a note-on in everything but the note: the envelope starts
+    // again, and the step counts from its start.
+    auto volumes = [](int16_t x) {
+        Rig r;
+        r.tickHz = 100.0;
+        auto& i = r.bank.instruments[0];
+        i.env.mode = EnvMode::Shaped;
+        i.env.start = 9; i.env.peak = 9; i.env.attackTicks = 0;
+        i.env.decayTicks = 3; i.env.sustain = 0;          // nine to nothing in three ticks
+        ChannelParams p; p.instrument = 1; p.velocityMode = 2;
+        p.cmd[0] = { Cmd::R, x, 6, 0 };                   // every six ticks, well past the fade
+        r.drv.setParams(0, p);
+        // The level each trigger *sounds* at: the NR12 write the trigger in the
+        // same block follows, not the envelope's level once the block is over --
+        // it has faded by then, which is the whole point.
+        auto volAtTrigger = [](const std::vector<RegWrite>& w) {
+            int vol = -1, best = -1;
+            for (const auto& x : w) {
+                if (x.addr == 0xFF12) vol = (x.value >> 4) & 15;
+                if (x.addr == 0xFF14 && (x.value & 0x80) && vol >= 0) best = vol;
+            }
+            return best;
+        };
+        std::vector<int> out;
+        out.push_back(volAtTrigger(r.block({ Rig::on(0, 60, 100) }, 480)));
+        for (int k = 0; k < 40; ++k) {
+            const int at = volAtTrigger(r.block({}, 480));
+            if (at >= 0) out.push_back(at);
+        }
+        return out;
+    };
+    // The slot's `R` fires its first retrigger on the note's own tick (section
+    // 134), so the first entry is already a retrigger and not the note's nine.
+    const auto flat = volumes(0);                         // x = 0: the start level every time
+    REQUIRE(flat.size() >= 4);
+    CHECK(flat[0] == 9); CHECK(flat[1] == 9); CHECK(flat[2] == 9); CHECK(flat[3] == 9);
+    const auto down = volumes(15);                        // x = F: one step down each retrigger
+    REQUIRE(down.size() >= 4);
+    CHECK(down[0] == 8); CHECK(down[1] == 7); CHECK(down[2] == 6); CHECK(down[3] == 5);
+}
+
 TEST_CASE("M sets a side or moves it", "[driver][commands]")
 {
     Rig r;

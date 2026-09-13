@@ -432,6 +432,21 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 45 (§136), the user's retrigger roll, reported twice and still wrong: with §135 in,
+  `READROOM`'s song row `04` agreed with the ROM on `PU1` and `PU2` trigger for trigger and the
+  noise channel did not. Rendering that row's noise channel from both register streams through the
+  same APU (`probe/wavcmp.py` + `scratchpad/wavout`) put the difference in one place -- the ROM has
+  four hits at 1695-2095 ms of every chain pass where ChipBoy has one long silence, which is phrase
+  `89`'s rows 9 and A, `R F4` and `R F6`. The times were right and the **volumes** were not: a
+  retrigger **starts the instrument's envelope again** (a note-on in everything but the note) and
+  `R`'s `x` step accumulates from that start, so on a volume-9 fade-1 instrument the ROM gives
+  9 8 7 6 5 ... for `R F4` and 9 9 9 9 for `R 04`, where ChipBoy gave 9 8 0 0 0 -- it added the
+  step to the level the software fade had reached, which agrees exactly only while nothing fades
+  (the column §133 and §134 were measured on). `Voice::retrigBase` is what the step counts from.
+  **Not settled:** `R x = 8`, the fast roll, does not fit -- the ROM gives 9 5 0 0 at 14 ms apart
+  where a restart would hold 9, and one burst at the command where every other `x` gives two.
+  `READROOM` has no `x = 8`, so §90 stands there until it is measured (`probe/vs_Rvol.py`).
+
 - Round 44 (§135), from the user's **`READROOM`** song row `04`: "everything goes totally out of
   whack ... because they are not looping on `H` commands as expected". The `H`s are exact -- a
   two-phrase chain probe (`probe/hop2.py`, `hop3.py`) agreed with the ROM step for step on `H 00`
@@ -819,18 +834,22 @@ design-log section the change touches. Update this file at the end of every chan
   (16.78 ms), not a drift. The tempo itself is right: the ROM's tick for every tempo byte measured
   (85 to 190) is within 0.016% of `1 / (0.4 x bpm)`, and DELIVERY's grooves are all 6/6 with no `G`
   or `T` anywhere. So one row in about a hundred is taking a tick longer in ChipBoy. Find which.
-- **`READROOM`'s noise channel triggers where ChipBoy does not, and sits about 2 dB low.** On song
-  row `04` `PU1` and `PU2` now agree with the ROM on every trigger (§135); `NOI` agrees for
-  seventeen and then the ROM fires a trigger ChipBoy does not. Phrase `89` under `G 0C` puts its
-  rows 184 ms apart; the ROM triggers twice at row 2 (`note 34`, instrument `15`, `E 35`) and once
-  at row 3 (no note, `E 24`), ChipBoy once and none. It is **not** `E` itself: a bare `E xy` on a
-  sounding noise channel emits no trigger on the ROM, measured five ways in
-  `probe/vs_Enoi.py` (`E 35`, `E 24`, `E 30`, an `E` on the note's own row, and the same on `PU1`)
-  -- all one trigger, ROM and ChipBoy alike. So it is something about instrument `15`
-  (`b3 = 6F`: a length of 17 with the counter **on**) or its neighbours; instrument `0F` has no
-  length and row 4 pairs in both. Phrase `1A` rendering about 2 dB down in every band with the note
-  timing right is likely the same thread: fewer restarts means the envelope decays from wherever
-  the last note left it. Start from `probe/rrrow.py rr04b 04 20`, which prints the first delta.
+- **`READROOM`'s noise channel has one trigger ChipBoy does not, and a table step a tick out.** On
+  song row `04` `PU1` and `PU2` agree with the ROM on every trigger (§135) and `NOI` agrees for
+  seventeen. Then: the ROM triggers **twice** at phrase `89`'s row 2 (`note 34`, instrument `15`,
+  `E 35`) and once at its row 3 (no note, `E 24`), where ChipBoy triggers once and none. It is
+  **not** `E`: a bare `E xy` on a sounding noise channel emits no trigger on the ROM, measured five
+  ways in `probe/vs_Enoi.py` (`E 35`, `E 24`, `E 30`, an `E` on the note's own row, and the same on
+  `PU1`) -- one trigger each, ROM and ChipBoy alike. Suspect instrument `15` (`b3 = 6F`: length 17
+  with the counter **on**), since instrument `0F` has no length and its row pairs in both. Separately
+  the table-driven cluster inside rows 1-2 starts a tick early in ChipBoy (a constant 35 ms offset
+  against the ROM's 21 ms play-start offset, so ~14 ms = one tick) and carries one step more. Start
+  from `probe/rrrow.py rr04b 04 20`, which prints the first delta, then the register dump either
+  side of it.
+- **`R` with `x = 8`, the fast roll, is not settled (§136).** On a fading instrument the ROM gives
+  9, 5, 0, 0 at 14 ms apart where the §136 restart would hold 9, and it emits one burst at the
+  command where every other `x` emits two. `READROOM` has no `x = 8`, so §90 stands there.
+  `probe/vs_Rvol.py` is the measurement.
 - **`READROOM` comes apart at about thirty seconds.** Its first five windows are 89-99% on every
   channel since §102 gave a phrase's `H` its loop; before that it was 3-6% from the first bar. §135
   moves every channel that carries a `G`, so this wants re-measuring from the top before anything

@@ -413,6 +413,11 @@ private:
         /// slide yet, so it is the portamento the next note-on takes (20).
         bank::Command hybridSlide;
         int16_t  retrigStep = 0;                      ///< R: volume change per retrigger
+        /// Section 136: the level `R`'s step counts from -- the level the `R`
+        /// was read at, or, for a shaped envelope, the start the retrigger puts
+        /// the envelope back to. The step accumulates over `retrigCount` from
+        /// here, so it is not added to itself.
+        uint8_t  retrigBase = 15;
         uint32_t rng = 1;
         // model of the wave channel timer, for streaming
         uint64_t nextFetch = 0; uint32_t fetchPeriod = 0; uint32_t fetchIndex = 0; bool timerValid = false;

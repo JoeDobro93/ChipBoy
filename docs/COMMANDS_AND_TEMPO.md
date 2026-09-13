@@ -4203,3 +4203,61 @@ Two rules keep every song written before this one sounding as it did:
 
 `G 0` -- ChipBoy's revert, which LSDj cannot write (its groove 00 imports as slot 1) -- clears the
 walk back to the phrase's own and restarts the index.
+
+## 136. A retrigger starts the instrument's envelope again, and `R`'s step accumulates from there
+
+With §135 in, `READROOM`'s song row `04` agreed with the ROM on `PU1` and `PU2` trigger for
+trigger, and the noise channel still did not. Rendering the row's noise channel from both register
+streams through the same APU put the difference in one place: where the ROM has four hits at
+1695-2095 ms in every chain pass, ChipBoy has one long silence. Those are phrase `89`'s rows 9 and
+A, `R F4` and `R F6`.
+
+The retrigger *times* were right. The volumes were not. Measured on the noise channel at tempo 163,
+the volume each trigger sounds at, for an instrument whose envelope **fades** (`b1 = 91`: volume 9,
+fade 1) and one that does not (`b1 = F0`: volume 15, fade 0):
+
+```
+             env 91 (vol 9, fade 1)            env F0 (vol 15, no fade)
+R F4   ROM   9 8 7 6 5 4 3 2 1 0               15 14 13 12 11 10 9 8 7 6
+       CB    9 8 0 0 0 0 0 0 0 0               15 14 13 12 11 10 9 8 7 6
+R F6   ROM   9 8 7 6 5 4 3 2 1 0               15 14 13 12 11 10 9 8 7 6
+       CB    9 8 0 0 0 0 0 0 0 0               15 14 13 12 11 10 9 8 7 6
+R 04   ROM   9 9 9 9 9 9 9 9 9 9               15 15 15 15 15 15 15 15 15 15
+       CB    9 9 0 0 0 0 0 0 0 0               15 15 15 15 15 15 15 15 15 15
+```
+
+The same on `PU1`. So a retrigger **starts the instrument's envelope again** — it is a note-on in
+everything but the note, as `docs/HARDWARE_DRIVER_AUDIT.md` already says of an instrument reload —
+and `R`'s `x` step then accumulates over the retriggers from that starting volume: `R F4` is
+9, 8, 7, 6 and not 9, 8, 8, 8, while `R 04`, which steps by nothing, is 9 every time however long
+the note has been fading. ChipBoy added the step to the level the software envelope had already
+reached, so the two agreed exactly while nothing was fading (the `F0` column, which is what §133
+and §134 were measured on) and every retrigger of a fading instrument was silent.
+
+### As built
+
+`Driver::retrigger(ch, full = true)` restarts the shaped envelope the way a note-on and an
+instrument load do — `shapedTick`, `shapedClocks`, `shapedPosMax`, `shapedFrom` to zero,
+`shapedTaken` and `shapedRelease` clear, the level read back out of `shapedLevel()` — and then
+applies `retrigStep * retrigCount`, `retrigCount` being which retrigger this is since the `R`
+was read. It was already a field, reset by the `R` and by a note-on and incremented nowhere.
+`Voice::retrigBase` is the level the step counts from, so it is not added to itself: the
+envelope's start where there is one, and otherwise the level the `R` was read at.
+
+Re-measured with it in, every case but the fast roll agrees with the ROM to the volume step:
+
+```
+             env 91 (vol 9, fade 1)       env F0 (vol 15, no fade)
+R F4   ROM   9 8 7 6 5 4 3 2 1 0          15 14 13 12 11 10 9 8 7 6
+       CB    9 8 7 6 5 4 3 2 1 0          15 14 13 12 11 10 9 8 7 6
+R 04   ROM   9 9 9 9 9 9 9 9 9 9          15 15 15 15 15 15 15 15 15 15
+       CB    9 9 9 9 9 9 9 9 9 9          15 15 15 15 15 15 15 15 15 15
+```
+
+### Left measured but not settled
+
+`R` with `x = 8`, the fast roll on the pitch clock (§90), does **not** fit this: on the fading
+instrument the ROM gives 9, 5, 0, 0 at 14 ms apart where a restart would hold 9, and it emits one
+burst at the command where the other `x` values emit two. `READROOM` uses `R F4`, `R F6`, `R D0`,
+`R 04` and `R 06` and no `x = 8`, so the fast roll keeps §90's behaviour until it is measured
+properly.

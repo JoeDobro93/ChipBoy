@@ -1948,6 +1948,7 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             v.retrigFast = (c.a & 15) == 8;
             v.retrigStep = retrigVolStep(c.a);
             v.retrigCount = 0; v.retrigFastCount = 0;
+            v.retrigBase = v.envVol;                  // section 136: where the step counts from
             // Section 134: the retrigger fires on the command's **own** tick and
             // then every `y` ticks -- `y = 0` is that one alone. ChipBoy counted
             // from the command instead, so the first landed a tick early and the
@@ -2617,11 +2618,25 @@ void Driver::retrigger(int ch, bool full)
                emit(regAddr(ch, 4), uint8_t((f >> 8) | 0x80 | lengthBit(v.inst)), true); markTrigger(ch); }
         return;
     }
+    // Section 136: a retrigger starts the instrument's envelope again, exactly
+    // as a note-on and an instrument load do -- so the level it sounds at is
+    // the envelope's own start and not wherever a fade had got to.
+    if (v.retrigCount < 0xFFFF) ++v.retrigCount;
+    if (v.inst.env.mode == EnvMode::Shaped) {
+        v.shapedOn = true; v.shapedTaken = false; v.shapedRelease = false;
+        v.shapedTick = 0; v.shapedClocks = 0; v.shapedPosMax = 0; v.shapedFrom = 0;
+        const uint8_t level = shapedLevel(v);
+        if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) v.waveLevel = uint8_t(level / 4);
+        else { v.envVol = level; v.envRate = 0; v.envDir = EnvDir::Up; v.retrigBase = level; }
+    }
     // `x` is a signed nibble of volume change: 1-7 up by that much, 9-15 down
     // by sixteen minus it (measured: R A steps the level down by six). Section
     // 133: **on the noise channel too** -- the guard that skipped it there had
     // nothing measured behind it, and it is what silenced `READROOM`'s rolls.
-    if (v.retrigStep) v.envVol = uint8_t(std::clamp<int>(int(v.envVol) + v.retrigStep, 0, 15));
+    // It accumulates over the retriggers from that start (section 136): R F4 is
+    // 9, 8, 7, 6 from a volume of nine, not 9, 8, 8, 8.
+    if (v.retrigStep)
+        v.envVol = uint8_t(std::clamp<int>(int(v.retrigBase) + int(v.retrigStep) * int(v.retrigCount), 0, 15));
     if (pulse) {
         if (ch == 0) emit(0xFF10, uint8_t(~v.sweepByte), true);
         emit(regAddr(ch, 1), uint8_t((v.duty << 6) | lengthCode6(v.inst.length)), true);

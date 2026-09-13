@@ -3571,3 +3571,36 @@ last note sustaining" now lives. `locked` is what carries §9.2's "the slot outr
 **Fixed in passing:** `playingStepOf()` in `PanelCommon.cpp` passed a 65-entry array to
 `stepStartTicks()`, which writes one entry per **position** — up to 257 of them once a cell's `H`
 loops (§102). It was a stack overrun on any phrase with a hop.
+
+### 2026-09-13 (READROOM) — a retrigger starts the instrument's envelope again (§136)
+
+**Measured:** with §135 in, `READROOM`'s song row `04` agreed with the ROM on `PU1` and `PU2`
+trigger for trigger and the noise channel still did not. Rendering that row's noise channel from
+both register streams through the same APU put the difference in one place: where the ROM has four
+hits at 1695-2095 ms of every chain pass, ChipBoy has one long silence. Those are phrase `89`'s
+rows 9 and A, `R F4` and `R F6` — the user's retrigger roll, reported twice and still wrong.
+
+The retrigger times were already right; the volumes were not. The volume each trigger sounds at,
+noise channel, tempo 163, for an instrument whose envelope fades and one that does not:
+
+```
+             env 91 (vol 9, fade 1)       env F0 (vol 15, no fade)
+R F4   ROM   9 8 7 6 5 4 3 2 1 0          15 14 13 12 11 10 9 8 7 6
+       CB    9 8 0 0 0 0 0 0 0 0          15 14 13 12 11 10 9 8 7 6
+R 04   ROM   9 9 9 9 9 9 9 9 9 9          15 15 15 15 15 15 15 15 15 15
+       CB    9 9 0 0 0 0 0 0 0 0          15 15 15 15 15 15 15 15 15 15
+```
+
+**Changed** (§136): a retrigger starts the instrument's envelope again — it is a note-on in
+everything but the note, which is what the hardware audit already says of an instrument reload —
+and `R`'s `x` step accumulates from that starting volume over `retrigCount`. ChipBoy added the step
+to the level the software envelope had already faded to, so the two agreed exactly while nothing
+was fading, which is the column §133 and §134 were measured on, and every retrigger of a fading
+instrument was silent. `Voice::retrigBase` is the level the step counts from, so it is no longer
+added to itself.
+
+**Left measured but not settled, deliberately:** `R` with `x = 8`, the fast roll on the pitch clock
+(§90), does not fit — on the fading instrument the ROM gives 9, 5, 0, 0 at 14 ms apart where a
+restart would hold 9, and it emits one burst at the command where every other `x` emits two.
+`READROOM` uses `R F4`, `R F6`, `R D0`, `R 04` and `R 06` and no `x = 8`, so the fast roll keeps
+§90's behaviour until it has a measurement of its own.
