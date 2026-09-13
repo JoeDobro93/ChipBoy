@@ -3740,3 +3740,25 @@ After: every step lands on the ROM's pitch clock and the catch-up step is gone.
 **Left measured, not settled:** every step is uniformly 0.4 ms later than the ROM's. That is where the
 two count **from**, not how fast: LSDj's handler starts the envelope when its interrupt begins and
 writes the note's registers a few hundred microseconds in, which is where this trace's `t = 0` sits.
+
+### 2026-09-13 — `R`'s fast roll starts on the pitch clock, not at the command (§143)
+
+**Measured:** §136 left `R` with `x = 8` open, as not fitting "a retrigger starts the instrument's
+envelope again". Two of the three things it wondered about turn out to be right already. The interval
+is `y + 1` pitch clocks (one at `y = 0`, nine at `y = 8`) and ChipBoy matches it; the level is the
+instrument's envelope where it has got to, not reset, and ChipBoy does that too, because the fast roll
+goes through `retrigger(ch, false)` which §136's restart never touched. So there was no conflict with
+§136 at all.
+
+What was wrong is one trigger:
+
+```
+R 88 on env 91   ROM  0/9  25/1  50/0  75/0          CB  0/9  0/9  25/0  50/0
+counts over a second, R 80 / 81 / 82 / 84 / 88:
+                 ROM  351  176  117  71  39          CB  360  181  121  73  41
+```
+
+**Changed** (§143): ChipBoy fired a retrigger as the command was read and the ROM does not for `x = 8`
+— §134's law holds for every other `x`, while the fast roll starts on the pitch clock `y + 1` clocks
+later with nothing at the command. After: the doubled trigger is gone and the times line up, the few
+extra over a second being the pitch clock's own 0.07% (`kPitchCycles` 11712 against the ROM's 11704).

@@ -4596,3 +4596,49 @@ Every step is still 0.4 ms later than the ROM's, evenly -- `env 62` at 5.6 again
 envelope when the interrupt begins and writes the note's registers a few hundred microseconds into
 it, which is where this trace's `t = 0` sits. 0.4 ms on a 5.6 ms step, and it would take measuring the
 ROM's interrupt entry rather than its first register write to confirm.
+
+## 143. `R` with `x = 8` starts its roll on the pitch clock, with no retrigger as the command is read
+
+§136 left this open: the fast roll (§90) did not fit "a retrigger starts the instrument's envelope
+again". Measured across `y`, on a fading instrument (`env 91`) and a flat one (`env F0`), the
+retrigger times from the note and the volume each sounds at:
+
+```
+R 80   ROM  0/9   2/9   5/8   8/7  11/6  14/5       every pitch clock
+       CB   0/9   0/9   3/8   6/7   8/6  11/5
+R 81   ROM  0/9   5/8  11/6  16/4  22/2  27/0       every two
+       CB   0/9   0/9   6/7  11/5  17/3  22/1
+R 84   ROM  0/9  14/5  27/0  41/0                   every five
+       CB   0/9   0/9  14/4  28/0  42/0
+R 88   ROM  0/9  25/1  50/0  75/0                   every nine
+       CB   0/9   0/9  25/0  50/0  75/0
+```
+
+Two of the three things §136 wondered about are already right. The **interval** is `y + 1` pitch
+clocks -- one clock at `y = 0`, nine at `y = 8` -- and ChipBoy matches it. The **level** is simply the
+instrument's envelope where it has got to, not reset: `R 81` on `env 91` sounds 9, 8, 6, 4, 2, 0,
+which is the fade running on underneath, and ChipBoy does that too because the fast roll goes through
+`retrigger(ch, false)`, which §136's restart never touched. So there was never a conflict with §136 --
+only this:
+
+**ChipBoy fires one retrigger as the command is read and the ROM does not.** It is there in every
+row above as the doubled `0/9`, and in the counts over a second: 360 against 351, 181 against 176,
+121 against 117, 73 against 71, 41 against 39. §134 measured a cell's `R` firing on its own tick and
+that holds for every other `x`; the fast roll starts on the pitch clock instead, `y + 1` clocks after
+the command, with nothing at the command itself.
+
+### As built
+
+The `R` case fires its immediate retrigger only when the roll is not the fast one, and owes none
+through `retrigPending` either. `retrigOn`, `retrigNext` and the pitch-clock counter are untouched.
+
+Re-measured with it in, the doubled trigger is gone and the times line up:
+
+```
+R 88   ROM  0  25  50  75  100   (39 over a second)    CB  0  25  50  75  101   (40)
+R 84   ROM  0  14  27  41   55   (71)                  CB  0  14  28  42   56   (72)
+R 80   ROM 351 over a second                           CB  359
+```
+
+The few extra over a second are the pitch clock's own 0.07%: `kPitchCycles` is 11712 where the ROM's
+music clock is 11704, which `docs/HANDOFF.md` has separately.

@@ -2058,7 +2058,10 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             // immediate one was missing altogether.
             v.retrigOn = v.retrigFast || v.retrigEvery > 0;
             v.retrigNext = int64_t(tickCount_) + int64_t(v.retrigEvery);
-            if (live) retrigger(ch, true); else v.retrigPending = 1;
+            // Section 143: the fast roll (`x = 8`) starts on the pitch clock,
+            // `y + 1` clocks after the command, with nothing at the command
+            // itself -- measured, where every other `x` fires one as it is read.
+            if (!v.retrigFast) { if (live) retrigger(ch, true); else v.retrigPending = 1; }
             break;
         case Cmd::S: {
             // PU1's sweep; on NOI a transpose through the map that adds up

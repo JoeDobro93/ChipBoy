@@ -1395,6 +1395,32 @@ TEST_CASE("R retriggers and steps the volume", "[driver][commands]")
     for (int v : flat) CHECK(v == 8);
 }
 
+TEST_CASE("R's fast roll starts on the pitch clock, not at the command", "[driver][commands]")
+{
+    // Section 143: `x = 8` is the roll on the pitch clock (section 90), every
+    // `y + 1` clocks. Measured, the ROM fires nothing as the command is read --
+    // where every other `x` fires one on its own tick (section 134) -- and
+    // ChipBoy fired one there too, a doubled trigger at the note.
+    auto triggers = [](int16_t x, int16_t y) {
+        Rig r;
+        r.tickHz = 65.2174;
+        ChannelParams p; p.instrument = 1; p.velocityMode = 2;
+        p.cmd[0] = { Cmd::R, x, y, 0 };
+        r.drv.setTickRate(r.tickHz);
+        r.drv.setParams(0, p);
+        const auto w = r.block({ Rig::on(0, 60, 100) }, 256);
+        int n = 0;
+        for (const auto& e : w) if (e.addr == 0xFF14 && (e.value & 0x80)) ++n;
+        return n;
+    };
+    // The note's own burst and nothing else, in the block the note is in.
+    CHECK(triggers(8, 8) == 1);
+    CHECK(triggers(8, 4) == 1);
+    // Every other x still owes one as section 134 measured.
+    CHECK(triggers(0, 4) == 2);
+    CHECK(triggers(15, 4) == 2);
+}
+
 TEST_CASE("a retrigger starts a fading envelope again", "[driver][commands]")
 {
     // Section 136: ChipBoy added `R`'s step to the level the software envelope

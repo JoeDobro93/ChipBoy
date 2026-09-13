@@ -432,6 +432,13 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 52 (§143), closing §136's `x = 8` question: the fast roll's **interval** (`y + 1` pitch
+  clocks, measured across `y` = 0, 1, 2, 4, 8) and its **level** (the instrument's envelope where it
+  has got to, never reset -- the fast path goes through `retrigger(ch, false)`, which §136's restart
+  never touched) were both already right. The one fault was ChipBoy firing a retrigger as the command
+  was read: §134's law for every other `x`, but the ROM starts the fast roll on the pitch clock with
+  nothing at the command. `probe/vs_R8.py`.
+
 - Round 51 (§142), closing §141's residue: the envelope's first step landed a whole pitch clock late.
   Timed exactly from the zombie triples (`probe/vs_envstep.py`), the spacing was right everywhere and
   only the first step was wrong, with a short step at the first tick boundary pulling the rest back.
@@ -905,10 +912,10 @@ design-log section the change touches. Update this file at the end of every chan
   ChipBoy (a constant 35 ms offset against the ROM's 21 ms play-start offset, so about 14 ms = one
   tick) and carries one step more. Start from `probe/rrrow.py rr04b 04 20`, which prints the first
   delta, then the register dump either side of it.
-- **`R` with `x = 8`, the fast roll, is not settled (§136).** On a fading instrument the ROM gives
-  9, 5, 0, 0 at 14 ms apart where the §136 restart would hold 9, and it emits one burst at the
-  command where every other `x` emits two. `READROOM` has no `x = 8`, so §90 stands there.
-  `probe/vs_Rvol.py` is the measurement.
+- ~~`R` with `x = 8`, the fast roll~~ -- **settled by §143.** The interval (`y + 1` pitch clocks) and
+  the level (the envelope where it has got to, not reset) were already right; the one fault was
+  ChipBoy firing a retrigger as the command was read, which the ROM does not for `x = 8`.
+  `probe/vs_R8.py` is the measurement.
 - **`READROOM` comes apart at about thirty seconds.** Its first five windows are 89-99% on every
   channel since §102 gave a phrase's `H` its loop; before that it was 3-6% from the first bar. §135
   moves every channel that carries a `G`, so this wants re-measuring from the top before anything
