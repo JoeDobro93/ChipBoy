@@ -293,7 +293,8 @@ clock** instead of on ticks, and writes two registers, the level and the trigger
 side; both arguments are nibbles.
 
 **E**: `x` is the level and `y` the envelope — 0 and 8 hold, 1–7 fall at that rate, 9–15
-rise at `y` − 8. **E never triggers**: it walks the level to `x` by zombie-mode writes at
+rise at `y` − 8. **E does not trigger** *unless the instrument's LENGTH counter is enabled*
+(§138, the one exception): it walks the level to `x` by zombie-mode writes at
 its own tick (§26) and sets the direction and rate of what happens next, which the driver
 then runs itself. Measured: `E 8 0` on a channel sounding at 15 is seven down-triples and
 nothing else.
@@ -4283,3 +4284,72 @@ ChipBoy's own straight six for a song written here, so nothing native moves; the
 `grooves()` already writes `6 6` into a slot LSDj left empty, so a song with no groove 0 at all
 imports exactly as it did. §135's walk then starts where the ROM starts: the phrase's own groove,
 which for an imported song is LSDj's groove 0, until the first `G`.
+
+## 138. An `E` on a channel whose LENGTH counter is on **does** trigger
+
+§136 left one trigger of `READROOM`'s noise channel unaccounted for: the ROM triggers twice at
+phrase `89`'s row 2 (`note 34`, instrument `15`, `E 35`) and once at its row 3 (no note, `E 24`),
+where ChipBoy triggers once and none. The first guess -- that `E` retriggers on the noise channel --
+is wrong, and `probe/vs_Enoi.py` measured it wrong five ways: `E 35`, `E 24`, `E 30`, an `E` on the
+note's own row, and the same on `PU1`, all one trigger on the ROM and in ChipBoy alike.
+
+What those probes had in common is an instrument with **no LENGTH**. `READROOM`'s instrument `15`
+carries `b3 = 6F`: length code `2F` with bit 6, the counter enable, **set** (§134). Sweeping byte 3
+against the same `E` (`probe/vs_Elen.py`, `vs_Elen2.py`), triggers counted:
+
+```
+b3 = 00   no length at all          E two rows later     ROM 1
+b3 = 6F   length 17, counter ON     E two rows later     ROM 2      <- the E triggers
+b3 = 2F   the same code, counter off E two rows later    ROM 1
+b3 = 6F   length 17, counter ON     no E at all          ROM 1
+b3 = 6F   length 17, counter ON     E on the note's row  ROM 2, both at t = 0
+b3 = 6F   on PU1                    E two rows later     ROM 2
+b3 = 2F   on PU1                    E two rows later     ROM 1
+```
+
+So it is the **counter enable bit**, not the length value, and not whether the counter has expired:
+an `E` on the note's own row triggers twice before the counter can have run out. It is both pulse
+and noise. And it is the `E` **command**, not a level change in general -- with the counter on, a
+table's volume column still does not trigger, while a table's `E` triggers on every row that
+carries it:
+
+```
+b3 = 6F   a table's VOLUME column   ROM 1
+b3 = 2F   a table's VOLUME column   ROM 1
+b3 = 6F   a table's E command       ROM 6: 0, 62, 308, 553, 799, 1044 ms
+```
+
+§26 says a level change is a zombie-mode write and never a trigger, and that holds for everything
+except this: **an `E`, from a cell or from a table, triggers the channel when the instrument's
+LENGTH counter is enabled.** The reason is visible from the hardware: a length counter can have
+switched the channel off at any moment, and the driver cannot read back that it has, so a zombie
+write to such a channel may land on a dead channel and do nothing. Re-triggering always is the
+cheap correct answer, and it is what LSDj does.
+
+`docs/HARDWARE_DRIVER_AUDIT.md` listed "the length counter disabling a channel" as a thing that
+stays because modelling it means modelling the 256 Hz frame step in the driver, for one silent case.
+That was the wrong shape of the problem: nothing needs to know *whether* the counter has expired,
+only that it is **enabled**, which is a bit of the instrument. And the case is not silent -- it is
+four noise hits a bar in `READROOM`.
+
+### As built
+
+`Driver::retrigger(ch, full, restartEnv = true)` takes a third argument: §136's envelope restart is
+what an `R`'s retrigger wants and not what this one wants, because the trigger here must carry the
+level the `E` just set. Measured on the ROM, the burst's `NRx2` is the `E`'s own volume. So the `E`
+case calls `retrigger(ch, true, false)` after `setLevel()`, under
+`v.inst.length && !v.inst.lengthLatent` -- the same test `lengthBit()` makes -- on pulse and noise,
+leaving the wave channel (whose level is `NR32` and needs no trigger on any version) alone. §59's
+pre-8.8 `envRetrig` path keeps its own full retrigger. Beside a note it is flushed after the note's
+own burst through `retrigPending`, which §134 added for `R` and which now says *which* kind of
+retrigger is owed. Re-measured with it in, every case agrees with the ROM:
+
+```
+                                          ROM   CB
+b3 = 00  no length         E two rows on    1     1
+b3 = 6F  counter ON        E two rows on    2     2
+b3 = 2F  counter off       E two rows on    1     1
+b3 = 6F  counter ON        no E             1     1
+b3 = 6F  counter ON        E on the note    2     2   (both at t = 0)
+b3 = 6F  counter ON        E on two rows    3     3
+```

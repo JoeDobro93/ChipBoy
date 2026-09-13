@@ -432,6 +432,19 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 47 (§138), closing §136's open noise trigger: an **`E` triggers the channel when the
+  instrument's LENGTH counter is enabled**. My first guess -- that `E` retriggers on noise -- was
+  measured wrong five ways; what those probes shared was an instrument with no length.
+  `READROOM`'s instrument `15` is `b3 = 6F`, length 17 with bit 6 set. Sweeping byte 3 against the
+  same `E` (`probe/vs_Elen.py`, `vs_Elen2.py`): it is the **counter enable bit** that decides, not
+  the length value and not whether the counter has expired (an `E` on the note's own row triggers
+  twice before it can have); it holds on pulse and noise; and it is the `E` **command**, since with
+  the counter on a table's volume column still does not trigger while a table's `E` triggers on
+  every row carrying it. §26 holds everywhere else. This also settles the hardware audit's "the
+  length counter disabling a channel", which said fixing it meant modelling the 256 Hz frame step
+  for one silent case -- nothing needs to know whether the counter has expired, only that it is
+  enabled, and the case is four noise hits a bar.
+
 - Round 46 (§137): LSDj's **groove 0** is the groove a phrase runs on until a `G` says otherwise,
   and the importer pointed every phrase at ChipBoy's slot 0 instead -- a hard straight six that is
   not editable. Measured with groove 0 set to a single entry of twelve ticks and no `G` anywhere:
@@ -840,18 +853,11 @@ design-log section the change touches. Update this file at the end of every chan
   (16.78 ms), not a drift. The tempo itself is right: the ROM's tick for every tempo byte measured
   (85 to 190) is within 0.016% of `1 / (0.4 x bpm)`, and DELIVERY's grooves are all 6/6 with no `G`
   or `T` anywhere. So one row in about a hundred is taking a tick longer in ChipBoy. Find which.
-- **`READROOM`'s noise channel has one trigger ChipBoy does not, and a table step a tick out.** On
-  song row `04` `PU1` and `PU2` agree with the ROM on every trigger (§135) and `NOI` agrees for
-  seventeen. Then: the ROM triggers **twice** at phrase `89`'s row 2 (`note 34`, instrument `15`,
-  `E 35`) and once at its row 3 (no note, `E 24`), where ChipBoy triggers once and none. It is
-  **not** `E`: a bare `E xy` on a sounding noise channel emits no trigger on the ROM, measured five
-  ways in `probe/vs_Enoi.py` (`E 35`, `E 24`, `E 30`, an `E` on the note's own row, and the same on
-  `PU1`) -- one trigger each, ROM and ChipBoy alike. Suspect instrument `15` (`b3 = 6F`: length 17
-  with the counter **on**), since instrument `0F` has no length and its row pairs in both. Separately
-  the table-driven cluster inside rows 1-2 starts a tick early in ChipBoy (a constant 35 ms offset
-  against the ROM's 21 ms play-start offset, so ~14 ms = one tick) and carries one step more. Start
-  from `probe/rrrow.py rr04b 04 20`, which prints the first delta, then the register dump either
-  side of it.
+- **`READROOM`'s noise table steps a tick early.** §138 closed the missing triggers; what is left on
+  song row `04` is that the table-driven cluster inside phrase `89`'s rows 1-2 starts a tick early in
+  ChipBoy (a constant 35 ms offset against the ROM's 21 ms play-start offset, so about 14 ms = one
+  tick) and carries one step more. Start from `probe/rrrow.py rr04b 04 20`, which prints the first
+  delta, then the register dump either side of it.
 - **`R` with `x = 8`, the fast roll, is not settled (§136).** On a fading instrument the ROM gives
   9, 5, 0, 0 at 14 ms apart where the §136 restart would hold 9, and it emits one burst at the
   command where every other `x` emits two. `READROOM` has no `x = 8`, so §90 stands there.

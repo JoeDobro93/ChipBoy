@@ -3617,3 +3617,35 @@ which is what makes `G 00` import as `G 1`; an imported phrase's own groove is n
 it was slot 0, ChipBoy's own hard straight six. Nothing native moves, and a song whose groove 0 is
 `6 6` (`READROOM`'s is) imports exactly as it did -- a song whose groove 0 is anything else played
 at the wrong speed from its first row.
+
+### 2026-09-13 (READROOM) — an `E` triggers when the LENGTH counter is on (§138)
+
+**Measured:** §136 left one trigger of `READROOM`'s noise channel unaccounted for — the ROM
+triggers twice at phrase `89`'s row 2 (`E 35` beside a note) and once at row 3 (`E 24` alone) where
+ChipBoy triggered once and none. My first guess, that `E` retriggers on noise, was measured **wrong**
+five ways (`probe/vs_Enoi.py`). What those probes shared was an instrument with no LENGTH.
+`READROOM`'s instrument `15` carries `b3 = 6F`: length 17 with the counter enable bit set. Sweeping
+byte 3 against the same `E` (`probe/vs_Elen.py`, `vs_Elen2.py`), triggers counted:
+
+```
+b3 = 00  no length              E two rows later     ROM 1       b3 = 6F  on PU1   ROM 2
+b3 = 6F  length, counter ON     E two rows later     ROM 2       b3 = 2F  on PU1   ROM 1
+b3 = 2F  same code, counter off E two rows later     ROM 1
+b3 = 6F  length, counter ON     no E                 ROM 1
+b3 = 6F  length, counter ON     E on the note's row  ROM 2, both at t = 0
+b3 = 6F  a table's VOLUME column                     ROM 1       <- not a trigger
+b3 = 6F  a table's E command                         ROM 6, one per row that carries it
+```
+
+**Changed** (§138): an `E`, from a cell or a table, triggers the channel when the instrument's
+LENGTH counter is **enabled** — on pulse and noise, whatever the length value, and whether or not
+the counter has run out (an `E` on the note's own row triggers twice before it can have). A level
+change that is not an `E` still zombie-writes, so §26 holds everywhere else. Beside a note it is
+flushed after the note's own burst, as §134's `R` is. `retrigger()` takes a third argument for
+§136's envelope restart: an `R`'s retrigger wants it, this one must not have it, because the ROM's
+burst carries the level the `E` just set.
+
+**Departure from the audit, deliberate:** `docs/HARDWARE_DRIVER_AUDIT.md` listed the length counter
+disabling a channel as a thing that stays, because fixing it meant modelling the 256 Hz frame step
+for one silent case. Both halves were wrong — nothing needs to know whether the counter has expired,
+only that it is enabled, and the case is four noise hits a bar in `READROOM`. That row now says so.

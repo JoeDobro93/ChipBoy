@@ -693,7 +693,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // **not** reset here. Measured on 9.2.L: the record outlives the note-on and
     // even a different instrument, and clearing it made every `Z` after the
     // first note inert.
-    v.dutyIdx = 0; v.killAt = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigPending = false; v.retrigFast = false; v.retrigFastCount = 0; v.envCount = 0; v.frameStep = 0; v.frameIdx = 0;   // the run starts at its first step (section 65)
+    v.dutyIdx = 0; v.killAt = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigPending = 0; v.retrigFast = false; v.retrigFastCount = 0; v.envCount = 0; v.frameStep = 0; v.frameIdx = 0;   // the run starts at its first step (section 65)
     v.rng = v.rng * 1664525u + 1013904223u + note;
     restartPitchClock(ch);
     // volume from velocity: a MIDI note asks the Velocity mode, a cell's VEL is
@@ -850,7 +850,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // Section 134: an `R` among the note's own commands owes a retrigger, and
     // the ROM emits it **after** the note's burst -- two triggers a fraction of
     // a millisecond apart, as section 127's `S` does.
-    if (v.retrigPending) { v.retrigPending = false; retrigger(ch, true); }
+    if (v.retrigPending) { const bool env = v.retrigPending == 1; v.retrigPending = 0; retrigger(ch, true, env); }
 }
 
 /// K, and the end of a note: LSDj takes the level to zero with the same
@@ -1676,11 +1676,12 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             // nothing. ChipBoy took x.
             if (wave) { v.waveLevel = uint8_t(c.b & 3); setLevel(ch); }
             else {
-                // **E never triggers.** It walks the level to x by zombie steps
-                // at its own tick and sets the direction and rate of what
-                // happens next -- the envelope the driver runs in software
-                // (docs/LSDJ_PARITY.md section 6). Measured: `E 8 0` on a
-                // channel at 15 is seven down-triples and nothing else.
+                // E walks the level to x by zombie steps at its own tick and
+                // sets the direction and rate of what happens next -- the
+                // envelope the driver runs in software (docs/LSDJ_PARITY.md
+                // section 6). Measured: `E 8 0` on a channel at 15 is seven
+                // down-triples and nothing else. **No trigger** -- except for
+                // the two cases below, section 59's and section 138's.
                 v.envVol = uint8_t(std::clamp<int>(c.a, 0, 15));
                 v.envRate = uint8_t(c.b & 7);
                 v.envDir = (c.b & 8) ? EnvDir::Up : EnvDir::Down;
@@ -1690,6 +1691,18 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
                 // the new envelope only starts on a trigger (section 59). The
                 // wave channel's level is NR32 and needs none, on any version.
                 if (v.inst.envRetrig && live) retrigger(ch, true);
+                // Section 138: and **unless the LENGTH counter is on**, where an
+                // `E` always triggers -- the counter can have switched the
+                // channel off at any moment and a zombie write would land on a
+                // dead channel. The trigger carries the level the E just set, so
+                // the envelope is not restarted with it (section 136).
+                else if (v.inst.length && !v.inst.lengthLatent) {
+                    // Beside a note it is flushed after the note's own burst, as
+                    // section 134's `R` is: the ROM emits both a fraction of a
+                    // millisecond apart.
+                    if (live) retrigger(ch, true, false);
+                    else if (v.retrigPending == 0) v.retrigPending = 2;
+                }
             }
             break;
         }
@@ -1955,7 +1968,7 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             // immediate one was missing altogether.
             v.retrigOn = v.retrigFast || v.retrigEvery > 0;
             v.retrigNext = int64_t(tickCount_) + int64_t(v.retrigEvery);
-            if (live) retrigger(ch, true); else v.retrigPending = true;
+            if (live) retrigger(ch, true); else v.retrigPending = 1;
             break;
         case Cmd::S: {
             // PU1's sweep; on NOI a transpose through the map that adds up
@@ -2604,7 +2617,7 @@ void Driver::tick(int ch)
 /// NR12, NR13, NR14 with the trigger -- not just a trigger, so the register
 /// log of a retrigger and of a note-on are the same five writes
 /// (docs/LSDJ_PARITY.md section 8).
-void Driver::retrigger(int ch, bool full)
+void Driver::retrigger(int ch, bool full, bool restartEnv)
 {
     Voice& v = v_[size_t(ch)];
     if (!v.active) return;
@@ -2622,7 +2635,7 @@ void Driver::retrigger(int ch, bool full)
     // as a note-on and an instrument load do -- so the level it sounds at is
     // the envelope's own start and not wherever a fade had got to.
     if (v.retrigCount < 0xFFFF) ++v.retrigCount;
-    if (v.inst.env.mode == EnvMode::Shaped) {
+    if (restartEnv && v.inst.env.mode == EnvMode::Shaped) {
         v.shapedOn = true; v.shapedTaken = false; v.shapedRelease = false;
         v.shapedTick = 0; v.shapedClocks = 0; v.shapedPosMax = 0; v.shapedFrom = 0;
         const uint8_t level = shapedLevel(v);

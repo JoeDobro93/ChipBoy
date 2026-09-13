@@ -271,9 +271,11 @@ private:
         bool     frameSilenced = false;
         /// Section 134: `R` fires a retrigger on the command's own tick and
         /// then every y ticks. `retrigNext` is the absolute tick the next one
-        /// is due on; `retrigPending` is one the note-on owes after its burst.
+        /// is due on; `retrigPending` is one the note-on owes after its burst:
+        /// 0 none, 1 an `R`'s, 2 an `E`'s, which keeps the level the `E` set
+        /// rather than restarting the envelope (sections 136 and 138).
         int64_t  retrigNext = 0;
-        bool     retrigPending = false;
+        uint8_t  retrigPending = 0;
         bool     volLaneOn = false;                   ///< the volume lane ends at its first empty row (section 64)
         uint16_t tableRun = 0;                        ///< counts this channel's table runs (section 32)
         uint16_t tableWait = 0;                       ///< ticks left of lane 1's row
@@ -432,7 +434,10 @@ private:
     void emit(uint16_t addr, uint8_t v, bool force = false);
     /// A retrigger (section 8): LSDj writes the whole note-on sequence again --
     /// sweep, duty, level, period, trigger -- not just the trigger.
-    void retrigger(int ch, bool full);
+    /// `restartEnv` is §136's envelope restart, which an `R`'s retrigger wants
+    /// and an `E`'s (§138) does not: that one must carry the level the `E` just
+    /// set, which is what the ROM's burst writes.
+    void retrigger(int ch, bool full, bool restartEnv = true);
     void emitAt(uint64_t cycle, uint16_t addr, uint8_t v);
     void tick(int ch);
     void tickAll();

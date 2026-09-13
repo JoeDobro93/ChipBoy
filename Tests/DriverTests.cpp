@@ -1851,6 +1851,36 @@ TEST_CASE("E never triggers, whatever it does to the envelope", "[driver][zombie
     }
 }
 
+TEST_CASE("an E does trigger when the LENGTH counter is on", "[driver][zombie]")
+{
+    // Section 138, measured by sweeping instrument byte 3 against the same `E`:
+    // it is the counter **enable** bit that decides, not the length value and
+    // not whether the counter has run out, and it holds on pulse and noise. A
+    // length counter can have switched the channel off at any moment and the
+    // driver cannot read back that it has, so a zombie write may land on a dead
+    // channel; LSDj triggers instead. The trigger carries the level the `E`
+    // just set, so the envelope is not restarted with it (section 136).
+    auto triggers = [](uint16_t length, bool latent, int ch) {
+        Rig r;
+        auto& i = r.bank.instruments[size_t(ch == 3 ? 20 : 0)];
+        if (ch == 3) i = Instrument::defaults(InstrumentType::Noise, "hat");
+        i.length = length; i.lengthLatent = latent;
+        ChannelParams p; p.instrument = uint8_t(ch == 3 ? 21 : 1); p.velocityMode = 2;
+        r.drv.setParams(ch, p);
+        r.block({ Rig::on(ch, 69, 100) }, 512);
+        const auto w = r.block({ levelCell(ch, 9, 0) }, 512);
+        return std::make_pair(anyTrigger(w, uint16_t(0xFF14 + 5 * ch)), int(r.drv.view(ch).envVol));
+    };
+    for (int ch : { 0, 3 }) {
+        INFO("channel " << ch);
+        CHECK_FALSE(triggers(0, false, ch).first);         // no length at all
+        CHECK_FALSE(triggers(17, true, ch).first);          // a length, the counter latent
+        const auto on = triggers(17, false, ch);
+        CHECK(on.first);                                    // a length with the counter enabled
+        CHECK(on.second == 9);                              // and it carries the E's own level
+    }
+}
+
 TEST_CASE("a slide holds its aim through the table and stops at the bottom of the range", "[driver][table]")
 {
     // Section 71: LSDj's wave kick is a table row carrying TSP -60 beside L20,
