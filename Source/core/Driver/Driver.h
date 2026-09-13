@@ -166,6 +166,7 @@ public:
     /// non-zero run, row i lasting ticks[i % length] ticks. Null (or a table
     /// that asked for no groove) is one tick per row, the default.
     void setTableGroove(int ch, const uint8_t* ticks16);
+
     uint8_t tableGrooveSlot(int ch) const;   ///< the slot a table's G asked for, 0 none
 
     /// An optional log of every register write this driver emits, in cycle
@@ -294,6 +295,10 @@ private:
         int8_t   instTranspose = 0;   ///< the instrument's PU2 transpose, or what an F on PU2 set (section 49)
         uint8_t  chord[3] = { 0, 0, 0 }; uint8_t chordN = 0, chordIdx = 0, chordCount = 0;
         uint8_t  dutyIdx = 0, duty = 2;
+        /// Section 140: the `instKey` the live table position is parked under,
+        /// or kNoStepKey while the table is not a STEP one. 0x10000 is a local
+        /// instrument's mark (section 8), so this is wider than a byte.
+        uint32_t stepKey = 0xFFFFFFFFu;
         /// Section 139: a table row's `O` fired inside a note-on, waiting for
         /// the note's own pan write to go out first -- 0 none, else the pan plus
         /// one. The ROM writes the note's mixer and then the row's, two writes
@@ -636,6 +641,28 @@ private:
     std::array<NoteEvent*, 256> pendingFrom_{};
     /// The row lengths a table's G asks for, per channel (setTableGroove).
     std::array<std::array<uint8_t, 16>, 4> tableGroove_{};
+
+    /// Section 140: where a STEP table stands, parked per instrument. The
+    /// position is the **instrument's** -- two instruments keep their own and
+    /// one playing in between does not move the other's -- so it cannot live in
+    /// the Voice. `table` is the slot it belongs to, since a `tableOverride` can
+    /// point one instrument at another table.
+    struct StepPark {
+        uint8_t step = 0, step2 = 0, stepE = 0;
+        uint8_t row = 0, row2 = 0, rowE = 0;
+        uint8_t table = 0;
+        bool    used = false;
+    };
+    /// Keyed by the voice's `instKey`: bank slots 0-255 and one more for a local
+    /// instrument (section 8). Per channel as well, which nothing measured
+    /// requires -- it only keeps one instrument sounding on two channels from
+    /// interleaving their positions.
+    static constexpr size_t kStepKeys = 257;
+    static constexpr uint32_t kNoStepKey = 0xFFFFFFFFu;
+    std::array<std::array<StepPark, kStepKeys>, 4> stepState_{};
+    void parkStep(int ch);
+    void takeStep(int ch, uint8_t table);
+    void clearSteps(int ch);
     /// The noise map for notes -kNoiseMapBelow..127 (index note + kNoiseMapBelow).
     std::array<int8_t, 128 + kNoiseMapBelow> noiseShiftMap_{}, noiseDivMap_{};
 };

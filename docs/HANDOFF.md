@@ -432,6 +432,18 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 49 (§140), the user naming phrase `1A`'s whole pan sequence (L R C; rows 0/8 left, 2/A
+  right, 6/C centre, the `0D` note on row 4 not disturbing it, and LSDj resetting the position on
+  play): a STEP table's position is the **instrument's own**. Measured two ways -- a note on another
+  instrument in between does not move it (ChipBoy restarted the table there, because it kept one
+  position per channel and reset it whenever the table slot changed), and two instruments sharing one
+  table each keep their own and advance in lockstep (ROM `L L R R C C` where ChipBoy gave
+  `L R C L R C` sharing and `L L L L L L` with separate tables). `Driver::stepState_[ch][instKey]`
+  parks the lane positions per instrument; `allNotesOff()` clears a channel's, so stopping the
+  transport puts every STEP table back to row 0 -- LSDj's reset on play, and what makes a song's
+  first articulation deterministic. All four probes agree with the ROM after
+  (`probe/vs_step2.py`, `vs_step3.py`).
+
 - Round 48 (§139), from the user on `READROOM` phrase `1A`: the retrigger on row C is centred in
   LSDj and panned left in ChipBoy. Not the STEP table's index, which is right -- instrument `0C` is
   a STEP-mode noise instrument whose table is `O 01`, `O 02`, a blank row and `H 00` back to row 0,

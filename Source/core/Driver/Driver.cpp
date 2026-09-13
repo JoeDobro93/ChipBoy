@@ -339,6 +339,45 @@ uint32_t Driver::instrumentKey(int ch, uint8_t vel) const
     return uint32_t(std::max(0, resolveSlot(ch, vel)));
 }
 
+/* ------------------------------------------------- STEP table positions */
+
+/// Section 140: a STEP table's position is the instrument's own. `parkStep`
+/// puts the live one away under the key it belongs to, `takeStep` brings one
+/// back (starting at the table's first row when that instrument has none, or
+/// when the one it has belongs to another table), and `clearSteps` empties a
+/// channel's -- which the transport stopping does, so a song's first
+/// articulation is always the table's first row.
+void Driver::parkStep(int ch)
+{
+    Voice& v = v_[size_t(ch & 3)];
+    if (v.stepKey == kNoStepKey || v.stepKey >= kStepKeys) return;
+    StepPark& p = stepState_[size_t(ch & 3)][size_t(v.stepKey)];
+    p.step = v.tableStep; p.step2 = v.tableStep2; p.stepE = v.tableStepE;
+    p.row = v.tableRow;  p.row2 = v.tableRow2;  p.rowE = v.tableRowE;
+    p.table = v.tableSlot; p.used = true;
+}
+
+void Driver::takeStep(int ch, uint8_t table)
+{
+    Voice& v = v_[size_t(ch & 3)];
+    const uint32_t key = v.instKey;
+    const StepPark* p = key < kStepKeys ? &stepState_[size_t(ch & 3)][size_t(key)] : nullptr;
+    if (p != nullptr && p->used && p->table == table) {
+        v.tableStep = p->step; v.tableStep2 = p->step2; v.tableStepE = p->stepE;
+        v.tableRow = p->row;  v.tableRow2 = p->row2;  v.tableRowE = p->rowE;
+    } else {
+        v.tableStep = v.tableStep2 = v.tableStepE = 0;
+        v.tableRow = v.tableRow2 = v.tableRowE = 0;
+    }
+    v.stepKey = key;
+}
+
+void Driver::clearSteps(int ch)
+{
+    for (auto& p : stepState_[size_t(ch & 3)]) p = StepPark{};
+    v_[size_t(ch & 3)].stepKey = kNoStepKey;
+}
+
 void Driver::setTableGroove(int ch, const uint8_t* ticks16)
 {
     auto& g = tableGroove_[size_t(ch & 3)];
@@ -665,9 +704,9 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     else core = Instrument::defaults(defaultType(ch));
     if (!typeFits(ch, core.type)) core = Instrument::defaults(defaultType(ch));
 
-    // A Step-mode table keeps its place across notes, note-offs included: the
-    // slot it was on, not whether it happens to be running.
-    const uint8_t hadTable = v.tableSlot;
+    // A Step-mode table keeps its place across notes, note-offs included -- and
+    // across another instrument playing in between, because the place is the
+    // instrument's own (section 140, below).
     v.inst = core; v.haveInst = true;
     latch(ch);
     v.note = note; v.vel = vel; v.active = true; v.killed = false; v.releasing = false; v.pulseReleasing = false;
@@ -713,6 +752,9 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     }
     // table
     const uint8_t tbl = v.tableOverride ? v.tableOverride : core.table;
+    // Section 140: park the position of whatever was playing **before** the slot
+    // is overwritten, so it is filed under the table it belongs to.
+    parkStep(ch);
     v.nestOn = false; v.nestSlot = 0; v.nestJustStarted = false;   // section 131
     v.tableSlot = tbl; v.tableOn = tbl && bank_ && bank_->table(tbl);
     const bool wasFromCmd = v.tableTicks;
@@ -722,10 +764,17 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // A Step-mode table advances one row per trigger instead of restarting,
     // which is the whole point of it; a table that was not already running
     // starts at its first row (section 7).
-    if (core.tableMode != TableMode::Step || wasFromCmd || hadTable != tbl) {
+    // Section 140: the position a STEP table resumes from is the instrument's
+    // own, not the channel's -- measured, two instruments keep their own and one
+    // playing in between does not move the other's. Whatever was playing parked
+    // its position above; this instrument takes up its own.
+    if (core.tableMode == TableMode::Step && !wasFromCmd) {
+        takeStep(ch, tbl);
+    } else {
         v.tableStep = v.tableStep2 = v.tableStepE = 0;
         v.tableRow = v.tableRow2 = v.tableRowE = 0;
         v.tableGroove = 0; v.volLaneOn = true;
+        v.stepKey = kNoStepKey;
     }
     if (core.dutySeqLen) v.duty = uint8_t(core.dutySeq[0] & 3);
     // The table's first row fires with the note-on, in the same event, never
@@ -899,6 +948,10 @@ void Driver::stopVoice(int ch, bool kill)
 void Driver::allNotesOff(int ch)
 {
     Voice& v = v_[size_t(ch)];
+    // Section 140: every STEP table on this channel goes back to its first row.
+    // The transport stopping sends this on all four, which is LSDj's reset on
+    // play and what makes a song's first articulation deterministic.
+    clearSteps(ch);
     // A note-on still waiting for its tick is a delayed start like any other
     // (section 8): it has to go, or the queue puts back the note this just
     // silenced -- which the fuzz found, as a channel still sounding after a

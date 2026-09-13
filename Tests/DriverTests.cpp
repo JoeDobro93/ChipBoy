@@ -1881,6 +1881,46 @@ TEST_CASE("an E does trigger when the LENGTH counter is on", "[driver][zombie]")
     }
 }
 
+TEST_CASE("a STEP table's position is the instrument's own", "[driver][table]")
+{
+    // Section 140: measured on the ROM, two instruments keep their own position
+    // in a STEP table and one playing in between does not move the other's --
+    // ChipBoy kept one per channel and reset it whenever the table slot changed,
+    // which put `READROOM`'s phrase `1A` back on the left after its `0D` note.
+    Rig r;
+    auto& a = r.bank.instruments[20];
+    a = Instrument::defaults(InstrumentType::Noise, "A");
+    a.pan = Pan::Both; a.table = 5; a.tableMode = TableMode::Step;
+    auto& b = r.bank.instruments[21];
+    b = Instrument::defaults(InstrumentType::Noise, "B");
+    b.pan = Pan::Both; b.table = 6; b.tableMode = TableMode::Step;
+    auto& ta = r.bank.tables[4];                          // slot 5: left, right, blank, hop
+    ta.used = true; ta.name = "pans";
+    ta.steps[0].cmd1 = Command{ Cmd::O, 1, 0, 0 };
+    ta.steps[1].cmd1 = Command{ Cmd::O, 2, 0, 0 };
+    ta.steps[3].cmd1 = Command{ Cmd::H, 0, 0, 0 };
+    auto& tb = r.bank.tables[5];                          // slot 6: B's own, a transpose
+    tb.used = true; tb.name = "tsp";
+    tb.steps[0].hasTranspose = true; tb.steps[0].transpose = -6;
+    tb.steps[3].cmd1 = Command{ Cmd::H, 0, 0, 0 };
+    auto pan = [&](int slot) {
+        ChannelParams p; p.instrument = uint8_t(slot); r.drv.setParams(3, p);
+        const auto w = r.block({ Rig::on(3, 69, 100) }, 512);
+        const RegWrite* l = last(w, 0xFF25);
+        if (l == nullptr) return '?';
+        const bool L = (l->value & 0x80) != 0, R = (l->value & 0x08) != 0;
+        return L && R ? 'C' : L ? 'L' : R ? 'R' : '-';
+    };
+    // A's own walk is L R C, and B's notes in between leave it alone.
+    std::string got;
+    got += pan(21); got += pan(21); got += pan(22);        // A A B
+    got += pan(21); got += pan(21); got += pan(22);        // A A B
+    INFO("got " << got);
+    CHECK(got[0] == 'L'); CHECK(got[1] == 'R');
+    CHECK(got[3] == 'C');                                  // after B, A carries on
+    CHECK(got[4] == 'L');                                  // and wraps
+}
+
 TEST_CASE("a table row's O lands after the note's own pan", "[driver][table]")
 {
     // Section 139: LSDj's note pass writes the mixer and triggers, and its table

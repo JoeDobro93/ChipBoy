@@ -4403,3 +4403,57 @@ CB    0/C  368/L  368/C  736/R  1104/C
 
 The note on the `R`'s row is `L` and its retrigger `C` on both sides now, where ChipBoy had `R` for
 both. That is the user's "row C is centred in LSDj".
+
+## 140. A STEP table's position belongs to the **instrument**, and starts at its first row
+
+§139 put phrase `1A`'s pan on the right step of the sequence for a run of notes on one instrument.
+The user then named the whole sequence: instrument `0C`'s table is `O 01`, `O 02`, a blank row and
+`H 00` back to row 0, so the pan walks **left, right, the instrument's own centre**, and in
+`READROOM`'s phrase `1A` "row 0 and 8 are left, 2 and A are right, 6 and C are centered" — with the
+instrument `0D` note on row 4 not disturbing it. And: in LSDj the position resets when play is
+pressed, so the first articulation is always the table's first row.
+
+(Phrase `1A` carries `H 10` at row 8, so rows 0–7 play twice before rows 8–E; three `0C` notes a pass
+against a three-row cycle keeps the phase, which is why rows 0 and 8 agree.)
+
+Measured with a phrase of that shape — instrument A at rows 0, 2, 6, 8, A, C and B at row 4, A's
+table the same `O 01` / `O 02` / blank / `H 00` — the pan each note settles at:
+
+```
+                              row0  row2  row4  row6  row8  rowA  rowC
+ROM, with B on row 4           L     R     (B)   C     L     R     C
+CB   "                         L     R     (B)   L     R     C     L
+ROM and CB, with no B at all   L     R      -    C     L     R     C
+```
+
+So the sequence is LSDj's until another instrument plays on the channel, and ChipBoy restarted the
+table there: it keeps one position per **channel** and reset it whenever the table slot changed.
+Two instruments sharing one table settle it — alternating A B A B A B:
+
+```
+one table, shared       ROM  L L R R C C      each instrument walks its own
+two identical tables    ROM  L L R R C C
+CB, one table                L R C L R C      one counter per channel
+CB, two tables               L L L L L L      reset on every table change
+```
+
+The ROM pairs the pans, so **the position is the instrument's, not the table's and not the
+channel's**: A's first note is its table's row 0 and B's first note is row 0 too, then both take
+row 1, then row 2. ChipBoy was wrong in both directions at once.
+
+### As built
+
+`Driver::stepState_[ch][key]` parks `tableStep`, `tableStep2`, `tableStepE`, `tableRow`,
+`tableRow2`, `tableRowE` and the table slot they belong to, `key` being the voice's `instKey` — the
+bank slot, or the mark a local instrument gets (§8). A note-on parks the position of whatever
+instrument was playing and takes up this one's, starting at row 0 when that instrument has none
+saved or when its saved position belongs to another table (a `tableOverride` can point the same
+instrument at a different one). A non-STEP table still starts at its first row, as before.
+
+It is kept per channel as well as per instrument, which nothing here measures: one instrument
+sounding on two channels at once keeps a position on each rather than interleaving them, which is
+the conservative reading.
+
+`allNotesOff()` clears that channel's positions, so the transport stopping puts every STEP table
+back to its first row — LSDj's reset on play, and what makes the first articulation of a song
+deterministic.

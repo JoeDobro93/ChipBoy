@@ -3678,3 +3678,37 @@ retrigger, which is the order the ROM writes them in. §31 already said the row 
 running state" inside a note-on so the note's own writes carry its own values — transpose and level
 obeyed it, `O` did not. On a noise hit a few milliseconds long the attack is the whole sound, so the
 order is audible.
+
+### 2026-09-13 (READROOM) — a STEP table's position is the instrument's own (§140)
+
+**Reported:** instrument `0C`'s pan sequence in phrase `1A` is left, right, centre — "row 0 and 8 are
+left, 2 and A are right, 6 and C are centered" — with the `0D` note on row 4 not disturbing it; and
+in LSDj the position resets when play is pressed, so the first articulation is the table's first row.
+
+**Measured**, with a phrase of that shape (A at rows 0, 2, 6, 8, A, C and B at row 4):
+
+```
+                              row0  row2  row4  row6  row8  rowA  rowC
+ROM, with B on row 4           L     R     (B)   C     L     R     C
+CB   "                         L     R     (B)   L     R     C     L
+ROM and CB, with no B at all   L     R      -    C     L     R     C
+```
+
+and, alternating two instruments A B A B A B:
+
+```
+one table, shared       ROM  L L R R C C      CB  L R C L R C
+two identical tables    ROM  L L R R C C      CB  L L L L L L
+```
+
+The ROM pairs the pans, so the position is **per instrument** — not per table (two instruments
+sharing one each keep their own) and not per channel (which is what ChipBoy kept, resetting it
+whenever the table slot changed). ChipBoy was wrong in both directions at once.
+
+**Changed** (§140): `Driver::stepState_[ch][instKey]` parks the six lane positions and the table they
+belong to; a note-on parks whatever was playing and takes up this instrument's, starting at row 0
+when it has none or when the one it has belongs to another table. `allNotesOff()` clears a channel's,
+so the transport stopping puts every STEP table back to its first row — LSDj's reset on play, and
+what makes a song's first articulation deterministic. Kept per channel as well as per instrument,
+which nothing here measures: it only stops one instrument sounding on two channels from interleaving
+their positions. All four probes now agree with the ROM.
