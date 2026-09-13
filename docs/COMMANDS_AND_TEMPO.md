@@ -4393,4 +4393,13 @@ the note's own writes carry its transpose, its level and its commands". Transpos
 
 `Cmd::O` inside a note-on stores the pan in `Voice::panQueued` (0 for none, the pan plus one
 otherwise) and writes nothing. `startVoice()` flushes it after its own `writeNr51(true)` and after
-§134's owed retrigger -- the order the ROM writes them in, measured with `R` on the row.
+§134's owed retrigger -- the order the ROM writes them in, measured with `R` on the row. Re-measured
+with it in, the pan each trigger sounds at, `R F0` on the second row:
+
+```
+ROM   0/C  368/L  370/C  737/R  1105/C
+CB    0/C  368/L  368/C  736/R  1104/C
+```
+
+The note on the `R`'s row is `L` and its retrigger `C` on both sides now, where ChipBoy had `R` for
+both. That is the user's "row C is centred in LSDj".
