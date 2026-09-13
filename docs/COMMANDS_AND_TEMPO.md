@@ -4353,3 +4353,44 @@ b3 = 6F  counter ON        no E             1     1
 b3 = 6F  counter ON        E on the note    2     2   (both at t = 0)
 b3 = 6F  counter ON        E on two rows    3     3
 ```
+
+## 139. A table row's `O` lands **after** the note's own pan, not folded into it
+
+From the user, on `READROOM`'s phrase `1A`: "in LSDj the retrigger note on row C is centered, but in
+ChipBoy it's falling on the left pan in the panning sequence." Their guess was the STEP table's
+index. The index is right; the **order of two writes in one tick** is not.
+
+Phrase `1A` plays instrument `0C`, a noise instrument in **STEP** mode (byte 5 bit 3) whose table is
+a pan sequence: `O 01` (left), `O 02` (right), a blank row, then `H 00` hopping to row 0 for ever.
+STEP advances it one row per trigger, so the hits walk left, right, the instrument's own pan, and
+round again. Probed with the same table and five plain note-ons, the register order per note:
+
+```
+ROM   NR43=40  TRIG  NR51=FF          <- the note sounds at the instrument's own pan
+      (+2 ms)  NR51=F7                <- then the table row's O pans it left
+CB    NR51=FF  NR51=F7  NR43=40  TRIG <- the note already sounds panned left
+```
+
+Both writes are inside the same tick -- 2 ms apart, where a tick at tempo 163 is 15.3 ms -- so this
+is not a tick's delay. LSDj's note pass writes the mixer and triggers; its table pass, right after,
+writes the row's `O`. ChipBoy fires the table's first row *inside* the note-on (§31) and `O` wrote
+`NR51` there and then, so the note's own pan write carried the **table's** pan instead of the
+instrument's and the attack was already panned. On a noise hit a few milliseconds long the attack is
+the whole sound, which is what the user heard.
+
+With an `R` on the row it is plainer still, and it is exactly phrase `1A`'s row C:
+
+```
+ROM   note at 390 -> NR51=FF (centre),  the R's retrigger at 392 -> NR51=7F (right)
+CB    note at 368 -> NR51=7F (right),   retrigger -> 7F
+```
+
+§31 already says what should happen: inside the note-on the row "only changes the running state, so
+the note's own writes carry its transpose, its level and its commands". Transpose and level obey it;
+`O` did not.
+
+### As built
+
+`Cmd::O` inside a note-on stores the pan in `Voice::panQueued` (0 for none, the pan plus one
+otherwise) and writes nothing. `startVoice()` flushes it after its own `writeNr51(true)` and after
+§134's owed retrigger -- the order the ROM writes them in, measured with `R` on the row.

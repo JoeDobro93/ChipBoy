@@ -1881,6 +1881,45 @@ TEST_CASE("an E does trigger when the LENGTH counter is on", "[driver][zombie]")
     }
 }
 
+TEST_CASE("a table row's O lands after the note's own pan", "[driver][table]")
+{
+    // Section 139: LSDj's note pass writes the mixer and triggers, and its table
+    // pass writes the row's `O` right after -- two NR51 writes in the one tick,
+    // the note's first. ChipBoy folded the row's pan into the note's own write,
+    // so a short hit's attack was already panned and `READROOM`'s phrase `1A`
+    // put a centred retrigger on the left.
+    Rig r;
+    auto& i = r.bank.instruments[20];
+    i = Instrument::defaults(InstrumentType::Noise, "hat");
+    i.pan = Pan::Both; i.table = 5;                       // slot 5, below
+    auto& tb = r.bank.tables[4];
+    tb.used = true; tb.name = "pans";
+    tb.steps[0].cmd1 = Command{ Cmd::O, 1, 0, 0 };        // left
+    ChannelParams p; p.instrument = 21; r.drv.setParams(3, p);
+    const auto w = r.block({ Rig::on(3, 69, 100) }, 512);
+    // The trigger, then the note's own pan (both sides), then the row's.
+    int trig = -1, after = -1, pans = 0;
+    for (size_t k = 0; k < w.size(); ++k) {
+        if (w[k].addr == 0xFF23 && (w[k].value & 0x80)) trig = int(k);
+        if (w[k].addr == 0xFF25) { ++pans; if (trig >= 0 && after < 0) after = int(k); }
+    }
+    REQUIRE(trig >= 0);
+    REQUIRE(after > trig);                                // a pan write follows the trigger
+    CHECK(pans >= 2);
+    // The last one is the row's: the noise channel on the left only. NR51 puts
+    // the left gates in bits 4-7 and the right in 0-3, so noise is 0x80 and 0x08.
+    const RegWrite* last51 = last(w, 0xFF25);
+    REQUIRE(last51 != nullptr);
+    CHECK((last51->value & 0x80) != 0);
+    CHECK((last51->value & 0x08) == 0);
+    // and the one the note itself wrote had both sides.
+    int notePan = -1;
+    for (size_t k = 0; k < w.size(); ++k)
+        if (w[k].addr == 0xFF25 && int(k) > trig) { notePan = int(w[k].value); break; }
+    REQUIRE(notePan >= 0);
+    CHECK((notePan & 0x88) == 0x88);                      // both sides, the instrument's own
+}
+
 TEST_CASE("a slide holds its aim through the table and stops at the bottom of the range", "[driver][table]")
 {
     // Section 71: LSDj's wave kick is a table row carrying TSP -60 beside L20,

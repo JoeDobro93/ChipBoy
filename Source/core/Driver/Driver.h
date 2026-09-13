@@ -294,6 +294,11 @@ private:
         int8_t   instTranspose = 0;   ///< the instrument's PU2 transpose, or what an F on PU2 set (section 49)
         uint8_t  chord[3] = { 0, 0, 0 }; uint8_t chordN = 0, chordIdx = 0, chordCount = 0;
         uint8_t  dutyIdx = 0, duty = 2;
+        /// Section 139: a table row's `O` fired inside a note-on, waiting for
+        /// the note's own pan write to go out first -- 0 none, else the pan plus
+        /// one. The ROM writes the note's mixer and then the row's, two writes
+        /// in the one tick, and the order is audible on a short hit.
+        uint8_t  panQueued = 0;
         // The envelope the driver *wants*: what a note-on writes into NRx2 and
         // what a level change aims at (section 26).
         uint8_t  envVol = 15, envRate = 0; bank::EnvDir envDir = bank::EnvDir::Down;

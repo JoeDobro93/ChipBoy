@@ -3649,3 +3649,32 @@ burst carries the level the `E` just set.
 disabling a channel as a thing that stays, because fixing it meant modelling the 256 Hz frame step
 for one silent case. Both halves were wrong — nothing needs to know whether the counter has expired,
 only that it is enabled, and the case is four noise hits a bar in `READROOM`. That row now says so.
+
+### 2026-09-13 (READROOM) — a table row's `O` lands after the note's own pan (§139)
+
+**Reported:** on phrase `1A`, "in LSDj the retrigger note on row C is centered, but in ChipBoy it's
+falling on the left pan in the panning sequence" — with the guess that the STEP table's index was
+off.
+
+**Measured:** the index is right. Instrument `0C` is a noise instrument in STEP mode whose table is
+`O 01` (left), `O 02` (right), a blank row, then `H 00` hopping to row 0 for ever, and STEP walks it
+one row per trigger; ChipBoy walks it the same way the ROM does. What differs is the **order of two
+writes in one tick**:
+
+```
+ROM   NR43=40  TRIG  NR51=FF          the note sounds at the instrument's own pan
+      (+2 ms)  NR51=F7                then the table row's O pans it left
+CB    NR51=FF  NR51=F7  NR43=40  TRIG the note already sounds panned left
+```
+
+Both writes are in the same tick — 2 ms apart where a tick is 15.3 ms — so it is not a tick's delay:
+LSDj's note pass writes the mixer and triggers, and its table pass writes the row's `O` right after.
+With an `R` on the row, which is phrase `1A`'s row C: the ROM's note is `NR51=FF` (centre) and the
+`R`'s retrigger two milliseconds later is `7F` (right), where ChipBoy had both on the right.
+
+**Changed** (§139): a table row's `O` fired inside a note-on stores the pan in `Voice::panQueued` and
+writes nothing; `startVoice()` flushes it after its own `writeNr51(true)` and after §134's owed
+retrigger, which is the order the ROM writes them in. §31 already said the row "only changes the
+running state" inside a note-on so the note's own writes carry its own values — transpose and level
+obeyed it, `O` did not. On a noise hit a few milliseconds long the attack is the whole sound, so the
+order is audible.

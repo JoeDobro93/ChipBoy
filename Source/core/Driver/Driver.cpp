@@ -693,7 +693,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // **not** reset here. Measured on 9.2.L: the record outlives the note-on and
     // even a different instrument, and clearing it made every `Z` after the
     // first note inert.
-    v.dutyIdx = 0; v.killAt = -1; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigPending = 0; v.retrigFast = false; v.retrigFastCount = 0; v.envCount = 0; v.frameStep = 0; v.frameIdx = 0;   // the run starts at its first step (section 65)
+    v.dutyIdx = 0; v.killAt = -1; v.panQueued = 0; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigPending = 0; v.retrigFast = false; v.retrigFastCount = 0; v.envCount = 0; v.frameStep = 0; v.frameIdx = 0;   // the run starts at its first step (section 65)
     v.rng = v.rng * 1664525u + 1013904223u + note;
     restartPitchClock(ch);
     // volume from velocity: a MIDI note asks the Velocity mode, a cell's VEL is
@@ -851,6 +851,10 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // the ROM emits it **after** the note's burst -- two triggers a fraction of
     // a millisecond apart, as section 127's `S` does.
     if (v.retrigPending) { const bool env = v.retrigPending == 1; v.retrigPending = 0; retrigger(ch, true, env); }
+    // Section 139: and then the table row's own `O`, which the ROM writes after
+    // both -- measured with an `R` on the row, where the order is note, pan,
+    // retrigger, row's pan.
+    if (v.panQueued) { v.pan = Pan(v.panQueued - 1); v.panQueued = 0; writeNr51(); }
 }
 
 /// K, and the end of a note: LSDj takes the level to zero with the same
@@ -1900,7 +1904,13 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             writeNr50(uint8_t(masterFromArg(c.a & 15, (cur >> 4) & 7)), uint8_t(masterFromArg(c.b & 15, cur & 7)));
             break;
         }
-        case Cmd::O: v.pan = Pan(std::clamp<int>(c.a, 0, 3)); writeNr51(); break;
+        case Cmd::O:
+            // Section 139: inside a note-on the row only changes the running
+            // state (section 31), so the note's own pan write goes out first and
+            // this one follows it; outside one it is immediate.
+            if (inNoteOn_) v.panQueued = uint8_t(std::clamp<int>(c.a, 0, 3) + 1);
+            else { v.pan = Pan(std::clamp<int>(c.a, 0, 3)); writeNr51(); }
+            break;
         case Cmd::P: {
             // The argument is **two's complement** (section 34): the byte 0-255
             // read as a signed -128..127. The step per update comes from the
@@ -2100,7 +2110,13 @@ void Driver::revertCommand(int ch, Cmd cmd)
             }
             break;
         case Cmd::M: writeNr50(global_.masterL, global_.masterR); break;
-        case Cmd::O: v.pan = v.p.pan != 255 ? Pan(v.p.pan & 3) : i.pan; writeNr51(); break;
+        case Cmd::O: {
+            // Section 139: a revert waits for the note's own pan write too.
+            const Pan want = v.p.pan != 255 ? Pan(v.p.pan & 3) : i.pan;
+            if (inNoteOn_) v.panQueued = uint8_t(int(want) + 1);
+            else { v.pan = want; writeNr51(); }
+            break;
+        }
         case Cmd::P: v.fineOffset = 0; v.fineQueued = 0; v.drumOffset = 0.0; v.bendSpeed = 0; v.noiseRegStep = 0; v.noiseBend256 = 0; v.noiseBend9 = 0; if (live) writePeriod(ch, false); break;
         case Cmd::S:
             if (i.type == InstrumentType::Noise) { v.noiseTsp = 0; v.noiseReg = 0; if (live) writePeriod(ch, false); }   // the transpose back to zero (sections 55 and 66)

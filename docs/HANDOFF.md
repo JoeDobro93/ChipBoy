@@ -432,6 +432,17 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 48 (§139), from the user on `READROOM` phrase `1A`: the retrigger on row C is centred in
+  LSDj and panned left in ChipBoy. Not the STEP table's index, which is right -- instrument `0C` is
+  a STEP-mode noise instrument whose table is `O 01`, `O 02`, a blank row and `H 00` back to row 0,
+  and ChipBoy walks it as the ROM does. It is the **order of two `NR51` writes in one tick**: the
+  ROM's note sounds at the instrument's own pan and the table row's `O` follows 2 ms later (a tick
+  is 15.3 ms, so this is LSDj's note pass then its table pass, not a tick's delay), where ChipBoy
+  folded the row's pan into the note's own write and the attack was already panned. `Voice::panQueued`
+  holds a row's `O` fired inside a note-on until after the note's own pan write and §134's owed
+  retrigger -- the order measured with an `R` on the row. §31 already asked for this; transpose and
+  level obeyed it and `O` did not.
+
 - Round 47 (§138), closing §136's open noise trigger: an **`E` triggers the channel when the
   instrument's LENGTH counter is enabled**. My first guess -- that `E` retriggers on noise -- was
   measured wrong five ways; what those probes shared was an instrument with no length.
