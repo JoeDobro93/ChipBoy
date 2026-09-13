@@ -3887,3 +3887,20 @@ pitch: a note's pitch does not -- `CASTSHDW`'s note-on periods are identical at 
 every channel that writes one -- but two things that move a pitch are on the wrong clock (a wave DRUM
 sweep that never stops, a kit STEP bend applied once instead of every tick) and the **envelope** follows
 the tempo where LSDj's does not. All three are in `docs/HANDOFF.md` with their numbers.
+
+### 2026-09-13 — the probe rig moves into the repository, and a brief for the ROM audit (tooling)
+
+The three helpers every round this year was measured with -- `playStart` and the per-channel readers,
+the any-version host bootstrap, and the one call that imports a probe save into ChipBoy and traces it
+-- lived in a scratchpad outside the tree beside the ~110 one-question probes that use them. The
+probes are disposable and named in the design log where each was used; the helpers are the rig, so
+they are now `tools/lsdjref/probe_h.py`, `probe_vh.py` and `probe_cb.py`, with their paths resolved
+from the file's own location and the asset root overridable (`CHIPBOY_LSDJ_DIR`). Smoke-checked from
+a clean import: a probe traced on the ROM and through ChipBoy in twelve lines.
+
+`docs/plan-rom-audit.md` is the brief for the next round -- a code-led audit of every command against
+the 9.3.9 ROM, in a phrase cell and in a table row and in both command columns, with the interactions
+as the point. It carries the L3 rule that lets behaviour be derived from the ROM, the disassembler and
+PC-tracer invocations with the addresses the last campaign recorded, the reading order for the
+documents and how far to trust each, the ten things already known to be wrong, the traps this year
+cost to learn, and what done looks like per finding.

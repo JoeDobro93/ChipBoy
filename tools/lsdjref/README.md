@@ -47,6 +47,16 @@ ROM still runs the suite clean.
 | `lsdjref_ocr.py` | reads LSDj's 8x8 tile text off a `--screen` dump |
 | `run.sh.in` | configured into the build tree as `lsdjref-run` |
 | `cmake/SameBoy.cmake` | fetches SameBoy and assembles its boot ROMs |
+| `probe_fmt22.py` | writes a controlled song into a save's working area: `Probe`, `only`, `tempo`, `phrase`, `table`, `pulse`, `wave`, `noise` |
+| `run.py` | traces a probe save and decodes a channel's writes |
+| `probe_h.py` | `playStart` (LSDj's own play moment, never a frame count), `ev`, `trigs`, `reg`, `levels` |
+| `probe_vh.py` | the same rig on **any** version: `VP(version)` on a host the ROM formatted itself, `trace`, `romPath`, `fmt` |
+| `probe_cb.py` | `trace_cb`: import a probe save into ChipBoy and trace it, so both streams come out of one function |
+
+The last three moved here from a scratchpad once a year of rounds had been
+measured with them; `docs/plan-rom-audit.md` §3.3 is the twelve-line
+two-sided probe they add up to. Assets default to `/root/lsdj/`, overridable
+with `CHIPBOY_LSDJ_DIR`.
 
 ## Adding a case
 

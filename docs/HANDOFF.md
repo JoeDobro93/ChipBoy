@@ -935,6 +935,16 @@ design-log section the change touches. Update this file at the end of every chan
 
 ## Next steps
 
+- **The next round is a code-led audit of every command against the 9.3.9 ROM, and
+  `docs/plan-rom-audit.md` is its brief.** Read that first: what the round is for, the L3 rule that
+  lets behaviour be derived from the ROM, the disassembler and PC tracer and the exact invocations,
+  the reading order for these documents and how much to trust each, the ten things already known to
+  be wrong, the traps this year cost to learn, and what done looks like per finding. The probe rig
+  moved into `tools/lsdjref/` (`probe_h.py`, `probe_vh.py`, `probe_cb.py`) so a fresh container has
+  it; the ~110 `vs_*.py` probes in `/root/lsdj/probe/` do not survive the container and are named in
+  the design log where each was used.
+
+
 - **Fourteen more ROMs are in `/root/lsdj/roms/`** and every format gap is filled: 7.2.3 (format
   8), 7.5.4 (9), 7.9.9 and 8.0.0 (10), 8.2.0 (11), 8.8.6 (15), 8.9.3 and 8.9.5 (17), 9.0.0 and
   9.0.1 (18), 9.1.0 (19), 9.1.C (21), 3.6.5. Formats 9 and 10 have their own model now
