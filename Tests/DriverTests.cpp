@@ -4147,6 +4147,70 @@ TEST_CASE("a bare note does not step a STEP table", "[driver][table]")
     CHECK(int(r.drv.view(2).frame) - 1 == 1);               // and the bare note stepped nothing
 }
 
+TEST_CASE("a bare note pays what its commands owe the burst", "[driver][commands]")
+{
+    // Section 146, from `SAMESONG`'s phrase 2F: `setLevel()` leaves a level to the
+    // note's own burst while a note-on is in progress (section 3), and a bare
+    // note's writes are the period and the pan -- so an `E` beside one reached no
+    // register at all. Measured on the ROM: `NR32` at 100 % where ChipBoy wrote no
+    // `NR32`, eight zombie steps on a pulse where it wrote none, and section 138's
+    // trigger lost with them.
+    auto bareWith = [](int ch, const Command& c) {
+        NoteEvent e = cellOn(ch, 62, 2); e.inst = 0; e.cmd1 = c; return e;
+    };
+    SECTION("the wave channel's NR32")
+    {
+        Rig r;
+        r.tickHz = 100.0;
+        r.song.noteSource[2] = tracker::NoteSource::Tracker;
+        r.bank.waves[0].used = true;
+        auto& i = r.bank.instruments[1];
+        i = Instrument::defaults(InstrumentType::Wave, "wav");
+        i.wave = 1; i.waveLevel = 2;                        // 50 % to begin with
+        ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(2, p);
+        r.block({ cellOn(2, 60, 2) }, 480);
+        // Section 108: on the wave channel the `E`'s low nibble **is** the level.
+        const auto w = r.block({ bareWith(2, Command{ Cmd::E, 0, 3, 0 }) }, 480);
+        const RegWrite* x = last(w, 0xFF1C);
+        REQUIRE(x != nullptr);                              // it wrote NR32 at all
+        CHECK(int((x->value >> 5) & 3) == 1);               // NR32's code for 100 %
+    }
+    SECTION("a pulse's level")
+    {
+        Rig r;
+        r.tickHz = 100.0;
+        r.song.noteSource[0] = tracker::NoteSource::Tracker;
+        auto& i = r.bank.instruments[1];
+        i = Instrument::defaults(InstrumentType::Pulse, "pu");
+        i.envRate = 0;
+        ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(0, p);
+        r.block({ cellOn(0, 60, 2) }, 480);
+        const int before = int(r.drv.view(0).volume);        // the velocity's level
+        const auto w = r.block({ bareWith(0, Command{ Cmd::E, 4, 0, 0 }) }, 480);
+        int downs = 0;
+        for (const auto& x : w) if (x.addr == 0xFF12 && x.value == 0x09) ++downs;
+        INFO("from " << before << " to " << int(r.drv.view(0).volume) << ", " << downs << " steps");
+        CHECK(downs == before - 4);                          // one zombie triple a level down
+        CHECK(int(r.drv.view(0).volume) == 4);
+    }
+    SECTION("and section 138's trigger with it")
+    {
+        Rig r;
+        r.tickHz = 100.0;
+        r.song.noteSource[0] = tracker::NoteSource::Tracker;
+        auto& i = r.bank.instruments[1];
+        i = Instrument::defaults(InstrumentType::Pulse, "pu");
+        i.envVol = 4; i.envRate = 0;
+        i.length = 59; i.lengthLatent = false;              // the counter is enabled
+        ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(0, p);
+        r.block({ cellOn(0, 60, 2) }, 480);
+        const auto w = r.block({ bareWith(0, Command{ Cmd::E, 12, 0, 0 }) }, 480);
+        int trigs = 0;
+        for (const auto& x : w) if (x.addr == 0xFF14 && (x.value & 0x80)) ++trigs;
+        CHECK(trigs == 1);                                  // the bare note itself triggers none
+    }
+}
+
 TEST_CASE("a Z plays what it rolled without remembering it", "[driver][commands][table]")
 {
     // Section 130: the lane's record is the last command actually **written**,

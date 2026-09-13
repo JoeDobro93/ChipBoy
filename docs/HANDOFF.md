@@ -432,6 +432,20 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 55 (§146), from the user on **`SAMESONG`'s `WAV` phrase 2F after 2E** ("doesn't sound right
+  during the string of `E` commands") and on 2E's `K` ("might be cutting the note off slightly earlier
+  in LSDj"): **a bare note pays nothing its commands owe the note's burst.** 2E needed nothing -- traced
+  against the ROM it agrees on all 96 of its ticks, every `K 03` and `K 04` killing on the ROM's tick,
+  so `K 03` is right and `K 02` would be a tick early. 2F is rows of bare notes (§101) each carrying an
+  `E`, and ChipBoy's level sat a step low on every row that carried **both** a note and an `E`. The
+  cause is one line in `setLevel()`: it returns without writing while `inNoteOn_` is set, because §3
+  folds a note's commands into its own burst, which carries the level -- and §138's trigger waits for
+  that burst too, in `retrigPending`. A bare note's writes are the period and `NR51`, so both were
+  dropped: measured, the ROM writes `NR32` at 100 % and eight zombie steps on a pulse and §138's
+  trigger where ChipBoy wrote none of them (`probe/vs_bareE.py`). `startVoice()`'s bare branch now pays
+  both, in the ROM's order. After: 2E and 2F agree on 186 of 191 ticks, and the five left are one
+  place -- 2F's row E, instrument `00`'s own pitch fall, 4 % short a step (below).
+
 - Round 54 (§145, correcting §144), from the two things round 53 left measured and not settled: the
   transpose column **belongs to the run that is live**. §144's "they add" came from four readings at
   the top of the noise map, where +12 from the probe's note wraps into the 7-bit region and two sums
@@ -940,6 +954,14 @@ design-log section the change touches. Update this file at the end of every chan
   of the time (§97). Whole notes are missing, among them every one whose note byte names a sample
   one of its two kits does not have -- the ROM plays the other kit's, `kitNote()` gives up on both
   and returns silence. Start there; it is a few lines.
+- **`SAMESONG` phrase 2F's row E falls 4 % short a step.** Note `49` on instrument `00` (`WAV`, byte
+  5 = `0x60`) carries no command and its period still falls over the row: the ROM `1362 1158 953 748
+  544`, ChipBoy `1308 1115 923 731 538` -- the same shape, every step a little small. It is the
+  instrument's own vibrato or sweep, and it is the only thing left on 2E and 2F after §146 (five ticks
+  of 191). Measure the shapes against `V`'s tables (§119 did the noise channel's phase; the wave
+  channel's saw and square shapes are still on the unmeasured list). `probe/ssph.py ss 2E,2F 3.72`
+  prints the row.
+
 - **`DELIVERY` gains a tick about every ten seconds.** Its PU2 note-ons run +17, +16, +11, +13 ms
   later than the ROM's in steps, with long plateaus between -- each step is one tick at its tempo
   (16.78 ms), not a drift. The tempo itself is right: the ROM's tick for every tempo byte measured

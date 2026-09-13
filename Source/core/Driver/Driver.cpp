@@ -702,6 +702,11 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         // slide in force starts from the pitch the channel is at.
         v.note = note; v.vel = vel; v.active = true;
         const bool was = inNoteOn_; inNoteOn_ = true;
+        // Section 146: what the cell's commands do to the level is owed to the
+        // note's own burst (section 3) and a bare note has none, so it is
+        // remembered here and written below.
+        const bool levelIsNr32 = v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit;
+        const uint8_t levelWas = levelIsNr32 ? v.waveLevel : v.envVol;
         // Section 131: a **bare** note does not step a STEP table. Measured on
         // 9.2.L with a bare row between two plain ones and an `F 10` on the
         // table's rows: the ROM writes no frame there at all, where stepping
@@ -718,6 +723,12 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         v.noteCmd[0] = {}; v.noteCmd[1] = {};
         inNoteOn_ = was;
         writePeriod(ch, false);
+        // Section 146: and now what they owe, in the ROM's order -- the period
+        // with no trigger, then `E`'s trigger where the LENGTH counter asks for
+        // one (section 138), then the level's own writes. `setLevel()` is right
+        // to leave these to a plain note's burst; this note has no burst.
+        if (v.retrigPending) { const bool env = v.retrigPending == 1; v.retrigPending = 0; retrigger(ch, true, env); }
+        if ((levelIsNr32 ? v.waveLevel : v.envVol) != levelWas) setLevel(ch);
         writeNr51();
         return;
     }

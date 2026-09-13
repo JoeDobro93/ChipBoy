@@ -3842,3 +3842,39 @@ would put the called table's row 0 on that tick where the ROM has nothing, and t
 loop already lands on the next one, so the two cannot be told apart here. A parent whose rows loop
 sooner than the called table's would separate them; `READROOM`'s `A 20` sits on a phrase cell, and its
 table `05`'s `A 20` on that table's last row, where the two coincide.
+
+### 2026-09-13 — a bare note pays what its commands owe the burst (§146)
+
+**Measured:** from the user on `SAMESONG`'s **`WAV` phrase 2F after 2E** -- the string of `E` commands
+does not sound right -- and on phrase 2E's `K`, which felt like it cut later than LSDj's. Traced
+against the ROM, **2E agrees tick for tick over all 96 of its ticks**, every `K 03` and `K 04` landing
+on the ROM's tick, so `K` needed nothing. 2F did: its rows are bare notes (the instrument column blank,
+§101's pitch change with no trigger) carrying `E 03` or `E 02`, and ChipBoy's level sat a step low
+wherever a row carried **both** a note and an `E` -- 50 % where the ROM had 100 %. Probed on its own:
+
+```
+WAV, NR32, an `E` alone then two beside bare notes   ROM 12:C0 (50%)  24:A0 (100%)  36:C0 (50%)
+                                                    CB  12:40 (50%)  -- and nothing after it
+PU1, NR12 writes per tick, the same three `E`s       ROM t12: 33  t24: 8  t36: 12
+                                                    CB  t12: 33
+PU1 with the LENGTH counter on, triggers (§138)      ROM 0  12  24  36      CB  0  12
+```
+
+Nothing a cell's command did to the level reached a register on a bare note, on any channel, and
+§138's trigger went with it. One line in `setLevel()` is the cause: it returns without writing while
+`inNoteOn_` is set, because §3 folds a note's commands into the note's own burst, which carries the
+level anyway -- and §138's trigger waits for that same burst in `retrigPending`. A bare note writes the
+period and `NR51` and nothing else, so both were dropped.
+
+**Changed** (§146): the bare-note branch of `startVoice()` remembers the level before the cell's
+commands run and, once `inNoteOn_` is back off and the period is written, pays what they owe -- the
+pending retrigger first, then the level if it changed, which is the order the ROM's trace shows
+(period with no trigger, the five-register trigger, the level's zombie steps, the period again).
+`setLevel()` is unchanged: it is right for a plain note.
+
+After: all three probes are the ROM's, and `SAMESONG`'s 2E and 2F agree on **186 of 191 ticks**.
+
+**Left measured, not settled:** the five that differ are one place, phrase 2F's row E -- note `49` on
+instrument `00`, whose own pitch effect falls `1362 1158 953 748 544` on the ROM against ChipBoy's
+`1308 1115 923 731 538`, about 4 % short a step. That is the instrument's vibrato or sweep shape, not
+a command, and it wants its own measurement.

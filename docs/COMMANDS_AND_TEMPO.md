@@ -4785,3 +4785,49 @@ sixteenth tick for a table that runs its length -- and reads the same `A` a seco
 called table's row 0 on that tick where the ROM has nothing, and its own loop already lands on the
 next one. A parent whose rows loop sooner than the called table's would tell a restart from this; no
 song measured has one, and `READROOM`'s `A 20` sits on its table's last row, where the two coincide.
+
+## 146. A bare note has no burst, so what a command owes the burst is owed at once
+
+The user, on `SAMESONG`'s **`WAV` phrase 2F after 2E**: the string of `E` commands does not sound
+right. 2F is eight rows of bare notes -- the instrument column blank, §101's pitch change with no
+trigger -- each carrying `E 03` or `E 02`, which on the wave channel is 100 % and 50 % of `NR32`
+(§108). Traced against the ROM the whole of 2E agrees tick for tick, kills included, and 2F's level
+sits a step low wherever a row carries **both** a note and an `E`:
+
+```
+phrase 2F, rows 2, 4, 6 (a bare note and `E 03`)   ROM level 1 (100 %)   CB level 2 (50 %)
+```
+
+Probed on its own -- `E 02` alone on one row, then `E 03` and `E 02` each beside a bare note:
+
+```
+WAV, NR32                     ROM 12:C0 (50 %)  24:A0 (100 %)  36:C0 (50 %)
+                              CB  12:40 (50 %)   -- and nothing after it
+PU1, NR12 writes per tick     ROM t12: 33  t24: 8  t36: 12      -- 11 down-triples, 8 up, 4 triples
+                              CB  t12: 33
+PU1 with the LENGTH counter on, triggers (§138)
+                              ROM 0  12  24  36
+                              CB  0  12
+```
+
+So **nothing** a cell's command does to the level reaches the register on a bare note, on any channel,
+and §138's trigger is lost with it. The cause is one line in `setLevel()`: it returns without writing
+while `inNoteOn_` is set, because §3 folds a note's commands into the note's own burst, which carries
+the level anyway. §138's trigger waits for the same burst, in `retrigPending`. A bare note's writes are
+the period and `NR51` and nothing else, so both were simply dropped.
+
+The ROM's order at such a row's own tick, read off the trace:
+
+```
+NR13 NR14          the bare note's period, no trigger bit  (section 101)
+NR10 NR11 NR12 NR13 NR14   the whole note-on again, with the trigger  (section 138)
+NR12 x 8           the level's zombie steps, after the trigger, which carries the old level
+NR13 NR14          the period once more
+```
+
+### As built
+
+The bare-note branch of `startVoice()` remembers the level before the cell's commands run and, once
+`inNoteOn_` is back off and the period is written, pays what they owe: the pending retrigger first,
+then the level if it changed, which is the ROM's order. `setLevel()` is unchanged -- it is right for a
+plain note, where the burst carries the level.
