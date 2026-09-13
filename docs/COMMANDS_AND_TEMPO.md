@@ -4261,3 +4261,25 @@ instrument the ROM gives 9, 5, 0, 0 at 14 ms apart where a restart would hold 9,
 burst at the command where the other `x` values emit two. `READROOM` uses `R F4`, `R F6`, `R D0`,
 `R 04` and `R 06` and no `x = 8`, so the fast roll keeps §90's behaviour until it is measured
 properly.
+
+## 137. The groove in force before any `G` is LSDj's **groove 0**, not a hard straight six
+
+§135 settled what a `G` does; this is what is in force before one. Probing `R` at tempo 163 with
+LSDj's groove 0 set to a single entry of twelve ticks and no `G` anywhere, the phrase's rows came
+184 ms apart on the ROM and 92 ms apart in ChipBoy -- the straight six. LSDj's groove 0 is an
+ordinary editable groove and it is the one a phrase uses when nothing has changed it; ChipBoy's
+slot 0 is a hard-coded straight six that is not editable (§9.2), and the importer left every
+phrase pointing at it.
+
+The importer already copies LSDj groove *g* into ChipBoy slot *g + 1* -- that is what makes
+`G 00` import as `G 1` -- so the fix is for an imported phrase's own groove to be **slot 1**, the
+same groove `G 00` names. `READROOM`'s groove 0 is `06 06`, so nothing there moves; a song whose
+groove 0 is anything else played at the wrong speed from its first row.
+
+### As built
+
+`LsdjSong.cpp` sets an imported phrase's `groove` to **1** where it set 0. `Groove` slot 0 stays
+ChipBoy's own straight six for a song written here, so nothing native moves; the importer's
+`grooves()` already writes `6 6` into a slot LSDj left empty, so a song with no groove 0 at all
+imports exactly as it did. §135's walk then starts where the ROM starts: the phrase's own groove,
+which for an imported song is LSDj's groove 0, until the first `G`.

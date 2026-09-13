@@ -865,7 +865,11 @@ struct Reader {
         const int slot = ++phrasesOut;
         auto& ph = song.phrases[size_t(slot - 1)];
         ph = tracker::Phrase{};
-        ph.used = true; ph.steps = 16; ph.groove = 0;
+        // Section 137: LSDj's groove 0 is an ordinary editable groove and the
+        // one a phrase runs on until a `G` says otherwise; it lands in ChipBoy
+        // slot 1, which is also what `G 00` imports as. Slot 0 is ChipBoy's own
+        // straight six, which LSDj has no equivalent of.
+        ph.used = true; ph.steps = 16; ph.groove = 1;
         bool stopsHere = false;              // section 120: an H F F ends the channel
         int hopStep = -1;                    // an H that ends the phrase (section 56)
         for (int st = 0; st < 16; ++st) {

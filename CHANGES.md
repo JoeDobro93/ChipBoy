@@ -3604,3 +3604,16 @@ added to itself.
 restart would hold 9, and it emits one burst at the command where every other `x` emits two.
 `READROOM` uses `R F4`, `R F6`, `R D0`, `R 04` and `R 06` and no `x = 8`, so the fast roll keeps
 §90's behaviour until it has a measurement of its own.
+
+### 2026-09-13 — an imported phrase's groove is LSDj's groove 0 (§137)
+
+**Measured:** probing `R` at tempo 163 with LSDj's groove 0 set to a single entry of twelve ticks
+and no `G` anywhere, the phrase's rows came 184 ms apart on the ROM and 92 ms apart in ChipBoy --
+the straight six.
+
+**Changed** (§137): LSDj's groove 0 is an ordinary editable groove and the one a phrase runs on
+until a `G` says otherwise. The importer already copies LSDj groove *g* into ChipBoy slot *g + 1*,
+which is what makes `G 00` import as `G 1`; an imported phrase's own groove is now **slot 1** where
+it was slot 0, ChipBoy's own hard straight six. Nothing native moves, and a song whose groove 0 is
+`6 6` (`READROOM`'s is) imports exactly as it did -- a song whose groove 0 is anything else played
+at the wrong speed from its first row.

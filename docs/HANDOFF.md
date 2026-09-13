@@ -432,6 +432,12 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 46 (§137): LSDj's **groove 0** is the groove a phrase runs on until a `G` says otherwise,
+  and the importer pointed every phrase at ChipBoy's slot 0 instead -- a hard straight six that is
+  not editable. Measured with groove 0 set to a single entry of twelve ticks and no `G` anywhere:
+  the ROM's rows 184 ms apart, ChipBoy's 92. An imported phrase's own groove is now slot 1, which
+  is also what `G 00` imports as. `READROOM`'s groove 0 is `06 06`, so nothing there moved.
+
 - Round 45 (§136), the user's retrigger roll, reported twice and still wrong: with §135 in,
   `READROOM`'s song row `04` agreed with the ROM on `PU1` and `PU2` trigger for trigger and the
   noise channel did not. Rendering that row's noise channel from both register streams through the

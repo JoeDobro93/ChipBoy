@@ -367,6 +367,12 @@ TEST_CASE("a format-22 song imports its instruments, tables, phrases and chains"
     CHECK(out->chain[1].empty());
     CHECK(out->grooves[0].ticks[0] == 7); CHECK(out->grooves[0].ticks[1] == 5); CHECK(out->grooves[0].ticks[2] == 0);
     CHECK(out->grooves[1].ticks[0] == 6);
+    // Section 137: LSDj's groove 0 is the groove a phrase runs on until a `G`
+    // says otherwise, and it lands in slot 1. This song's is 7 5, so every
+    // imported phrase swings and its rows are 7 + 5 per pair, not six each.
+    REQUIRE(out->chain[0][0] >= 1);
+    CHECK(int(out->phrases[size_t(out->chain[0][0] - 1)].groove) == 1);
+    CHECK(rowTicks(*out, 0, 0) == 8 * (7 + 5));
     for (auto src : out->noteSource) CHECK(src == tracker::NoteSource::Tracker);
     // Section 49: the PU2 transpose is a signed byte of semitones and ChipBoy's
     // is the same, so a transpose that keeps every note on the keyboard is
