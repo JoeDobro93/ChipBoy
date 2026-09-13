@@ -1881,6 +1881,40 @@ TEST_CASE("an E does trigger when the LENGTH counter is on", "[driver][zombie]")
     }
 }
 
+TEST_CASE("a shaped envelope's first step lands on its own pitch clock", "[driver][shaped]")
+{
+    // Section 142: the level boundary of a six-level stage stored as 2 + 47/256
+    // ticks sits at 93.17 of section 116's 1/256-tick units, and two pitch
+    // clocks are worth 93.2 of them -- so truncating the position to that unit
+    // put the first step a whole pitch clock (2.8 ms) late, which is what the
+    // ROM's step times exposed. The position is 1/65536 of a tick now.
+    Rig r;
+    r.tickHz = 65.2174;                                   // tempo 163, as measured
+    auto& i = r.bank.instruments[0];
+    i.env.mode = EnvMode::Shaped;
+    i.env.start = 6; i.env.peak = 6; i.env.attackTicks = 0; i.env.attackFine = 0;
+    i.env.decayTicks = 2; i.env.decayFine = 47;           // what the importer makes of `env 62`
+    i.env.sustain = 0;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2;
+    r.drv.setTickRate(r.tickHz);                          // section 141
+    r.drv.setParams(0, p);
+    // The tick the note is on, then the pitch clocks inside it: the level must
+    // leave 6 on the second clock, 5.58 ms in, not the third.
+    std::vector<std::pair<double, int>> steps;
+    int last = -1;
+    for (int k = 0; k < 16; ++k) {
+        const auto w = r.block(k == 0 ? std::vector<NoteEvent>{ Rig::on(0, 60, 100) } : std::vector<NoteEvent>{}, 128);
+        const int lvl = int(r.drv.view(0).envVol);
+        if (last >= 0 && lvl != last) steps.push_back({ double(k) * 128.0 / 48.0, lvl });
+        last = lvl;
+    }
+    REQUIRE(steps.size() >= 2);
+    INFO("first step at " << steps[0].first << " ms to level " << steps[0].second);
+    CHECK(steps[0].second == 5);
+    CHECK(steps[0].first < 7.0);                          // the second clock, not the third
+    CHECK(steps[0].first > 3.0);
+}
+
 TEST_CASE("a STEP table's position is the instrument's own", "[driver][table]")
 {
     // Section 140: measured on the ROM, two instruments keep their own position

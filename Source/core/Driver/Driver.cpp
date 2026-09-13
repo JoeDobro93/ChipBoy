@@ -78,8 +78,15 @@ constexpr double kDrumUnitsPerSemitone = 19.11;
 constexpr int kEnvStepPeriods[8] = { 0, 1432, 2865, 4297, 5730, 7162, 8595, 10027 };
 /// One pitch clock, in the units the table is held in.
 constexpr int kEnvClock = 256;
-/// Section 116: the shaped envelope's position is in 1/kShapedFine of a tick.
+/// Section 116: a stored envelope stage is a tick count plus 1/kShapedFine.
 constexpr int kShapedFine = 256;
+/// Section 142: the position the driver walks that stage with is finer again --
+/// 1/kShapedPos of a tick. At 1/256 a level boundary at 93.17 of those units and
+/// two pitch clocks worth 93.2 of them decided the wrong way once the 93.2 was
+/// truncated, and the envelope's first step slipped a whole pitch clock.
+constexpr int kShapedPos = kShapedFine * 256;
+/// A stored stage (ticks + 1/256) in position units.
+constexpr int stagePos(int ticks, int fine) { return (ticks * kShapedFine + fine) * (kShapedPos / kShapedFine); }
 
 /// The spacing of the NRx2 writes a level change is made of (measured): the
 /// three writes of one step down are sixteen cycles apart and successive steps
@@ -382,10 +389,10 @@ void Driver::clearSteps(int ch)
 
 int Driver::subOfTick(const Voice& v) const
 {
-    constexpr int F = kShapedFine;
+    constexpr int P = kShapedPos;
     if (tickCycles_ <= 0.0) return 0;
     const double cycles = double(v.shapedClocks) * double(kPitchCycles);
-    return std::clamp(int(cycles * double(F) / tickCycles_), 0, F - 1);
+    return std::clamp(int(cycles * double(P) / tickCycles_), 0, P - 1);
 }
 
 void Driver::setTickRate(double ticksPerSecond)
@@ -1454,16 +1461,19 @@ uint8_t Driver::shapedLevel(const Voice& v) const
 {
     const Envelope& e = v.inst.env;
     auto clamp15 = [](int x) { return uint8_t(std::clamp(x, 0, 15)); };
-    // Section 116: the position is in 1/256 of a tick -- exact on a tick
+    // Section 116: the position is a fraction of a tick -- exact on a tick
     // boundary, interpolated between them from how far this tick's pitch
-    // clocks have got. Section 121: the stages are in the same units, their
-    // tick count plus a fraction, so a stage shorter than a tick is a stage.
-    constexpr int F = kShapedFine;
+    // clocks have got. Section 121: the stages are a tick count plus a
+    // fraction, so a stage shorter than a tick is a stage. Section 142: the
+    // position is carried in 1/65536 of a tick where a stage is stored in
+    // 1/256, because a level boundary and a pitch clock can fall 0.03 of a
+    // stored unit apart and the coarser unit then put the step a clock late.
+    constexpr int P = kShapedPos;
     const int sub = subOfTick(v);
-    const int pos = std::max(int(v.shapedTick) * F + sub, int(v.shapedPosMax));
-    if (v.shapedRelease) return clamp15(envSegmentLevel(v.shapedFrom, 0, int(e.releaseTicks) * F + int(e.releaseFine), pos, e.releaseCurve));
-    const int a = int(e.attackTicks) * F + int(e.attackFine), d = int(e.decayTicks) * F + int(e.decayFine),
-              f = int(e.fadeTicks) * F + int(e.fadeFine), t = pos;
+    const int pos = std::max(int(v.shapedTick) * P + sub, int(v.shapedPosMax));
+    if (v.shapedRelease) return clamp15(envSegmentLevel(v.shapedFrom, 0, stagePos(int(e.releaseTicks), int(e.releaseFine)), pos, e.releaseCurve));
+    const int a = stagePos(int(e.attackTicks), int(e.attackFine)), d = stagePos(int(e.decayTicks), int(e.decayFine)),
+              f = stagePos(int(e.fadeTicks), int(e.fadeFine)), t = pos;
     if (t < a) return clamp15(envSegmentLevel(e.start, e.peak, a, t, e.attackCurve));
     if (t < a + d) return clamp15(envSegmentLevel(e.peak, e.sustain, d, t - a, e.decayCurve));
     // The third stage (section 51): the sustain fades to a level and holds there.
@@ -1480,10 +1490,10 @@ void Driver::emitShapedLevel(int ch)
 {
     Voice& v = v_[size_t(ch)];
     if (!v.shapedOn || v.shapedTaken) return;
-    {   // the position only ever goes forward (section 116)
-        constexpr int F = kShapedFine;
+    {   // the position only ever goes forward (section 116), in section 142's units
+        constexpr int P = kShapedPos;
         const int sub = subOfTick(v);
-        v.shapedPosMax = std::max(v.shapedPosMax, uint32_t(int(v.shapedTick) * F + sub));
+        v.shapedPosMax = std::max(v.shapedPosMax, uint32_t(int(v.shapedTick) * P + sub));
     }
     const uint8_t level = shapedLevel(v);
     if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) {
@@ -1503,7 +1513,7 @@ void Driver::stepShaped(int ch)
     Voice& v = v_[size_t(ch)];
     if (!v.shapedOn || v.shapedTaken) return;
     ++v.shapedTick; v.shapedClocks = 0;
-    if (v.shapedRelease && int(v.shapedTick) * kShapedFine >= int(v.inst.env.releaseTicks) * kShapedFine + int(v.inst.env.releaseFine)) {
+    if (v.shapedRelease && int(v.shapedTick) * kShapedPos >= stagePos(int(v.inst.env.releaseTicks), int(v.inst.env.releaseFine))) {
         v.shapedOn = false; v.shapedRelease = false;
         stopVoice(ch, true);
         return;

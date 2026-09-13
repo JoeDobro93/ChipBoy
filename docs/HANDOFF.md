@@ -432,6 +432,17 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 51 (§142), closing §141's residue: the envelope's first step landed a whole pitch clock late.
+  Timed exactly from the zombie triples (`probe/vs_envstep.py`), the spacing was right everywhere and
+  only the first step was wrong, with a short step at the first tick boundary pulling the rest back.
+  A knife-edge: `env 62`'s decay is 559 of §116's 1/256-tick units over six levels, so a level
+  boundary is at 93.17, and two pitch clocks are worth 93.2 -- which `subOfTick()` truncated to 93,
+  a hair under. The runtime position is 1/65536 of a tick now (`kShapedPos`, `stagePos()`); nothing
+  stored changed. After: every step lands on the ROM's clock, uniformly +0.4 ms, which is where the
+  two count **from** (LSDj starts its envelope at the interrupt and writes the note's registers a few
+  hundred microseconds in, where this trace's t = 0 sits) and would need the ROM's interrupt entry
+  timed to confirm.
+
 - Round 50 (§141), from the user: "the envelope doesn't scale the same way with tempo ... at T51
   (81bpm) the noise notes in this same phrase sound a lot different". The ROM's envelope is
   **tempo-independent** (byte for byte the same at T163 and T81) and so is the importer's conversion
@@ -443,9 +454,7 @@ design-log section the change touches. Update this file at the end of every chan
   only the middle one changed nothing measurable. The length is now in cycles (`tickCycles_`,
   `subOfTick()`), measured from the tick boundaries, and supplied by the caller's clock through
   `Driver::setTickRate()` for the first tick. After: ChipBoy is the same at both tempos.
-  **Still open:** the shape starts about one pitch clock late (`6 6 5` against the ROM's `6 5 4`, and
-  `env 71` opens at 7 where the ROM opens at 6) -- an offset at the note, not a rate, since the slope
-  matches and the tempos agree. `probe/vs_envtempo.py` and `scratchpad/envdump` are the tools.
+  That left the shape one pitch clock late, which **§142 (round 51) closed**: see below.
 
 - Round 49 (§140), the user naming phrase `1A`'s whole pan sequence (L R C; rows 0/8 left, 2/A
   right, 6/C centre, the `0D` note on row 4 not disturbing it, and LSDj resetting the position on

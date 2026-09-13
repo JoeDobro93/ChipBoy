@@ -4540,3 +4540,59 @@ and `env 71` opens at 7 where the ROM opens at 6, so the ROM has taken its first
 ChipBoy has. That is an offset at the envelope's **start**, of the order of one pitch clock, not a
 rate: the decay's slope matches and both tempos now agree with each other. It wants its own
 measurement of where the ROM starts counting from a note.
+
+## 142. The envelope's position needs finer than 1/256 of a tick, or a step slips a whole pitch clock
+
+§141 left the shape starting late. Timed exactly -- each zombie triple on `NRx2` is one level, so its
+own write says when the level landed -- the envelope's steps from the note, on noise and on `PU1`
+alike:
+
+```
+env 62 (volume 6, fade 2: a level every 2 pitch clocks, 5.58 ms)
+ROM   5.2  10.8  16.3  21.9  27.5  33.1
+CB    8.4  13.9  16.7  22.3  27.9  33.5
+env 71 (volume 7, fade 1: every clock, 2.79 ms)
+ROM   2.4   5.2   8.0  10.8  13.6  16.3  19.1
+CB    5.6   8.4  11.2  13.9  14.0  16.7  19.5
+env F4 (volume 15, fade 4: every 4 clocks, 11.2 ms)
+ROM  10.8  21.9  33.1  44.2  55.4  66.6
+CB   13.9  22.3  33.5  44.7  55.8  67.0
+```
+
+The **spacing** is right everywhere -- 5.6, 2.8, 11.2 -- so the rate is not in question. What is wrong
+is that the first step lands one whole pitch clock late, and then one short step at the first tick
+boundary pulls the rest back into line (`env 62`: 13.9 to 16.7 is 2.8 ms where every other gap is
+5.6; `env 71` shows it as the pair 13.9 and 14.0).
+
+It is a knife-edge in the arithmetic. `env 62`'s decay is stored as `2 + 47/256` ticks, 559 of §116's
+1/256-tick units, over six levels -- so a level boundary is at 559/6 = **93.17** units. Two pitch
+clocks are worth 93.2 units at tempo 163. `subOfTick()` returned an integer, so 93.2 became **93**,
+a hair under the boundary, and the step had to wait for the third clock. Every stage whose level
+boundary falls just above a whole number of these units loses its first step the same way; 1/256 of a
+tick is 0.06 ms of resolution holding a decision worth 2.79 ms.
+
+### As built
+
+The **runtime** position goes to 1/65536 of a tick (`kShapedPos = kShapedFine * 256`) while the bank's
+stages keep their tick-plus-1/256 form: `stagePos()` scales a stored stage up, `subOfTick()` returns
+the finer unit, and `shapedTick`, `shapedPosMax` and `envSegmentLevel()`'s two arguments are all in it.
+93.2 against 93.17 then decides the way the ROM does. Nothing about the stored envelope changes, so no
+song moves but the one step.
+
+Re-measured with it in, every step lands on the pitch clock the ROM's does and the catch-up step is
+gone:
+
+```
+env 62   ROM  5.2  10.8  16.3  21.9  27.5  33.1       env F4   ROM  10.8  21.9  33.1  44.2
+         CB   5.6  11.2  16.7  22.3  27.9  33.5                CB   11.2  22.3  33.5  44.7
+env 71   ROM  2.4   5.2   8.0  10.8  13.6  16.3  19.1
+         CB   2.8   5.6   8.4  11.2  13.9  16.7  19.5
+```
+
+### Left measured, not settled
+
+Every step is still 0.4 ms later than the ROM's, evenly -- `env 62` at 5.6 against 5.2, 11.2 against
+10.8. That is where the two count **from**, not how fast they count: LSDj's handler starts its
+envelope when the interrupt begins and writes the note's registers a few hundred microseconds into
+it, which is where this trace's `t = 0` sits. 0.4 ms on a 5.6 ms step, and it would take measuring the
+ROM's interrupt entry rather than its first register write to confirm.

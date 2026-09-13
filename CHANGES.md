@@ -3712,3 +3712,31 @@ so the transport stopping puts every STEP table back to its first row — LSDj's
 what makes a song's first articulation deterministic. Kept per channel as well as per instrument,
 which nothing here measures: it only stops one instrument sounding on two channels from interleaving
 their positions. All four probes now agree with the ROM.
+
+### 2026-09-13 — the envelope's position needs finer than 1/256 of a tick (§142)
+
+**Measured:** §141 left the shape starting late. Timing each level exactly -- a zombie triple on
+`NRx2` is one level, so its own write says when the level landed -- the steps from the note:
+
+```
+env 62 (a level every 2 pitch clocks, 5.58 ms)   ROM  5.2  10.8  16.3  21.9  27.5  33.1
+                                                 CB   8.4  13.9  16.7  22.3  27.9  33.5
+env 71 (every clock, 2.79 ms)                    ROM  2.4   5.2   8.0  10.8  13.6  16.3
+                                                 CB   5.6   8.4  11.2  13.9  14.0  16.7
+```
+
+The spacing was right; the first step landed one whole pitch clock late and a short step at the first
+tick boundary then pulled the rest into line.
+
+**Changed** (§142): a knife-edge in the arithmetic. `env 62`'s decay is stored as `2 + 47/256` ticks,
+559 of §116's 1/256-tick units over six levels, so a level boundary sits at 559/6 = **93.17** units;
+two pitch clocks are worth 93.2 of them. `subOfTick()` returned an integer, so 93.2 became 93 -- a
+hair under -- and the step waited for the third clock. The **runtime** position is now 1/65536 of a
+tick (`kShapedPos`) while the bank's stages keep their tick-plus-1/256 form (`stagePos()` scales one
+up), so 93.2 against 93.17 decides the way the ROM does. Nothing stored changes.
+
+After: every step lands on the ROM's pitch clock and the catch-up step is gone.
+
+**Left measured, not settled:** every step is uniformly 0.4 ms later than the ROM's. That is where the
+two count **from**, not how fast: LSDj's handler starts the envelope when its interrupt begins and
+writes the note's registers a few hundred microseconds in, which is where this trace's `t = 0` sits.
