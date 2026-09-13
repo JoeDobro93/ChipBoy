@@ -266,6 +266,8 @@ void Driver::reset()
     pitchClockAt_ = 0; pitchClockValid_ = false; mixerInit_ = false;
     pendingCount_ = 0;
     for (auto& g : tableGroove_) g.fill(0);
+    for (auto& c : stepState_) for (auto& p : c) p = StepPark{};   // section 140
+    lastTickCycle_ = 0; lastTickIndex_ = -1;                       // section 141
     for (auto& vw : view_) vw = VoiceView{};
 }
 
@@ -376,6 +378,21 @@ void Driver::clearSteps(int ch)
 {
     for (auto& p : stepState_[size_t(ch & 3)]) p = StepPark{};
     v_[size_t(ch & 3)].stepKey = kNoStepKey;
+}
+
+int Driver::subOfTick(const Voice& v) const
+{
+    constexpr int F = kShapedFine;
+    if (tickCycles_ <= 0.0) return 0;
+    const double cycles = double(v.shapedClocks) * double(kPitchCycles);
+    return std::clamp(int(cycles * double(F) / tickCycles_), 0, F - 1);
+}
+
+void Driver::setTickRate(double ticksPerSecond)
+{
+    // Section 141: one tick in cycles. 4194304 cycles a second is the chip's
+    // clock, which is what kPitchCycles is counted in.
+    if (ticksPerSecond > 0.0) tickCycles_ = 4194304.0 / ticksPerSecond;
 }
 
 void Driver::setTableGroove(int ch, const uint8_t* ticks16)
@@ -1442,7 +1459,7 @@ uint8_t Driver::shapedLevel(const Voice& v) const
     // clocks have got. Section 121: the stages are in the same units, their
     // tick count plus a fraction, so a stage shorter than a tick is a stage.
     constexpr int F = kShapedFine;
-    const int sub = std::clamp(int(v.shapedClocks) * F / std::max(1, clocksPerTick_), 0, F - 1);
+    const int sub = subOfTick(v);
     const int pos = std::max(int(v.shapedTick) * F + sub, int(v.shapedPosMax));
     if (v.shapedRelease) return clamp15(envSegmentLevel(v.shapedFrom, 0, int(e.releaseTicks) * F + int(e.releaseFine), pos, e.releaseCurve));
     const int a = int(e.attackTicks) * F + int(e.attackFine), d = int(e.decayTicks) * F + int(e.decayFine),
@@ -1465,7 +1482,7 @@ void Driver::emitShapedLevel(int ch)
     if (!v.shapedOn || v.shapedTaken) return;
     {   // the position only ever goes forward (section 116)
         constexpr int F = kShapedFine;
-        const int sub = std::clamp(int(v.shapedClocks) * F / std::max(1, clocksPerTick_), 0, F - 1);
+        const int sub = subOfTick(v);
         v.shapedPosMax = std::max(v.shapedPosMax, uint32_t(int(v.shapedTick) * F + sub));
     }
     const uint8_t level = shapedLevel(v);
@@ -2873,7 +2890,6 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
             // interleave with it on real hardware, and must not overtake
             // writes that were computed before it, so it follows the burst.
             if (at > cycle_ + burst_) moveTo(at);
-            ++clocksThisTick_;                      // section 116
             for (int ch = 0; ch < 4; ++ch) {
                 Voice& v = v_[size_t(ch)];
                 if (v.active && v.pitchClockOn) pitchStep(ch, false);
@@ -2944,10 +2960,23 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
         moveTo(at);
         for (size_t i = 0; i < pendingCount_; ++i) fire(i);   // notes that were waiting for a tick
         pendingCount_ = 0;
-        // Section 116: how many pitch clocks that tick took, so the shaped
-        // envelope knows how far 1/256 of a tick is. A tick with none in it
-        // (a very fast tempo, or the first of a block) keeps the last reading.
-        if (clocksThisTick_ > 0) { clocksPerTick_ = clocksThisTick_; clocksThisTick_ = 0; }
+        // Section 141: how long this tick is, in pitch clocks, so the shaped
+        // envelope knows how far 1/256 of a tick is (section 116). The next
+        // boundary in this block gives the tick about to run exactly; failing
+        // that, the gap back to the boundary before it, which is the same at a
+        // steady tempo. Counting the clocks that fell inside the **last** tick
+        // was a tick late, and left the first tick of a session on a guess that
+        // `shapedPosMax` then ratcheted in.
+        if (k + 1 < nTicks) {
+            const uint32_t nextOff = std::min<uint32_t>(ticks[k + 1].offset, numSamples ? numSamples - 1 : 0);
+            const uint64_t nextAt = cycleAt(frameAbs + nextOff);
+            const int64_t span = int64_t(ticks[k + 1].tick) - int64_t(ticks[k].tick);
+            if (nextAt > at && span > 0) tickCycles_ = double(nextAt - at) / double(span);
+        } else if (lastTickIndex_ >= 0 && at > lastTickCycle_) {
+            const int64_t span = int64_t(ticks[k].tick) - lastTickIndex_;
+            if (span > 0) tickCycles_ = double(at - lastTickCycle_) / double(span);
+        }
+        lastTickCycle_ = at; lastTickIndex_ = int64_t(ticks[k].tick);
         tickAll();
     }
     while (ei < n) { NoteEvent& e = events[ei++]; if (waits(e)) hold(e); else runEvent(e); }

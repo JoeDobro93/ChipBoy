@@ -167,6 +167,14 @@ public:
     /// that asked for no groove) is one tick per row, the default.
     void setTableGroove(int ch, const uint8_t* ticks16);
 
+    /// Section 141: the tick rate in force, ticks a second, so the shaped
+    /// envelope's sub-tick position is right on the **first** tick of a session
+    /// too -- there is no boundary either side of that one to measure. The
+    /// caller knows it from its clock (`bpm * kTicksPerBeat / 60`); a caller
+    /// that never says is measured from the boundaries from the second tick on.
+    /// Harmless to call every block: it only moves what a tick is worth.
+    void setTickRate(double ticksPerSecond);
+
     uint8_t tableGrooveSlot(int ch) const;   ///< the slot a table's G asked for, 0 none
 
     /// An optional log of every register write this driver emits, in cycle
@@ -530,8 +538,17 @@ private:
     /// Section 116: pitch clocks between the last two ticks, so the shaped
     /// envelope knows how far 1/256 of a tick is. Seeded with the 19.5 ms tick
     /// a 128 BPM song has, and re-measured every tick.
-    int  clocksPerTick_ = 7;
-    int  clocksThisTick_ = 0;
+    /// Section 141: how long the tick now running is, in **cycles**, so the
+    /// shaped envelope knows how far 1/256 of a tick is (section 116). In
+    /// cycles and not in whole pitch clocks because a tick is not a whole
+    /// number of them -- 5.52 of them at tempo 163 -- and rounding that to 5
+    /// ran every tick's interpolation 9% fast. Taken from the tick
+    /// **boundaries**, which is exact and known before the tick it describes,
+    /// or from `setTickRate()` where the caller knows the tempo, which is what
+    /// answers for the very first tick of a session.
+    double   tickCycles_ = 7.0 * 11712.0;
+    uint64_t lastTickCycle_ = 0;     ///< the cycle of the last boundary seen
+    int64_t  lastTickIndex_ = -1;    ///< and its absolute tick number, -1 for none
 
     /// Section 113: how deep a table starting a table has gone, so a ring of
     /// `A`s cannot run away. The new table's row 0 fires at once, as a
@@ -660,6 +677,11 @@ private:
     static constexpr size_t kStepKeys = 257;
     static constexpr uint32_t kNoStepKey = 0xFFFFFFFFu;
     std::array<std::array<StepPark, kStepKeys>, 4> stepState_{};
+    /// Section 141: how far into the tick this voice's envelope is, in 1/256 of
+    /// one. Its own pitch-clock count against the tick's length in cycles, so a
+    /// note that started mid-tick begins at zero (section 121) and the fraction
+    /// carries no rounding of its own.
+    int  subOfTick(const Voice& v) const;
     void parkStep(int ch);
     void takeStep(int ch, uint8_t table);
     void clearSteps(int ch);

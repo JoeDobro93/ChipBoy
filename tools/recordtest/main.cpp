@@ -499,6 +499,9 @@ int traceSong(const juce::File& file, const juce::File& out, double seconds)
         events.clear();
         player.process(clock.ticks(), clock.tickCount(), clock.playing(), events);
         blockWrites.clear();
+        // Section 141: the tick rate in force, for the shaped envelope's
+        // sub-tick position on the very first tick.
+        driver.setTickRate(clock.bpm() * double(chipboy::driver::kTicksPerBeat) / 60.0);
         driver.process(events.data(), events.size(), kBlock, frame, clock.ticks(), clock.tickCount(), cycleAt, blockWrites);
         frame += kBlock;
     }

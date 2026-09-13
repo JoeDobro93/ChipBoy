@@ -432,6 +432,21 @@ design-log section the change touches. Update this file at the end of every chan
 - The LSDj ROM is the user's own, at `/root/lsdj/lsdj9_2_J.gb` on the build container
   only; `*.gb`/`*.sav` are git-ignored.
 
+- Round 50 (§141), from the user: "the envelope doesn't scale the same way with tempo ... at T51
+  (81bpm) the noise notes in this same phrase sound a lot different". The ROM's envelope is
+  **tempo-independent** (byte for byte the same at T163 and T81) and so is the importer's conversion
+  (`env 62` is 2+47/256 ticks at T163 and 1+22/256 at T81, both 33.5 ms). The fault was the driver's
+  sub-tick interpolation, three compounding errors in one expression: `clocksPerTick_` was an **int**
+  where a tick is 5.52 pitch clocks at T163, so every tick ran ~9% fast; it was counted from the
+  clocks inside the **previous** tick, a tick late; and the **first** tick of a session had neither,
+  so it used a hard-coded 7 -- and that is the tick a song's first note lands on, which is why fixing
+  only the middle one changed nothing measurable. The length is now in cycles (`tickCycles_`,
+  `subOfTick()`), measured from the tick boundaries, and supplied by the caller's clock through
+  `Driver::setTickRate()` for the first tick. After: ChipBoy is the same at both tempos.
+  **Still open:** the shape starts about one pitch clock late (`6 6 5` against the ROM's `6 5 4`, and
+  `env 71` opens at 7 where the ROM opens at 6) -- an offset at the note, not a rate, since the slope
+  matches and the tempos agree. `probe/vs_envtempo.py` and `scratchpad/envdump` are the tools.
+
 - Round 49 (§140), the user naming phrase `1A`'s whole pan sequence (L R C; rows 0/8 left, 2/A
   right, 6/C centre, the `0D` note on row 4 not disturbing it, and LSDj resetting the position on
   play): a STEP table's position is the **instrument's own**. Measured two ways -- a note on another

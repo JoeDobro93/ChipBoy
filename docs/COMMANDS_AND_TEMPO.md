@@ -4457,3 +4457,86 @@ the conservative reading.
 `allNotesOff()` clears that channel's positions, so the transport stopping puts every STEP table
 back to its first row — LSDj's reset on play, and what makes the first articulation of a song
 deterministic.
+
+## 141. How long a tick is comes from the tick boundaries, not from counting the clocks inside the last one
+
+From the user: "the envelope doesn't scale the same way with tempo. If I set tempo to T51 (81bpm) and
+match that in ChipBoy, the noise notes in this same phrase sound a lot different."
+
+The ROM's envelope is **tempo-independent**. Measured on the noise channel, the channel volume every
+4 ms from the note, for instrument `0C`'s envelope (`b1 = 62`) and instrument `15`'s (`71`):
+
+```
+                 env 62                      env 71
+ROM  T163   6 5 4 4 3 2 1 1 0           6 4 3 2 0
+ROM  T81    6 5 4 4 3 2 1 1 0           6 4 3 2 0      <- byte for byte the same
+CB   T163   6 6 5 4 3 2 1               7 6 4 2
+CB   T81    6 5 3 3 1 1 1 1             6 4 1          <- faster, and a different shape
+```
+
+The importer is not at fault: it converts the ROM's real-time stage (its period table times the
+pitch clock) into ticks with the song's own tempo, and dumping what it produced gives the same real
+duration at both tempos -- `env 62` is `2 + 47/256` ticks at T163 and `1 + 22/256` at T81, both
+33.5 ms.
+
+The fault is the driver's sub-tick interpolation. §116 puts the envelope's position in 1/256 of a
+tick, reading the fraction from `shapedClocks * 256 / clocksPerTick_`, and `clocksPerTick_` was
+**counted from the pitch clocks that fell inside the previous tick** -- starting from a hard-coded 7.
+The true figure is about 5.5 clocks a tick at T163 and 11 at T81, so the first tick of a session
+interpolates 27% fast at one tempo and 57% fast at the other, and `shapedPosMax` ratchets the error
+in permanently. Playing the same phrase and looking at successive notes shows exactly that shape:
+
+```
+                 ROM                 CB
+T163 note 1   6 5 4 4 3 2 1 1     6 6 5 4 3 2 1 0
+T163 note 2   6 5 4 4 3 2 1 1     5 5 4 4 3 2 2 0     <- close, once the count has been made
+T81  note 1   6 5 4 4 3 2 1 1     6 5 3 3 1 1 1 1     <- badly wrong
+T81  note 2   6 5 4 4 3 2 1 1     6 6 4 4 3 2 2 1
+```
+
+A whole envelope of this shape is about two ticks long, so the first one is most of it.
+
+There is a second error in the same line of arithmetic, and it is why fixing the first alone changes
+nothing measurable: `clocksPerTick_` was an **int**. A tick is 5.52 pitch clocks at tempo 163 and a
+whole number cannot be, so `shapedClocks * 256 / 5` reached 256 on the sixth clock of a tick that has
+5.52 -- clamped, so every tick's interpolation ran about 9% fast even once the count was right. That
+is the residue visible on the notes after the first.
+
+### As built
+
+Three things, and all three are needed:
+
+- The tick's length is carried in **cycles**, `tickCycles_`, not in whole pitch clocks. The fraction
+  is `shapedClocks * kPitchCycles * 256 / tickCycles_` in `subOfTick()`, so nothing is rounded but
+  the final 1/256.
+- It is measured from the tick **boundaries**, which the driver already has: the next one in the
+  block when there is one -- the exact length of the tick about to run -- and otherwise the gap back
+  to the boundary before it, kept across blocks in `lastTickCycle_` and `lastTickIndex_`. Both are
+  exact where the old tally was quantised and a tick late, and both are known before the tick they
+  describe rather than after. `clocksThisTick_` goes.
+- The very first tick of a session has no boundary either side of it, and that is the tick a song's
+  first note lands on -- which is why the boundary measurement alone left the numbers above
+  unchanged. `Driver::setTickRate(ticksPerSecond)` takes it from the caller's clock instead
+  (`bpm * kTicksPerBeat / 60`), called each block by the plugin and by `recordtest`'s trace. A caller
+  that never says is measured from the boundaries from the second tick on, as before.
+
+Re-measured with all three in:
+
+```
+                  ROM              before            after
+env 62  T163   6 5 4 4 3 2 1 1   6 6 5 4 3 2 1     6 6 5 4 3 2 1 1 0
+env 62  T81    6 5 4 4 3 2 1 1   6 5 3 3 1 1 1 1   6 6 5 4 3 3 2 1 0
+env 71  T163   6 4 3 2 0         7 6 4 2           7 6 4 2 0
+env 71  T81    6 4 3 2 0         6 4 1             7 6 4 3 0
+```
+
+ChipBoy is the same at both tempos now, which is what the report was about: `env 62` ran twice as
+fast at T81 as at T163 and does not any more.
+
+### Left measured, not settled
+
+The shape still starts about one sample late against the ROM -- `6 6 5` where the ROM has `6 5 4`,
+and `env 71` opens at 7 where the ROM opens at 6, so the ROM has taken its first step before
+ChipBoy has. That is an offset at the envelope's **start**, of the order of one pitch clock, not a
+rate: the decay's slope matches and both tempos now agree with each other. It wants its own
+measurement of where the ROM starts counting from a note.

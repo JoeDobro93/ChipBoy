@@ -1029,6 +1029,10 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
 
     // --- drive the chip -------------------------------------------------
     writes_.clear();
+    // Section 141: the tick rate in force, so the shaped envelope's sub-tick
+    // position is right on the first tick of playback too -- that one has no
+    // boundary either side of it for the driver to measure.
+    driver_.setTickRate(clock_.bpm() * double(driver::kTicksPerBeat) / 60.0);
     driver_.process(events_.data(), events_.size(), uint32_t(n), frames_, clock_.ticks(), clock_.tickCount(), cycleAt_, writes_);
     // The notes are recorded now that the driver has played them: the cell's
     // instrument column is the instrument the note actually loaded, and
