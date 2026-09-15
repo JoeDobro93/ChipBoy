@@ -28,7 +28,7 @@ intended product rather than a progress report.
 
 ### 2026-09-15 -- the third parity campaign: 9.4.2's code, and what it corrected
 
-`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§162. The audit target is
+`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§163. The audit target is
 LSDj 9.4.2 now, read as code: the dispatcher, every handler's address, the work RAM the commands
 share, the order a phrase step and a table tick run their columns, and a two-sided probe rig that
 builds a song, traces the ROM and ChipBoy and reports the first register batch that differs (200
@@ -75,6 +75,11 @@ cases over nineteen letters). What differed, and what changed:
 - **Thirty-two grooves** (§162): `REACTION`'s `G 12` was folded onto slot 16; `kGrooveSlots`
   is 32 through the song, the importer, the JSON (which read sixteen), the parameter table and
   the Grooves tab.
+- **A pulse note's own writes carry the plain period; the finetune rides the refresh** (§163,
+  what §112 had measured and ChipBoy still folded into the trigger). The trigger, an `S`'s or
+  `R`'s second trigger and a bare note write the plain note; the tick's epilogue (`2:$53D7`)
+  refreshes it with the finetune, or the next 358 Hz instant does when a FAST bend, slide or
+  vibrato is running (`$C3F9`). `REACTION`'s pulses now open as the ROM's do.
 
 Left as measured (§147): the fold -- the ROM triggers on the instrument's values and lets a table's
 row 0, a cell's `R` or `S` land a millisecond later as their own writes.

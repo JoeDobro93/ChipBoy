@@ -352,6 +352,9 @@ private:
         /// note-on clears it. It is its own field so a `P` bend, which walks
         /// `fineOffset`, and an `F` do not overwrite each other.
         int16_t  fineTune = 0;
+        /// Section 163: a note's own writes carry the plain period; the finetune
+        /// lands with the refresh at the next pitch-clock instant.
+        bool     fineTunePending = false;
         uint8_t  noiseShift = 5, noiseDiv = 1; bool lfsr7 = false; int8_t noiseSweep = 0;
         int16_t  noiseTsp = 0;             ///< S on NOI: semitones added to the note, adding up until the next note-on (section 55)
         bank::Pan pan = bank::Pan::Both;

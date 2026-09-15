@@ -727,6 +727,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         applyCellCommands(ch, v.noteCmd[0], v.noteCmd[1]);
         v.noteCmd[0] = {}; v.noteCmd[1] = {};
         inNoteOn_ = was;
+        if (v.inst.type == InstrumentType::Pulse && v.fineTune != 0) v.fineTunePending = true;   // section 163
         writePeriod(ch, false);
         if (oweW) emit(regAddr(ch, 1), uint8_t((v.duty << 6) | lengthCode6(v.inst.length)), true);
         if (oweS) retrigger(ch, true, false);
@@ -767,6 +768,10 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     v.fineTune = (v.inst.type == InstrumentType::Pulse && v.inst.fineTune != 0)
                      ? int16_t(ch == 1 ? int(v.inst.fineTune) : -int(v.inst.fineTune))
                      : int16_t(0); v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0;
+    // Section 163: the trigger, and every write the tick's own code makes
+    // after it (S, R, a bare note), carries the plain note; the finetune
+    // arrives with the refresh at the next 358 Hz instant.
+    v.fineTunePending = v.fineTune != 0;
     v.drumSlideStep = 0.0; v.drumSlideLeft = 0; v.drumSlideHold = false;   // section 99
     v.chordN = 0; v.chordIdx = 0; v.chordCount = 0;
     // Section 123: `lastCellCmd` -- what a `Z` on a later row re-runs -- is
@@ -1074,7 +1079,7 @@ double Driver::noteOfVoice(int ch) const
     // transposes in force at every pitch write and the slide moves an offset
     // beside them. Only Drum's period-unit slide folds the column in (§99).
     if (!v.drumSlideHold) note += double(tableTransposeOf(v));
-    const int32_t fine = v.fineOffset + v.fineTune + slideResidual(v);
+    const int32_t fine = v.fineOffset + (v.fineTunePending ? 0 : v.fineTune) + slideResidual(v);
     return note + double(fine) / 256.0;
 }
 
@@ -2776,7 +2781,18 @@ void Driver::tickAll()
     // Master volume from the parameters, when they change (an M command holds until then).
     if (global_.masterL != masterL_ || global_.masterR != masterR_) { masterL_ = global_.masterL; masterR_ = global_.masterR; writeNr50(masterL_, masterR_); }
     if (gateDirty_) writeNr51();
-    for (int ch = 0; ch < 4; ++ch) tick(ch);
+    for (int ch = 0; ch < 4; ++ch) {
+        tick(ch);
+        // Section 163: the tick's epilogue (2:$53D7) refreshes the pitch after
+        // a note's own writes -- the finetune lands here -- unless a FAST bend,
+        // slide or vibrato is running ($C3F9), when the next 358 Hz instant
+        // does it.
+        Voice& v = v_[size_t(ch)];
+        if (v.active && v.fineTunePending) {
+            const bool fast = pitchSpeed(v) != PitchSpeed::Tick && (v.bendSpeed != 0 || v.sliding || (v.vibOn && v.vibDepth != 0));
+            if (!fast) { v.fineTunePending = false; writePeriod(ch, false); v.pitchWrite = false; }   // the ROM writes nothing more at the next instant
+        }
+    }
     ++tickCount_;
 }
 
@@ -2921,6 +2937,9 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
             if (at > cycle_ + burst_) moveTo(at);
             for (int ch = 0; ch < 4; ++ch) {
                 Voice& v = v_[size_t(ch)];
+                // Section 163: the refresh after a note -- the finetune lands
+                // here, at the first instant after the note's own writes.
+                if (v.active && v.fineTunePending) { v.fineTunePending = false; if (v.pitchClockOn) v.pitchWrite = true; else writePeriod(ch, false); }
                 if (v.active && v.pitchClockOn) pitchStep(ch, false);
                 // Section 116: the shaped envelope's level is re-read on this
                 // clock as well as on the tick, so a stage shorter than the

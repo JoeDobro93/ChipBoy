@@ -5113,6 +5113,33 @@ processor's `T` pick-up on a locate and `chipboy_recordtest`'s `--tempo` all cla
 `REACTION`'s 280 played at 255 (a tick of 9.8 ms for 8.9). Every one of them is 40-295 now; the
 parameter table and its demo cross-check say 295.
 
+## 163. A pulse note's own writes carry the plain period; the finetune rides the refresh
+
+§112 measured it on 9.2.L -- "not applied at the trigger; the first pitch update moves it" -- and
+ChipBoy still folded the finetune into the trigger. Read in 9.4.2: the note-on stores the
+**plain** note's period at `$C0F4 + 2·ch` (`2:$4A29`, the note plus the transposes in force,
+straight from the period table, no fraction, no finetune) and triggers from it; the retrigger
+(`2:$6073`, `R` and `S`) reads the same word; and the refresh `0:$1BA7` -- the note, `$C174`'s
+transposes, the finetune `$C696` (byte 11, stored by the loader at `2:$5A2D`; `$C697` for PU2),
+the vibrato word `$C31C` and the slide offset `$C337`, through `0:$1B28`'s interpolation --
+writes `NR13`/`NR14` (and `NR11` when the length bit is clear). **Where the refresh runs:** the
+tick's epilogue for the channel (`2:$53C1`-`$53D7`: when the retrigger flag `$C34E` was set this
+tick it rebuilds `$C174` and calls `0:$1BA7` unless `$C3F9` is set), and `$C3F9` -- kept by
+`0:$1CA8` as "a bend word `$C2D0` or the vibrato flag `$C315` is live and the channel is not
+TICK-mode `$C35F`" -- hands it to the 358 Hz handler (`0:$0584`) instead, at the next instant.
+Raw traces of a finetune `$40` note (`FT40_*` in `vs_matrix.py`): the trigger writes
+`NR13 = 97`, the epilogue `95` 0.7 ms later; with `S 21` the second trigger 0.3 ms after the
+first still carries `97`; with `R 01` the retrigger 1 ms after carries `97`; with a FAST `P 03`
+the `95` waits for the next instant, 3 ms on; a bare note two rows on writes `A7` and its
+epilogue `A6`. `REACTION`'s pulses (`16` then `14`, `63` then `64`) are this, 4 ms apart under
+a busy tick.
+
+ChipBoy: `fineTunePending` is set by every note on a pulse channel with a finetune (plain or
+bare); `noteOfVoice()` leaves the finetune out while it is pending, so the trigger and any
+`S`/`R` trigger in the same tick carry the plain note; `tickAll()`'s epilogue writes the period
+and clears it unless a FAST bend, slide or vibrato is running, and then the next pitch-clock
+instant does (`pitchWrite`, or a plain write for a TICK instrument).
+
 ## 162. Thirty-two grooves
 
 LSDj has thirty-two groove slots (`G 00`-`G 1F`, 32 × 16 bytes at `$1090` of the song) and ChipBoy

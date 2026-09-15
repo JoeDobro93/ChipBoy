@@ -4453,3 +4453,53 @@ TEST_CASE("a table Z on a W re-rolls the duty", "[driver][table][rom942]")
     }
     CHECK(changed > 0);                                   // random, but not never
 }
+
+TEST_CASE("a pulse note's trigger is the plain period; the finetune rides the next pitch clock", "[driver][commands][rom942]")
+{
+    // Section 163: the ROM triggers from the plain note's period and the
+    // refresh at the next 358 Hz instant brings the finetune; a bare note
+    // starts plain again. On PU1 `40` is a quarter semitone down.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Lead");
+    i.used = true; i.fineTune = 0x40;
+    ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(0, p);
+    auto w = r.block({ cellOn(0, 60, 2) }, 480);
+    const int plain = Driver::periodForNote(60, false), fine = Driver::periodForNote(60.0 - 0x40 / 256.0, false);
+    REQUIRE(fine < plain);
+    std::vector<std::pair<uint64_t, int>> lo;     // (cycle, NR13) in order
+    for (const auto& x : w) if (x.addr == 0xFF13) lo.push_back({ x.cycle, int(x.value) });
+    REQUIRE(lo.size() >= 2);
+    CHECK(lo[0].second == (plain & 0xFF));         // the trigger: plain
+    CHECK(lo[1].second == (fine & 0xFF));          // the epilogue: finetuned, in the tick's own burst
+    CHECK(lo[1].first - lo[0].first < 2000);
+    // With a FAST P on the cell the refresh is the 358 Hz handler's, at the next instant.
+    {
+        Rig q;
+        q.tickHz = 100.0;
+        q.song.noteSource[0] = tracker::NoteSource::Tracker;
+        q.bank.instruments[1] = i;
+        q.drv.setParams(0, p);
+        NoteEvent on = cellOn(0, 60, 2); on.cmd1 = { Cmd::P, 3, 0, 0 };
+        auto wq = q.block({ on }, 480);
+        std::vector<std::pair<uint64_t, int>> lq;
+        for (const auto& x : wq) if (x.addr == 0xFF13) lq.push_back({ x.cycle, int(x.value) });
+        REQUIRE(lq.size() >= 2);
+        CHECK(lq[0].second == (plain & 0xFF));
+        CHECK(lq[1].second == (fine & 0xFF));
+        CHECK(lq[1].first - lq[0].first > 2000);
+        CHECK(lq[1].first - lq[0].first <= 11712);
+    }
+    // A bare note two ticks on: plain again at its own write, finetuned at the next instant.
+    r.block({}, 480);
+    NoteEvent bare = cellOn(0, 63, 0);
+    auto w2 = r.block({ bare }, 480);
+    const int plain2 = Driver::periodForNote(63, false), fine2 = Driver::periodForNote(63.0 - 0x40 / 256.0, false);
+    std::vector<int> lo2;
+    for (const auto& x : w2) if (x.addr == 0xFF13) lo2.push_back(int(x.value));
+    REQUIRE(lo2.size() >= 2);
+    CHECK(lo2[0] == (plain2 & 0xFF));
+    CHECK(lo2[1] == (fine2 & 0xFF));
+}

@@ -35,8 +35,11 @@ design-log section the change touches. Update this file at the end of every chan
   (the ROM's 358 Hz clock, its accumulator and its tempo word, read from `7:$5DD8` and checked
   on `REACTION`'s 150 ticks) -- the pitch clock is the grid, every tick lands on it, an
   imported song's Song source takes the ROM's word (`Song::lsdjTempo`); §161: the tempo runs to
-  295; §162: thirty-two grooves. `CHANGES.md` has the round. `probe_fmt22.py`'s instrument
-  writers take `extra={byte: value}`. 279 core tests, 11 plugin checks.
+  295; §162: thirty-two grooves; §163: a pulse note's own writes carry the plain period and the
+  finetune rides the tick's epilogue refresh (or the next instant under a FAST effect).
+  `CHANGES.md` has the round. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
+  `probe/raw.py TAG [ch] [n]` prints the first raw writes of both sides. 280 core tests, 11
+  plugin checks.
 - The probe rig for this campaign lives in the container at `/root/lsdj/probe/`: `vs_matrix.py`
   (the interaction cases, two-sided, `--show` for the first differing batch), `songdiff.py NAME`
   (a whole song of the 9.4.2 save, both sides), `watch.py SAV RANGE` (the ROM's writes to a
@@ -893,9 +896,6 @@ design-log section the change touches. Update this file at the end of every chan
   Timing (§160): the ROM's interrupt latency -- the trace shows its sub-ticks 4096 to 23084
   cycles apart inside one second where the ideal grid is 11712 -- is not modelled, so a ROM
   trace and ChipBoy's differ by up to a few milliseconds per write while averaging the same.
-- **A pulse note's trigger period is off by its finetune** (`REACTION` ch0: the ROM writes
-  `NR13 = 16` then `14`, ChipBoy `14`; ch1 `63` against `64`): the ROM's pulse instrument
-  loader (about 2:`$5900`-`$5A60`, the PU2 tail at `$5B00`) is unread. Next in the audit.
 - **Kits are not the ROM's** (task open, `LSDJ_COMMAND_MATRIX.md` §11.8): the importer indexes
   kits by their position in the ROM's list where the ROM uses bank = kit + 8 (gaps break
   `EGOFLEX`'s `18`-`1A` and `READROOM`'s `1C`-`1F`), byte 3 and 11 are both lengths in 16-byte
