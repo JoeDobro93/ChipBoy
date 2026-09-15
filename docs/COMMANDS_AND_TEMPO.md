@@ -5525,3 +5525,30 @@ and pushed every channel's pitch work behind it. ChipBoy: `wavePhase` and `waveD
 wave voice, fed every instant by `waveSyncStep()` (before the channels, §171's order), both
 zeroed by the frame writer; the pending frame is written when the remainder is under 184
 units, as before.
+
+## 179. A STEP table's position advances a row a note whatever an `A` did in between
+
+§122 settled what runs when: STEP governs the instrument's own table, one row a note-on, and a
+table an `A` starts runs a row a tick from the next tick. What it left to ChipBoy's guess was
+the note-on *after* such an `A`: ChipBoy skipped the STEP advance when the run in force was an
+`A`'s and restarted the instrument's table at row 0, so the `A` fired again on every note and the
+rows after it never played. Probed on 9.4.2 (`STEP_A2`, `STEP_A3`, `STEP_A_r1`, `STEP_H`,
+`STEP_noA` in `vs_matrix.py`: a STEP pulse instrument, four notes two rows apart, `W` values
+read off `NR11`):
+
+```
+table 0: A01 / W01 / W02   table 1: -- / L03+12 / W03 / W00
+ROM  note 1: trigger, then table 1's rows on ticks 2, 3, 4 (slide, C0, 00)
+     note 2: trigger, 40 (table 0's row 1)     note 3: nothing (row 2: W02 = the duty)
+     note 4: nothing (row 3 empty)             table 1 does not tick on after note 2
+table 0: W03 / A01 / W02 / W00   table 1: W01 / L03+12
+ROM  note 1: C0    note 2: trigger, 40 on the next tick, the slide on the one after
+table 0: W03 / H03 / W02 / W00 / W01
+ROM  note 1: C0    note 2: 00 (the hop is free: row 3 plays on the same note)    note 3: 40
+```
+
+So the instrument's STEP position counts the instrument's own rows, one a note, and an `A` on
+one of them changes only what the channel runs until the next note-on reloads the instrument's
+table (§124). ChipBoy: the note-on takes the parked position whether or not the run in force was
+an `A`'s (the position written through when the `A` fired, §166, is the row after it). `H` in a
+STEP table was already right: its target row plays on the same note.

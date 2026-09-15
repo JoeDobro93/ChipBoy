@@ -613,6 +613,34 @@ TEST_CASE("a V on a bare note holds until the next plain note", "[driver][comman
     CHECK(r.drv.view(0).vibSpeed == 10);                           // clean, as if the V had never played
 }
 
+TEST_CASE("a STEP table resumes at the row after its A on the next note, and the A's table is gone", "[driver][commands][table][rom942]")
+{
+    // Section 179 (STEP_A2): table 0 = A01 / W01 / W02, table 1 = W03 on
+    // row 0 and W00 on row 2. Note 1 fires the A; table 1 runs on the ticks
+    // after it. Note 2 plays row 1 of table 0 -- duty 1 -- and nothing of
+    // table 1 follows it.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    Table t0; t0.used = true; t0.steps[0].cmd1 = { Cmd::A, 2, 0, 0 }; t0.steps[1].cmd1 = { Cmd::W, 1, 0, 0 }; t0.steps[2].cmd1 = { Cmd::W, 2, 0, 0 };
+    Table t1; t1.used = true; t1.steps[0].cmd1 = { Cmd::W, 3, 0, 0 }; t1.steps[2].cmd1 = { Cmd::W, 0, 0, 0 };
+    r.bank.tables[0] = t0; r.bank.tables[1] = t1;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Step");
+    i.used = true; i.table = 1; i.tableMode = bank::TableMode::Step; i.duty = 2;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(0, p);
+    const auto duties = [](const std::vector<RegWrite>& w) { std::vector<int> d; for (const auto& x : w) if (x.addr == 0xFF11) d.push_back(x.value >> 6); return d; };
+    std::vector<RegWrite> w = r.block({ cellOn(0, 60, 2) }, 480);
+    for (int k = 0; k < 5; ++k) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+    CHECK(duties(w) == std::vector<int>{ 2, 3, 0 });          // the note's own duty, then table 1's rows on the ticks
+    w = r.block({ cellOn(0, 60, 2) }, 480);
+    for (int k = 0; k < 5; ++k) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+    CHECK(duties(w) == std::vector<int>{ 1 });                // row 1 of the instrument's table, and table 1 no more
+    w = r.block({ cellOn(0, 60, 2) }, 480);
+    for (int k = 0; k < 5; ++k) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+    CHECK(duties(w) == std::vector<int>{ 2 });                // row 2: W02
+}
+
 TEST_CASE("a K cell kills its own note and no other", "[driver][commands]")
 {
     // K is a per-note letter (section 12): it shapes the cell it is on.

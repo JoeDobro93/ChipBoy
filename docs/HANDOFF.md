@@ -64,8 +64,9 @@ design-log section the change touches. Update this file at the end of every chan
   level to 0 and `lsdjZombieStep` no longer double-counts the chip level (`REPTCOMP` PU2 and
   `REACTION` NOI whole, `DELIVERY` NOI to 6.9 s); §177: a bare cell takes its chain row's
   transpose (`EGOFLEX`'s pad slides); §178: the sync phase word accumulates across period
-  changes (`Voice::wavePhase`, `waveSyncStep()` before the channels). `CHANGES.md` has the
-  round. 292 core tests. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
+  changes (`Voice::wavePhase`, `waveSyncStep()` before the channels); §179: a STEP table's
+  position advances a row a note past an `A` (the `STEP_*` probes match to the fold).
+  `CHANGES.md` has the round. 293 core tests. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
   `probe/raw.py TAG [ch] [n]` prints the first raw writes of both sides. 287 core tests, 11
   plugin checks.
 - The probe rig for this campaign lives in the container at `/root/lsdj/probe/`: `vs_matrix.py`

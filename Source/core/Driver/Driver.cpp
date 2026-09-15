@@ -885,7 +885,6 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     if (v.stepDirty) parkStep(ch);
     v.stepDirty = false;
     v.tableSlot = tbl; v.tableOn = tbl && bank_ && bank_->table(tbl);
-    const bool wasFromCmd = v.tableTicks;
     v.tableTicks = false;                                 // the instrument's own table again (section 122)
     v.tableWait = v.tableWait2 = v.tableWaitE = 0;        // every lane starts its row afresh (section 64)
     v.tableTspHoldOn = false;                     // section 157: a note starts on its own column
@@ -896,8 +895,11 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // Section 140: the position a STEP table resumes from is the instrument's
     // own, not the channel's -- measured, two instruments keep their own and one
     // playing in between does not move the other's. Whatever was playing parked
-    // its position above; this instrument takes up its own.
-    if (core.tableMode == TableMode::Step && !wasFromCmd) {
+    // its position above; this instrument takes up its own. Section 179: and
+    // it does so whatever table an `A` had moved the channel to in between --
+    // the ROM's next note plays the row after the one that held the `A`, and
+    // the `A`'s table is gone with the note-on's reload (STEP_A2, STEP_A3).
+    if (core.tableMode == TableMode::Step) {
         takeStep(ch, tbl);
     } else {
         v.tableStep = v.tableStep2 = v.tableStepE = 0;

@@ -28,7 +28,7 @@ intended product rather than a progress report.
 
 ### 2026-09-15 -- the third parity campaign: 9.4.2's code, and what it corrected
 
-`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§178. The audit target is
+`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§179. The audit target is
 LSDj 9.4.2 now, read as code: the dispatcher, every handler's address, the work RAM the commands
 share, the order a phrase step and a table tick run their columns, and a two-sided probe rig that
 builds a song, traces the ROM and ChipBoy and reports the first register batch that differs (200
@@ -184,6 +184,12 @@ cases over nineteen letters). What differed, and what changed:
   moves the grid with the note; ChipBoy re-derived the phase from the trigger with the current
   period. `Voice::wavePhase`/`waveDivLast`, fed by `waveSyncStep()` before the channels' pitch
   work (the ROM's order, `0:$0391`) whether or not a frame is pending.
+- **A STEP table's position advances a row a note whatever an `A` did in between** (§179,
+  completing §122): ChipBoy skipped the STEP advance after an `A`-started run and restarted the
+  instrument's table at row 0, so the `A` fired on every note. The ROM's next note plays the
+  row after the `A` and the `A`'s table is gone with the reload; `STEP_A2`, `STEP_A3`,
+  `STEP_A_r1` and `STEP_H` (a hop's target row plays on the same note) now match the ROM to
+  the fold.
 
 Not modelled, from the same reading: the ROM multiplies a roll's period by instrument byte 8 + 1
 (no ChipBoy field; no song of the save sets it); `R`'s restart of stage 1 indexes the step table
