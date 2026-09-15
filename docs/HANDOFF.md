@@ -1072,14 +1072,20 @@ design-log section the change touches. Update this file at the end of every chan
 
 ## Next steps
 
-- **The next round is a code-led audit of every command against the 9.3.9 ROM, and
-  `docs/plan-rom-audit.md` is its brief.** Read that first: what the round is for, the L3 rule that
-  lets behaviour be derived from the ROM, the disassembler and PC tracer and the exact invocations,
-  the reading order for these documents and how much to trust each, the ten things already known to
-  be wrong, the traps this year cost to learn, and what done looks like per finding. The probe rig
-  moved into `tools/lsdjref/` (`probe_h.py`, `probe_vh.py`, `probe_cb.py`) so a fresh container has
-  it; the ~110 `vs_*.py` probes in `/root/lsdj/probe/` do not survive the container and are named in
-  the design log where each was used.
+- **The 9.4.2 campaign (§147-§181) is done as far as the ROM's logic goes.** What the eight
+  songs and the 323-case matrix still show is the ROM's own timing (its tick handler's latency in
+  a four-channel song, the lost-interrupt slip), its randomness (`Z`, `B`), the LCD's mode-3 reads
+  in a kit mix, and the two unmodelled instrument settings (a wave speed of `FC`, `PLAY` = 5) --
+  each listed under Open issues with the probe that shows it. `docs/plan-rom-audit.md` is the
+  brief the campaign followed and still says how to read a handler, run `lsdjref_pc --watch`
+  and build a two-sided probe; `docs/LSDJ_COMMAND_MATRIX.md` §11 has the dispatcher and every
+  handler's address. The probe rig lives in `tools/lsdjref/` (`probe_h.py`, `probe_vh.py`,
+  `probe_cb.py`) so a fresh container has it; the `vs_matrix.py`, `songdiff.py`, `watch.py`,
+  `rawwin.py`, `songrows.py`, `frtimes.py` scripts in `/root/lsdj/probe/` do not survive the
+  container and are named in the design log where each was used. Two things the campaign left
+  for the UI rather than the engine: the Instrument tab has no field for a wave's start frame
+  (`frameStart`, §171), and the Kits tab edits `loop` for every sample at once and has no
+  `halfSpeed` or per-side LEN/OFFSET/ATK fields (§172); imported songs carry all of them.
 
 
 - **Fourteen more ROMs are in `/root/lsdj/roms/`** and every format gap is filled: 7.2.3 (format
