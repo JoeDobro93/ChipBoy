@@ -121,7 +121,7 @@
         LANEHEIGHT 0 0
         ARM 0
         DEFSHAPE 1 -1 -1
-        PT 0 0.511627907 1
+        PT 0 0.431372549 1
       >
       <PARMENV 22:405983279 0 1 0.5 "PU1 CMD1 / ChipBoy"
         EGUID {9B538D87-14F5-59B2-BC46-95C16F993558}

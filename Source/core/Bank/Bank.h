@@ -75,11 +75,11 @@ enum class TableEnd : uint8_t { Loop = 0, Hop = 1, Stop = 2 };
 /// Commands, LSDj lettering, ChipBoy semantics (docs/COMMANDS_AND_TEMPO.md
 /// section 2). Both arguments are 0-255; the letter says what they mean:
 ///   A table slot 1-64, 0 stops              C x, y semitones        D ticks
-///   E vol 0-15, y 0-7 decay / 8-15 attack   F frame 1-16            G groove 1-16, 0 straight
+///   E vol 0-15, y 0-7 decay / 8-15 attack   F frame 1-16            G groove 1-32, 0 straight
 ///   H step 1-16 (0 stops), tables only      K ticks after note-on   L slide duration
 ///   M left/right 0-7, 8 keep, 9-15 relative O pan 0-3 (off L R both)
 ///   P bend speed x - 128                    R x volume step, y ticks
-///   S rate 0-7, shift 0-7 (x >= 128 down)   T BPM 40-255            V speed 1-15, depth 0-15
+///   S rate 0-7, shift 0-7 (x >= 128 down)   T BPM 40-295            V speed 1-15, depth 0-15
 ///   W duty 0-3 (pulse) / wave slot (WAV)    Z random 0..x, 0..y added to the last command
 ///   U wave run: x ticks a frame, y + 1 frames (WAV)
 /// `B` is appended rather than inserted after `A`: every other letter keeps the

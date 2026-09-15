@@ -171,7 +171,7 @@ def parameter_table():
     # Tempo (docs/COMMANDS_AND_TEMPO.md section 4): ticks are always 24 to the
     # beat, and the only choice left is where the beat comes from.
     choice("tempo_source", "Tempo Source", ["Host", "Song"], 0)
-    integer("song_tempo", "Song Tempo", 40, 255, 120, "BPM; the Song source's base tempo")
+    integer("song_tempo", "Song Tempo", 40, 295, 120, "BPM; the Song source's base tempo")
     boolean("notes_on_tick", "Quantize Notes To Ticks", False)
     boolean("link", "Link Mode", False)
     boolean("hex", "Hex Display", True)
@@ -962,7 +962,7 @@ def write_parameters_md(path, table, envelopes, song_tempo_envelopes):
         ("D", "delay", "ticks", "-"),
         ("E", "envelope", "volume 0-15 (wave level 0-3 on WAV)", "0-7 decay, 8-15 attack"),
         ("F", "frame", "frame 1-16 (WAV)", "-"),
-        ("G", "groove", "groove slot 1-16, 0 straight", "-"),
+        ("G", "groove", "groove slot 1-32, 0 straight", "-"),
         ("K", "kill", "ticks after the note-on", "-"),
         ("L", "slide", "x + 1 updates, linear in semitones", "-"),
         ("M", "master volume", "left 0-7", "right 0-7"),
@@ -991,7 +991,7 @@ def write_parameters_md(path, table, envelopes, song_tempo_envelopes):
     w("instrument's alone, or arrives as a command.")
     w("")
     w("Ticks are 24 to the beat, from **Tempo Source** (`tempo_source`): the host's")
-    w("tempo, or the song's own **Song Tempo** (`song_tempo`, 40-255 BPM) with `T`")
+    w("tempo, or the song's own **Song Tempo** (`song_tempo`, 40-295 BPM) with `T`")
     w("commands over it. **Quantize Notes To Ticks** (`notes_on_tick`) holds incoming")
     w("note-ons and note-offs until the next tick; bends and controllers are never")
     w("quantised, and tracker cells are always on ticks.")

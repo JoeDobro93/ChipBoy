@@ -34,7 +34,7 @@ and the plugin rounds to the nearest step when it reads it back.
 | 9 | `declick_ms` | De-click ms | 0.5-5 ms, continuous | 2 | 565664574 |
 | 10 | `soften` | Soften Master Pops | 0-1 (off, on) | 0 | 1250532947 |
 | 11 | `tempo_source` | Tempo Source | 0-1 (Host, Song) | 0 (Host) | 311560639 |
-| 12 | `song_tempo` | Song Tempo | 40-255 (BPM; the Song source's base tempo) | 120 | 448506737 |
+| 12 | `song_tempo` | Song Tempo | 40-295 (BPM; the Song source's base tempo) | 120 | 448506737 |
 | 13 | `notes_on_tick` | Quantize Notes To Ticks | 0-1 (off, on) | 0 | 53834879 |
 | 14 | `link` | Link Mode | 0-1 (off, on) | 0 | 3321850 |
 | 15 | `hex` | Hex Display | 0-1 (off, on) | 1 | 103195 |
@@ -118,7 +118,7 @@ the lane did. CMD1 is applied before CMD2.
 | `D` | delay | ticks | - |
 | `E` | envelope | volume 0-15 (wave level 0-3 on WAV) | 0-7 decay, 8-15 attack |
 | `F` | frame | frame 1-16 (WAV) | - |
-| `G` | groove | groove slot 1-16, 0 straight | - |
+| `G` | groove | groove slot 1-32, 0 straight | - |
 | `K` | kill | ticks after the note-on | - |
 | `L` | slide | x + 1 updates, linear in semitones | - |
 | `M` | master volume | left 0-7 | right 0-7 |
@@ -145,7 +145,7 @@ sweep, wave, frame, vibrato, arpeggio, detune, LFSR width -- is now the
 instrument's alone, or arrives as a command.
 
 Ticks are 24 to the beat, from **Tempo Source** (`tempo_source`): the host's
-tempo, or the song's own **Song Tempo** (`song_tempo`, 40-255 BPM) with `T`
+tempo, or the song's own **Song Tempo** (`song_tempo`, 40-295 BPM) with `T`
 commands over it. **Quantize Notes To Ticks** (`notes_on_tick`) holds incoming
 note-ons and note-offs until the next tick; bends and controllers are never
 quantised, and tracker cells are always on ticks.

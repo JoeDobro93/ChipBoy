@@ -28,7 +28,7 @@ intended product rather than a progress report.
 
 ### 2026-09-15 -- the third parity campaign: 9.4.2's code, and what it corrected
 
-`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§159. The audit target is
+`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§162. The audit target is
 LSDj 9.4.2 now, read as code: the dispatcher, every handler's address, the work RAM the commands
 share, the order a phrase step and a table tick run their columns, and a two-sided probe rig that
 builds a song, traces the ROM and ChipBoy and reports the first register batch that differs (200
@@ -52,12 +52,29 @@ cases over nineteen letters). What differed, and what changed:
 - An `A` inside a table **replaces** the table (§157, correcting §131's side-by-side runs): the ROM
   keeps one table number per channel. The nested-run machinery is gone; the `A`'s row keeps its
   column until the new table's row 0 steps, and on noise the note absorbs it (§145).
-- The project tempo byte reads as a `T` byte (§158): `REACTION` is `$24` = 292 BPM, and the
+- The project tempo byte reads as a `T` byte (§158): `REACTION` is `$18` = 280 BPM, and the
   importer had clamped it to 40. `R`'s level nibble moves the start a shaped envelope runs from
   (§158, `READROOM`'s noise `R F0`): ChipBoy stepped back up to the instrument's start first.
 - `Z` re-rolls the last command's **byte**, carry and all, and the letter reads its fields from the
   result (§159): ChipBoy added the draws to the fields, so a one-value letter's `Z` never landed
   (`CASTSHDW`'s `W 00` / `Z 02` duty re-roll).
+- **The tick grid** (§160). The ROM's ticks sit on its 358 Hz clock -- six timer interrupts a
+  video frame, 11712 cycles apart and 11664 across the frame's end -- through a 16-bit
+  accumulator that loses 2048 an interrupt and adds the tempo word when it borrows; the word
+  table (256 entries at `7:$5E49`) is round(1834828.8 / BPM) exactly. So every tick lands on
+  the next grid instant after its nominal time, the pitch effects run before the tick on a
+  shared instant, and the tick averages the word's period. ChipBoy: the pitch clock is that
+  grid (it was a flat 11712, 0.07 % slow); the Clock places every tick -- host, song, free run
+  -- on the grid and carries one past a block's end into the next; an imported song
+  (`Song::lsdjTempo`) takes the ROM's word for its Song-source period, a song written here keeps
+  the exact 60 / (24 · BPM) so its Host and Song sources still agree. `DELIVERY` at 27 s sits
+  within 3 ms of the ROM. The record test quantises its live MIDI to ticks and records a note
+  held across a block boundary when it fires (it was recorded bare).
+- **The tempo runs to 295** (§161): the Song Tempo parameter, the tempo map's base, the locate
+  pick-up of a `T`, the file reader and `recordtest --tempo` all clamped at 255.
+- **Thirty-two grooves** (§162): `REACTION`'s `G 12` was folded onto slot 16; `kGrooveSlots`
+  is 32 through the song, the importer, the JSON (which read sixteen), the parameter table and
+  the Grooves tab.
 
 Left as measured (§147): the fold -- the ROM triggers on the instrument's values and lets a table's
 row 0, a cell's `R` or `S` land a millisecond later as their own writes.

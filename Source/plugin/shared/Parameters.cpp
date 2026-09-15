@@ -150,7 +150,7 @@ constexpr CommandInfo kCmdInfo[bank::kCmdCount] = {
     { 'D', "Delay",         "ticks",                     1, { 0, 0 }, { 255, 0 },  { 3, 0 },   CmdShape::Byte },
     { 'E', "Envelope",      "vol, y 0/8 hold, 1-7 down, 9-15 up", 2, { 0, 0 }, { 15, 15 }, { 12, 3 }, CmdShape::Nibbles },
     { 'F', "Frame",         "1-16",                      1, { 1, 0 }, { 16, 0 },   { 2, 0 },   CmdShape::Small },
-    { 'G', "Groove",        "slot 1-16, 0 straight",     1, { 0, 0 }, { 16, 0 },   { 1, 0 },   CmdShape::Small },
+    { 'G', "Groove",        "slot 1-32, 0 straight",     1, { 0, 0 }, { 32, 0 },   { 1, 0 },   CmdShape::Small },
     { 'H', "Hop",           "times (0 forever), row 1-16", 2, { 0, 1 }, { 15, 16 }, { 1, 1 },  CmdShape::Nibbles },
     { 'K', "Kill",          "after ticks",               1, { 0, 0 }, { 255, 0 },  { 4, 0 },   CmdShape::Byte },
     { 'L', "Slide",         "duration, 0 instant",       1, { 0, 0 }, { 255, 0 },  { 60, 0 },  CmdShape::Byte },
@@ -343,7 +343,7 @@ void addGlobalParameters(AudioProcessorValueTreeState::ParameterLayout& L)
     // Tempo (docs/COMMANDS_AND_TEMPO.md section 4). Ticks are always 24 per
     // beat; what a tick is worth is the only choice left.
     L.add(choiceParam(ids::tempoSource, "Tempo Source", { "Host", "Song" }, 0));
-    L.add(intParam(ids::songTempo, "Song Tempo", 40, 255, 120, [](int v, int) { return String(v) + " BPM"; }));
+    L.add(intParam(ids::songTempo, "Song Tempo", 40, 295, 120, [](int v, int) { return String(v) + " BPM"; }));
     L.add(boolParam(ids::notesOnTick, "Quantize Notes To Ticks", false));
     L.add(boolParam(ids::linkMode, "Link Mode", false));
     L.add(boolParam(ids::hexDisplay, "Hex Display", true));   // Hex by default: it counts like LSDj (section 52)

@@ -708,7 +708,7 @@ struct Reader {
                 // three clocks and left a long slide a semitone off the ROM's.
                 if (m.pitchLaw == PitchLaw::Register) { out = { Cmd::P, int16_t(v), 0, 0 }; return true; }
                 out = { Cmd::P, int16_t(v), 0, 0 }; return true;                     // the two's-complement byte
-            case 'G': out = { Cmd::G, int16_t(std::min(v + 1, 16)), 0, 0 }; return true;           // LSDj's groove 00 is ChipBoy's slot 1
+            case 'G': out = { Cmd::G, int16_t(std::min(v + 1, tracker::kGrooveSlots)), 0, 0 }; return true;   // LSDj's groove 00 is ChipBoy's slot 1; 32 of them (section 162)
             case 'O': out = { Cmd::O, int16_t(v & 3), 0, 0 }; return true;
             case 'T':
                 // The byte is BPM for 40-255; **bytes 0-39 mean 256-295 BPM**
@@ -1049,15 +1049,15 @@ struct Reader {
     /// groove's *first* step, where ChipBoy (and LSDj 9) walk the groove. The
     /// two agree when the groove has one step, so each `G` in a table is
     /// pointed at a one step groove holding that count, taken from a slot the
-    /// song never names. Runs after grooves(), which fills the sixteen slots.
+    /// song never names. Runs after grooves(), which fills the thirty-two slots.
     void flattenTableGrooves()
     {
         if (m.tableGrooveWalks) return;
-        std::set<int> named;                       // groove slots the song asks for, 1-16
-        auto noteG = [&named](const bank::Command& c) { if (c.cmd == bank::Cmd::G && c.a >= 1 && c.a <= 16) named.insert(int(c.a)); };
+        std::set<int> named;                       // groove slots the song asks for, 1-32
+        auto noteG = [&named](const bank::Command& c) { if (c.cmd == bank::Cmd::G && c.a >= 1 && c.a <= tracker::kGrooveSlots) named.insert(int(c.a)); };
         for (const auto& ph : song.phrases) {
             if (!ph.used) continue;
-            if (ph.groove >= 1 && ph.groove <= 16) named.insert(int(ph.groove));
+            if (ph.groove >= 1 && ph.groove <= tracker::kGrooveSlots) named.insert(int(ph.groove));
             for (const auto& c : ph.cells) { noteG(c.cmd1); noteG(c.cmd2); }
         }
         for (const auto& tb : bank.tables) { if (!tb.used) continue; for (const auto& st : tb.steps) { noteG(st.cmd1); noteG(st.cmd2); } }
@@ -1067,7 +1067,7 @@ struct Reader {
         // fills its grooves from the bottom. Taking a groove the song can
         // still see in the Grooves tab is the last resort, not the first.
         std::vector<std::pair<int, int>> ranked;      // (how precious, slot)
-        for (int g = 15; g >= 0; --g) {
+        for (int g = tracker::kGrooveSlots - 1; g >= 0; --g) {
             if (named.count(g + 1)) continue;
             bool empty = true, dflt = true;
             for (int k = 0; k < 16 && (empty || dflt); ++k) {
@@ -1104,7 +1104,7 @@ struct Reader {
             if (!tb.used) continue;
             for (auto& st : tb.steps)
                 for (auto* c : { &st.cmd1, &st.cmd2 }) {
-                    if (c->cmd != bank::Cmd::G || c->a < 1 || c->a > 16) continue;
+                    if (c->cmd != bank::Cmd::G || c->a < 1 || c->a > tracker::kGrooveSlots) continue;
                     const int ticks = int(song.grooves[size_t(c->a - 1)].ticks[0]);
                     if (ticks == 0) continue;
                     const int slot = slotFor(ticks);
@@ -1118,7 +1118,7 @@ struct Reader {
     }
     void grooves()
     {
-        for (int g = 0; g < 16; ++g) {
+        for (int g = 0; g < tracker::kGrooveSlots; ++g) {
             auto& gr = song.grooves[size_t(g)];
             gr = tracker::Groove{};
             int n = 16;
@@ -1162,6 +1162,7 @@ bool importSong(const uint8_t* bytes, size_t size, const LsdjModel& model,
     const int tempo = model.tempoLowIsHigh ? bank::tempoBpmOfByte(bytes[kTempo]) : std::clamp<int>(bytes[kTempo], 40, 255);
     summary.tempoBpm = tempo;
     out.tempoBpm = tempo;
+    out.lsdjTempo = true;                                            // the ROM's tempo word (section 160)
     out.transpose = int8_t(signedByte(bytes[kSongTranspose]));      // the PROJECT screen's TRANSPOSE (section 61)
     if (out.transpose) notes.add("the song's own transpose is " + std::to_string(int(out.transpose)) + " semitones; it moves every note whose instrument admits a transpose");
     r.tickMs = 60000.0 / (double(tempo) * 24.0);

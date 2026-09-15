@@ -1105,11 +1105,14 @@ TEST_CASE("P bends by the measured table, and Drum wraps", "[driver][pitch]")
     }
 }
 
-TEST_CASE("the pitch clock is 11712 cycles and free-running", "[driver][pitch]")
+TEST_CASE("the pitch clock is the ROM's grid, 11704 cycles on average, free-running", "[driver][pitch]")
 {
     // LSDj sets the Game Boy's timer once at boot and never moves it, so the
     // clock does not know that a note began: the phase of an update against a
     // note is where the player pressed play (docs/LSDJ_PARITY.md section 1).
+    // Section 160: the instants are the grid's, six a video frame, run at the
+    // first frame at or after each -- so 11712 apart to the sample, the sixth
+    // to the next frame's first 11664, averaging 11704.
     Rig r;
     r.tickHz = 1.0;
     r.bank.instruments[0].vib = { VibShape::Triangle, VibDir::Down, 1, 15, 0 };
@@ -1121,7 +1124,21 @@ TEST_CASE("the pitch clock is 11712 cycles and free-running", "[driver][pitch]")
         for (const auto& x : w) if (x.addr == 0xFF13) at.push_back(x.cycle);
     }
     REQUIRE(at.size() > 8);
-    for (size_t i = 1; i < at.size(); ++i) CHECK(at[i] - at[i - 1] == 11712);
+    for (size_t i = 1; i < at.size(); ++i) {
+        const uint64_t gap = at[i] - at[i - 1];
+        INFO("update " << i);
+        CHECK((gap >= 11664 - 90 && gap <= 11712 + 90));   // a frame's rounding either way
+        // The write sits a cycle or two into the instant's burst: one of the
+        // two instants at or before it is its own, to the frame.
+        bool onGrid = false;
+        for (uint64_t n = driver::gridAfter(at[i]) - 2; n < driver::gridAfter(at[i]); ++n) {
+            const uint64_t instant = 4194304 * driver::gridFrame(n, 48000.0) / 48000;
+            if (at[i] >= instant && at[i] - instant <= 2) onGrid = true;
+        }
+        CHECK(onGrid);
+    }
+    const double mean = double(at.back() - at.front()) / double(at.size() - 1);
+    CHECK(std::fabs(mean - 11704.0) < 2.0);
 }
 
 /* ------------------------------------------------ notes, plain and bare */

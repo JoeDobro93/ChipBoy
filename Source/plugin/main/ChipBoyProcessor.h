@@ -262,7 +262,7 @@ private:
     /// sound, so the recorder never writes them as cells (section 9.4).
     bool keyswitchNote(int ch, const bank::Bank* bank, uint8_t note) const;
     /// The Song tempo parameter: the song's base tempo (section 4).
-    double songTempoParam() const { return double(std::clamp(paramInt(pSongTempo_, 120), 40, 255)); }
+    double songTempoParam() const { return double(std::clamp(paramInt(pSongTempo_, 120), 40, 295)); }
     /// All notes off on a channel: unconditional, never filtered by the
     /// Trk/MIDI gate, so a lane changing hands leaves nothing ringing (9.1).
     void flushChannel(int ch, std::vector<driver::NoteEvent>& dst, uint32_t offset = 0);

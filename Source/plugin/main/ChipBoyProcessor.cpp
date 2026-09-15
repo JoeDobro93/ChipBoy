@@ -82,7 +82,7 @@ void ChipBoyProcessor::publishSong(std::shared_ptr<tracker::Song> s, bool fromFi
     // saved from here carries the tempo it was played at.
     if (fromFile) {
         if (auto* prm = apvts.getParameter(ids::songTempo))
-            prm->setValueNotifyingHost(prm->getNormalisableRange().convertTo0to1(float(std::clamp(s->tempoBpm, 40.0, 255.0))));
+            prm->setValueNotifyingHost(prm->getNormalisableRange().convertTo0to1(float(std::clamp(s->tempoBpm, 40.0, 295.0))));
     }
     s->tempoBpm = songTempoParam();
     tempoBase_ = s->tempoBpm;
@@ -130,7 +130,7 @@ int ChipBoyProcessor::tabIndexOfId(int id) const
 void ChipBoyProcessor::setSongTempoParam(double bpm)
 {
     if (auto* prm = apvts.getParameter(ids::songTempo))
-        prm->setValueNotifyingHost(prm->getNormalisableRange().convertTo0to1(float(std::clamp(bpm, 40.0, 255.0))));
+        prm->setValueNotifyingHost(prm->getNormalisableRange().convertTo0to1(float(std::clamp(bpm, 40.0, 295.0))));
 }
 
 /// The audio thread's two pointers, straight from a tab. Nothing is rebuilt:
@@ -189,7 +189,7 @@ int ChipBoyProcessor::addTab(std::shared_ptr<const tracker::Song> song, std::sha
     {
         auto built = std::make_shared<tracker::Song>();
         *built = *tabs_[size_t(index)].song;
-        tracker::buildTempoMap(*built, std::clamp(built->tempoBpm, 40.0, 255.0));
+        tracker::buildTempoMap(*built, std::clamp(built->tempoBpm, 40.0, 295.0));
         tabs_[size_t(index)].song = std::move(built);
     }
     activeTab_ = index;
@@ -337,7 +337,7 @@ void ChipBoyProcessor::setBankNameEdit(const String& n)
 /// undo step (section 19). Everything else about a song edit is editSong's.
 void ChipBoyProcessor::setMasterTempo(double bpm)
 {
-    const double v = std::clamp(bpm, 40.0, 255.0);
+    const double v = std::clamp(bpm, 40.0, 295.0);
     const double was = songShared_ ? songShared_->tempoBpm : 120.0;
     if (std::fabs(was - v) < 1e-9) return;
     auto before = songShared_;
@@ -841,13 +841,14 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     cc.source = paramInt(pTempoSource_) != 0 || clock_.ownsTransport() ? driver::TempoSource::Song : driver::TempoSource::Host;
     cc.songTempo = songTempoParam();
     cc.songStartSeconds = song ? song->songStartSeconds : 0.0;
+    cc.lsdjTempo = song && song->lsdjTempo;
     // A T slot in force is the song's tempo from now on; the lowest channel
     // holding one wins, as two lanes cannot both be the timeline.
     for (int ch = 0; ch < 4; ++ch) {
         bool found = false;
         for (int i = 0; i < 2; ++i) {
             const auto& c = driver_.slot(ch, i);
-            if (c.cmd == bank::Cmd::T && !bank::isRevert(c)) { cc.songTempo = double(std::clamp<int>(c.a, 40, 255)); found = true; break; }
+            if (c.cmd == bank::Cmd::T && !bank::isRevert(c)) { cc.songTempo = double(std::clamp<int>(c.a, 40, 295)); found = true; break; }
         }
         if (found) break;
     }
@@ -958,7 +959,7 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
         // A G slot is the channel's groove; the Player owns the timing and
         // works out at every tick which groove that leaves in force (9.2).
         uint8_t groove = tracker::kGrooveNone;
-        for (int i = 0; i < 2; ++i) if (driver_.params(ch).cmd[i].cmd == bank::Cmd::G && !bank::isRevert(driver_.params(ch).cmd[i])) groove = uint8_t(std::clamp<int>(driver_.params(ch).cmd[i].a, 0, 16));
+        for (int i = 0; i < 2; ++i) if (driver_.params(ch).cmd[i].cmd == bank::Cmd::G && !bank::isRevert(driver_.params(ch).cmd[i])) groove = uint8_t(std::clamp<int>(driver_.params(ch).cmd[i].a, 0, tracker::kGrooveSlots));
         player_.setGrooveSlot(ch, groove);
         driver_.setViewGroove(ch, player_.groove(ch));
         // A G inside a table sets that run's row lengths from the song's
@@ -966,7 +967,7 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
         // is handed its tick counts here, straight (null) for slot 0.
         {
             const int ts = driver_.tableGrooveSlot(ch);
-            driver_.setTableGroove(ch, song && ts >= 1 && ts <= 16 ? song->grooves[size_t(ts - 1)].ticks.data() : nullptr);
+            driver_.setTableGroove(ch, song && ts >= 1 && ts <= tracker::kGrooveSlots ? song->grooves[size_t(ts - 1)].ticks.data() : nullptr);
         }
     }
 
@@ -1042,9 +1043,15 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     if (rec) {
         const double tickPerFrame = clock_.bpm() * driver::kTicksPerBeat / 60.0 / sampleRate_;
         const double tick0 = double(clock_.tickAtBlockStart());
-        for (const auto& e : events_)
-            if (e.source == driver::NoteEvent::Midi && (recMask & (1u << (e.channel & 3))) && (e.kind == driver::NoteEvent::NoteOn || e.kind == driver::NoteEvent::NoteOff))
+        auto take = [&](const driver::NoteEvent& e) {
+            if (e.source == driver::NoteEvent::Midi && !e.held && (recMask & (1u << (e.channel & 3))) && (e.kind == driver::NoteEvent::NoteOn || e.kind == driver::NoteEvent::NoteOff))
                 recordNote(e, tick0 + e.offset * tickPerFrame, bankNow);
+        };
+        // A note the driver held for a tick in a later block is recorded when
+        // it fires, from the driver's own list, not from the event it came on
+        // (section 160): the tick it waited for is where it belongs.
+        for (size_t i = 0; i < driver_.firedHeldCount(); ++i) take(driver_.firedHeld()[i]);
+        for (const auto& e : events_) take(e);
     }
     applyWrites();
     apu_.runTo(std::max(renderer_.cycleForFrame(frames_ + uint64_t(n)), apu_.cycle()));

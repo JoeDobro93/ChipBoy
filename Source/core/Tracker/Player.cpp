@@ -85,7 +85,7 @@ void Player::fireStep(int ch, int row, int step, uint8_t slot, uint32_t offset, 
     for (const bank::Command* cmd : { &c.cmd1, &c.cmd2 })
         if (cmd->cmd == bank::Cmd::G)
             // G reverting is the phrase's own groove back (section 3).
-            grooveCell_[size_t(ch)] = bank::isRevert(*cmd) ? kGrooveNone : uint8_t(std::clamp<int>(cmd->a, 0, 16));
+            grooveCell_[size_t(ch)] = bank::isRevert(*cmd) ? kGrooveNone : uint8_t(std::clamp<int>(cmd->a, 0, kGrooveSlots));
     if (c.note == 0 && c.inst == 0 && c.table == 0 && c.cmd1.cmd == bank::Cmd::None && c.cmd2.cmd == bank::Cmd::None) return;
     // A Hybrid cell that holds nothing but a note has nothing to say: its
     // note and its VEL are the MIDI's business (section 20).

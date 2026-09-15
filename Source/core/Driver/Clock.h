@@ -20,7 +20,9 @@
 // Plain C++20: no allocation, nothing but the standard library.
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -29,6 +31,48 @@ namespace chipboy::driver {
 constexpr int    kTicksPerBeat = 24;        ///< always, as LSDj (6 per sixteenth straight)
 constexpr size_t kMaxTicksPerBlock = 512;
 constexpr size_t kMaxTempoPoints = 64;      ///< T changes the clock integrates; the rest are ignored
+
+// --- the ROM's 358 Hz grid (docs/COMMANDS_AND_TEMPO.md section 160) ---------
+//
+// Six timer interrupts a video frame, 11712 cycles apart and the sixth to the
+// next frame's first 11664: instant n sits at gridCycle(n) from the timeline's
+// cycle 0, averaging 11704 cycles. The driver's pitch clock runs on it, and
+// every tick lands on the first instant strictly after its nominal frame.
+constexpr uint64_t kGridCpuHz = 4194304;
+constexpr uint64_t kGridFrameCycles = 70224;
+constexpr uint64_t kGridStepCycles = 11712;
+constexpr uint64_t kGridPerFrame = 6;
+constexpr uint64_t kGridMeanCycles = kGridFrameCycles / kGridPerFrame;   ///< 11704
+constexpr uint64_t gridCycle(uint64_t n) { return kGridFrameCycles * (n / kGridPerFrame) + kGridStepCycles * (n % kGridPerFrame); }
+/// The first instant strictly after cycle c.
+constexpr uint64_t gridAfter(uint64_t c)
+{
+    const uint64_t f = c / kGridFrameCycles, i = (c % kGridFrameCycles) / kGridStepCycles + 1;
+    return i >= kGridPerFrame ? (f + 1) * kGridPerFrame : f * kGridPerFrame + i;
+}
+/// The first frame at or after instant n, at a sample rate.
+inline uint64_t gridFrame(uint64_t n, double sampleRate)
+{
+    return uint64_t(std::ceil(double(gridCycle(n)) * sampleRate / double(kGridCpuHz) - 1e-9));
+}
+/// Where a tick due at a nominal frame fires: the frame of the first instant after it.
+inline uint64_t gridTickFrame(double nominalFrame, double sampleRate)
+{
+    const double c = std::max(0.0, nominalFrame) * double(kGridCpuHz) / sampleRate;
+    return gridFrame(gridAfter(uint64_t(std::floor(c))), sampleRate);
+}
+/// The tick period at a tempo. With `rom` (section 160, `Song::lsdjTempo`) a
+/// whole-number BPM in 40..295 takes the ROM's tempo word, round(1834828.8 /
+/// BPM), and a tick is that many 2048ths of the grid's mean step. Otherwise,
+/// and for any other tempo -- the host's, a fraction -- it is 60 / (24 * BPM).
+inline double tickSeconds(double bpm, bool rom)
+{
+    if (bpm <= 0.0) bpm = 120.0;
+    const double r = std::round(bpm);
+    if (!rom || std::fabs(bpm - r) > 1e-9 || r < 40.0 || r > 295.0) return 60.0 / (bpm * kTicksPerBeat);
+    const double word = std::floor(2048.0 * 2.5 * double(kGridCpuHz) / double(kGridMeanCycles) / r + 0.5);
+    return word / 2048.0 * double(kGridMeanCycles) / double(kGridCpuHz);
+}
 
 enum class TempoSource : uint8_t { Host = 0, Song = 1 };
 
@@ -58,6 +102,7 @@ struct ClockConfig {
     TempoSource source = TempoSource::Host;
     double songTempo = 120.0;        ///< Song source: the base tempo, the Song tempo parameter
     double songStartSeconds = 0.0;   ///< host time where song tick 0 sits
+    bool   lsdjTempo = false;        ///< Song source: the tick is the ROM's tempo word (section 160)
 };
 
 class Clock {
@@ -114,6 +159,10 @@ private:
     size_t segmentForTick(double tick) const;
     size_t segmentForSeconds(double sec) const;
     void   pushTick(uint32_t offset, int64_t tick);
+    /// A tick due at a nominal absolute frame lands on the grid (section 160):
+    /// pushed if its frame is in the block, carried into the next one if not.
+    void   place(double nominalFrame, int64_t tick, uint64_t frameAbs, uint64_t blockEnd);
+    void   takeCarried(uint64_t frameAbs, uint64_t blockEnd);
     void   freeRun(double framesPerTick, uint32_t numSamples, uint64_t frameAbs);
 
     double sampleRate_ = 48000.0;
@@ -138,6 +187,12 @@ private:
     double  nextSeconds_ = 0.0;   ///< host time the next block should start at
     double  nextTick_ = 0.0;      ///< and the position it should start at
     bool    running_ = false;
+
+    // a tick the grid pushed past the block's end, for the next block if it
+    // follows on (section 160)
+    bool     haveCarried_ = false;
+    uint64_t carriedFrame_ = 0, carriedEnd_ = 0;
+    int64_t  carriedTick_ = 0;
 
     // free-running phase while the transport is stopped
     uint64_t lastTickFrame_ = 0;

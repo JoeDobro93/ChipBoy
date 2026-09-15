@@ -30,6 +30,8 @@ constexpr int kMaxSteps = 64;
 constexpr int kMaxPlaySteps = 256;
 /// A groove is sixteen tick counts, whatever the phrase's length (section 9.2).
 constexpr int kGrooveSteps = 16;
+/// The song's groove slots: LSDj's thirty-two, `G 00`-`G 1F` (section 162).
+constexpr int kGrooveSlots = 32;
 /// A step at the straight groove, always (section 25). Sixteen of them are
 /// 96 ticks -- four beats -- which is where the numbers below come from.
 constexpr int kTicksPerStep = 6;
@@ -62,7 +64,7 @@ struct Phrase {
     bool used = false;
     std::array<Cell, kMaxSteps> cells{};
     uint8_t steps = 16;          ///< the phrase's length, 1-64
-    uint8_t groove = 0;          ///< groove slot, 0 = straight, 1-16 the song's
+    uint8_t groove = 0;          ///< groove slot, 0 = straight, 1-32 the song's
 
     /// The length that plays, clamped into range.
     int length() const { return std::clamp<int>(steps, 1, kMaxSteps); }
@@ -94,11 +96,11 @@ struct Groove {
     int total(int steps) const { int t = 0; for (int i = 0; i < steps; ++i) t += at(i); return t; }
 };
 
-/// The sixteen editable grooves a new song holds: swing pairs, one triplet,
-/// the rest straight (section 9.2).
-constexpr std::array<Groove, 16> factoryGrooves()
+/// The thirty-two editable grooves a new song holds: swing pairs, one
+/// triplet, the rest straight (sections 9.2 and 162).
+constexpr std::array<Groove, kGrooveSlots> factoryGrooves()
 {
-    std::array<Groove, 16> g{};
+    std::array<Groove, kGrooveSlots> g{};
     g[1].ticks = { 7, 5 };
     g[2].ticks = { 8, 4 };
     g[3].ticks = { 5, 7 };
@@ -118,7 +120,7 @@ inline bool cellsPlay(NoteSource s) { return s == NoteSource::Tracker || s == No
 /// The channel's notes come from its cells; under Hybrid they come from MIDI.
 inline bool cellNotes(NoteSource s) { return s == NoteSource::Tracker; }
 
-/// The slot in force: 0 straight, 1-16 the song's grooves, kGrooveNone the
+/// The slot in force: 0 straight, 1-32 the song's grooves, kGrooveNone the
 /// phrase's own.
 constexpr uint8_t kGrooveNone = 255;
 
@@ -150,7 +152,7 @@ struct Song {
     /// The record arm per channel (section 14). On for a new song, so a song
     /// written before the arms existed records exactly as it used to.
     std::array<bool, 4> recordArm{ true, true, true, true };
-    std::array<Groove, 16> grooves = factoryGrooves();
+    std::array<Groove, kGrooveSlots> grooves = factoryGrooves();
     // The song's own timeline (docs/COMMANDS_AND_TEMPO.md section 4).
     /// The base tempo the file carries, written from the Song tempo
     /// parameter when the song is saved and read back into it when one is
@@ -158,6 +160,12 @@ struct Song {
     /// live parameter: the clock's base is always the parameter (section 4).
     double  tempoBpm = 120.0;
     double  songStartSeconds = 0.0;    ///< host time where tick 0 sits
+    /// The song's tick is the ROM's tempo word (section 160): round(1834828.8
+    /// / BPM) 2048ths of the 358 Hz clock's step, 0.008-0.02 % from 60 / (24 *
+    /// BPM). The importer sets it, so an imported song lines up with the ROM
+    /// over minutes; a song written here keeps the exact period, and its Host
+    /// and Song sources agree.
+    bool    lsdjTempo = false;
     /// Built from the T cells by buildTempoMap() when the song is published;
     /// the clock integrates it. Not part of the file.
     std::vector<driver::TempoPoint> tempoMap;

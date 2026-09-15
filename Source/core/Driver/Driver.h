@@ -62,6 +62,10 @@ struct NoteEvent {
     // What the driver made of this note-on, stamped as it plays it, so the
     // recorder describes this event and not the channel's latest one
     // (docs/COMMANDS_AND_TEMPO.md section 9.4).
+    /// The driver held it for a tick that lies in a later block (section
+    /// 160): what it did is reported through Driver::firedHeld() when it
+    /// fires, not on this event.
+    bool     held = false;
     bool     plain = true;       ///< it loaded the instrument; false = a bare note
     uint8_t  loaded = 0;         ///< the slot it loaded, or the one sounding under a bare note
     /// Tracker cells: the VEL column was filled, so `b` is a start volume
@@ -143,6 +147,10 @@ public:
     /// Quantise MIDI notes to ticks (section 4). Bends and controllers never
     /// wait; tracker cells are always on ticks anyway.
     void setNotesOnTick(bool on) { notesOnTick_ = on; }
+    /// The held notes that fired this block for events of an earlier block
+    /// (section 160), for the recorder: at this block's offsets, stamped.
+    const NoteEvent* firedHeld() const { return firedHeld_.data(); }
+    size_t firedHeldCount() const { return firedHeldCount_; }
     /// The groove the Player has in force, for the running-state line.
     void setViewGroove(int ch, uint8_t g) { view_[size_t(ch & 3)].groove = g; }
 
@@ -623,16 +631,21 @@ private:
     /// before any note (LSDj does it while its interface is still up).
     bool mixerInit_ = false;
     uint64_t tickCount_ = 0;
-    /// The pitch clock: one for the driver, free-running, never restarted at a
-    /// note (docs/LSDJ_PARITY.md section 1). `pitchClockAt_` is the cycle of
-    /// its next update.
-    uint64_t pitchClockAt_ = 0;
+    /// The pitch clock: one for the driver, never restarted at a note
+    /// (docs/LSDJ_PARITY.md section 1), and since section 160 the ROM's own
+    /// grid from the timeline's cycle 0: `pitchNext_` is the index of its
+    /// next instant.
+    uint64_t pitchNext_ = 0;
     bool     pitchClockValid_ = false;
+    bool     tickRateSet_ = false;   ///< a caller named the tempo, so the block's measured spacing is not it
     bool     notesOnTick_ = false;
     bool     inNoteOn_ = false;   ///< commands set state; the note's own writes carry it
     /// Notes waiting for the next tick while notes-on-tick is on; they survive
     /// a block boundary, so the tick they wait for may be in the next block.
     std::array<NoteEvent, 256> pending_{}; size_t pendingCount_ = 0;
+    /// Held notes that fired this block for an event of an earlier block
+    /// (section 160): their offsets are this block's, and they are stamped.
+    std::array<NoteEvent, 64> firedHeld_{}; size_t firedHeldCount_ = 0;
     /// Where each waiting note came from, so the note's report reaches the
     /// caller's event. Only valid inside process(); cleared when it returns.
     std::array<NoteEvent*, 256> pendingFrom_{};

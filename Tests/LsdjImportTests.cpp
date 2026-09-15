@@ -1176,7 +1176,7 @@ TEST_CASE("before LSDj 9 a table's G holds the groove's first step", "[lsdj]")
     REQUIRE(bank->tables[0].steps[0].cmd1.cmd == bank::Cmd::G);
     const int slot = int(bank->tables[0].steps[0].cmd1.a);
     CHECK(slot != 2);                                            // moved off the song's own groove
-    REQUIRE(slot >= 1); REQUIRE(slot <= 16);
+    REQUIRE(slot >= 1); REQUIRE(slot <= tracker::kGrooveSlots);
     CHECK(int(out->grooves[size_t(slot - 1)].ticks[0]) == 7);    // one step of seven: every row the same
     CHECK(int(out->grooves[size_t(slot - 1)].ticks[1]) == 0);
     CHECK(int(out->grooves[1].ticks[1]) == 4);                   // the song's groove 1 is left alone
@@ -1264,4 +1264,30 @@ TEST_CASE("the 9.x noise map is the ROM's, generated from the clock order", "[im
     CHECK(map[31] == 0x90); CHECK(map[55] == 0x30); CHECK(map[59] == 0x00);
     CHECK(map[60] == 0xDF); CHECK(map[63] == 0xDC); CHECK(map[71] == 0xD9); CHECK(map[119] == 0x08);
     for (int i = 0; i < 60; ++i) { CHECK((map[i] & 8) == 0); CHECK(map[60 + i] == (map[i] | 8)); }
+}
+
+TEST_CASE("a G past 0F names one of LSDj's thirty-two grooves", "[lsdj][groove][rom942]")
+{
+    // Section 162: `REACTION`'s noise phrase opens with `G 12`; LSDj's slot
+    // $12 is ChipBoy's 19, and its ticks come with it.
+    const auto letter = [](char c) { const char* t = "-ABCDEFGHKLMOPRSTVWZ"; return uint8_t(std::strchr(t, c) - t); };
+    auto song = blankSong(22);
+    song[kGrooves + 0x12 * 16 + 0] = 9; song[kGrooves + 0x12 * 16 + 1] = 3; song[kGrooves + 0x12 * 16 + 2] = 6;
+    song[kGrooves + 0x1F * 16 + 0] = 2;                                     // the last slot too
+    song[kInstAlloc + 0] = 1;
+    uint8_t* i0 = song.data() + kInst; i0[0] = 0; i0[1] = 0xA5; i0[4] = 0xFF; i0[7] = 0x80 | 3;
+    song[kPhraseAlloc] |= 1; song[kNotes] = uint8_t(60 - 35); song[kPhraseInst] = 0;
+    song[kCmd + 0] = letter('G'); song[kCmdV + 0] = 0x12;
+    song[kCmd + 1] = letter('G'); song[kCmdV + 1] = 0x1F;
+    song[kChainPhrases] = 0;
+    song[kRows + 0] = 0; song[kRows + 1] = 0xFF; song[kRows + 2] = 0xFF; song[kRows + 3] = 0xFF;
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes));
+    REQUIRE(out->phrases[0].cells[0].cmd1.cmd == bank::Cmd::G);
+    CHECK(int(out->phrases[0].cells[0].cmd1.a) == 0x12 + 1);
+    CHECK(int(out->phrases[0].cells[1].cmd1.a) == 0x1F + 1);
+    CHECK(int(out->grooves[0x12].ticks[0]) == 9); CHECK(int(out->grooves[0x12].ticks[1]) == 3); CHECK(int(out->grooves[0x12].ticks[2]) == 6);
+    CHECK(int(out->grooves[0x1F].ticks[0]) == 2); CHECK(int(out->grooves[0x1F].ticks[1]) == 0);
+    CHECK(int(out->grooves[0x10].ticks[0]) == 6);                             // an empty slot is LSDj's 6 6
 }

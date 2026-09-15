@@ -46,7 +46,7 @@ struct GrooveEditor::Impl {
     GrooveEditor& owner;
     std::shared_ptr<const tracker::Song> song;
     Stepper slotStepper;
-    int slot = 0;                 ///< 0 straight (read-only), 1-16 the song's
+    int slot = 0;                 ///< 0 straight (read-only), 1-32 the song's
     int rowH = GrooveEditor::kRowHeight;
     int rowTicks = tracker::kEmptyRowTicks;   ///< what the groove is measured against: the phrase's straight length
     int playing = -1;
@@ -56,12 +56,12 @@ struct GrooveEditor::Impl {
 
     explicit Impl(GrooveEditor& o) : owner(o)
     {
-        slotStepper.setRange(0, 16, 0);
-        slotStepper.setTooltip("Which groove the editor shows: 0 is straight, 1-16 are the song's.");
+        slotStepper.setRange(0, tracker::kGrooveSlots, 0);
+        slotStepper.setTooltip("Which groove the editor shows: 0 is straight, 1-32 are the song's.");
         slotStepper.setTextFunction([](int v) { return v == 0 ? juce::String("0 str") : ValueFormat::slot(v); });
         slotStepper.setSlotNumbering(true);
         slotStepper.onChange = [this](int v) {
-            slot = juce::jlimit(0, 16, v);
+            slot = juce::jlimit(0, tracker::kGrooveSlots, v);
             entry.reset();
             owner.repaint();
             if (owner.onSlotChange) owner.onSlotChange(slot);
@@ -69,7 +69,7 @@ struct GrooveEditor::Impl {
         owner.addAndMakeVisible(slotStepper);
     }
 
-    bool editable() const { return slot >= 1 && slot <= 16; }
+    bool editable() const { return slot >= 1 && slot <= tracker::kGrooveSlots; }
     /// The groove's own sixteen entries: a step is its ticks, whatever the
     /// phrase's length (section 25).
     int steps() const { return tracker::kGrooveSteps; }
@@ -268,7 +268,7 @@ juce::String GrooveEditor::getTooltip()
     if (im.hoverNudge >= 0)
         return "Move one tick between the entries of every pair, keeping each pair's total: 6 6, 7 5, 8 4. The left and right arrow keys do the same.";
     if (im.hover >= 0) {
-        if (!im.editable()) return "Groove 0 is straight, six ticks a step, and cannot be edited. Browse to 1-16 to edit one of the song's.";
+        if (!im.editable()) return "Groove 0 is straight, six ticks a step, and cannot be edited. Browse to 1-32 to edit one of the song's.";
         const auto g = im.groove();
         const int row = im.hover;
         juce::String s = "How many ticks step " + ValueFormat::index(row) + " lasts, 1-48. ";

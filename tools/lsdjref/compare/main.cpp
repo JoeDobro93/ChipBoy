@@ -307,6 +307,7 @@ std::vector<Write> playChipBoy(const lsdjref::SpecCase& c, Console console, doub
     driver::ClockConfig cc;
     cc.source = driver::TempoSource::Song;
     cc.songTempo = double(c.tempo);
+    cc.lsdjTempo = true;                 // the ROM's tempo word (section 160): this is a ROM comparison
     clock.setConfig(cc);
     if (!song->tempoMap.empty()) clock.setTempoMap(song->tempoMap.data(), song->tempoMap.size());
     clock.setOwnsTransport(true);
@@ -329,7 +330,7 @@ std::vector<Write> playChipBoy(const lsdjref::SpecCase& c, Console console, doub
         clock.process(t, kBlock, frame);
         for (int ch = 0; ch < 4; ++ch) {
             const int slot = driver.tableGrooveSlot(ch);
-            driver.setTableGroove(ch, slot >= 1 && slot <= 16 ? song->grooves[size_t(slot - 1)].ticks.data() : nullptr);
+            driver.setTableGroove(ch, slot >= 1 && slot <= tracker::kGrooveSlots ? song->grooves[size_t(slot - 1)].ticks.data() : nullptr);
             driver.setViewGroove(ch, player.groove(ch));
         }
         events.clear();

@@ -78,7 +78,7 @@ bank::Command randomCommand(Rng& r)
     c.a = int16_t(r.range(0, 255));
     c.b = int16_t(r.range(0, 255));
     if (r.chance(10)) c = bank::revertOf(c.cmd);      // the revert form, where the letter has one
-    if (c.cmd == bank::Cmd::T) c.a = int16_t(r.range(40, 255));   // a tempo the clock can hold
+    if (c.cmd == bank::Cmd::T) c.a = int16_t(r.range(40, 295));   // a tempo the clock can hold
     return c;
 }
 
@@ -88,7 +88,7 @@ std::unique_ptr<tracker::Song> randomSong(Rng& r, int rows)
 {
     auto owned = std::make_unique<tracker::Song>();
     tracker::Song& s = *owned;
-    s.tempoBpm = double(r.range(40, 255));
+    s.tempoBpm = double(r.range(40, 295));
     for (int g = 0; g < 16; ++g) {
         auto& gr = s.grooves[size_t(g)];
         gr.ticks = {};
@@ -157,7 +157,7 @@ Result runSeed(uint64_t seed, int rows, const juce::File& dir)
 
     const auto live = p.song();
     const int64_t total = live ? tracker::songTicks(*live) : 0;
-    const double tempo = live ? std::clamp(live->tempoBpm, 40.0, 255.0) : 120.0;
+    const double tempo = live ? std::clamp(live->tempoBpm, 40.0, 295.0) : 120.0;
     const int64_t samples = int64_t(double(total) * 60.0 * kSampleRate / (tempo * double(driver::kTicksPerBeat)));
     out.samples = samples;
 

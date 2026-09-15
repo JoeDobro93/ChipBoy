@@ -5011,10 +5011,11 @@ is the one run's row, with §152's `L`-row rule.
 
 Two more from the song diffs of the 9.4.2 project.
 
-**`REACTION` plays at 292 BPM**, not 40: its tempo byte is `$24`, and the ROM's tempo routine
+**`REACTION` plays at 280 BPM**, not 40: its tempo byte is `$18`, and the ROM's tempo routine
 reads the project byte exactly as it reads a `T` (`$179A` is one routine: 0-39 are 256-295 BPM,
 the manual's `T 00`-`T 27`). The importer clamped the project byte to 40, so every row of the song
 was seven times too long; it now goes through `tempoBpmOfByte()` on the formats whose `T` does.
+(§160 read the byte from the ROM's own accumulator: the word it adds is byte 24's.)
 
 **`READROOM`'s noise row 2** (`R F0` on a note whose instrument has an ADSR envelope, `62` / `36`):
 the ROM triggers at 6, retriggers at 5 a millisecond later (the nibble's −1) and the envelope then
@@ -5034,3 +5035,91 @@ the ROM (0, 1 or 2; the trace alternates `NR11 = 80` and `00`) and never changed
 `resolveRandom()` now works on the byte: the nibble letters (`V C R M E S B`) re-split it, `T` goes
 through its byte encoding, `G` through its slot-from-zero byte, and the rest (`D K L P A W F O`)
 take it as their one value, the letter's own clamp applying after.
+
+## 160. The tick grid: the ROM's 358 Hz clock, its accumulator and its tempo word
+
+Read from 9.4.2's code and checked on its accumulator (the `songdiff` "drift" of `DELIVERY`, and
+the 292 BPM case of §158, were this).
+
+**The clock.** The timer runs at 65536 Hz (`TAC = $06`) with `TMA = $49`: 183 counts, 11712 cycles
+between overflows. The V-blank interrupt (`$0040` → `0:$183A`) writes `TIMA` from `$C578` (`$B7`
+on DMG, `$6E` at CGB double speed: 73 counts either way), so the first timer interrupt of a video
+frame lands 4672 cycles after V-blank and the next five 11712 apart; `$C8F4` is the budget -- V-blank
+adds six (`$C579`), each interrupt takes one and does nothing when it is spent, and a V-blank that
+finds some unspent requests one at once (`IF` bit 2) -- so there are exactly six a frame and the
+sixth-to-first gap is 11664. The average is 70224 / 6 = **11704 cycles, 358.37 Hz**. ChipBoy's
+pitch clock was a flat 11712 (`LSDJ_PARITY` §4, measured from the reload): 0.07 % slow, 41 ms a
+minute.
+
+**What an interrupt runs** (`0:$0391`): the kit mixer, then `0:$0584`'s pitch work (FAST and DRUM
+`P`/`L`/`V`, the software envelope), then at `0:$064C` the tick accumulator `$C956/$C957`: the
+high byte loses 8 (2048 from the word), and when that borrows the word `$C954/$C955` is added and
+the tick runs (`0:$227C`). Play start (`2:$4EA1`) zeroes the accumulator, so the first tick is the
+first interrupt after play, and tick *k* lands on interrupt **floor(k · word / 2048) + 1**: the
+150 ticks of `REACTION`'s first 1.3 s sit on exactly those interrupts (3, 6, 9, 12, 15, 19, …
+for its word 6553). So a tick is never between interrupts, and consecutive ticks are floor or
+ceil of word / 2048 apart -- at 280 BPM three or four interrupts, 8.4 or 11.2 ms, averaging 8.93;
+at 163 BPM five or six, 14.0 or 16.7 ms, averaging 15.34.
+
+**The word** (`7:$5DD8`, from `T`'s `$6676` and the project tempo alike): index = (byte + `$D8`)
+& `$FF` -- byte 40 is entry 0, 255 is 215, 0-39 are 216-255 -- doubled into the 256-word table at
+`7:$5E49` (`7:$6049` when `$C402` is set). Every one of the 256 words is
+**round(2048 × 2.5 × 4194304 / 11704 / BPM) = round(1834828.8 / BPM)**: 45871 at 40, 15290 at
+120, 11257 at 163, 7195 at 255, 6220 at 295. So the tick averages word / 2048 interrupts, which is
+60 / (24 · BPM) s up to the word's rounding: 11257 for 11256.7 makes 163 BPM's tick 0.008 % long,
+8 ms per 100 s. (`$C52A` non-zero takes (4 − mode) × 2048 instead: one, two or three interrupts a
+tick -- a sync mode, not ChipBoy's.)
+
+**What is not modelled:** the interrupt's latency. The trace shows the accumulator's writes from
+4096 to 23084 cycles apart inside one second (the ROM's own display and kit code holding the
+interrupt off, and the V-blank catch-up), averaging 11704. ChipBoy runs the ideal grid.
+
+**ChipBoy.**
+
+1. The driver's pitch clock **is the grid**: instant *n* at cycle 70224 · (n div 6) + 11712 ·
+   (n mod 6) from the timeline's cycle 0, run at the first frame at or after it
+   (`driver::gridCycle`, `gridFrame`, `gridAfter` in `Clock.h`). The free-running phase state is
+   gone; a jump re-anchors to the grid.
+2. **The Clock places every tick on the grid**: a tick due at frame *f* -- the host's ppq k/24,
+   the song map's integral, the free run -- fires at the frame of the first instant strictly after
+   *f*'s cycle. One that falls past the block's end is carried into the next block (at most one: a
+   tick is at least 6 ms on a 2.8 ms grid; a jump drops it). In Host mode the ticks lag the host's
+   grid by 0-2.8 ms, as the ROM's lag its nominal tempo. `tickAtBlockStart()` stays the nominal
+   tick in force.
+3. **An imported song's Song source takes the ROM's period**: `Song::lsdjTempo` (the importer
+   sets it; `"lsdjTempo"` in the JSON) makes a whole-number BPM in 40..295 a tick of
+   round(1834828.8 / BPM) × 11704 / (2048 × 4194304) s (`driver::tickSeconds(bpm, true)`), so
+   a trace lines up with the ROM's over minutes, not seconds. A song written here keeps the
+   exact 60 / (24 · BPM) -- its Host and Song sources agree to the sample, which the record test
+   holds -- as does any other tempo (the host's, a fraction).
+4. **Order on a shared instant**: the ROM's pitch work precedes its tick in one interrupt, so the
+   driver runs an instant that falls on a tick's frame before the tick (`pitchBefore` takes
+   instants up to and including the tick's cycle).
+5. The shaped envelope's cycles-per-tick (§141) comes from the tempo the caller sets
+   (`setTickRate`), the block's measured spacing only where no caller set one: on the grid the
+   spacing alternates floor and ceil, which is not a tempo.
+6. The record test (§9.5) plays its MIDI with *Quantise MIDI notes to ticks* on in the passes
+   that have MIDI (the record pass, the hybrid pass), so a live note lands on the same grid
+   instant the replay pass plays its cell on; a note held for a tick in a later block is
+   recorded when it fires (`NoteEvent::held`, `Driver::firedHeld()`), not from the event it
+   arrived on, which had recorded it bare. The demo song and hybrid state are regenerated
+   (thirty-two grooves, §162).
+
+## 161. The tempo runs to 295
+
+`T 00`-`T 27` are 256-295 BPM (§59's byte) and the ROM's project byte reads the same (§158), but
+ChipBoy's playback stopped at 255: the **Song Tempo** parameter, `buildTempoMap`'s base, the
+processor's `T` pick-up on a locate and `chipboy_recordtest`'s `--tempo` all clamped at 255, so
+`REACTION`'s 280 played at 255 (a tick of 9.8 ms for 8.9). Every one of them is 40-295 now; the
+parameter table and its demo cross-check say 295.
+
+## 162. Thirty-two grooves
+
+LSDj has thirty-two groove slots (`G 00`-`G 1F`, 32 × 16 bytes at `$1090` of the song) and ChipBoy
+held sixteen, so the importer folded `G 10`-`G 1F` onto slot 16 (`std::min(v + 1, 16)`) and
+`REACTION`'s noise phrase -- `G 12` on its first row -- swung on the wrong groove: the ROM's rows
+came 0.077, 0.030, 0.078 s apart and ChipBoy's every 0.053. `tracker::kGrooveSlots` is 32 now:
+the song's array, the phrase's slot, the `G` byte's range in the parameter table, the Grooves
+tab's list (it scrolls) and its editor's slot stepper, the driver's table `G`, the importer's read
+of all thirty-two and its §63 packing (which ranks the free slots from 32 down). A saved song with
+sixteen grooves reads back with the other sixteen straight.

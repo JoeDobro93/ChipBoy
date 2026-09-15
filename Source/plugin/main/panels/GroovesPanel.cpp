@@ -14,13 +14,13 @@ constexpr int kListWidth = 220, kGap = 14, kListHeader = 28, kEditorWidth = 520,
 /// 512 the editor pane has at the window's minimum height.
 constexpr int kMinRow = ui::GrooveEditor::kRowHeight, kMaxRow = 34;
 String middot() { return String(CharPointer_UTF8(" \xc2\xb7 ")); }
-/// Slot 0 is straight and read-only; the song's own are 1-16.
-constexpr int kSlots = 16;
+/// Slot 0 is straight and read-only; the song's own are 1-32 (section 162).
+constexpr int kSlots = tracker::kGrooveSlots;   // thirty-two (section 162)
 }
 
 GroovesPanel::GroovesPanel(ChipBoyProcessor& p)
     : EditorPanel(p),
-      listTitle_("Grooves" + middot() + "16 slots", Fonts::sans(11.0f), colours::textMute)
+      listTitle_("Grooves" + middot() + "32 slots", Fonts::sans(11.0f), colours::textMute)
 {
     addAndMakeVisible(list_);
     addAndMakeVisible(listTitle_);

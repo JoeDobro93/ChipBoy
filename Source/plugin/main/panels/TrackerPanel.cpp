@@ -98,7 +98,7 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     // ticks follow is the header's Tempo group, which only reads the tempo
     // out now; the master tempo is typed here, because it belongs to the
     // song and the window can hold several.
-    tempo_.setRange(40, 255, 120);
+    tempo_.setRange(40, 295, 120);
     tempo_.setTyped(true);
     tempo_.setTooltip("This song's master tempo, 40-255 BPM: the base its T commands move from, and what the header reads in Song mode.");
     tempo_.onChange = [this](int v) { processor.setMasterTempo(double(v)); refreshViews(); contextChanged(); };
@@ -201,7 +201,7 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
         const int bar = bar_;
         editSong(String(colours::channelName(ch)) + " phrase groove " + ValueFormat::slot(groove), [ch, bar, groove](tracker::Song& s) {
             const uint8_t slot = ensurePhrase(s, ch, bar);
-            if (slot) s.phrases[size_t(slot - 1)].groove = uint8_t(std::clamp(groove, 0, 16));
+            if (slot) s.phrases[size_t(slot - 1)].groove = uint8_t(std::clamp(groove, 0, tracker::kGrooveSlots));
         });
     };
     // A cursor move or a click closes the run of digits being typed, so what
@@ -282,7 +282,7 @@ void TrackerPanel::syncSongTime()
 {
     const auto s = processor.song();
     if (!s) return;
-    tempo_.setValue(std::clamp(int(std::lround(s->tempoBpm)), 40, 255), dontSendNotification);
+    tempo_.setValue(std::clamp(int(std::lround(s->tempoBpm)), 40, 295), dontSendNotification);
     songStart_.setValue(std::clamp(int(std::lround(s->songStartSeconds * kStartSteps)), 0, kStartMax), dontSendNotification);
     transpose_.setValue(int(s->transpose), dontSendNotification);
 

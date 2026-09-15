@@ -80,13 +80,13 @@ TEST_CASE("steps fire on their ticks, block size notwithstanding", "[tracker]")
     REQUIRE(a.size() == 10);   // 4 notes + 1 command per bar, two bars
     REQUIRE(a.size() == b.size());
     for (size_t i = 0; i < a.size(); ++i) { CHECK(a[i].first == b[i].first); CHECK(a[i].second.kind == b[i].second.kind); CHECK(a[i].second.a == b[i].second.a); }
-    // Step 4 of bar 1 is beat 2: frame 24000 at 120 BPM.
-    CHECK(a[2].first == 24000);
+    // Step 4 of bar 1 is beat 2: frame 24000 at 120 BPM, on the grid (section 160).
+    CHECK(a[2].first == driver::gridTickFrame(24000.0, 48000.0));
     CHECK(a[2].second.a == 64);
     CHECK(a[1].second.kind == NoteEvent::Command);
     CHECK(a[1].second.cmd1.cmd == bank::Cmd::V);
     // bar 2 repeats the phrase
-    CHECK(a[5].first == 96000);
+    CHECK(a[5].first == driver::gridTickFrame(96000.0, 48000.0));
 }
 
 /* ---------------------------------------------------------------- grooves */
@@ -988,4 +988,25 @@ TEST_CASE("an H loop makes the row longer and the next row start later", "[track
     CHECK(row == 0); CHECK(step == 0);
     REQUIRE(p.stepAt(0, 24, row, step));
     CHECK(row == 0); CHECK(step == 2);
+}
+
+TEST_CASE("a G names any of the thirty-two grooves", "[tracker][groove][rom942]")
+{
+    // Section 162: `REACTION`'s noise phrase opens with LSDj's `G 12` -- slot
+    // 19 -- and its rows are nine and three ticks from there.
+    const auto owned = blankSong(); Song& s = *owned;
+    s.noteSource[3] = NoteSource::Tracker;
+    s.grooves[18].ticks = { 9, 3 };
+    s.grooves[31].ticks = { 2, 2, 2 };
+    auto& a = s.phrases[0]; a.used = true;
+    for (int i = 0; i < 16; ++i) a.cells[size_t(i)].note = uint8_t(60 + i);
+    a.cells[0].cmd1 = { bank::Cmd::G, 19, 0, 0 };
+    a.cells[8].cmd1 = { bank::Cmd::G, 32, 0, 0 };
+    s.chain[3] = { 1 };
+    buildRowTables(s);
+    CHECK(rowTicks(s, 3, 0) == 8 * 6 + 8 * 2);          // 9 3 9 3 9 3 9 3, then twos
+    CHECK(s.walkAt(3, 0).slot == kGrooveNone);          // the row's own walk starts at the cell
+    int starts[kMaxSteps + 1]; uint8_t step[kMaxSteps + 1];
+    stepStartTicks(s, &a, kGrooveNone, starts, step);
+    CHECK(starts[1] == 9); CHECK(starts[2] == 12); CHECK(starts[3] == 21); CHECK(starts[9] == 50);
 }

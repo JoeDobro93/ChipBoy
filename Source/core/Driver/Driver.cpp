@@ -25,7 +25,7 @@ constexpr int      kMaxTicksPerBlock = 512;
 /// driver and it free-runs: it is not restarted at a note-on, because a real
 /// driver's timer does not know that a note began. Where in that period a note
 /// falls is where the player pressed play, not a property of the driver.
-constexpr uint64_t kPitchCycles = 11712;
+constexpr uint64_t kPitchCycles = kGridMeanCycles;   ///< 11704: the grid's mean step (section 160)
 
 /// The vibrato's phase is a six-bit counter, 0-63 to the cycle, and the speed
 /// is the step: **one cycle is 64/(x+1) updates** (measured for every speed).
@@ -270,7 +270,7 @@ void Driver::reset()
     for (auto& k : known_) k = false;     // the first write of anything lands
     masterL_ = masterR_ = 255;
     tickCount_ = 0;
-    pitchClockAt_ = 0; pitchClockValid_ = false; mixerInit_ = false;
+    pitchNext_ = 0; pitchClockValid_ = false; mixerInit_ = false;
     pendingCount_ = 0;
     for (auto& g : tableGroove_) g.fill(0);
     for (auto& c : stepState_) for (auto& p : c) p = StepPark{};   // section 140
@@ -399,7 +399,7 @@ void Driver::setTickRate(double ticksPerSecond)
 {
     // Section 141: one tick in cycles. 4194304 cycles a second is the chip's
     // clock, which is what kPitchCycles is counted in.
-    if (ticksPerSecond > 0.0) tickCycles_ = 4194304.0 / ticksPerSecond;
+    if (ticksPerSecond > 0.0) { tickCycles_ = 4194304.0 / ticksPerSecond; tickRateSet_ = true; }
 }
 
 void Driver::setTableGroove(int ch, const uint8_t* ticks16)
@@ -1873,7 +1873,7 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             // the slot for the Player, which hands back the groove's ticks
             // through setTableGroove(). On the timeline the Player owns it.
             if (fromTable) {
-                v.tableGroove = uint8_t(std::clamp<int>(c.a, 0, 16));
+                v.tableGroove = uint8_t(std::clamp<int>(c.a, 0, 32));   // LSDj's thirty-two slots (section 162)
                 // The row that carries the G takes the groove's first step as
                 // its own length (section 57), so the ticks are read here and
                 // not waited for from the Player's next hand-off.
@@ -2873,6 +2873,7 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
                      std::vector<RegWrite>& out)
 {
     out_ = &out;
+    firedHeldCount_ = 0;
     const size_t logFrom = out.size();
     const uint64_t blockEnd = frameAbs + numSamples;
 
@@ -2898,15 +2899,21 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
     size_t ei = 0;
     auto moveTo = [&](uint64_t c) { if (c != cycle_) { cycle_ = c; burst_ = 0; } };
     auto offOf = [&](uint32_t o) { return numSamples ? std::min<uint32_t>(o, numSamples - 1) : 0u; };
+    // Section 160: the instants are the ROM's grid, each run at the first
+    // frame at or after its cycle -- the frame the Clock lands a tick on, so
+    // an instant on a tick's frame runs before the tick, as the ROM's pitch
+    // work precedes its tick in one interrupt.
+    auto instantAt = [&](uint64_t n) { return cycleAt(gridFrame(n, sampleRate_)); };
     auto pitchBefore = [&](uint64_t limit) {
-        // One clock for the driver, free-running (docs/LSDJ_PARITY.md 1). A
-        // jump in the timeline (a locate, a long gap) must not walk it forward
-        // one update at a time.
-        if (!pitchClockValid_) { pitchClockAt_ = cycle_ + kPitchCycles; pitchClockValid_ = true; }
-        if (pitchClockAt_ + kPitchCycles * 4096 < limit)
-            pitchClockAt_ = limit - (limit - pitchClockAt_) % kPitchCycles;
-        while (pitchClockAt_ < limit) {
-            const uint64_t at = pitchClockAt_;
+        // One clock for the driver (docs/LSDJ_PARITY.md 1). A jump in the
+        // timeline (a locate, a long gap) must not walk it forward one update
+        // at a time, nor leave it ahead of the position.
+        if (!pitchClockValid_ || gridCycle(pitchNext_) + kGridStepCycles * 4096 < limit
+            || gridCycle(pitchNext_) > limit + kGridFrameCycles) {
+            pitchNext_ = gridAfter(limit) - 1; pitchClockValid_ = true;
+        }
+        while (instantAt(pitchNext_) <= limit) {
+            const uint64_t at = instantAt(pitchNext_);
             // A tick's register writes go out as one burst, an instruction
             // pair apart. A 358 Hz update landing inside that burst cannot
             // interleave with it on real hardware, and must not overtake
@@ -2939,7 +2946,7 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
                         || v.inst.type == InstrumentType::Wave) retrigger(ch, false);
                 }
             }
-            pitchClockAt_ = at + kPitchCycles;
+            ++pitchNext_;
         }
     };
     auto runEvent = [&](NoteEvent& e) {
@@ -2954,9 +2961,14 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
     // A note that has waited for a tick reports back to the event it came
     // from, so the recorder still sees what it did -- if that event is still
     // this block's. One held over a block boundary has none to report to.
-    auto fire = [&](size_t i) {
+    // Section 160: one held over a block boundary (its tick sat past the
+    // block's end) is reported through firedHeld() instead, at the offset it
+    // fired on, and the event it came from was marked `held` so the recorder
+    // did not take it early.
+    auto fire = [&](size_t i, uint32_t off) {
         handleEvent(pending_[i]);
         if (pendingFrom_[i]) { pendingFrom_[i]->plain = pending_[i].plain; pendingFrom_[i]->loaded = pending_[i].loaded; }
+        else if (firedHeldCount_ < firedHeld_.size()) { NoteEvent& f = firedHeld_[firedHeldCount_++] = pending_[i]; f.offset = off; f.held = false; }
     };
     auto hold = [&](NoteEvent& e) {
         if (pendingCount_ == pending_.size()) {
@@ -2966,7 +2978,7 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
             const uint64_t at = cycleAt(frameAbs + offOf(e.offset));
             pitchBefore(at);
             moveTo(at);
-            fire(0);
+            fire(0, offOf(e.offset));
             for (size_t i = 1; i < pendingCount_; ++i) { pending_[i - 1] = pending_[i]; pendingFrom_[i - 1] = pendingFrom_[i]; }
             --pendingCount_;
         }
@@ -2980,7 +2992,7 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
         const uint64_t at = cycleAt(frameAbs + off);
         pitchBefore(at);
         moveTo(at);
-        for (size_t i = 0; i < pendingCount_; ++i) fire(i);   // notes that were waiting for a tick
+        for (size_t i = 0; i < pendingCount_; ++i) fire(i, off);   // notes that were waiting for a tick
         pendingCount_ = 0;
         // Section 141: how long this tick is, in pitch clocks, so the shaped
         // envelope knows how far 1/256 of a tick is (section 116). The next
@@ -2989,7 +3001,10 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
         // steady tempo. Counting the clocks that fell inside the **last** tick
         // was a tick late, and left the first tick of a session on a guess that
         // `shapedPosMax` then ratcheted in.
-        if (k + 1 < nTicks) {
+        // Section 160: on the grid the spacing alternates floor and ceil of the
+        // period, which is not a tempo, so a caller's setTickRate() wins.
+        if (tickRateSet_) {
+        } else if (k + 1 < nTicks) {
             const uint32_t nextOff = std::min<uint32_t>(ticks[k + 1].offset, numSamples ? numSamples - 1 : 0);
             const uint64_t nextAt = cycleAt(frameAbs + nextOff);
             const int64_t span = int64_t(ticks[k + 1].tick) - int64_t(ticks[k].tick);
@@ -3004,8 +3019,8 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
     while (ei < n) { NoteEvent& e = events[ei++]; if (waits(e)) hold(e); else runEvent(e); }
     pitchBefore(cycleAt(blockEnd));
     // The caller's events go away with the block; a note still waiting has
-    // nothing left to report to.
-    for (size_t i = 0; i < pendingCount_; ++i) pendingFrom_[i] = nullptr;
+    // nothing left to report to, and its event says so (section 160).
+    for (size_t i = 0; i < pendingCount_; ++i) { if (pendingFrom_[i]) pendingFrom_[i]->held = true; pendingFrom_[i] = nullptr; }
 
     // --- wave RAM streaming, cycle domain ---------------------------------
     scheduleStreams(cycleAt(frameAbs), cycleAt(blockEnd));

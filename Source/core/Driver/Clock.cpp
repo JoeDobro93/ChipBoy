@@ -22,13 +22,14 @@ void Clock::reset()
     tickCount_ = 0; blockStartTick_ = 0;
     offset_ = 0.0; nextSeconds_ = 0.0; nextTick_ = 0.0; running_ = false;
     lastTickFrame_ = 0; haveFreeTick_ = false; freeTick_ = 0;
+    haveCarried_ = false;
     ownPlaying_ = false; ownSeconds_ = 0.0; isPlaying_ = false;
     mapDirty_ = true;
 }
 
 void Clock::setConfig(const ClockConfig& c)
 {
-    if (std::fabs(c.songTempo - cfg_.songTempo) > kEps || std::fabs(c.songStartSeconds - cfg_.songStartSeconds) > kEps) mapDirty_ = true;
+    if (std::fabs(c.songTempo - cfg_.songTempo) > kEps || std::fabs(c.songStartSeconds - cfg_.songStartSeconds) > kEps || c.lsdjTempo != cfg_.lsdjTempo) mapDirty_ = true;
     cfg_ = c;
 }
 
@@ -63,7 +64,7 @@ void Clock::rebuild()
     mapDirty_ = false;
 }
 
-double Clock::rateAt(size_t i) const { return map_[std::min(i, mapCount_ - 1)].bpm * kTicksPerBeat / 60.0; }
+double Clock::rateAt(size_t i) const { return 1.0 / tickSeconds(map_[std::min(i, mapCount_ - 1)].bpm, cfg_.lsdjTempo); }   // section 160
 
 size_t Clock::segmentForTick(double tick) const
 {
@@ -103,6 +104,25 @@ void Clock::pushTick(uint32_t offset, int64_t tick)
     ticks_[tickCount_++] = { offset, tick };
 }
 
+void Clock::place(double nominalFrame, int64_t tick, uint64_t frameAbs, uint64_t blockEnd)
+{
+    // Section 160: the tick fires on the first grid instant after its nominal
+    // frame. Past the block's end it waits for the next block; at most one
+    // does, a tick being 6 ms or more on a 2.8 ms grid.
+    const uint64_t f = std::max(gridTickFrame(nominalFrame, sampleRate_), frameAbs);
+    if (f < blockEnd) { pushTick(uint32_t(f - frameAbs), tick); return; }
+    haveCarried_ = true; carriedFrame_ = f; carriedEnd_ = blockEnd; carriedTick_ = tick;
+}
+
+void Clock::takeCarried(uint64_t frameAbs, uint64_t blockEnd)
+{
+    if (!haveCarried_) return;
+    if (carriedEnd_ != frameAbs) { haveCarried_ = false; return; }    // a jump: the tick is gone with its block
+    if (carriedFrame_ >= blockEnd) { carriedEnd_ = blockEnd; return; }  // still ahead (a tiny block)
+    haveCarried_ = false;
+    pushTick(uint32_t(carriedFrame_ - frameAbs), carriedTick_);
+}
+
 void Clock::freeRun(double framesPerTick, uint32_t numSamples, uint64_t frameAbs)
 {
     // Stopped: ticks come from the absolute frame count at the current tempo,
@@ -113,7 +133,7 @@ void Clock::freeRun(double framesPerTick, uint32_t numSamples, uint64_t frameAbs
     for (; tickCount_ < kMaxTicksPerBlock; k += 1.0) {
         const uint64_t f = uint64_t(std::llround(k * framesPerTick));
         if (f >= blockEnd) break;
-        if (f >= frameAbs) { pushTick(uint32_t(f - frameAbs), freeTick_++); lastTickFrame_ = f; haveFreeTick_ = true; }
+        if (f >= frameAbs) { place(double(f), freeTick_++, frameAbs, blockEnd); lastTickFrame_ = f; haveFreeTick_ = true; }
     }
 }
 
@@ -150,6 +170,7 @@ void Clock::setLoop(bool on, int64_t startTick, int64_t endTick)
 void Clock::process(const Transport& host, uint32_t numSamples, uint64_t frameAbs)
 {
     tickCount_ = 0;
+    takeCarried(frameAbs, frameAbs + numSamples);
     if (mapDirty_) { if (!baseIsCell_) map_[0].bpm = clampBpm(cfg_.songTempo); rebuild(); }
 
     Transport t = host;
@@ -178,7 +199,7 @@ void Clock::process(const Transport& host, uint32_t numSamples, uint64_t frameAb
         // tables and vibrato -- the tempo is the host's, or the song's.
         bpm_ = clampBpm(song ? cfg_.songTempo : hostBpm);
         running_ = false;
-        freeRun(sampleRate_ * 60.0 / (bpm_ * kTicksPerBeat), numSamples, frameAbs);
+        freeRun(sampleRate_ * tickSeconds(bpm_, song && cfg_.lsdjTempo), numSamples, frameAbs);
         blockStartTick_ = tickCount_ ? ticks_[0].tick : freeTick_;
         return;
     }
@@ -193,9 +214,8 @@ void Clock::process(const Transport& host, uint32_t numSamples, uint64_t frameAb
         const double tickEnd = ppqEnd * kTicksPerBeat;
         for (double k = std::ceil(ppqStart * kTicksPerBeat - kTickEps); k < tickEnd - kTickEps && tickCount_ < kMaxTicksPerBlock; k += 1.0) {
             const double f = (k / kTicksPerBeat - ppqStart) / ppqPerFrame;
-            const uint32_t off = uint32_t(std::max(0.0, std::floor(f + 1e-6)));
-            if (off >= numSamples) break;
-            pushTick(off, int64_t(std::llround(k)));
+            if (std::floor(f + 1e-6) >= double(numSamples)) break;
+            place(double(frameAbs) + std::max(0.0, f), int64_t(std::llround(k)), frameAbs, frameAbs + numSamples);
         }
         freeTick_ = blockStartTick_;
         running_ = true;
@@ -227,8 +247,7 @@ void Clock::process(const Transport& host, uint32_t numSamples, uint64_t frameAb
     // boundary is emitted once and never twice.
     for (double k = std::ceil(tickStart - kTickEps); k < tickEnd - kTickEps && tickCount_ < kMaxTicksPerBlock; k += 1.0) {
         const double f = (secondsAtTicks(k - offset_) - s0) * sampleRate_;
-        const uint32_t off = uint32_t(std::clamp(std::floor(f + 1e-6), 0.0, double(numSamples ? numSamples - 1 : 0)));
-        pushTick(off, int64_t(std::llround(k)));
+        place(double(frameAbs) + std::clamp(f, 0.0, double(numSamples ? numSamples - 1 : 0)), int64_t(std::llround(k)), frameAbs, frameAbs + numSamples);
     }
     if (wrap) {
         // The rest of the block, from the loop's start: tick loopStart is due
@@ -238,7 +257,7 @@ void Clock::process(const Transport& host, uint32_t numSamples, uint64_t frameAb
         for (int64_t j = 0; tickCount_ < kMaxTicksPerBlock; ++j) {
             const double f = (sWrap + (secondsAtTicks(double(loopStart_ + j) - offset_) - sLoop) - s0) * sampleRate_;
             if (f >= double(numSamples) - 1e-6) break;
-            if (f >= -1e-6) pushTick(uint32_t(std::clamp(std::floor(f + 1e-6), 0.0, double(numSamples ? numSamples - 1 : 0))), loopStart_ + j);
+            if (f >= -1e-6) place(double(frameAbs) + std::clamp(f, 0.0, double(numSamples ? numSamples - 1 : 0)), loopStart_ + j, frameAbs, frameAbs + numSamples);
         }
         ownSeconds_ = sLoop + (s1 - sWrap);
     } else if (owns_) ownSeconds_ = s1;

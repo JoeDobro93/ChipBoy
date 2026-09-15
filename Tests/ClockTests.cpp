@@ -14,6 +14,14 @@ namespace {
 
 struct Tick { uint64_t frame; int64_t index; };
 
+/// Section 160: where a tick nominally due at a frame lands -- the frame of
+/// the first grid instant after it.
+uint64_t onGrid(double nominalFrame) { return gridTickFrame(nominalFrame, 48000.0); }
+/// The ROM's tick in frames at a whole-number tempo.
+double framesPerTick(double bpm) { return 48000.0 * tickSeconds(bpm, false); }
+/// The ROM's tick in frames at a whole-number tempo (`lsdjTempo`).
+double romFramesPerTick(double bpm) { return 48000.0 * tickSeconds(bpm, true); }
+
 /// Play `seconds` through the clock in blocks and collect every tick.
 std::vector<Tick> run(Clock& c, double seconds, uint32_t block, double bpm, bool song, double rate = 48000.0, double startSeconds = 0.0)
 {
@@ -39,12 +47,15 @@ TEST_CASE("host ticks are 24 to the beat, straight from the host's ppq", "[clock
     Clock c; c.prepare(48000.0);
     ClockConfig cfg; cfg.source = TempoSource::Host; c.setConfig(cfg);
     const auto a = run(c, 4.0, 512, 120.0, false);
-    // 120 BPM: a beat is 24 000 frames, so a tick every 1 000 frames.
+    // 120 BPM: a beat is 24 000 frames, so a tick is due every 1 000 frames,
+    // and lands on the grid instant after it (section 160): 0-2.8 ms later.
     REQUIRE(a.size() == 4 * 2 * 24);
     for (size_t i = 0; i < a.size(); ++i) {
         INFO("tick " << i);
         CHECK(a[i].index == int64_t(i));
-        CHECK(a[i].frame == i * 1000);
+        CHECK(a[i].frame == onGrid(double(i * 1000)));
+        CHECK(a[i].frame >= i * 1000);
+        CHECK(a[i].frame <= i * 1000 + 135);   // 11712 cycles is 134.03 frames
     }
     // The block size cannot move a tick.
     Clock d; d.prepare(48000.0); d.setConfig(cfg);
@@ -55,23 +66,30 @@ TEST_CASE("host ticks are 24 to the beat, straight from the host's ppq", "[clock
     Clock e; e.prepare(48000.0); e.setConfig(cfg);
     const auto slow = run(e, 4.0, 512, 60.0, false);
     REQUIRE(slow.size() == 4 * 24);
-    CHECK(slow[1].frame == 2000);
+    CHECK(slow[1].frame == onGrid(2000.0));
 }
 
 TEST_CASE("song position is the integral of the tempo map", "[clock]")
 {
     Clock c; c.prepare(48000.0);
-    ClockConfig cfg; cfg.source = TempoSource::Song; cfg.songTempo = 120.0;
+    ClockConfig cfg; cfg.source = TempoSource::Song; cfg.songTempo = 120.0; cfg.lsdjTempo = true;
     c.setConfig(cfg);
     // 120 BPM to tick 96 (two seconds, one bar), then 60 BPM from a T cell.
+    // An imported song: the tick is the ROM's word (section 160).
     const TempoPoint map[] = { { 0, 120.0 }, { 96, 60.0 } };
     c.setTempoMap(map, 2);
 
+    // The rate is the ROM's word (section 160): 15290/2048 grid steps at 120,
+    // 30580/2048 at 60 -- within 0.01 % of 48 and 24 ticks a second, and the
+    // integral is exact in those units.
+    const double t120 = tickSeconds(120.0, true), t60 = tickSeconds(60.0, true);
+    CHECK(std::fabs(t120 * 48.0 - 1.0) < 2e-4);
+    CHECK(std::fabs(t60 * 24.0 - 1.0) < 2e-4);
     CHECK(c.ticksAtSeconds(0.0) == 0.0);
-    CHECK(std::fabs(c.ticksAtSeconds(1.0) - 48.0) < 1e-9);     // 120 BPM: 48 ticks a second
-    CHECK(std::fabs(c.ticksAtSeconds(2.0) - 96.0) < 1e-9);
-    CHECK(std::fabs(c.ticksAtSeconds(3.0) - 120.0) < 1e-9);    // 60 BPM: 24 ticks a second
-    CHECK(std::fabs(c.secondsAtTicks(120.0) - 3.0) < 1e-9);
+    CHECK(std::fabs(c.ticksAtSeconds(1.0) - 1.0 / t120) < 1e-9);       // 120 BPM: 48 ticks a second
+    CHECK(std::fabs(c.ticksAtSeconds(96.0 * t120) - 96.0) < 1e-9);
+    CHECK(std::fabs(c.ticksAtSeconds(96.0 * t120 + 1.0) - (96.0 + 1.0 / t60)) < 1e-9);   // 60 BPM: 24 a second
+    CHECK(std::fabs(c.secondsAtTicks(120.0) - (96.0 * t120 + 24.0 * t60)) < 1e-9);
     CHECK(c.bpmAtTick(95) == 120.0);
     CHECK(c.bpmAtTick(96) == 60.0);
 
@@ -79,9 +97,9 @@ TEST_CASE("song position is the integral of the tempo map", "[clock]")
     const auto a = run(c, 4.0, 512, 120.0, true);
     REQUIRE(a.size() == 96 + 48);
     CHECK(a[0].index == 0);
-    CHECK(a[47].frame == 47 * 1000);            // still 120 BPM
+    CHECK(a[47].frame == onGrid(47.0 * romFramesPerTick(120.0)));      // still 120 BPM
     CHECK(a[96].index == 96);
-    CHECK(a[97].frame - a[96].frame == 2000);   // 60 BPM: a tick every 2 000 frames
+    CHECK(a[97].frame == onGrid(96.0 * romFramesPerTick(120.0) + romFramesPerTick(60.0)));   // 60 BPM: a tick every 2 000 frames
     CHECK(a.back().index == int64_t(a.size() - 1));
 }
 
@@ -101,8 +119,11 @@ TEST_CASE("a jump lands on the tick playing through would have reached", "[clock
     jumped.process(t, 512, 240000);
     const int64_t at5 = jumped.tickAtBlockStart();
     int64_t playedAt5 = -1;
+    // The nominal position: a tick fires up to 2.8 ms after it is due
+    // (section 160), so the last one played by 5 s is the one due by then or
+    // the one before it.
     for (const auto& k : played) if (k.frame <= 5 * 48000) playedAt5 = k.index;
-    CHECK(at5 == playedAt5);
+    CHECK((at5 == playedAt5 || at5 == playedAt5 + 1));
     CHECK(at5 == int64_t(std::floor(jumped.ticksAtSeconds(5.0))));
 
     // Before the song start there are no song ticks yet.
@@ -118,12 +139,14 @@ TEST_CASE("the Song tempo parameter is the base a T cell modifies", "[clock]")
     // parameter's tempo -- the song does not carry a base of its own into the
     // map.
     Clock c; c.prepare(48000.0);
-    ClockConfig cfg; cfg.source = TempoSource::Song; cfg.songTempo = 150.0; c.setConfig(cfg);
+    ClockConfig cfg; cfg.source = TempoSource::Song; cfg.songTempo = 150.0; cfg.lsdjTempo = true; c.setConfig(cfg);
     c.setTempoMap(nullptr, 0);
-    CHECK(std::fabs(c.ticksAtSeconds(1.0) - 60.0) < 1e-9);        // 150 BPM: 60 ticks a second
+    const double t150 = tickSeconds(150.0, true), t100 = tickSeconds(100.0, true);
+    CHECK(std::fabs(c.ticksAtSeconds(1.0) - 1.0 / t150) < 1e-9);  // 150 BPM: 60 ticks a second
+    CHECK(std::fabs(t150 * 60.0 - 1.0) < 2e-4);
     const auto none = run(c, 2.0, 512, 120.0, true);
     REQUIRE(none.size() == 120);
-    CHECK(none[60].frame == 60 * 800);
+    CHECK(none[60].frame == onGrid(60.0 * romFramesPerTick(150.0)));
 
     // A T at bar 9 (tick 768 at four beats a bar) changes it from there.
     Clock d; d.prepare(48000.0); d.setConfig(cfg);
@@ -131,8 +154,8 @@ TEST_CASE("the Song tempo parameter is the base a T cell modifies", "[clock]")
     d.setTempoMap(bar9, 1);
     CHECK(d.bpmAtTick(767) == 150.0);                             // the parameter's, until the cell
     CHECK(d.bpmAtTick(768) == 100.0);
-    CHECK(std::fabs(d.secondsAtTicks(768.0) - 768.0 / 60.0) < 1e-9);
-    CHECK(std::fabs(d.ticksAtSeconds(768.0 / 60.0 + 1.0) - 808.0) < 1e-9);   // 100 BPM: 40 a second
+    CHECK(std::fabs(d.secondsAtTicks(768.0) - 768.0 * t150) < 1e-9);
+    CHECK(std::fabs(d.ticksAtSeconds(768.0 * t150 + 1.0) - (768.0 + 1.0 / t100)) < 1e-9);   // 100 BPM: 40 a second
 
     // Moving the parameter moves the base and everything after it, and a T
     // cell at tick 0 is a cell, so it keeps the base it names.
@@ -255,9 +278,9 @@ TEST_CASE("the plugin's own transport runs the song at the Song tempo", "[clock]
     REQUIRE(a.size() == 48);              // 120 BPM: 48 ticks a second
     CHECK(c.playing());
     CHECK(a[0].index == 0);
-    CHECK(a[0].frame == 0);
+    CHECK(a[0].frame == onGrid(0.0));
     CHECK(a[24].index == 24);
-    CHECK(a[24].frame == 24000);
+    CHECK(a[24].frame == onGrid(24.0 * framesPerTick(120.0)));
     CHECK(c.tickAtBlockStart() > 40);
 
     // The block size cannot move a tick here either.
@@ -300,9 +323,9 @@ TEST_CASE("the plugin's own transport loops, keeping its place", "[clock][transp
     // The wrap is a jump in the tick stream -- what tells the Player to flush
     // -- and it lands on the sample the next tick was due on.
     CHECK(a[96].index == 0);
-    CHECK(a[96].frame == 96000);
+    CHECK(a[96].frame == onGrid(96.0 * framesPerTick(120.0)));
     CHECK(a[97].index == 1);
-    CHECK(a[97].frame == 97000);
+    CHECK(a[97].frame == onGrid(97.0 * framesPerTick(120.0)));
 
     // A loop that starts later starts there.
     Clock d; d.prepare(48000.0); d.setConfig(cfg); d.setTempoMap(nullptr, 0);
@@ -319,4 +342,53 @@ TEST_CASE("the plugin's own transport loops, keeping its place", "[clock][transp
     const auto e = runOwn(d, 3.0, 512);
     REQUIRE(e.size() == 144);
     CHECK(e.back().index == 143);
+}
+
+/* ------------------------------------------------------- the grid (160) */
+
+TEST_CASE("a tick lands on the ROM's 358 Hz grid, whatever the block size", "[clock][grid]")
+{
+    // Section 160: six instants a video frame, 11712 cycles apart and the
+    // sixth to the next frame's first 11664; a tick fires on the first instant
+    // strictly after its nominal frame.
+    CHECK(gridCycle(0) == 0);
+    CHECK(gridCycle(5) == 5 * 11712);
+    CHECK(gridCycle(6) == 70224);
+    CHECK(gridCycle(6) - gridCycle(5) == 11664);
+    CHECK(gridAfter(0) == 1);
+    CHECK(gridAfter(11711) == 1);
+    CHECK(gridAfter(11712) == 2);
+    CHECK(gridAfter(58560) == 6);
+    CHECK(gridAfter(70223) == 6);
+    // The tempo word: round(1834828.8 / BPM) 2048ths of the mean step.
+    CHECK(std::fabs(tickSeconds(120.0, true) - 15290.0 / 2048.0 * 11704.0 / 4194304.0) < 1e-12);
+    CHECK(std::fabs(tickSeconds(163.0, true) - 11257.0 / 2048.0 * 11704.0 / 4194304.0) < 1e-12);
+    CHECK(std::fabs(tickSeconds(280.0, true) - 6553.0 / 2048.0 * 11704.0 / 4194304.0) < 1e-12);
+    CHECK(std::fabs(tickSeconds(120.5, true) - 60.0 / (120.5 * 24.0)) < 1e-12);   // a fraction: the plain period
+    CHECK(std::fabs(tickSeconds(120.0, false) - 1.0 / 48.0) < 1e-12);            // a song written here: exact
+
+    // At 280 BPM the ticks are three or four instants apart and never
+    // between two: every tick's frame is an instant's frame, and the block
+    // size -- 512, 97 or 1 -- cannot move one, a tick pushed past a block's
+    // end being carried into the next.
+    for (uint32_t block : { 512u, 97u, 1u }) {
+        INFO("block " << block);
+        Clock c; c.prepare(48000.0);
+        ClockConfig cfg; cfg.source = TempoSource::Song; cfg.songTempo = 280.0; cfg.lsdjTempo = true; c.setConfig(cfg);
+        c.setTempoMap(nullptr, 0);
+        const auto a = run(c, 1.0, block, 120.0, true);
+        REQUIRE(a.size() > 100);
+        for (size_t i = 0; i < a.size(); ++i) {
+            INFO("tick " << i);
+            CHECK(a[i].index == int64_t(i));
+            CHECK(a[i].frame == onGrid(double(i) * romFramesPerTick(280.0)));
+            const uint64_t cyc = a[i].frame * 4194304 / 48000;
+            const uint64_t n = gridAfter(cyc) - 1;
+            CHECK(gridFrame(n, 48000.0) == a[i].frame);
+            if (i) {
+                const uint64_t gap = a[i].frame - a[i - 1].frame;
+                CHECK((gap >= 3 * 11664 / 87.4 - 2 && gap <= 4 * 11712 / 87.4 + 2));
+            }
+        }
+    }
 }

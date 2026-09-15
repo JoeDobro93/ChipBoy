@@ -437,6 +437,7 @@ var songToVar(const tracker::Song& s)
     o->setProperty("format", "chipboy-song"); o->setProperty("version", 7);
     // The song's own timeline (docs/COMMANDS_AND_TEMPO.md section 4).
     o->setProperty("tempoBpm", s.tempoBpm); o->setProperty("songStartSeconds", s.songStartSeconds);
+    if (s.lsdjTempo) o->setProperty("lsdjTempo", true);   // section 160: the tick is the ROM's word
     if (s.transpose) o->setProperty("transpose", int(s.transpose));    // section 61; absent reads as 0
     Array<var> phrases;
     for (int i = 0; i < tracker::kPhraseSlots; ++i) {
@@ -546,15 +547,16 @@ bool songFromVar(const var& v, tracker::Song& out)
     // before it) and perhaps a bar override, which become phrase lengths
     // below (section 25).
     const int fileSteps = std::clamp(o->hasProperty("steps") ? getOr(o, "steps", 16) : getOr(o, "stepsPerBar", 16), 1, tracker::kMaxSteps);
-    out.tempoBpm = std::clamp(o->hasProperty("tempoBpm") ? double(o->getProperty("tempoBpm")) : 120.0, 40.0, 255.0);
+    out.tempoBpm = std::clamp(o->hasProperty("tempoBpm") ? double(o->getProperty("tempoBpm")) : 120.0, 40.0, 295.0);
     out.transpose = int8_t(std::clamp(o->hasProperty("transpose") ? int(o->getProperty("transpose")) : 0, -128, 127));
     out.songStartSeconds = std::max(0.0, o->hasProperty("songStartSeconds") ? double(o->getProperty("songStartSeconds")) : 0.0);
+    out.lsdjTempo = o->hasProperty("lsdjTempo") && bool(o->getProperty("lsdjTempo"));
     bool haveLengths = false;
     if (auto* ph = o->getProperty("phrases").getArray())
         for (const auto& pv : *ph) {
             auto* po = pv.getDynamicObject(); if (!po) continue;
             const int slot = getOr(po, "slot", 0); if (slot < 1 || slot > tracker::kPhraseSlots) continue;
-            auto& p = out.phrases[size_t(slot - 1)]; p.used = true; p.groove = uint8_t(std::clamp(getOr(po, "groove", 0), 0, 16));
+            auto& p = out.phrases[size_t(slot - 1)]; p.used = true; p.groove = uint8_t(std::clamp(getOr(po, "groove", 0), 0, tracker::kGrooveSlots));
             // Format 6: `steps` is the phrase's length and the cells are
             // `cells`. Before it, `steps` *was* the cells.
             const var stepsVar = po->getProperty("steps");
@@ -591,8 +593,9 @@ bool songFromVar(const var& v, tracker::Song& out)
     // The arms are on for a song written before they existed (section 14).
     if (auto* arm = o->getProperty("recordArm").getArray()) for (int ch = 0; ch < std::min(4, arm->size()); ++ch) out.recordArm[size_t(ch)] = bool((*arm)[ch]);
     // Sixteen tick counts; the old two-entry form reads as the first two.
+    // Thirty-two slots (section 162); a file with sixteen leaves the rest straight.
     if (auto* gr = o->getProperty("grooves").getArray())
-        for (int k = 0; k < std::min(tracker::kGrooveSteps, gr->size()); ++k)
+        for (int k = 0; k < std::min(int(out.grooves.size()), gr->size()); ++k)
             if (auto* a = (*gr)[k].getArray()) {
                 auto& t = out.grooves[size_t(k)].ticks;
                 t = {};

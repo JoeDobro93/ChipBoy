@@ -259,6 +259,11 @@ void run(ChipBoyProcessor& p, const Automation& aut, const RunOptions& opt, Capt
     p.setWriteLog(&log);
     for (const auto& s : aut.statics)
         if (!(opt.skipInertLanes && inertUnderHybrid(s.first))) setParameter(p, s.first, s.second);
+    // Section 160: the tracker's ticks sit on the ROM's grid, so the live
+    // notes of a pass that plays MIDI -- the record pass, the hybrid pass --
+    // wait for the tick too (the Quantise MIDI notes to ticks toggle), and
+    // land where the replay pass replays them as cells.
+    if (opt.midi != nullptr) setParameter(p, ids::notesOnTick, 1.0);
     if (opt.record) p.setRecordArm(true);
     if (opt.ownTransport) {
         // The Standalone's case (section 16): no host transport, so the
@@ -478,7 +483,8 @@ int traceSong(const juce::File& file, const juce::File& out, double seconds, dou
     cc.source = driver::TempoSource::Song;
     // `--tempo` plays the same song at another tempo, which is what a host's
     // tempo does to it: the pitch must not move with it (section 147).
-    cc.songTempo = std::clamp(bpm > 0.0 ? bpm : song->tempoBpm, 40.0, 255.0);
+    cc.songTempo = std::clamp(bpm > 0.0 ? bpm : song->tempoBpm, 40.0, 295.0);
+    cc.lsdjTempo = song->lsdjTempo;
     clock.setConfig(cc);
     if (!song->tempoMap.empty()) clock.setTempoMap(song->tempoMap.data(), song->tempoMap.size());
     clock.setOwnsTransport(true);
@@ -497,7 +503,7 @@ int traceSong(const juce::File& file, const juce::File& out, double seconds, dou
         clock.process(t, kBlock, frame);
         for (int ch = 0; ch < 4; ++ch) {
             const int slot = driver.tableGrooveSlot(ch);
-            driver.setTableGroove(ch, slot >= 1 && slot <= 16 ? song->grooves[size_t(slot - 1)].ticks.data() : nullptr);
+            driver.setTableGroove(ch, slot >= 1 && slot <= tracker::kGrooveSlots ? song->grooves[size_t(slot - 1)].ticks.data() : nullptr);
             driver.setViewGroove(ch, player.groove(ch));
         }
         events.clear();
@@ -635,7 +641,7 @@ int playSong(const juce::File& file, int bars)
         if (!openForPlayback(p, file, -1, report)) return 1;
         const auto song = p.song();
         if (song == nullptr) { std::printf("FAIL %s opened with no song\n", file.getFullPathName().toRawUTF8()); return 1; }
-        shape.tempo = std::clamp(song->tempoBpm, 40.0, 255.0);
+        shape.tempo = std::clamp(song->tempoBpm, 40.0, 295.0);
         shape.countChannel = tracker::longestChain(*song);
         shape.steps = song->stepsOfRow(shape.countChannel, 0);
         shape.songRows = song->rows();
@@ -728,7 +734,7 @@ int main(int argc, char** argv)
         else if (key == "--write-state") writeState = juce::File(juce::String(argv[++i]));
         else if (key == "--check-state") checkState = juce::File(juce::String(argv[++i]));
         else if (key == "--model") importModel = juce::String(argv[++i]);
-        else if (key == "--tempo") traceBpm = std::clamp(juce::String(argv[++i]).getDoubleValue(), 40.0, 255.0);
+        else if (key == "--tempo") traceBpm = std::clamp(juce::String(argv[++i]).getDoubleValue(), 40.0, 295.0);
         else if (key == "--import-sav" && i + 3 < argc) {
             importSav = juce::File(juce::String(argv[++i])); importWhich = juce::String(argv[++i]); importOut = juce::File(juce::String(argv[++i]));
         }

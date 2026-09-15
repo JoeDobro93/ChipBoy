@@ -12,7 +12,7 @@ Groove grooveFor(const Song& s, const Phrase* p, uint8_t slot)
 {
     uint8_t g = slot;
     if (g == kGrooveNone) g = p ? p->groove : 0;
-    if (g >= 1 && g <= 16) return s.grooves[size_t(g - 1)];
+    if (g >= 1 && g <= kGrooveSlots) return s.grooves[size_t(g - 1)];
     return Groove{};                        // slot 0 is straight and not editable
 }
 
@@ -88,7 +88,7 @@ int stepStartTicks(const Song& s, const Phrase* p, GrooveWalk& w, int* start, ui
         // position takes the new groove's first entry (section 135).
         if (p != nullptr && !w.locked) {
             if (const bank::Command* c = cellGroove(p->cells[size_t(order[i])])) {
-                w.slot = bank::isRevert(*c) ? kGrooveNone : uint8_t(std::clamp<int>(c->a, 0, 16));
+                w.slot = bank::isRevert(*c) ? kGrooveNone : uint8_t(std::clamp<int>(c->a, 0, kGrooveSlots));
                 w.index = 0;
                 g = grooveFor(s, p, w.slot);
             }
@@ -213,7 +213,7 @@ void buildTempoMap(Song& s, double baseBpm)
     // and a T reverting is the base again from its tick.
     buildRowTables(s);
     s.tempoMap.clear();
-    const double base = std::clamp(baseBpm, 40.0, 255.0);
+    const double base = std::clamp(baseBpm, 40.0, 295.0);   // section 161
     std::vector<int> starts(size_t(kMaxPlaySteps) + 1, 0);
     std::vector<uint8_t> stepOf(size_t(kMaxPlaySteps) + 1, 0);
     for (int ch = 0; ch < 4; ++ch) {
