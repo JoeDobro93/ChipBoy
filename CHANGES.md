@@ -28,7 +28,7 @@ intended product rather than a progress report.
 
 ### 2026-09-15 -- the third parity campaign: 9.4.2's code, and what it corrected
 
-`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§163. The audit target is
+`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§168. The audit target is
 LSDj 9.4.2 now, read as code: the dispatcher, every handler's address, the work RAM the commands
 share, the order a phrase step and a table tick run their columns, and a two-sided probe rig that
 builds a song, traces the ROM and ChipBoy and reports the first register batch that differs (200
@@ -80,6 +80,39 @@ cases over nineteen letters). What differed, and what changed:
   `R`'s second trigger and a bare note write the plain note; the tick's epilogue (`2:$53D7`)
   refreshes it with the finetune, or the next 358 Hz instant does when a FAST bend, slide or
   vibrato is running (`$C3F9`). `REACTION`'s pulses now open as the ROM's do.
+- **The three-stage envelope is a countdown machine on the 358 Hz clock** (§164, correcting
+  §51's shaped walk as the way it is played). The ROM keeps a mode, a countdown, a reload, a
+  target and a software level per channel (`$CBBF`-`$CBC2`, `$C2D8`); every instant the countdown
+  loses one and at zero the level takes one zombie step toward the target; a stage whose level
+  already equals its target **holds for one countdown** before the hand-over; the step table is
+  §51's sixteen. ChipBoy's walk had the rates and not the phase (a level half a period early, no
+  hold on an equal stage): `CASTSHDW`'s hats held 22 ms where the ROM holds 78. `Envelope::lsdj`
+  with bytes 1, 9 and 10 (`envLsdj` in the JSON; the importer sets it for formats 15 and 22) runs
+  the machine on the pitch clock; the shaped fields are still filled for the Instrument tab.
+- **A tick sits at the end of its period, and a `T` takes effect a tick late** (§165, refining
+  §160). The `D` probes put song tick *s* at floor((s + 1) · T) sub-ticks: the play-start tick
+  only steps into the song, and the accumulator adds the word before the tick's commands run. For
+  a song on the ROM's tempo the Clock places a tick at the last grid instant at or before its
+  nominal end (`gridRomTickFrame`) and the tempo map's `T` points sit one tick after their cell;
+  Host mode keeps §160's placement.
+- **A STEP table's position is the instrument's, shared across the channels** (§166, correcting
+  §140's per-channel positions): `EGOFLEX`'s instrument `1B` on both pulses takes row 0 on PU1
+  and row 1 on PU2, and neither slides. `stepState_` is one array over the instrument keys.
+- **`R`'s level nibble moves the hardware, not the machine's level** (§167, correcting §158's
+  "moves the start"): the ROM writes `NRx2` from the software level plus the delta and steps the
+  software level toward the target from there, so `REPTCOMP`'s `R B0` on a `74 71 48` noise goes
+  to 2 and then **down**; ChipBoy stepped back up toward 7. `Voice::lsdjLevel` is the machine's
+  level; `E`'s `x` and a table's volume column walk it with one zombie step per level
+  (`lsdjWalkLevel`), `R` leaves it alone.
+- **The interrupt's order is pitch, the fast retrigger, then the envelope; the roll's trigger has
+  no length bit** (§168): `R 8y`'s trigger lands before the envelope step of the same instant
+  (`SAMESONG`'s hats write `C8` then step to B) and writes `NRx4 = $80 | period`, where ChipBoy
+  kept the instrument's length bit.
+
+Not modelled, from the same reading: the ROM multiplies a roll's period by instrument byte 8 + 1
+(no ChipBoy field; no song of the save sets it); `R`'s restart of stage 1 indexes the step table
+with the reload it already holds; `Z` draws from an LCG (`0:$33EB`) whose state the editor's own
+code advances, so its sequence is not reproducible from the song.
 
 Left as measured (§147): the fold -- the ROM triggers on the instrument's values and lets a table's
 row 0, a cell's `R` or `S` land a millisecond later as their own writes.

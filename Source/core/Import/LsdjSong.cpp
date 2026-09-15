@@ -334,6 +334,9 @@ struct Reader {
             return;
         }
         o.env.mode = bank::EnvMode::Shaped;
+        // Section 164: the software machine runs the ROM's bytes as they are;
+        // the shaped stages below are its picture for the Instrument tab.
+        if (!hw) { o.env.lsdj = true; o.env.lsdjByte1 = b[1]; o.env.lsdjByte9 = b[9]; o.env.lsdjByte10 = b[10]; }
         o.env.start = uint8_t(a1); envStage(o.env.attackTicks, o.env.attackFine, a1 - a2, s1); o.env.peak = uint8_t(a2); o.env.releaseTicks = 0;
         if (!reaches(b[9], a3, s2)) { o.env.decayTicks = 0; o.env.decayFine = 0; o.env.sustain = uint8_t(a2); o.env.fadeTicks = 0; o.env.fadeFine = 0; }
         else {

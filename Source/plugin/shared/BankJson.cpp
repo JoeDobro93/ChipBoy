@@ -96,6 +96,8 @@ var instrumentToVarSlot(const Instrument& i, int slot)
         if (i.env.fadeTicks) { o->setProperty("envFade", int(i.env.fadeTicks)); o->setProperty("envFadeTo", int(i.env.fadeTo)); o->setProperty("envFadeCurve", int(i.env.fadeCurve)); }
         o->setProperty("envAttackCurve", int(i.env.attackCurve)); o->setProperty("envDecayCurve", int(i.env.decayCurve));
         o->setProperty("envReleaseCurve", int(i.env.releaseCurve));
+        // Section 164: LSDj's own three bytes, when the importer brought them.
+        if (i.env.lsdj) { Array<var> b; b.add(int(i.env.lsdjByte1)); b.add(int(i.env.lsdjByte9)); b.add(int(i.env.lsdjByte10)); o->setProperty("envLsdj", b); }
         // Section 121: the fraction of a tick each stage carries, only when a
         // stage has one, so a whole-tick envelope reads back as it was written.
         if (i.env.attackFine) o->setProperty("envAttackFine", int(i.env.attackFine));
@@ -165,6 +167,10 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.env.fadeTicks = uint8_t(std::clamp(getOr(o, "envFade", 0), 0, 255));
     i.env.fadeTo = uint8_t(std::clamp(getOr(o, "envFadeTo", 0), 0, 15));
     i.env.fadeCurve = EnvCurve(std::clamp(getOr(o, "envFadeCurve", 0), 0, 2));
+    if (auto* b = o->getProperty("envLsdj").getArray(); b != nullptr && b->size() == 3 && i.env.mode == EnvMode::Shaped) {
+        i.env.lsdj = true;
+        i.env.lsdjByte1 = uint8_t(std::clamp(int((*b)[0]), 0, 255)); i.env.lsdjByte9 = uint8_t(std::clamp(int((*b)[1]), 0, 255)); i.env.lsdjByte10 = uint8_t(std::clamp(int((*b)[2]), 0, 255));
+    }
     i.env.attackCurve = EnvCurve(std::clamp(getOr(o, "envAttackCurve", 0), 0, 2));
     i.env.decayCurve = EnvCurve(std::clamp(getOr(o, "envDecayCurve", 0), 0, 2));
     i.env.releaseCurve = EnvCurve(std::clamp(getOr(o, "envReleaseCurve", 0), 0, 2));

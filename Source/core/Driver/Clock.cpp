@@ -104,12 +104,16 @@ void Clock::pushTick(uint32_t offset, int64_t tick)
     ticks_[tickCount_++] = { offset, tick };
 }
 
-void Clock::place(double nominalFrame, int64_t tick, uint64_t frameAbs, uint64_t blockEnd)
+void Clock::place(double nominalFrame, int64_t tick, uint64_t frameAbs, uint64_t blockEnd, double periodFrames)
 {
     // Section 160: the tick fires on the first grid instant after its nominal
     // frame. Past the block's end it waits for the next block; at most one
-    // does, a tick being 6 ms or more on a 2.8 ms grid.
-    const uint64_t f = std::max(gridTickFrame(nominalFrame, sampleRate_), frameAbs);
+    // does, a tick being 6 ms or more on a 2.8 ms grid. Section 165: a song
+    // on the ROM's tempo takes the ROM's placement, the last instant at or
+    // before the tick's nominal end, so it waits up to a tick.
+    const bool rom = cfg_.lsdjTempo && (cfg_.source == TempoSource::Song || owns_);
+    if (rom && periodFrames < 0.0) periodFrames = sampleRate_ * (secondsAtTicks(double(tick) + 1.0) - secondsAtTicks(double(tick)));
+    const uint64_t f = std::max(rom ? gridRomTickFrame(nominalFrame, std::max(0.0, periodFrames), sampleRate_) : gridTickFrame(nominalFrame, sampleRate_), frameAbs);
     if (f < blockEnd) { pushTick(uint32_t(f - frameAbs), tick); return; }
     haveCarried_ = true; carriedFrame_ = f; carriedEnd_ = blockEnd; carriedTick_ = tick;
 }
@@ -133,7 +137,7 @@ void Clock::freeRun(double framesPerTick, uint32_t numSamples, uint64_t frameAbs
     for (; tickCount_ < kMaxTicksPerBlock; k += 1.0) {
         const uint64_t f = uint64_t(std::llround(k * framesPerTick));
         if (f >= blockEnd) break;
-        if (f >= frameAbs) { place(double(f), freeTick_++, frameAbs, blockEnd); lastTickFrame_ = f; haveFreeTick_ = true; }
+        if (f >= frameAbs) { place(double(f), freeTick_++, frameAbs, blockEnd, framesPerTick); lastTickFrame_ = f; haveFreeTick_ = true; }
     }
 }
 

@@ -293,6 +293,9 @@ private:
         int8_t   shapedStartOffset = 0;   ///< section 158: what `R`'s level nibble took off the shaped envelope's start
         uint8_t  dutyIdx = 0, duty = 2;
         /// Section 140: the `instKey` the live table position is parked under,
+        /// Section 166: the live copy is newer than the park (taken, not yet
+        /// written through), so the next note-on parks it first.
+        bool     stepDirty = false;
         /// or kNoStepKey while the table is not a STEP one. 0x10000 is a local
         /// instrument's mark (section 8), so this is wider than a byte.
         uint32_t stepKey = 0xFFFFFFFFu;
@@ -340,6 +343,14 @@ private:
         // instrument from before 8.8.0 just steps at the chip's own rate
         // instead of that table's (section 70).
         uint32_t envCount = 0;             ///< 256ths of a pitch clock since the level last stepped (section 70)
+        /// Section 164: the ROM's three-stage envelope machine, for an
+        /// `Envelope::lsdj` instrument: the stage (0 off, 1-3), the countdown
+        /// in pitch-clock instants and its reload, and the level it walks to.
+        uint8_t  lsdjStage = 0, lsdjReload = 0, lsdjCount = 0, lsdjTarget = 0;
+        /// Section 167: the machine's own level (`$C2D8`), which an `R`'s nibble
+        /// does not move -- the hardware follows it a zombie step at a time from
+        /// wherever the `R` put it.
+        uint8_t  lsdjLevel = 0;
         bool     retrigFast = false;       ///< R x = 8: the retrigger runs on the pitch clock
         /// PU1's sweep, **held inverted, as LSDj holds it** (section 72): a note-on
         /// seeds it from the instrument and `S` adds each nibble into it, so two
@@ -475,7 +486,7 @@ private:
     /// NRx2 (or NR32 on the wave channel) from the running state, with the
     /// trigger a note-on, R or an E that moves the envelope needs. Every
     /// other level change goes through setLevel() instead (section 26).
-    void writeEnvelope(int ch, bool trigger);
+    void writeEnvelope(int ch, bool trigger, bool fast = false);
     /// A level change on a running channel, without a trigger (section 26):
     /// the shortest zombie-mode NRx2 sequence that leaves the chip's volume at
     /// `v.envVol` with the envelope the driver wants (`v.envRate`, `v.envDir`)
@@ -499,6 +510,17 @@ private:
     /// A table's volume column, an E or a level lane taking the level over:
     /// the remaining segments stop until the next plain note-on (section 27).
     void takeShaped(int ch) { v_[size_t(ch & 3)].shapedTaken = true; }
+    /// Section 164: start the ROM's envelope machine at its first stage (a
+    /// note-on, an instrument load, a retrigger), and one instant of it.
+    void lsdjEnvStart(Voice& v);
+    void lsdjEnvStep(int ch);
+    /// Section 167: one zombie step of the hardware level, up or down, with
+    /// the chip's wrap (the ROM writes the pattern whatever the level is).
+    void lsdjZombieStep(int ch, bool down);
+    /// Section 167: the machine's level walked to `level` -- an `E`, a table's
+    /// volume column -- as the ROM does it: the hardware moves by the same
+    /// number of steps from where it is.
+    void lsdjWalkLevel(int ch, uint8_t level);
     /// The pan gates. LSDj writes NR51 at every note-on whether or not it
     /// changed (measured), which is what `force` is for.
     void writeNr51(bool force = false);
@@ -659,7 +681,9 @@ private:
     /// position is the **instrument's** -- two instruments keep their own and
     /// one playing in between does not move the other's -- so it cannot live in
     /// the Voice. `table` is the slot it belongs to, since a `tableOverride` can
-    /// point one instrument at another table.
+    /// point one instrument at another table. Section 166: one position per
+    /// instrument for the whole driver (the ROM's `$C250 + $C210[ch]`), so two
+    /// channels playing the instrument take turns through its rows.
     struct StepPark {
         uint8_t step = 0, step2 = 0, stepE = 0;
         uint8_t row = 0, row2 = 0, rowE = 0;
@@ -672,7 +696,7 @@ private:
     /// interleaving their positions.
     static constexpr size_t kStepKeys = 257;
     static constexpr uint32_t kNoStepKey = 0xFFFFFFFFu;
-    std::array<std::array<StepPark, kStepKeys>, 4> stepState_{};
+    std::array<StepPark, kStepKeys> stepState_{};
     /// Section 141: how far into the tick this voice's envelope is, in 1/256 of
     /// one. Its own pitch-clock count against the tick's length in cycles, so a
     /// note that started mid-tick begins at zero (section 121) and the fraction

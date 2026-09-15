@@ -4503,3 +4503,173 @@ TEST_CASE("a pulse note's trigger is the plain period; the finetune rides the ne
     CHECK(lo2[0] == (plain2 & 0xFF));
     CHECK(lo2[1] == (fine2 & 0xFF));
 }
+
+TEST_CASE("an imported instrument's envelope is the ROM's three-stage countdown machine", "[driver][shaped][rom942]")
+{
+    // Section 164: a level step every table[rate] pitch-clock instants toward
+    // each stage's target; a stage whose target is the current level holds
+    // one countdown; a rate of zero stops the machine.
+    auto stepsOf = [](uint8_t b1, uint8_t b9, uint8_t b10) {
+        auto r = std::make_unique<Rig>();
+        r->tickHz = 100.0;
+        r->song.noteSource[0] = tracker::NoteSource::Tracker;
+        auto& i = r->bank.instruments[1];
+        i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Lead");
+        i.used = true; i.env.mode = bank::EnvMode::Shaped; i.env.start = uint8_t(b1 >> 4);
+        i.env.lsdj = true; i.env.lsdjByte1 = b1; i.env.lsdjByte9 = b9; i.env.lsdjByte10 = b10;
+        i.envVol = uint8_t(b1 >> 4);
+        ChannelParams p; p.instrument = 2; p.velocityMode = 2; r->drv.setParams(0, p);
+        std::vector<RegWrite> w = r->block({ cellOn(0, 60, 2) }, 480);
+        for (int k = 0; k < 60; ++k) { auto more = r->block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+        uint64_t note = 0; bool haveNote = false;
+        std::vector<std::pair<int, int>> steps;   // (instant index, 8 up / 9 down)
+        for (const auto& x : w) {
+            if (x.addr == 0xFF14 && (x.value & 0x80) && !haveNote) { haveNote = true; note = x.cycle; continue; }
+            if (!haveNote || x.addr != 0xFF12) continue;
+            if (x.value == 0x08 || x.value == 0x09) steps.push_back({ int((x.cycle - note + 5852) / 11704), int(x.value) });
+        }
+        return steps;
+    };
+    {   // F3 85 46: F -> 8 every 3, 8 -> 4 every 6, 4 -> 0 every 8
+        const auto s = stepsOf(0xF3, 0x85, 0x46);
+        const std::vector<int> want = { 3, 6, 9, 12, 15, 18, 21, 27, 33, 39, 45, 53, 61, 69, 77 };
+        REQUIRE(s.size() == want.size());
+        for (size_t k = 0; k < want.size(); ++k) { INFO("step " << k); CHECK(s[k].first == want[k]); CHECK(s[k].second == 9); }
+    }
+    {   // 39 36 08: 3 -> 3 holds 20, then 3 -> 0 every 8, then a silent stage of 15 and off
+        const auto s = stepsOf(0x39, 0x36, 0x08);
+        const std::vector<int> want = { 28, 36, 44 };
+        REQUIRE(s.size() == want.size());
+        for (size_t k = 0; k < want.size(); ++k) { INFO("step " << k); CHECK(s[k].first == want[k]); }
+    }
+    {   // 42 C3 07: 4 -> C up every 2, C -> 0 down every 3, then off
+        const auto s = stepsOf(0x42, 0xC3, 0x07);
+        REQUIRE(s.size() == 8 + 12);
+        for (int k = 0; k < 8; ++k) { INFO("up " << k); CHECK(s[size_t(k)].first == 2 * (k + 1)); CHECK(s[size_t(k)].second == 8); }
+        for (int k = 0; k < 12; ++k) { INFO("down " << k); CHECK(s[size_t(8 + k)].first == 16 + 3 * (k + 1)); CHECK(s[size_t(8 + k)].second == 9); }
+    }
+    {   // F0 85 46: a first rate of zero never starts the machine
+        CHECK(stepsOf(0xF0, 0x85, 0x46).empty());
+    }
+}
+
+TEST_CASE("a STEP table's position is shared by the channels playing the instrument", "[driver][table][rom942]")
+{
+    // Section 166: one walk per instrument, in note order across the channels.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[0] = tracker::NoteSource::Tracker; r.song.noteSource[1] = tracker::NoteSource::Tracker;
+    auto& t = r.bank.tables[4]; t = Table{}; t.used = true;
+    t.steps[0].hasTranspose = true; t.steps[0].transpose = 12;
+    t.steps[1].hasTranspose = true; t.steps[1].transpose = 5;
+    t.steps[2].hasTranspose = true; t.steps[2].transpose = 8;
+    t.steps[3].hasTranspose = true; t.steps[3].transpose = 1;
+    auto& i = r.bank.instruments[20];
+    i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Step");
+    i.used = true; i.table = 5; i.tableMode = bank::TableMode::Step;
+    for (int ch = 0; ch < 2; ++ch) { ChannelParams p; p.instrument = 21; r.drv.setParams(ch, p); }
+    std::vector<int> got;
+    auto period = [&](int ch, const std::vector<RegWrite>& w) {
+        int lo = -1, hi = -1;
+        for (const auto& x : w) { if (x.addr == uint16_t(0xFF13 + ch * 5)) lo = x.value; if (x.addr == uint16_t(0xFF14 + ch * 5)) hi = x.value & 7; }
+        return lo < 0 ? -1 : (hi << 8) | lo;
+    };
+    // Both channels on one tick: PU1 first, then PU2.
+    auto w = r.block({ cellOn(0, 60, 21), cellOn(1, 60, 21) }, 480);
+    got.push_back(period(0, w)); got.push_back(period(1, w));
+    r.block({}, 480);
+    w = r.block({ cellOn(0, 60, 21), cellOn(1, 60, 21) }, 480);
+    got.push_back(period(0, w)); got.push_back(period(1, w));
+    REQUIRE(got.size() == 4);
+    CHECK(got[0] == Driver::periodForNote(72, false));   // row 0: +12
+    CHECK(got[1] == Driver::periodForNote(65, false));   // row 1: +5
+    CHECK(got[2] == Driver::periodForNote(68, false));   // row 2: +8
+    CHECK(got[3] == Driver::periodForNote(61, false));   // row 3: +1
+}
+
+TEST_CASE("a STEP row's A does not move the instrument's position past its own row", "[driver][table][rom942]")
+{
+    // Section 166, EGOFLEX's instrument 1B: row 0 is an `A` to another table
+    // beside a `W`; the second channel's note, the same tick, takes row 1.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[0] = tracker::NoteSource::Tracker; r.song.noteSource[1] = tracker::NoteSource::Tracker;
+    auto& t = r.bank.tables[4]; t = Table{}; t.used = true;              // slot 5: the instrument's STEP table
+    t.steps[0].cmd1 = { Cmd::A, 6, 0, 0 }; t.steps[0].cmd2 = { Cmd::W, 0, 0, 0 };
+    t.steps[1].hasTranspose = true; t.steps[1].transpose = 5;
+    auto& u = r.bank.tables[5]; u = Table{}; u.used = true;              // slot 6: the A's target
+    u.steps[0].hasTranspose = true; u.steps[0].transpose = 12;
+    auto& i = r.bank.instruments[20];
+    i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Step");
+    i.used = true; i.table = 5; i.tableMode = bank::TableMode::Step;
+    for (int ch = 0; ch < 2; ++ch) { ChannelParams p; p.instrument = 21; r.drv.setParams(ch, p); }
+    auto period = [&](int ch, const std::vector<RegWrite>& w) {
+        int lo = -1, hi = -1;
+        for (const auto& x : w) { if (x.addr == uint16_t(0xFF13 + ch * 5)) { lo = x.value; } if (x.addr == uint16_t(0xFF14 + ch * 5)) hi = x.value & 7; }
+        return lo < 0 ? -1 : (hi << 8) | lo;
+    };
+    auto w = r.block({ cellOn(0, 60, 21), cellOn(1, 60, 21) }, 480);
+    CHECK(period(1, w) == Driver::periodForNote(65, false));   // PU2: row 1, +5
+    // PU1 took row 0: the A moved it to the other table, whose row 0 (+12) is the next tick's.
+    auto w2 = r.block({}, 480);
+    int lo = -1; for (const auto& x : w2) if (x.addr == 0xFF13) lo = x.value;
+    CHECK(lo == (Driver::periodForNote(72, false) & 0xFF));
+}
+
+TEST_CASE("R's level nibble leaves the machine's level alone, and the machine steps the hardware from where R put it", "[driver][shaped][rom942]")
+{
+    // Section 167, REPTCOMP's instrument 16: 74 71 48 with R B0 on the note.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[3] = tracker::NoteSource::Tracker;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Noise, "Hat");
+    i.used = true; i.env.mode = bank::EnvMode::Shaped; i.env.start = 7; i.envVol = 7;
+    i.env.lsdj = true; i.env.lsdjByte1 = 0x74; i.env.lsdjByte9 = 0x71; i.env.lsdjByte10 = 0x48;
+    ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(3, p);
+    NoteEvent on = cellOn(3, 60, 2); on.cmd1 = { Cmd::R, 11, 0, 0 };
+    std::vector<RegWrite> w = r.block({ on }, 480);
+    for (int k = 0; k < 12; ++k) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+    uint64_t note = 0; bool haveNote = false; int trigLevel = -1;
+    std::vector<std::pair<int, int>> steps;
+    for (const auto& x : w) {
+        if (x.addr == 0xFF23 && (x.value & 0x80)) { if (!haveNote) { haveNote = true; note = x.cycle; } continue; }
+        if (!haveNote || x.addr != 0xFF21) continue;
+        if (x.value == 0x08 || x.value == 0x09) steps.push_back({ int((x.cycle - note + 5852) / 11704), int(x.value) });
+        else if (trigLevel < 0 || (x.cycle - note) < 2000) trigLevel = x.value >> 4;
+    }
+    CHECK(trigLevel == 2);                                    // 7 - 5, the hardware
+    REQUIRE(steps.size() >= 3);
+    // A hold of 4 (the level is its own first target), then down a step an instant: never up.
+    CHECK(steps[0].first == 5); CHECK(steps[0].second == 9);
+    CHECK(steps[1].first == 6); CHECK(steps[1].second == 9);
+    CHECK(steps[2].first == 7); CHECK(steps[2].second == 9);
+    for (const auto& s : steps) CHECK(s.second == 9);
+}
+
+TEST_CASE("a roll's trigger carries the machine's level, comes before the step, and has no length bit", "[driver][commands][rom942]")
+{
+    // Section 168: R 82 on a noise note with a LENGTH and a stepping machine.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[3] = tracker::NoteSource::Tracker;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Noise, "Hat");
+    i.used = true; i.env.mode = bank::EnvMode::Shaped; i.env.start = 12; i.envVol = 12; i.length = 20;
+    i.env.lsdj = true; i.env.lsdjByte1 = 0xC3; i.env.lsdjByte9 = 0x84; i.env.lsdjByte10 = 0x41;
+    ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(3, p);
+    NoteEvent on = cellOn(3, 60, 2); on.cmd1 = { Cmd::R, 8, 2, 0 };
+    std::vector<RegWrite> w = r.block({ on }, 480);
+    for (int k = 0; k < 4; ++k) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+    // The note's trigger keeps the length bit; the roll's does not, and its NR42 is the level before the instant's step.
+    int trig = 0; bool sawStepAfterRoll = false; int rollLevel = -1; uint8_t rollNr44 = 0xFF; uint64_t rollAt = 0;
+    for (size_t k = 0; k < w.size(); ++k) {
+        const auto& x = w[k];
+        if (x.addr == 0xFF23 && (x.value & 0x80)) { ++trig; if (trig == 2) { rollNr44 = x.value; rollAt = x.cycle; for (size_t j = k; j > 0; --j) if (w[j - 1].addr == 0xFF21) { rollLevel = w[j - 1].value >> 4; break; } } }
+        if (trig == 2 && x.addr == 0xFF21 && x.value == 0x09 && x.cycle >= rollAt && x.cycle < rollAt + 2000) sawStepAfterRoll = true;
+    }
+    REQUIRE(trig >= 2);
+    CHECK((rollNr44 & 0x40) == 0);
+    CHECK(rollLevel == 12);                                   // C, then the step to B follows
+    CHECK(sawStepAfterRoll);
+}

@@ -1291,3 +1291,30 @@ TEST_CASE("a G past 0F names one of LSDj's thirty-two grooves", "[lsdj][groove][
     CHECK(int(out->grooves[0x1F].ticks[0]) == 2); CHECK(int(out->grooves[0x1F].ticks[1]) == 0);
     CHECK(int(out->grooves[0x10].ticks[0]) == 6);                             // an empty slot is LSDj's 6 6
 }
+
+TEST_CASE("a 9.x instrument's envelope bytes come through for the ROM's machine", "[lsdj][rom942]")
+{
+    // Section 164: bytes 1, 9 and 10 verbatim beside the shaped picture; a
+    // first rate of zero is a held level and brings none.
+    auto build = [](uint8_t b1, uint8_t b9, uint8_t b10) {
+        auto song = blankSong(22);
+        song[kInstAlloc + 0] = 1;
+        uint8_t* i0 = song.data() + kInst; i0[0] = 0; i0[1] = b1; i0[4] = 0xFF; i0[7] = 0x80 | 3; i0[9] = b9; i0[10] = b10;
+        song[kPhraseAlloc] |= 1; song[kNotes] = uint8_t(60 - 35); song[kPhraseInst] = 0;
+        song[kChainPhrases] = 0;
+        song[kRows + 0] = 0; song[kRows + 1] = 0xFF; song[kRows + 2] = 0xFF; song[kRows + 3] = 0xFF;
+        return song;
+    };
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    const auto a = build(0xF3, 0x85, 0x46);
+    REQUIRE(importSong(a.data(), a.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes));
+    CHECK(bank->instruments[0].env.mode == bank::EnvMode::Shaped);
+    CHECK(bank->instruments[0].env.lsdj);
+    CHECK(int(bank->instruments[0].env.lsdjByte1) == 0xF3); CHECK(int(bank->instruments[0].env.lsdjByte9) == 0x85); CHECK(int(bank->instruments[0].env.lsdjByte10) == 0x46);
+    CHECK(int(bank->instruments[0].env.start) == 15);
+    const auto h = build(0xF0, 0x85, 0x46);
+    REQUIRE(importSong(h.data(), h.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes));
+    CHECK_FALSE(bank->instruments[0].env.lsdj);
+    CHECK(bank->instruments[0].env.mode == bank::EnvMode::Chip);
+}

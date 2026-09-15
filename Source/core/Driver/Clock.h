@@ -61,6 +61,17 @@ inline uint64_t gridTickFrame(double nominalFrame, double sampleRate)
     const double c = std::max(0.0, nominalFrame) * double(kGridCpuHz) / sampleRate;
     return gridFrame(gridAfter(uint64_t(std::floor(c))), sampleRate);
 }
+/// Section 165: the ROM's own placement. Its accumulator fires song tick s at
+/// the last instant at or before the nominal **end** of the tick (the start of
+/// s + 1): the row after play is a tick late, and which ticks are the long
+/// ones follows floor((s + 1) * T), not floor(s * T) + 1. `periodFrames` is
+/// the tick's own length.
+inline uint64_t gridRomTickFrame(double nominalFrame, double periodFrames, double sampleRate)
+{
+    const double c = std::max(0.0, nominalFrame + periodFrames) * double(kGridCpuHz) / sampleRate;
+    const uint64_t n = gridAfter(uint64_t(std::floor(c)));
+    return gridFrame(n > 0 ? n - 1 : 0, sampleRate);
+}
 /// The tick period at a tempo. With `rom` (section 160, `Song::lsdjTempo`) a
 /// whole-number BPM in 40..295 takes the ROM's tempo word, round(1834828.8 /
 /// BPM), and a tick is that many 2048ths of the grid's mean step. Otherwise,
@@ -161,7 +172,7 @@ private:
     void   pushTick(uint32_t offset, int64_t tick);
     /// A tick due at a nominal absolute frame lands on the grid (section 160):
     /// pushed if its frame is in the block, carried into the next one if not.
-    void   place(double nominalFrame, int64_t tick, uint64_t frameAbs, uint64_t blockEnd);
+    void   place(double nominalFrame, int64_t tick, uint64_t frameAbs, uint64_t blockEnd, double periodFrames = -1.0);
     void   takeCarried(uint64_t frameAbs, uint64_t blockEnd);
     void   freeRun(double framesPerTick, uint32_t numSamples, uint64_t frameAbs);
 

@@ -17,6 +17,9 @@ struct Tick { uint64_t frame; int64_t index; };
 /// Section 160: where a tick nominally due at a frame lands -- the frame of
 /// the first grid instant after it.
 uint64_t onGrid(double nominalFrame) { return gridTickFrame(nominalFrame, 48000.0); }
+/// Section 165: where a ROM-tempo song's tick lands -- the last instant at or
+/// before the tick's nominal end.
+uint64_t onRomGrid(double nominalFrame, double periodFrames) { return gridRomTickFrame(nominalFrame, periodFrames, 48000.0); }
 /// The ROM's tick in frames at a whole-number tempo.
 double framesPerTick(double bpm) { return 48000.0 * tickSeconds(bpm, false); }
 /// The ROM's tick in frames at a whole-number tempo (`lsdjTempo`).
@@ -97,9 +100,9 @@ TEST_CASE("song position is the integral of the tempo map", "[clock]")
     const auto a = run(c, 4.0, 512, 120.0, true);
     REQUIRE(a.size() == 96 + 48);
     CHECK(a[0].index == 0);
-    CHECK(a[47].frame == onGrid(47.0 * romFramesPerTick(120.0)));      // still 120 BPM
+    CHECK(a[47].frame == onRomGrid(47.0 * romFramesPerTick(120.0), romFramesPerTick(120.0)));      // still 120 BPM
     CHECK(a[96].index == 96);
-    CHECK(a[97].frame == onGrid(96.0 * romFramesPerTick(120.0) + romFramesPerTick(60.0)));   // 60 BPM: a tick every 2 000 frames
+    CHECK(a[97].frame == onRomGrid(96.0 * romFramesPerTick(120.0) + romFramesPerTick(60.0), romFramesPerTick(60.0)));   // 60 BPM: a tick every 2 000 frames
     CHECK(a.back().index == int64_t(a.size() - 1));
 }
 
@@ -146,7 +149,7 @@ TEST_CASE("the Song tempo parameter is the base a T cell modifies", "[clock]")
     CHECK(std::fabs(t150 * 60.0 - 1.0) < 2e-4);
     const auto none = run(c, 2.0, 512, 120.0, true);
     REQUIRE(none.size() == 120);
-    CHECK(none[60].frame == onGrid(60.0 * romFramesPerTick(150.0)));
+    CHECK(none[60].frame == onRomGrid(60.0 * romFramesPerTick(150.0), romFramesPerTick(150.0)));
 
     // A T at bar 9 (tick 768 at four beats a bar) changes it from there.
     Clock d; d.prepare(48000.0); d.setConfig(cfg);
@@ -381,7 +384,7 @@ TEST_CASE("a tick lands on the ROM's 358 Hz grid, whatever the block size", "[cl
         for (size_t i = 0; i < a.size(); ++i) {
             INFO("tick " << i);
             CHECK(a[i].index == int64_t(i));
-            CHECK(a[i].frame == onGrid(double(i) * romFramesPerTick(280.0)));
+            CHECK(a[i].frame == onRomGrid(double(i) * romFramesPerTick(280.0), romFramesPerTick(280.0)));
             const uint64_t cyc = a[i].frame * 4194304 / 48000;
             const uint64_t n = gridAfter(cyc) - 1;
             CHECK(gridFrame(n, 48000.0) == a[i].frame);
@@ -391,4 +394,24 @@ TEST_CASE("a tick lands on the ROM's 358 Hz grid, whatever the block size", "[cl
             }
         }
     }
+}
+
+TEST_CASE("a ROM-tempo song's ticks fall where the accumulator puts them", "[clock][grid][rom942]")
+{
+    // Section 165, measured with D 01/02/03/06 at 163 BPM: song tick s sits on
+    // instant floor((s + 1) * T) -- relative to tick 0 at +5, +11, +16, +33
+    // instants, where floor(s * T) + 1 would give +5, +10, +16, +32.
+    Clock c; c.prepare(48000.0);
+    ClockConfig cfg; cfg.source = TempoSource::Song; cfg.songTempo = 163.0; cfg.lsdjTempo = true; c.setConfig(cfg);
+    c.setTempoMap(nullptr, 0);
+    const auto a = run(c, 1.5, 512, 120.0, true);
+    REQUIRE(a.size() > 8);
+    auto instant = [](uint64_t frame) { return gridAfter(frame * 4194304 / 48000) - 1; };
+    const uint64_t i0 = instant(a[0].frame);
+    CHECK(instant(a[1].frame) - i0 == 5);
+    CHECK(instant(a[2].frame) - i0 == 11);
+    CHECK(instant(a[3].frame) - i0 == 16);
+    CHECK(instant(a[6].frame) - i0 == 33);
+    // The word: 11257 / 2048 instants a tick, so tick 0 is one tick after the song's start.
+    CHECK(i0 == 5);
 }

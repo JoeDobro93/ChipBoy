@@ -5150,3 +5150,107 @@ the song's array, the phrase's slot, the `G` byte's range in the parameter table
 tab's list (it scrolls) and its editor's slot stepper, the driver's table `G`, the importer's read
 of all thirty-two and its §63 packing (which ranks the free slots from 32 down). A saved song with
 sixteen grooves reads back with the other sixteen straight.
+
+## 164. The three-stage envelope is a countdown machine on the 358 Hz clock
+
+§51 measured LSDj 9's envelope as three stages and §116/§121/§141/§142 refined the shaped
+walk that plays it; the ROM's own machine is simpler, and where the two differ every note's
+shape differs. Read in 9.4.2, PU1's copy (PU2 and NOI have their own variables; WAV has none):
+
+- **State**: mode `$CBBF` (0 off, 1-3 the stage), the countdown `$CBC1` and its reload `$CBC0`
+  (in timer interrupts, the 358 Hz instants of §160), the target level `$CBC2`, the software
+  level `$C2D8`, and the instrument's bytes 9 and 10 at `$CBBD`/`$CBBE` (the loader, `2:$5A25`).
+- **Note-on** (`2:$5735`, then `2:$6086` from the retrigger routine the note-on shares): mode 0,
+  level = byte 1's high nibble (the trigger's `NRx2` is `level << 4 | 8`: no hardware envelope,
+  direction up for the zombie writes), rate = byte 1's low nibble; if the rate is zero the
+  machine stays off and the level holds; else mode 1, countdown = reload = **table[rate]**, target
+  = byte 9's high nibble. The table at `0:$300C` is `0 1 2 3 4 6 8 11 15 20 27 36 48 64 86 115`
+  instants a step (§51's `kEnvPeriods9`, measured, is the same sixteen).
+- **Every instant** (`0:$0619`, after the pitch work and before the tick): the countdown loses
+  one; at zero `0:$2FC9` steps the level one toward the target with a zombie write (`08` up;
+  `09 11 18` down, `0:$2F97`, with a `DIV` wait before the step from F to E), and when the level
+  is the target -- reached by that step, or already there, which is how a stage **holds for one
+  countdown** -- the next stage begins (`0:$301C`): mode 2 runs byte 9's rate toward byte 10's
+  level, mode 3 byte 10's rate toward zero, and mode 3's end is off. A rate of zero at a
+  hand-over stops the machine where it stands. Otherwise the countdown reloads.
+- **`R`** (`2:$6086`): mode 1 again from the retrigger's level. **`E`** (`2:$6A0D`): mode 0, the
+  level walked to `x` at once, then `y`'s rate from the eight-entry table `0 6 11 17 22 28 34 39`
+  toward F or 0 in mode 3. **A table's volume column** (`2:$5224`) walks the level and leaves the
+  mode alone: the machine goes on from the new level.
+
+Probed (`ENV_*` in `vs_matrix.py`, `NRx2` writes timed from the trigger): `F3 85 46` steps every
+3 instants seven times, then every 6 four times, then every 8; `39 36 08` (a start equal to its
+first target) is silent for 20 + 8 = 28 instants and then steps every 8 -- `CASTSHDW`'s hats,
+78 ms of hold that ChipBoy played as 22; `42 C3 07` rises with `08` every 2 instants eight times
+then falls every 3. ChipBoy's shaped walk had the right rates and the wrong phase: a level
+half a period early, no hold on an equal stage, and a stage's first step a clock off.
+
+ChipBoy: `Envelope::lsdj` with the three bytes, set by the importer for the software-stage
+formats (15 and 22; format 11's chip-ramped stages stay §58's) and carried in the JSON as
+`envLsdj`; the driver runs the machine on the pitch clock (`lsdjEnvStart`, `lsdjEnvStep`)
+instead of the shaped walk for such an instrument, restarts it on `R`, stops it on `E`, and
+lets a table's volume column move the level under it. The shaped fields are still filled, so the
+Instrument tab shows the picture it did.
+
+## 165. The ROM's ticks sit at the end of their period, and a `T` takes effect a tick late
+
+§160's accumulator, read again with the `D` probes (`D01_env` … `D06_env`, `vs_matrix.py`,
+watched on `$C956`/`$C957` with the triggers in the same run): the interrupt-driven ticks land
+on sub-ticks `0 5 10 16 21 27 32 38` at 163 BPM -- floor(n · T) for T = word / 2048 -- and the
+song's row 0 sounds at the **second** of them (the first, at play start, only steps into the
+song). So song tick *s* is at floor((s + 1) · T): relative to tick 0 the delayed notes came at
++5, +11, +16 and +33 instants for `D 01`, `02`, `03`, `06` (one tick each, as the manual says),
+where ChipBoy's "first instant strictly after s · T" gave +5, +10, +16, +32 -- the long gaps in
+the wrong places, which is why `SAMESONG`'s envelope steps and pitch writes sat a tick's
+fraction apart. The accumulator also adds the tick's word **before** the tick's own commands
+run, so a `T` sets the period from the tick after its own.
+
+ChipBoy, for a song on the ROM's tempo (`Song::lsdjTempo`, the Song source or the plugin's
+own transport): a tick fires at the last instant at or before its nominal end
+(`gridRomTickFrame`), one tick after where it was, and the tempo map's points sit one tick
+after their cell. Host mode keeps §160's placement: the ROM's extra tick of latency after play
+is not what a host's grid wants.
+
+## 166. A STEP table's position is the instrument's across the channels
+
+§140 measured that two instruments keep their own STEP positions; ChipBoy kept them per
+channel as well, "which nothing measured requires". 9.4.2 keeps **one position per
+instrument** (`$C250 + $C210[ch]`, §11.5), and it is what `EGOFLEX` does: instrument `1B` --
+STEP, table `0F` whose row 0 is `A 10` -- plays on both pulses at the same tick, so PU1 takes
+row 0 (the `A`) and PU2 row 1 (`O 01`), and neither sounds the slide ChipBoy gave both.
+Probed (`STEP_2ch`, the same instrument on PU1 and PU2, notes at the same rows): the ROM's
+transposes go `+12` on PU1, `+5` on PU2, `+8` on PU1, `+1` on PU2 -- one walk shared in note
+order; offset by a row (`STEP_2ch_off`) it is the same walk. ChipBoy gave each channel `+12,
++5, +8`.
+
+ChipBoy: `stepState_` is one array over the instrument keys; `clearSteps()` empties them all.
+
+## 167. `R`'s level nibble moves the hardware, not the machine's level; `E` and a table's volume column walk relative to it
+
+`REPTCOMP`'s noise instrument `16` (`74 71 48`: start 7, hold at 7 for 4 instants, then to 4 a step an
+instant, then to 0 a step every 15) plays with `R B0` on the note: the hardware level goes to 2
+(7 − 5) at once, and the machine then steps **down** from there. ChipBoy compared its target (7)
+with the hardware level (2) and stepped up. Read in the ROM: the retrigger routine (`2:$6058`)
+writes `NRx2` from the software level `$C2D8` plus the nibble's delta, and leaves `$C2D8` alone;
+`0:$2FC9` steps `$C2D8` toward the target and issues one zombie step to the hardware for each,
+from wherever the hardware is; `2:$7F3E` (an `E`'s `x`, a table's volume column) walks `$C2D8`
+to the new level with the same one-zombie-step-per-level rule; the fast retrigger (`0:$05C1`)
+writes `$C2D8` as it is. So the hardware level is the machine's level plus whatever `R` nibbles
+have taken off, and every walk is relative. Probed (`RC_noi`, `SS_noi`, `DL_noi` in
+`vs_matrix.py`, the songs' noise instruments byte for byte).
+
+ChipBoy: `Voice::lsdjLevel` is the machine's level for an `Envelope::lsdj` instrument -- set by
+the note-on, stepped by the machine and by `lsdjWalkLevel()` (an `E`'s `x`, a table's volume
+column), never by `R`; each step moves the hardware one zombie step with the chip's wrap
+(`lsdjZombieStep()`); `R`'s nibble writes the hardware from `lsdjLevel` and its count; an `E`'s
+rate runs in the machine's third mode with the ROM's eight-entry table.
+
+## 168. The interrupt's order: pitch, the fast retrigger, then the envelope; and the roll's trigger has no length bit
+
+`0:$0391`'s order is the pitch work (`$0584`), the fast retrigger countdowns (`$05B3`), the
+envelope countdowns (`$0619`) and then the tick. So a roll's trigger (`R 8y`, `y + 1` instants
+apart, the count multiplied by instrument byte 8 + 1) writes the machine's level **before** the
+step that lands in the same instant -- `SAMESONG`'s hats: `C8`, then the step to B -- and it
+writes `NRx4 = $80 | period`, **without the length bit** (`0:$05CF`, `$0615`), where ChipBoy
+kept the instrument's. ChipBoy's instant now runs the fast retrigger between the pitch step and
+the envelope, and its trigger drops the length bit.

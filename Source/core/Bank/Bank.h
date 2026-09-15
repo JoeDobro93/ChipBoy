@@ -169,7 +169,20 @@ struct Envelope {
     EnvCurve decayCurve = EnvCurve::Linear;
     EnvCurve fadeCurve = EnvCurve::Linear;
     EnvCurve releaseCurve = EnvCurve::Linear;
+    /// Section 164: the ROM's three-stage machine, byte for byte, for an
+    /// instrument imported from LSDj 8.8 or 9: bytes 1, 9 and 10 carry a level
+    /// in the high nibble and a rate in the low one -- the rate indexes the
+    /// sixteen-entry table of pitch-clock instants a level step takes, and 0
+    /// stops the machine where it stands. With `lsdj` set the driver runs it
+    /// instead of the shaped walk; the shaped fields above stay filled for the
+    /// Instrument tab.
+    bool     lsdj = false;
+    uint8_t  lsdjByte1 = 0, lsdjByte9 = 0, lsdjByte10 = 0;
 };
+
+/// Section 164: pitch-clock instants a level step takes at each envelope rate,
+/// the ROM's table at 0:$300C (the importer measured the same sixteen).
+constexpr uint8_t kLsdjEnvSteps[16] = { 0, 1, 2, 3, 4, 6, 8, 11, 15, 20, 27, 36, 48, 64, 86, 115 };
 
 /// The level a shaped segment has reached: `from` to `to` over `ticks`, at
 /// tick `t` (0 at the segment's start, `ticks` at its end). Integer, so the

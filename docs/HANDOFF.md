@@ -36,14 +36,24 @@ design-log section the change touches. Update this file at the end of every chan
   on `REACTION`'s 150 ticks) -- the pitch clock is the grid, every tick lands on it, an
   imported song's Song source takes the ROM's word (`Song::lsdjTempo`); §161: the tempo runs to
   295; §162: thirty-two grooves; §163: a pulse note's own writes carry the plain period and the
-  finetune rides the tick's epilogue refresh (or the next instant under a FAST effect).
-  `CHANGES.md` has the round. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
-  `probe/raw.py TAG [ch] [n]` prints the first raw writes of both sides. 280 core tests, 11
+  finetune rides the tick's epilogue refresh (or the next instant under a FAST effect);
+  §164: the three-stage envelope is a countdown machine on the 358 Hz clock (`Envelope::lsdj`,
+  `envLsdj`; the shaped walk stays for the picture and for format 11); §165: a tick sits at the
+  end of its period (`gridRomTickFrame`) and a `T` takes effect a tick late; §166: a STEP
+  table's position is the instrument's across the channels; §167: `R`'s nibble moves the
+  hardware, `E` and a table's volume column walk relative to the machine's level
+  (`Voice::lsdjLevel`); §168: the interrupt runs pitch, fast retrigger, envelope, and the
+  roll's trigger has no length bit. `CHANGES.md` has the round. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
+  `probe/raw.py TAG [ch] [n]` prints the first raw writes of both sides. 287 core tests, 11
   plugin checks.
 - The probe rig for this campaign lives in the container at `/root/lsdj/probe/`: `vs_matrix.py`
   (the interaction cases, two-sided, `--show` for the first differing batch), `songdiff.py NAME`
-  (a whole song of the 9.4.2 save, both sides), `watch.py SAV RANGE` (the ROM's writes to a
-  work-RAM range with the pc), `probe_cmp.py` (the batch compare).
+  (a whole song of the 9.4.2 save, both sides; `--seq` compares the sequence of register
+  state changes without timing, `--ch N`, `--show N`), `watch.py SAV RANGE` (the ROM's writes
+  to a work-RAM range with the pc), `probe_cmp.py` (the batch compare), `rawwin.py NAME CH T0
+  T1` (both sides' raw writes in a time window), `songvar.py NAME CH T1 --set OFF=VAL` (the ROM
+  alone on a patched song), `tbl.py NAME T...` (a song's tables; TALLOC is a byte per table).
+  `lsdjref_pc --watch` wants `--keys 180` and 400 frames or more.
 
 ## Done (2026-09-09)
 
@@ -896,6 +906,16 @@ design-log section the change touches. Update this file at the end of every chan
   Timing (§160): the ROM's interrupt latency -- the trace shows its sub-ticks 4096 to 23084
   cycles apart inside one second where the ideal grid is 11712 -- is not modelled, so a ROM
   trace and ChipBoy's differ by up to a few milliseconds per write while averaging the same.
+- **Left open after §164-§168, each with the probe that shows it** (`songdiff.py NAME --seq
+  --ch 3`): `RC_noi` -- after `REPTCOMP`'s `R B0` the ROM's machine issues only two stage-2
+  triplets and never steps up, so some tick-side `R` state (`$C224`, `$C8CE`, `$C23C`, `$C2F0`,
+  readers unread) cuts the machine short; `REACTION`'s noise walks six steps where ChipBoy
+  walks two (instruments `06`/`07`, unprobed); `DELIVERY`'s noise note with `E 1B` on the cell
+  opens at `98` in the ROM and `88` here (an `E` on noise may not walk; probe `E1B_noi`);
+  `SAMESONG`'s noise roll and its PU1 machine, and `UNMASKED`'s PU2 machine, run one instant off
+  the ROM (an `SS_ch0` replica with `$CBC1`/`$C956` watched would settle it); `EGOFLEX`'s PU1
+  writes one extra period at tick time when an `L` row applies. The fold (above) still shows as
+  a first-batch difference in `AtblW_L`, `ENV_R`, `FT40_R01`.
 - **Kits are not the ROM's** (task open, `LSDJ_COMMAND_MATRIX.md` §11.8): the importer indexes
   kits by their position in the ROM's list where the ROM uses bank = kit + 8 (gaps break
   `EGOFLEX`'s `18`-`1A` and `READROOM`'s `1C`-`1F`), byte 3 and 11 are both lengths in 16-byte

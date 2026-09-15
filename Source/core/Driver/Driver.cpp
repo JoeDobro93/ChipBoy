@@ -273,7 +273,7 @@ void Driver::reset()
     pitchNext_ = 0; pitchClockValid_ = false; mixerInit_ = false;
     pendingCount_ = 0;
     for (auto& g : tableGroove_) g.fill(0);
-    for (auto& c : stepState_) for (auto& p : c) p = StepPark{};   // section 140
+    for (auto& p : stepState_) p = StepPark{};   // sections 140 and 166
     lastTickCycle_ = 0; lastTickIndex_ = -1;                       // section 141
     for (auto& vw : view_) vw = VoiceView{};
 }
@@ -360,7 +360,7 @@ void Driver::parkStep(int ch)
 {
     Voice& v = v_[size_t(ch & 3)];
     if (v.stepKey == kNoStepKey || v.stepKey >= kStepKeys) return;
-    StepPark& p = stepState_[size_t(ch & 3)][size_t(v.stepKey)];
+    StepPark& p = stepState_[size_t(v.stepKey)];
     p.step = v.tableStep; p.step2 = v.tableStep2; p.stepE = v.tableStepE;
     p.row = v.tableRow;  p.row2 = v.tableRow2;  p.rowE = v.tableRowE;
     p.table = v.tableSlot; p.used = true;
@@ -370,20 +370,25 @@ void Driver::takeStep(int ch, uint8_t table)
 {
     Voice& v = v_[size_t(ch & 3)];
     const uint32_t key = v.instKey;
-    const StepPark* p = key < kStepKeys ? &stepState_[size_t(ch & 3)][size_t(key)] : nullptr;
-    if (p != nullptr && p->used && p->table == table) {
+    // Section 166: the ROM's position is the instrument's whatever table the
+    // instrument points at now, so the table is not checked.
+    (void) table;
+    const StepPark* p = key < kStepKeys ? &stepState_[size_t(key)] : nullptr;
+    if (p != nullptr && p->used) {
         v.tableStep = p->step; v.tableStep2 = p->step2; v.tableStepE = p->stepE;
         v.tableRow = p->row;  v.tableRow2 = p->row2;  v.tableRowE = p->rowE;
     } else {
         v.tableStep = v.tableStep2 = v.tableStepE = 0;
         v.tableRow = v.tableRow2 = v.tableRowE = 0;
     }
-    v.stepKey = key;
+    v.stepKey = key; v.stepDirty = true;
 }
 
 void Driver::clearSteps(int ch)
 {
-    for (auto& p : stepState_[size_t(ch & 3)]) p = StepPark{};
+    // Section 166: the positions are the instruments', not a channel's, so
+    // the transport stopping empties them all (the ROM's play start does).
+    for (auto& p : stepState_) p = StepPark{};
     v_[size_t(ch & 3)].stepKey = kNoStepKey;
 }
 
@@ -474,8 +479,10 @@ void Driver::reloadInstrument(int ch)
     // channel, so the shape starts again from its attack (sections 26, 27).
     v.shapedOn = core.env.mode == EnvMode::Shaped;
     v.shapedTaken = false; v.shapedRelease = false; v.shapedTick = 0; v.shapedClocks = 0; v.shapedPosMax = 0; v.shapedFrom = 0;
+    lsdjEnvStart(v);                                              // section 164
     if (v.shapedOn) {
-        const uint8_t level = shapedLevel(v);
+        const uint8_t level = v.inst.env.lsdj && v.inst.type != InstrumentType::Wave && v.inst.type != InstrumentType::Kit ? uint8_t(v.inst.env.lsdjByte1 >> 4) : shapedLevel(v);   // section 164: byte 1 is the level
+        v.lsdjLevel = level;                                                                     // section 167: the machine's own copy
         if (core.type == InstrumentType::Wave || core.type == InstrumentType::Kit) v.waveLevel = uint8_t(level / 4);
         else { v.envVol = level; v.envRate = 0; v.envDir = EnvDir::Up; }
     }
@@ -791,16 +798,22 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // zero keeps the DAC on and every step of the shape can be a zombie write.
     v.shapedOn = core.env.mode == EnvMode::Shaped;
     v.shapedTaken = false; v.shapedRelease = false; v.shapedTick = 0; v.shapedClocks = 0; v.shapedPosMax = 0; v.shapedFrom = 0;
+    lsdjEnvStart(v);                                              // section 164
     if (v.shapedOn) {
-        const uint8_t level = shapedLevel(v);
+        const uint8_t level = v.inst.env.lsdj && v.inst.type != InstrumentType::Wave && v.inst.type != InstrumentType::Kit ? uint8_t(v.inst.env.lsdjByte1 >> 4) : shapedLevel(v);   // section 164: byte 1 is the level
+        v.lsdjLevel = level;                                                                     // section 167: the machine's own copy
         if (core.type == InstrumentType::Wave || core.type == InstrumentType::Kit) v.waveLevel = uint8_t(level / 4);
         else { v.envVol = level; v.envRate = 0; v.envDir = EnvDir::Up; }
     }
     // table
     const uint8_t tbl = v.tableOverride ? v.tableOverride : core.table;
     // Section 140: park the position of whatever was playing **before** the slot
-    // is overwritten, so it is filed under the table it belongs to.
-    parkStep(ch);
+    // is overwritten, so it is filed under the table it belongs to. Section
+    // 166: only while this channel's copy is the newest -- a note-on writes
+    // its advance through at once, so another channel playing the instrument
+    // takes the row after it.
+    if (v.stepDirty) parkStep(ch);
+    v.stepDirty = false;
     v.tableSlot = tbl; v.tableOn = tbl && bank_ && bank_->table(tbl);
     const bool wasFromCmd = v.tableTicks;
     v.tableTicks = false;                                 // the instrument's own table again (section 122)
@@ -831,9 +844,23 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // its transpose, its level and its commands; the rows after it step on the
     // ticks, and tableJustStarted keeps this tick from taking a second one.
     if (v.tableOn) {
+        const uint8_t stepBefore = v.tableStep;
         const bool wasIn = inNoteOn_; inNoteOn_ = true;
         stepTable(ch);
         inNoteOn_ = wasIn;
+        // Section 166: the instrument's position is written through at once
+        // for the next channel to take. When the row's own `A` has replaced
+        // the table, the position is still this note's row plus one: the ROM
+        // counts the instrument's steps, not the table the `A` moved to.
+        if (v.stepKey != kNoStepKey) {
+            if (v.tableSlot == tbl) parkStep(ch);
+            else {
+                StepPark& p = stepState_[size_t(v.stepKey)];
+                p.step = p.step2 = p.stepE = uint8_t((stepBefore + 1) % kTableSteps);
+                p.row = p.row2 = p.rowE = p.step; p.table = tbl; p.used = true;
+            }
+            v.stepDirty = false;
+        }
         v.tableJustStarted = true;
         // Section 84: the noise channel takes no pitch clock of its own, so the
         // update that carries row 0's transpose has to be asked for here --
@@ -982,7 +1009,7 @@ void Driver::stopVoice(int ch, bool kill)
     Voice& v = v_[size_t(ch)];
     v.active = false; v.tableOn = false; v.tableTspHoldOn = false; v.sliding = false; v.chordN = 0; v.kitOn = false; v.kitPair = false; v.streamActive = false; v.pendingOn = false;
     v.pitchClockOn = false; v.releasing = false; v.pulseReleasing = false;
-    v.shapedOn = false; v.shapedRelease = false; v.tableJustStarted = false;
+    v.shapedOn = false; v.shapedRelease = false; v.tableJustStarted = false; v.lsdjStage = 0;
     // A kill or a stop ends the phrase: a key released afterwards must not
     // bring a note back that nobody is playing (section 8).
     v.heldCount = 0;
@@ -1410,7 +1437,7 @@ void Driver::markTrigger(int ch)
     v.hwOn = v.dacOn;
 }
 
-void Driver::writeEnvelope(int ch, bool trigger)
+void Driver::writeEnvelope(int ch, bool trigger, bool fast)
 {
     Voice& v = v_[size_t(ch)];
     if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) {
@@ -1427,8 +1454,9 @@ void Driver::writeEnvelope(int ch, bool trigger)
     v.envCount = 0;
     if (trigger) {
         const uint16_t f = uint16_t(std::max<int16_t>(0, v.lastPeriod));
-        if (v.inst.type == InstrumentType::Noise) emit(regAddr(3, 4), uint8_t(0x80 | lengthBit(v.inst)), true);
-        else emit(regAddr(ch, 4), uint8_t((f >> 8) | 0x80 | lengthBit(v.inst)), true);
+        const uint8_t len = fast ? uint8_t(0) : lengthBit(v.inst);   // section 168
+        if (v.inst.type == InstrumentType::Noise) emit(regAddr(3, 4), uint8_t(0x80 | len), true);
+        else emit(regAddr(ch, 4), uint8_t((f >> 8) | 0x80 | len), true);
         markTrigger(ch);
     }
 }
@@ -1527,10 +1555,73 @@ uint8_t Driver::shapedLevel(const Voice& v) const
 /// ROM can replay the same list of levels (section 27). Called on the tick,
 /// which owns the stage, and again on every pitch clock inside it, which is
 /// what lets a stage shorter than the levels it crosses walk through them.
+void Driver::lsdjEnvStart(Voice& v)
+{
+    // Section 164, 2:$5735 then 2:$6086: the level is byte 1's high nibble (the
+    // note's own NRx2 write carries it), the first stage runs at byte 1's low
+    // nibble toward byte 9's high one, and a rate of zero leaves the machine
+    // off: the level holds.
+    v.lsdjStage = 0;
+    if (!v.inst.env.lsdj || v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) return;
+    const uint8_t rate = uint8_t(v.inst.env.lsdjByte1 & 0x0F);
+    if (rate == 0) return;
+    v.lsdjStage = 1; v.lsdjReload = v.lsdjCount = kLsdjEnvSteps[rate]; v.lsdjTarget = uint8_t(v.inst.env.lsdjByte9 >> 4);
+}
+
+void Driver::lsdjEnvStep(int ch)
+{
+    // Section 164, 0:$0619 then 0:$2FC9: every instant the countdown loses one;
+    // at zero the level takes one zombie step toward the target and the
+    // countdown reloads -- and when the level is the target (after that step,
+    // or already, which is how a stage holds) the next stage begins: byte 9's
+    // rate toward byte 10's level, then byte 10's rate toward zero, then off.
+    // A rate of zero at a hand-over stops the machine where it stands.
+    Voice& v = v_[size_t(ch)];
+    if (v.lsdjStage == 0) return;
+    if (--v.lsdjCount != 0) return;
+    if (v.lsdjLevel != v.lsdjTarget) {
+        // Section 167: the machine's level moves, and the hardware one step
+        // the same way from wherever an `R` left it.
+        const bool down = v.lsdjLevel > v.lsdjTarget;
+        v.lsdjLevel = uint8_t(down ? v.lsdjLevel - 1 : v.lsdjLevel + 1);
+        lsdjZombieStep(ch, down);
+    }
+    if (v.lsdjLevel != v.lsdjTarget) { v.lsdjCount = v.lsdjReload; return; }
+    uint8_t rate = 0;
+    if (v.lsdjStage == 1) { rate = uint8_t(v.inst.env.lsdjByte9 & 0x0F); v.lsdjTarget = uint8_t(v.inst.env.lsdjByte10 >> 4); v.lsdjStage = 2; }
+    else if (v.lsdjStage == 2) { rate = uint8_t(v.inst.env.lsdjByte10 & 0x0F); v.lsdjTarget = 0; v.lsdjStage = 3; }
+    else { v.lsdjStage = 0; return; }
+    if (rate == 0) { v.lsdjStage = 0; return; }
+    v.lsdjReload = v.lsdjCount = kLsdjEnvSteps[rate];
+}
+
+void Driver::lsdjZombieStep(int ch, bool down)
+{
+    Voice& v = v_[size_t(ch)];
+    if (inNoteOn_ || !v.dacOn || !v.hwOn) { v.envVol = uint8_t((v.envVol + (down ? 15 : 1)) & 15); return; }
+    const uint64_t at = burst_;
+    if (down) { for (int i = 0; i < 3; ++i) { burst_ = at + uint64_t(i) * kZombieInner; emitNrx2(ch, kZombieDown[size_t(i)]); } burst_ = at + kZombieDownStep; }
+    else { emitNrx2(ch, kZombieUp); burst_ = at + kZombieUpStep; }
+    v.volume = uint8_t((v.volume + (down ? 15 : 1)) & 15);   // the chip wraps
+    v.envVol = v.volume;
+}
+
+void Driver::lsdjWalkLevel(int ch, uint8_t level)
+{
+    Voice& v = v_[size_t(ch)];
+    level = uint8_t(std::min<int>(level, 15));
+    for (int guard = 0; guard < 16 && v.lsdjLevel != level; ++guard) {
+        const bool down = v.lsdjLevel > level;
+        v.lsdjLevel = uint8_t(down ? v.lsdjLevel - 1 : v.lsdjLevel + 1);
+        lsdjZombieStep(ch, down);
+    }
+}
+
 void Driver::emitShapedLevel(int ch)
 {
     Voice& v = v_[size_t(ch)];
     if (!v.shapedOn || v.shapedTaken) return;
+    if (v.inst.env.lsdj && v.inst.type != InstrumentType::Wave && v.inst.type != InstrumentType::Kit) return;   // section 164: the machine owns the level
     {   // the position only ever goes forward (section 116), in section 142's units
         constexpr int P = kShapedPos;
         const int sub = subOfTick(v);
@@ -1555,7 +1646,7 @@ void Driver::stepShaped(int ch)
     if (!v.shapedOn || v.shapedTaken) return;
     ++v.shapedTick; v.shapedClocks = 0;
     if (v.shapedRelease && int(v.shapedTick) * kShapedPos >= stagePos(int(v.inst.env.releaseTicks), int(v.inst.env.releaseFine))) {
-        v.shapedOn = false; v.shapedRelease = false;
+        v.shapedOn = false; v.shapedRelease = false; v.lsdjStage = 0;
         stopVoice(ch, true);
         return;
     }
@@ -1799,8 +1890,9 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             // Envelope: volume in x; y is the NRx2 encoding, 0 and 8 holding,
             // 1-7 decaying at that rate and 9-15 rising at y - 8.
             // E takes a shaped envelope over, as a table's volume column does
-            // (section 27).
-            v.shapedTaken = true;
+            // (section 27); section 164: and stops the ROM's machine (2:$6A0D
+            // sets its mode to zero before its own rate takes over).
+            v.shapedTaken = true; v.lsdjStage = 0;
             // Section 79: on WAV/KIT the level is NR32's two bits and LSDj takes
             // them from the **low** nibble -- E01 is 25%, E03 100%, and x does
             // nothing. ChipBoy took x.
@@ -1812,11 +1904,21 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
                 // section 6). Measured: `E 8 0` on a channel at 15 is seven
                 // down-triples and nothing else. **No trigger** -- except for
                 // the two cases below, section 59's and section 138's.
+                if (v.inst.env.lsdj) {
+                    // Section 167: the ROM's `E` (2:$6A0D) walks its own level to
+                    // `x` and runs `y`'s rate in its machine's third mode.
+                    lsdjWalkLevel(ch, uint8_t(c.a & 15));
+                    v.envRate = 0;
+                    static constexpr uint8_t kERate[8] = { 0, 6, 11, 17, 22, 28, 34, 39 };
+                    const uint8_t reload = kERate[c.b & 7];
+                    if (reload) { v.lsdjStage = 3; v.lsdjReload = v.lsdjCount = reload; v.lsdjTarget = (c.b & 8) ? uint8_t(15) : uint8_t(0); }
+                } else {
                 v.envVol = uint8_t(std::clamp<int>(c.a, 0, 15));
                 v.envRate = uint8_t(c.b & 7);
                 v.envDir = (c.b & 8) ? EnvDir::Up : EnvDir::Down;
                 v.envCount = 0;
                 setLevel(ch);
+                }
                 // ... unless the instrument asks for LSDj's pre-8.8 rule, where
                 // the new envelope only starts on a trigger (section 59). The
                 // wave channel's level is NR32 and needs none, on any version.
@@ -2056,7 +2158,7 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             v.retrigFast = (c.a & 15) == 8;
             v.retrigStep = retrigVolStep(c.a);
             v.retrigCount = 0; v.retrigFastCount = 0;
-            v.retrigBase = v.envVol;                  // section 136: where the step counts from
+            v.retrigBase = v.inst.env.lsdj ? v.lsdjLevel : v.envVol;   // section 136: where the step counts from; 167: the machine's level
             // Section 134: the retrigger fires on the command's **own** tick and
             // then every `y` ticks -- `y = 0` is that one alone. ChipBoy counted
             // from the command instead, so the first landed a tick early and the
@@ -2474,8 +2576,9 @@ void Driver::stepTableLane(int ch, int lane)
                 // every four, measured on 9.2.L across all sixteen. `vol / 4` made
                 // every amplitude 1-3 mute, which silenced `SAMESONG`'s bass swell.
                 if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) v.waveLevel = uint8_t(s.vol & 3);
+                else if (v.inst.env.lsdj) lsdjWalkLevel(ch, uint8_t(std::clamp<int>(s.vol, 0, 15)));   // section 167: relative, the machine runs on
                 else v.envVol = uint8_t(std::clamp<int>(s.vol, 0, 15));
-                setLevel(ch);
+                if (!v.inst.env.lsdj || v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) setLevel(ch);
                 // The same rule an E follows (section 59): before 8.8 the new level
                 // only starts on a trigger, and a table's volume column is how LSDj's
                 // old drums stutter. Never on the wave channel, whose level is NR32.
@@ -2734,9 +2837,12 @@ void Driver::retrigger(int ch, bool full, bool restartEnv)
     if (!full) {
         // R's resync (x = 8) runs on the pitch clock and writes two registers,
         // the level and the trigger, not the whole note-on (measured).
-        if (pulse || noise) writeEnvelope(ch, true);
+        // Section 168: the ROM's fast retrigger (0:$05B3) writes the machine's
+        // level and a trigger with **no length bit**.
+        if (v.inst.env.lsdj) v.envVol = v.lsdjLevel;
+        if (pulse || noise) writeEnvelope(ch, true, true);
         else { const uint16_t f = uint16_t(std::max<int16_t>(0, v.lastPeriod));
-               emit(regAddr(ch, 4), uint8_t((f >> 8) | 0x80 | lengthBit(v.inst)), true); markTrigger(ch); }
+               emit(regAddr(ch, 4), uint8_t((f >> 8) | 0x80), true); markTrigger(ch); }
         return;
     }
     // Section 136: a retrigger starts the instrument's envelope again, exactly
@@ -2746,7 +2852,10 @@ void Driver::retrigger(int ch, bool full, bool restartEnv)
     if (restartEnv && v.inst.env.mode == EnvMode::Shaped) {
         v.shapedOn = true; v.shapedTaken = false; v.shapedRelease = false;
         v.shapedTick = 0; v.shapedClocks = 0; v.shapedPosMax = 0; v.shapedFrom = 0;
-        const uint8_t level = shapedLevel(v);
+        lsdjEnvStart(v);                                          // section 164, 2:$6086: the first stage again
+        // Section 167: the machine's level is not reset by an `R`; the hardware
+        // is written from it (plus the nibble, below).
+        const uint8_t level = v.inst.env.lsdj && v.inst.type != InstrumentType::Wave && v.inst.type != InstrumentType::Kit ? v.lsdjLevel : shapedLevel(v);
         if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) v.waveLevel = uint8_t(level / 4);
         else { v.envVol = level; v.envRate = 0; v.envDir = EnvDir::Up; v.retrigBase = level; }
     }
@@ -2757,6 +2866,7 @@ void Driver::retrigger(int ch, bool full, bool restartEnv)
     // It accumulates over the retriggers from that start (section 136): R F4 is
     // 9, 8, 7, 6 from a volume of nine, not 9, 8, 8, 8.
     if (v.retrigStep) {
+        if (v.inst.env.lsdj) v.retrigBase = v.lsdjLevel;           // section 167: from the machine's live level, which the nibble never moves
         v.envVol = uint8_t(std::clamp<int>(int(v.retrigBase) + int(v.retrigStep) * int(v.retrigCount), 0, 15));
         // Section 158: the shaped envelope runs on from this level, not back
         // from its own start -- measured, `R F0` on an ADSR note falls 5 -> 1
@@ -2941,6 +3051,15 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
                 // here, at the first instant after the note's own writes.
                 if (v.active && v.fineTunePending) { v.fineTunePending = false; if (v.pitchClockOn) v.pitchWrite = true; else writePeriod(ch, false); }
                 if (v.active && v.pitchClockOn) pitchStep(ch, false);
+                // Section 168: the ROM's interrupt runs the fast retrigger
+                // (0:$05B3) after the pitch work and before the envelope
+                // countdown (0:$0619), so a roll's trigger carries the level the
+                // step then moves.
+                if (v.active && v.retrigFast && ++v.retrigFastCount > uint16_t(v.retrigEvery)) {
+                    v.retrigFastCount = 0;
+                    if (v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Noise
+                        || v.inst.type == InstrumentType::Wave) retrigger(ch, false);
+                }
                 // Section 116: the shaped envelope's level is re-read on this
                 // clock as well as on the tick, so a stage shorter than the
                 // levels it crosses walks through every one of them as the ROM
@@ -2948,6 +3067,9 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
                 // Section 121: the voice counts the clocks itself, from the
                 // note-on rather than from the tick boundary.
                 if (v.active) { if (v.shapedOn && !v.shapedTaken) ++v.shapedClocks; emitShapedLevel(ch); }
+                // Section 164: the ROM's envelope countdown runs on this clock
+                // too (0:$0619), after the pitch work and before the tick.
+                if (v.active && v.lsdjStage) lsdjEnvStep(ch);
                 // The instrument's own envelope and R's resync run on the same
                 // clock, whatever the pitch speed is (sections 7 and 8).
                 // Section 109: a channel a K has killed still answers a later E --
@@ -2957,13 +3079,6 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
                 // stepSoftEnvelope's own guards (a rate of zero, a dead DAC, a
                 // shaped envelope nobody has taken over) stop it otherwise.
                 if (v.active || v.releasing || v.pulseReleasing || v.dacOn) stepSoftEnvelope(ch);
-                // Section 90: `R 8 y` retriggers every **y + 1** pitch clocks,
-                // not every one, and `R 8 F` stops instead of starting.
-                if (v.active && v.retrigFast && ++v.retrigFastCount > uint16_t(v.retrigEvery)) {
-                    v.retrigFastCount = 0;
-                    if (v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Noise
-                        || v.inst.type == InstrumentType::Wave) retrigger(ch, false);
-                }
             }
             ++pitchNext_;
         }

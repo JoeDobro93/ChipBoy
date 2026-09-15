@@ -233,7 +233,9 @@ void buildTempoMap(Song& s, double baseBpm)
                 const Cell& cell = p->cells[size_t(stepOf[size_t(pos)])];
                 const bank::Command* t = cell.cmd1.cmd == bank::Cmd::T ? &cell.cmd1 : cell.cmd2.cmd == bank::Cmd::T ? &cell.cmd2 : nullptr;
                 if (!t) continue;
-                s.tempoMap.push_back({ rowStartTick(s, ch, row) + starts[size_t(pos)],
+                // Section 165: the ROM adds the tick's word before the tick's
+                // own T runs, so a T takes effect from the tick after its own.
+                s.tempoMap.push_back({ rowStartTick(s, ch, row) + starts[size_t(pos)] + (s.lsdjTempo ? 1 : 0),
                                        bank::isRevert(*t) ? base : double(bank::tempoBpmOfByte(t->a)) });
             }
         }
