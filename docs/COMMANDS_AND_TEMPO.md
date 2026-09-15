@@ -5254,3 +5254,115 @@ step that lands in the same instant -- `SAMESONG`'s hats: `C8`, then the step to
 writes `NRx4 = $80 | period`, **without the length bit** (`0:$05CF`, `$0615`), where ChipBoy
 kept the instrument's. ChipBoy's instant now runs the fast retrigger between the pitch step and
 the envelope, and its trigger drops the length bit.
+
+## 169. DRUM pitch is a linear period table with a per-note fraction, and its note-on drops the fraction
+
+§99 and §88 modelled DRUM as "the period register moves in a straight line", one semitone of a
+pitch effect worth 19.11 units wherever the note is. The ROM's machine (`$49C0`-`$4A33` at the
+note lookup, `$4B18` at the note-on, 0:`$1B28` at every pitch write) is a table, and the table is
+what makes the units come out at 19.1:
+
+- **The table** 0:`$09B9` is 108 words, `round(k · 2044 / 107)`: 0, 19, 38, 57, 76, 96 … 2044.
+  A DRUM instrument's note lookup (`$C330 + ch` set) points the channel's table pointer at it
+  instead of the semitone table in RAM at `$CF28`.
+- **The note** becomes an index into it plus a fraction: two tables built at boot in RAM,
+  `$CD28` (the index, the largest `k` with `table[k] ≤ period`) and `$CD94` (the fraction,
+  `floor((period − table[k]) · 256 / (table[k + 1] − table[k]))`), both indexed by the note.
+  `$49EB` writes the index + 1 into the note variable; `$4B18` writes the fraction into the low
+  byte of the offset word (`$C337 + 2ch`, high byte `$80`). So the note's pitch is exact from the
+  first refresh: 106.94 of the table for note `55` is 2025 + 19 · 94 / 256 = 2032, the semitone
+  table's own `$7F0`.
+- **Every effect is in 1/256 of an entry**: `P`'s curve value (§11.9), `L`'s
+  `(target − offset) / (v + 1)`, the vibrato's `$C31C` are added to the word as in FAST mode, and
+  the transposes (`$C174`, the table's column and a chord's step) to the index. 0:`$1B28` then
+  reads `table[d]` and adds `round(diff · e / 256)` (an 8-bit shift-add multiply, rounded on the
+  low byte's top bit) with the nine-octave wrap of §153 at 108. One entry is 19.1 units, which is
+  where §88's constant came from; the table's rounding is what it lost (`CASTSHDW`'s wave drum:
+  the ROM's `$713` where ChipBoy's line gave `$712`).
+- **The note-on writes `table[index]` without the fraction** (`$4A2C` stores the lookup, the
+  trigger reads it): `$7E9` for note `55`, seven units flat; the tick's epilogue refresh writes
+  the exact `$7F0` about a millisecond later, unless a FAST effect is live (a table's row-0 `P`),
+  when the next instant's step is the first exact write. This is §6.13's "half a step in" that
+  §11's matrix left open: it is not a step of the bend at all, but the fraction the note-on drops.
+
+Probed (`Wv_cast10`, `Wv_cast10_notbl`, `Wv55_tblPA9` in `vs_matrix.py`; `CASTSHDW`'s
+instrument `10` byte for byte): the note-on `$7E9`, the refresh `$7F0` at +1.2 ms, and with the
+table's `P A9` the word `$805E` stepping by −990 an instant (`$C33B`/`$C33C` watched) through
+`$7A6 $75C $713 $6C8 $67F $635`.
+
+ChipBoy, for a DRUM instrument of a 9.x format (`pitchSpeed == Drum`, not a kit, not the old
+formats' register-unit law of §88): `noteOfVoice()` returns the note's entry and fraction
+(`drumPosOf()`) with the transposes and the 1/256 offsets on top, so `P`, `L` and `V` run on the
+FAST machinery unchanged; `periodFor()` reads the generated table (`drumPeriod()`) with the ROM's
+rounding and §153's wrap at entry 108; the note-on writes the entry alone and leaves the exact
+period to the epilogue refresh through §163's `fineTunePending`. The period-unit slide of §99
+(`drumOffset`, `drumSlide*`) stays for kits and the register-unit formats.
+
+## 170. A wave instrument's `FINETUNE` is byte 12, 1/256 of a semitone, and it rides the refresh
+
+The 9.x wave instrument screen has a `FINETUNE` ("detune the sound") beside the pulse one of
+§112, and the importer never read it: `CASTSHDW`'s instrument `0E` carries `7F`, `REACTION`'s
+`05` and `14` carry `10` and `08`, `DELIVERY`'s `0A` carries `0C`. Read in the ROM: the loader
+(`2:$5C2B`) sign-extends byte 12 into the word `$C698`/`$C699`, and the wave refresh
+(`0:$1C47`) adds that word to the note's 16-bit note.fraction before the vibrato and the slide
+offset -- so the unit is **1/256 of a semitone, signed**, added (the pulse one is subtracted on
+PU1, `fine · 8 / 256`). The note-on's own writes carry the plain period as §163's do, and the
+finetune arrives with the tick's epilogue refresh (`REACTION`'s wave opens at `$416` and the
+refresh writes `$41A`), or with the next instant's step under a FAST effect.
+
+ChipBoy: `LsdjModel::waveFineTuneByte` (12 on format 22, unread elsewhere) fills
+`Instrument::fineTune` for a wave instrument, which the driver reads as a signed byte with no
+channel sign and hands to §163's `fineTunePending`.
+
+## 171. The wave frame writer: the sync grid, the `$7E0` pre-trigger, the start frame, `RESYNC`
+
+Every wave RAM write of the ROM -- a note-on, a frame of a synth run, the `0x77` frame that ends
+a `ONCE` run (`2:$5FCB`) -- goes through one routine, `0:$0762`, and the tick never calls it
+for a frame step. Read together with the interrupt's head (`0:$06A5`-`$075F`):
+
+- **The sequence.** `NR30 = 00`, the sixteen bytes, `NR30 = 80`, `NR33 = E0`, `NR34 = 87` -- a
+  trigger at period `$7E0`, sixty-four cycles a sample -- then `NR51`, then `NR33`/`NR34` with
+  the channel's current period and no trigger bit, about fifty cycles after the trigger. A
+  note-on writes `NR32` before it and the tick's epilogue `NR31 = 00` after. ChipBoy triggered
+  at the real period and, on CGB, streamed a new frame behind the read pointer instead of
+  retriggering (section 6.5): the ROM does neither, on either model.
+- **The sync grid** ("silky wave", 7.x). The trigger reads `DIV` (`$C400`) and zeroes a phase
+  word `$C363` in units of 64 cycles; every interrupt adds `4 · ΔDIV` to it and reduces it
+  modulo `S = (2048 − period) · 2^k`, the smallest `k` with `S ≥ 256` -- `2^k` cycles of the
+  wave, at least 16384 cycles. A frame the tick has made pending (`$C69C`, `2:$7028`) is written
+  only at an interrupt where the remainder `S − phase` is under 184 units (`0:$0748`: one
+  interrupt period), and then the handler **busy-waits** `remainder / 4` DIV ticks (256 cycles
+  each) to the boundary before writing, delaying its own pitch work and the next interrupt
+  behind it. So a frame lands where the wave's own cycle restarts, with the trigger's phase
+  reset landing on the old phase; measured on `Fr_loop_0C_FD` (a step a tick at 163 BPM,
+  period `$797`, `S` = 4 cycles = 26880): the writes fall 2 or 3 `S` apart, 264-520 cycles
+  after a boundary, and the ROM's own remainders at the checks it took run 4-180, the ones it
+  skipped 184-420. ChipBoy wrote the frame on the tick, wherever the wave was: the click that
+  made the runs sound rougher than LSDj's.
+- **The start frame.** The run's frame index `$C694` starts at **byte 3 whole** -- synth in
+  the high nibble, frame in the low -- and the steps are added to it unwrapped (`2:$6204`
+  reads `$A000 + index · 16`), so a start of 4 with eight steps plays frames 4 6 8 A D F 11 13,
+  the last two from the next synth. In `MANUAL` mode byte 3 is the `WAVE` parameter and that
+  frame is what plays (`DELIVERY`'s `0F`: frame `$33`, synth 3's frame 3). ChipBoy read the
+  high nibble as the slot and always started at frame 0.
+- **`LOOP POS` is byte 2's low nibble** (§93 already), the loop covering the last
+  `15 − nibble` steps, clamped to the run (`2:$57A2`); byte 10's high nibble is unused. The
+  run's frames are §132's ladder exactly (the ROM's table at `2:$7EC6` is that rule row for
+  row), the step comes every `speed + 4` ticks with the note-on's tick counted (`$C525` =
+  `speed + 4` at the note, decremented by the same tick's table pass), and `ONCE` ends by
+  writing the `0x77` frame. Speed `FC` wraps: the counter starts at 0, so the first step is
+  the note's own tick and the next 256 ticks later. Not modelled (no song has it).
+- **`RESYNC`** (9.2.E, `PLAY` = 4): §11's importer took `byte 9 & 3` and read it as `MANUAL`.
+  It runs `PINGPONG`'s program and writes each frame **at the tick**, at once, through the
+  same routine (`2:$701B`, interrupts off), so every step retriggers the wave. `REACTION`'s
+  `0C` and `READROOM`'s `02` use it.
+
+Probed (`Fr_*` in `vs_matrix.py`, sixteen frames tagged so `W0` names the frame; `frtimes.py`
+prints both sides' frame writes): every `PLAY`, length, speed and start combination above.
+
+ChipBoy: `FrameLoop::Resync`; `Instrument::frameStart`; the run's frames resolve through the
+flat wave table (`waveFlatOf`), so a run past the slot's end reads the next slot; a frame step
+sets `Voice::framePending` and the instant loop runs the ROM's check (`waveSyncPeriod()`,
+`waveSyncBase` = the last trigger's cycle) and writes at the boundary through
+`writeWaveFrame()`, which is also the note-on's and `RESYNC`'s writer; the trigger is the
+`$7E0` pre-trigger followed by the period. The CGB streaming path stays for kits only.

@@ -228,6 +228,49 @@ double Driver::periodRealForNote(double note, bool waveChannel)
     return double(lo) + frac * double(hi - lo);
 }
 
+/// Section 169: the ROM's DRUM table, `round(k * 2044 / 107)` for k = 0..107
+/// (0:$09B9) -- one entry is 19.1 period units, which is where section 88's
+/// constant came from.
+int Driver::drumEntry(int k)
+{
+    k = std::clamp(k, 0, 107);
+    return (k * 2044 + 53) / 107;
+}
+
+/// A note's position in the DRUM table, entry and fraction, as the boot-built
+/// tables at $CD28 / $CD94 hold it: the largest entry at or below the note's
+/// semitone period, and the fraction floored in 256ths of the gap to the next.
+/// Negative when the note has no period at all.
+double Driver::drumPosOf(double note, bool waveChannel)
+{
+    const int per = periodForNote(note, waveChannel);
+    if (per < 0) return -1.0;
+    int k = std::clamp(per * 107 / 2044, 0, 107);
+    while (k > 0 && drumEntry(k) > per) --k;
+    while (k < 107 && drumEntry(k + 1) <= per) ++k;
+    const int gap = k < 107 ? drumEntry(k + 1) - drumEntry(k) : 19;
+    const int frac = std::clamp((per - drumEntry(k)) * 256 / gap, 0, 255);
+    return double(k) + double(frac) / 256.0;
+}
+
+/// The period 0:$1B28 reads for a position in 1/256 entries: the entry plus
+/// `round(gap * fraction / 256)`, the rounding on the product's low byte. The
+/// caller has already brought the position into the table (section 153).
+int Driver::drumPeriod(int32_t pos256)
+{
+    const int d = std::clamp(int(pos256 >> 8), 0, 107);
+    const int e = int(pos256 & 255);
+    const int gap = d < 107 ? drumEntry(d + 1) - drumEntry(d) : 19;
+    return std::clamp(drumEntry(d) + (gap * e + 128) / 256, 0, 2047);
+}
+
+/// Section 169: the ROM's table machine plays a 9.x DRUM instrument; a kit has
+/// no DRUM (section 97) and the old formats' register-unit law is section 88's.
+bool Driver::drumRom(const Voice& v) const
+{
+    return pitchSpeed(v) == PitchSpeed::Drum && v.inst.type != InstrumentType::Kit && !v.inst.pitchRegisterUnits;
+}
+
 double Driver::noiseClockHz(uint8_t shift, uint8_t divisor)
 {
     const double r = divisor == 0 ? 0.5 : double(divisor);
@@ -734,7 +777,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         applyCellCommands(ch, v.noteCmd[0], v.noteCmd[1]);
         v.noteCmd[0] = {}; v.noteCmd[1] = {};
         inNoteOn_ = was;
-        if (v.inst.type == InstrumentType::Pulse && v.fineTune != 0) v.fineTunePending = true;   // section 163
+        if ((v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Wave) && v.fineTune != 0) v.fineTunePending = true;   // sections 163, 170
         writePeriod(ch, false);
         if (oweW) emit(regAddr(ch, 1), uint8_t((v.duty << 6) | lengthCode6(v.inst.length)), true);
         if (oweS) retrigger(ch, true, false);
@@ -774,18 +817,21 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     v.fineOffset = 0; v.fineQueued = 0; v.drumOffset = 0.0;
     v.fineTune = (v.inst.type == InstrumentType::Pulse && v.inst.fineTune != 0)
                      ? int16_t(ch == 1 ? int(v.inst.fineTune) : -int(v.inst.fineTune))
-                     : int16_t(0); v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0;
+                     : (v.inst.type == InstrumentType::Wave ? int16_t(int8_t(v.inst.fineTune)) : int16_t(0));   // section 170
+    v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0;
     // Section 163: the trigger, and every write the tick's own code makes
     // after it (S, R, a bare note), carries the plain note; the finetune
     // arrives with the refresh at the next 358 Hz instant.
-    v.fineTunePending = v.fineTune != 0;
+    // Section 163's refresh: the finetune, a DRUM note's fraction (section 169),
+    // and on the wave channel always -- its NR31 rides the refresh (section 171).
+    v.fineTunePending = v.fineTune != 0 || drumRom(v) || v.inst.type == InstrumentType::Wave;
     v.drumSlideStep = 0.0; v.drumSlideLeft = 0; v.drumSlideHold = false;   // section 99
     v.chordN = 0; v.chordIdx = 0; v.chordCount = 0;
     // Section 123: `lastCellCmd` -- what a `Z` on a later row re-runs -- is
     // **not** reset here. Measured on 9.2.L: the record outlives the note-on and
     // even a different instrument, and clearing it made every `Z` after the
     // first note inert.
-    v.dutyIdx = 0; v.killAt = -1; v.panQueued = 0; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.shapedStartOffset = 0; v.retrigOn = false; v.retrigPending = 0; v.retrigFast = false; v.retrigFastCount = 0; v.envCount = 0; v.frameStep = 0; v.frameIdx = 0;   // the run starts at its first step (section 65)
+    v.dutyIdx = 0; v.killAt = -1; v.panQueued = 0; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.shapedStartOffset = 0; v.retrigOn = false; v.retrigPending = 0; v.retrigFast = false; v.retrigFastCount = 0; v.envCount = 0; v.frameStep = 0; v.frameIdx = v.inst.type == InstrumentType::Wave ? v.inst.frameStart : uint8_t(0);   // the run starts at its first step, the instrument's start frame (sections 65, 171)
     v.rng = v.rng * 1664525u + 1013904223u + note;
     restartPitchClock(ch);
     // volume from velocity: a MIDI note asks the Velocity mode, a cell's VEL is
@@ -911,16 +957,15 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         case InstrumentType::Wave: {
             // waveAt, not wave: every one of the sixteen slots holds frames and
             // sounds, drawn or not, because the bank is one flat table (section 103).
-            const Wave* w = bank_ ? bank_->waveAt(v.waveSlot) : nullptr;
-            const Frame* f = w && !w->frames.empty() ? &w->frames[0] : nullptr;
             v.frameCount = 0; v.frameDir = 1; v.frameFresh = true; v.frameSilenced = false; v.kitOn = false; v.streamActive = false;
-            // The run starts at its first step, which is always frame 0
-            // (section 65); the reset above put the voice there, so an F on this
-            // very row -- applied with the note's other commands -- still stands.
-            if (w && !w->frames.empty()) v.frameIdx = uint8_t(std::min<int>(v.frameIdx, int(w->frames.size()) - 1));
-            else v.frameIdx = 0;
+            v.framePending = false;
+            // The run starts at its first step, the instrument's start frame
+            // (sections 65, 171); startVoice put the voice there, so an F on
+            // this very row -- applied with the note's other commands -- still
+            // stands. The ROM writes NR32 before the wave RAM (section 171).
             static const Frame silent{};
-            if (w && !w->frames.empty()) f = &w->frames[v.frameIdx];
+            const Frame* f = frameAt(ch, int(v.frameIdx));
+            writeEnvelope(ch, false);
             loadFrame(ch, f ? *f : silent, true);
             break;
         }
@@ -947,6 +992,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
             std::array<uint8_t, 16> chunk{}; bool ended = false;
             kitNextChunk(ch, chunk, ended);
             Frame f; for (int i = 0; i < 16; ++i) { f.s[size_t(i * 2)] = uint8_t(chunk[size_t(i)] >> 4); f.s[size_t(i * 2 + 1)] = uint8_t(chunk[size_t(i)] & 15); }
+            writeEnvelope(ch, false);
             loadFrame(ch, f, true);
             if (model_ == Console::CGB && v.kitOn) {
                 // CGB: the next chunk streams in behind the read pointer.
@@ -1101,6 +1147,10 @@ double Driver::noteOfVoice(int ch) const
 {
     const Voice& v = v_[size_t(ch)];
     double note = v.note + v.noteTsp + v.instTranspose + v.p.transpose + v.bend;
+    // Section 169: in DRUM the note is its entry and fraction in the ROM's
+    // linear table, and everything below -- the chord, the column, the 1/256
+    // offsets of P, L and V -- moves in entries, not semitones.
+    if (drumRom(v)) note = std::max(0.0, drumPosOf(note, v.inst.type == InstrumentType::Wave));
     if (v.chordN) note += v.chord[v.chordIdx % v.chordN];
     // Section 152: the table's column is live under a slide -- the ROM adds the
     // transposes in force at every pitch write and the slide moves an offset
@@ -1161,6 +1211,26 @@ int Driver::computePeriod(int ch)
         return std::clamp(int(std::lround(per)) + int(std::lround(v.drumOffset)), 0, 2047);
     }
     const bool wave = v.inst.type == InstrumentType::Wave;
+    if (drumRom(v)) {
+        // Section 169: the ROM's DRUM machine. A note with no period does not
+        // sound; otherwise the position -- entry.fraction with the offsets and
+        // the vibrato in 1/256 entries -- reads the linear table, wrapping by
+        // nine octaves (108 entries) as section 153's 0:$1B28 does. The note-on
+        // writes the note's entry alone: the fraction comes with the refresh.
+        if (periodForNote(v.note + v.noteTsp + v.instTranspose + v.p.transpose + v.bend, wave) < 0) return -1;
+        if (plainDrum_) return drumPeriod(int32_t(std::floor(drumPosOf(v.note + v.noteTsp + v.instTranspose + v.p.transpose + v.bend, wave))) << 8);
+        const double pos = noteOfVoice(ch) + (plainVib_ ? 0.0 : double(vibratoFine(v)) / 256.0);
+        int32_t p256 = int32_t(std::lround(pos * 256.0));
+        if (v.fineOffset != 0 || v.sliding || v.bendSpeed != 0) {
+            const int d = int(p256 >> 8);
+            if (d >= 108) { v.fineOffset -= 108 * 256; p256 -= 108 * 256; }
+            else if (d < 0) {
+                if (d >= -8) return 0;
+                if (d >= -74) { v.fineOffset += 108 * 256; p256 += 108 * 256; }
+            }
+        }
+        return drumPeriod(std::clamp<int32_t>(p256, 0, 107 * 256 + 255));
+    }
     if (pitchSpeed(v) == PitchSpeed::Drum) {
         // Drum works in the period register: P moves it in a straight line and
         // it **wraps at 2048** rather than clamping, which is what a P kick
@@ -1239,9 +1309,8 @@ void Driver::pitchStep(int ch, bool onTick)
                 // clock, whole. No table, so a long slide ends where the ROM's
                 // ends rather than a fraction of a semitone away.
                 v.drumOffset += double(v.bendSpeed) * (onTick ? 4.0 : 1.0);
-            else if (pitchSpeed(v) == PitchSpeed::Drum)
-                v.drumOffset += double(step) / 256.0 * kDrumUnitsPerSemitone;
             else
+                // Section 169: DRUM too -- its offset is 1/256 of a table entry.
                 v.fineOffset = std::clamp<int32_t>(v.fineOffset + step, -1 << 20, 1 << 20);
             moving = true;
         }
@@ -1294,14 +1363,17 @@ void Driver::restartPitchClock(int ch)
                      && pitchSpeed(v) != PitchSpeed::Tick;
 }
 
-void Driver::writePeriod(int ch, bool trigger)
+void Driver::writePeriod(int ch, bool trigger, bool preTriggered)
 {
     Voice& v = v_[size_t(ch)];
+    // Section 171: the period after a wave's $7E0 pre-trigger is the note-on's
+    // own write in every way but the trigger bit.
+    const bool own = trigger || preTriggered;
     // Section 84: the note-on triggers at the **plain** note and the table's
     // transpose column reaches the channel on the next pitch update. Only the
     // note's own write, and only when the table started with it, so a retrigger
     // in the middle of a table keeps the column it is on.
-    const bool plain = trigger && v.tableJustStarted;
+    const bool plain = own && v.tableJustStarted;
     struct PlainScope {
         bool& f; bool was;
         PlainScope(bool& x, bool on) : f(x), was(x) { f = on; }
@@ -1310,7 +1382,11 @@ void Driver::writePeriod(int ch, bool trigger)
     // Section 125: and the vibrato is out of every trigger, not only one that
     // starts a table -- measured on 9.2.L, a square vibrato's first swing shows
     // up on the update after the note, never on the note's own write.
-    PlainScope vibScope(plainVib_, trigger);
+    PlainScope vibScope(plainVib_, own);
+    // Section 169: a DRUM note-on's own trigger (and an S or R trigger before
+    // the refresh) carries the table entry without the note's fraction: the
+    // ROM's lookup stands in $C0F4 until the refresh rewrites it.
+    PlainScope drumScope(plainDrum_, own && v.fineTunePending);
     if (v.inst.type == InstrumentType::Noise) {
         uint8_t s, d;
         if (v.inst.noiseManual) { s = v.noiseShift; d = v.noiseDiv; }
@@ -1406,6 +1482,9 @@ void Driver::writePeriod(int ch, bool trigger)
     const uint8_t hi = uint8_t((f >> 8) | (trigger ? 0x80 : 0) | lengthBit(v.inst));
     emit(regAddr(ch, 4), hi, true);
     if (trigger && v.inst.type == InstrumentType::Pulse) markTrigger(ch);
+    // Section 171: the wave refresh (2:$1C7A) writes NR31 after the period,
+    // every time; the note-on's burst and the frame writer carry none.
+    if (ch == 2 && !trigger && !preTriggered) emit(regAddr(2, 1), v.inst.length ? uint8_t(256 - std::min<int>(256, v.inst.length)) : uint8_t(0));
     if (ch == 2) updateWaveTimer(ch, f, trigger);
     v.lastPeriod = int16_t(f);
 }
@@ -1680,31 +1759,83 @@ void Driver::updateWaveTimer(int ch, uint16_t freq, bool trigger)
     }
 }
 
-void Driver::loadFrame(int ch, const Frame& f, bool trigger)
+static std::array<uint8_t, 16> frameBytes(const Frame& f)
 {
-    Voice& v = v_[size_t(ch)];
     std::array<uint8_t, 16> bytes{};
     for (int i = 0; i < 16; ++i) bytes[size_t(i)] = uint8_t((f.s[size_t(i * 2)] << 4) | (f.s[size_t(i * 2 + 1)] & 15));
-    const bool same = v.ramValid && bytes == v.ram;
-    if (model_ == Console::CGB && v.dacOn && !trigger && v.timerValid) {
-        // CGB: writable live, so stream the new frame one loop behind the
-        // read pointer -- no click, one waveform's delay (section 6.5).
-        if (!same) { v.streamData = bytes; v.streamActive = true; v.streamByte = 0; v.ram = bytes; v.ramValid = true; }
-        return;
-    }
-    if (!same || trigger) {
-        // DMG: the channel must be off to reach wave RAM. This is the click.
-        emit(regAddr(2, 0), 0x00, true);
-        v.dacOn = false;
-        if (!same) for (int i = 0; i < 16; ++i) emit(uint16_t(0xFF30 + i), bytes[size_t(i)], true);
-        v.ram = bytes; v.ramValid = true;
-    }
-    const uint8_t len = v.inst.length ? uint8_t(256 - std::min<int>(256, v.inst.length)) : 0;
-    emit(regAddr(2, 1), len);
+    return bytes;
+}
+
+/// Section 171: every frame goes out the ROM's way, at once -- the note-on,
+/// an F, a RESYNC step. A run's step waits for the sync boundary through
+/// queueFrame(). The trigger flag is history: the ROM retriggers every time.
+void Driver::loadFrame(int ch, const Frame& f, bool)
+{
+    writeWaveFrame(ch, frameBytes(f));
+}
+
+void Driver::writeWaveFrame(int ch, const std::array<uint8_t, 16>& bytes)
+{
+    Voice& v = v_[size_t(ch)];
+    // The channel must be off to reach wave RAM, on both consoles: the ROM
+    // never streams a frame behind the read pointer, it retriggers at the
+    // wave's own cycle boundary (the sync grid), which is what hides the click.
+    v.waveSyncBase = cycle_ + burst_; v.waveSyncValid = true;   // the phase word is zeroed here (0:$0784)
+    emit(regAddr(2, 0), 0x00, true);
+    v.dacOn = false;
+    for (int i = 0; i < 16; ++i) emit(uint16_t(0xFF30 + i), bytes[size_t(i)], true);
+    v.ram = bytes; v.ramValid = true; v.streamActive = false;
     emit(regAddr(2, 0), 0x80, true);
     v.dacOn = true;
-    writeEnvelope(ch, false);
-    writePeriod(ch, true);
+    // The $7E0 pre-trigger (0:$07BC): sixty-four cycles a sample, so the
+    // first fetch is at once, then the real period without a trigger bit.
+    emit(regAddr(2, 3), 0xE0, true);
+    emit(regAddr(2, 4), 0x87, true);
+    updateWaveTimer(ch, 0x7E0, true);
+    writeNr51(true);
+    writePeriod(ch, false, true);
+    v.framePending = false;
+}
+
+void Driver::queueFrame(int ch, const Frame& f)
+{
+    Voice& v = v_[size_t(ch)];
+    v.framePendingBytes = frameBytes(f); v.framePending = true;
+}
+
+/// Section 171: the ROM's check at the head of every interrupt. The phase since
+/// the last trigger, in 64-cycle units through DIV's 256-cycle ticks, is
+/// reduced modulo the sync period -- `(2048 - period) << k`, the smallest k
+/// that reaches 256 -- and a pending frame is written when the remainder is
+/// under 184 units: the handler waits `remainder / 4` DIV ticks and writes at
+/// the boundary. Returns that cycle, or 0 when this instant is not the one.
+uint64_t Driver::waveSyncDue(int ch, uint64_t at) const
+{
+    const Voice& v = v_[size_t(ch)];
+    if (!v.waveSyncValid || v.lastPeriod < 0 || at < v.waveSyncBase) return 0;
+    int s = 2048 - (int(v.lastPeriod) & 0x7FF);
+    if (s <= 0) return 0;
+    for (int k = 0; s < 256 && k < 6; ++k) s <<= 1;
+    const uint64_t divNow = at >> 8, divBase = v.waveSyncBase >> 8;
+    const uint64_t phase = (4 * (divNow - divBase)) % uint64_t(s);
+    const uint64_t rem = uint64_t(s) - phase;
+    if (rem >= 184) return 0;
+    return ((divNow + (rem >> 2)) << 8) + 40;   // the wait's end, the DIV read and NR30 = 00
+}
+
+/// Frame `idx` of the voice's slot, counted on the flat table: past the
+/// slot's frames it is the next slot's (section 171), and past the table's
+/// end nothing.
+const Frame* Driver::frameAt(int ch, int idx) const
+{
+    const Voice& v = v_[size_t(ch)];
+    if (!bank_ || idx < 0) return nullptr;
+    const int flat = waveFlatOf(int(v.waveSlot), idx);
+    if (flat >= kWaveFrames) return nullptr;
+    const Wave* w = bank_->waveAt(uint8_t(waveSlotOfFlat(flat)));
+    const int fr = waveFrameOfFlat(flat);
+    if (!w || fr >= int(w->frames.size())) return nullptr;
+    return &w->frames[size_t(fr)];
 }
 
 void Driver::kitNextChunk(int ch, std::array<uint8_t, 16>& chunk, bool& ended)
@@ -2025,7 +2156,7 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             // on top ran the wave kick's sweep off the bottom of the register
             // and wrapped it round, which is the machine-gun in `SAMESONG`.
             v.bendSpeed = 0;
-            if (pitchSpeed(v) == PitchSpeed::Drum && v.inst.type != InstrumentType::Kit) {
+            if (pitchSpeed(v) == PitchSpeed::Drum && v.inst.type != InstrumentType::Kit && v.inst.pitchRegisterUnits) {
                 // Section 99: Drum's whole pitch is the period register, and so
                 // is its slide -- a fixed number of **units** an update, not a
                 // fixed number of semitones. Measured on 9.2.L: `L vv` lands in
@@ -2064,7 +2195,8 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             // offset: what the slide aims from.
             const int32_t colFine = int32_t(tableTransposeOf(v)) * 256;
             const int32_t plainFine = int32_t(std::lround(noteOfVoice(ch) * 256.0)) - colFine - v.fineOffset;
-            const int32_t floorFine = int32_t(lowestNote(wave)) * 256;
+            // Section 169: in DRUM the lowest note is its position in the table (entry 2.31, the semitone table's 44).
+            const int32_t floorFine = drumRom(v) ? int32_t(std::lround(drumPosOf(double(lowestNote(wave)), wave) * 256.0)) : int32_t(lowestNote(wave)) * 256;
             // A table's L aims the offset at its own row's transpose (the column
             // in force is the previous row's: tableTransposeOf() skips an L
             // row); a cell's at the new note, offset zero. Both land where the
@@ -2525,8 +2657,17 @@ void Driver::setFrameStep(int ch, int step, bool live)
     uint8_t run[16]; const int len = waveRunOf(ch, run);
     const int st = step < 0 ? 0 : (step >= len ? len - 1 : step);
     v.frameStep = uint8_t(st); v.frameCount = 0;
-    v.frameIdx = uint8_t(std::min<int>(run[size_t(st)], int(w->frames.size()) - 1));
-    if (live) loadFrame(ch, w->frames[v.frameIdx], model_ == Console::DMG);
+    // Section 171: the run's step is added to the instrument's start frame,
+    // unwrapped, and a step past the slot's frames reads the next slot's.
+    v.frameIdx = uint8_t(std::min<int>(int(v.inst.frameStart) + int(run[size_t(st)]), 255));
+    static const Frame flat = [] { Frame f; f.s.fill(7); return f; }();
+    const Frame* f = frameAt(ch, int(v.frameIdx));
+    if (!f) f = &flat;
+    if (!live) return;
+    // A RESYNC step is written at its tick (2:$701B); every other run step
+    // waits for the wave's sync boundary (section 171).
+    if (v.inst.frameLoop == FrameLoop::Resync) loadFrame(ch, *f, true);
+    else queueFrame(ch, *f);
 }
 
 void Driver::stepTable(int ch)
@@ -2784,9 +2925,10 @@ void Driver::tick(int ch)
         else if (++v.frameCount >= v.inst.frameAdvance) {
             v.frameCount = 0;
             const Wave* w = bank_ ? bank_->waveAt(v.waveSlot) : nullptr;
-            if (w && w->frames.size() > 1) {
+            if (w && !w->frames.empty()) {
                 uint8_t run[16]; const int len = waveRunOf(ch, run);
-                if (len > 1) {
+                // Section 171: a ONCE run of one frame still steps, to the silence.
+                if (len > 1 || v.inst.frameLoop == FrameLoop::Once) {
                     // Loop and PingPong turn at the run's own loop step, not at
                     // its first frame (section 65).
                     const int loop = std::clamp<int>(v.inst.frameLoopStep, 0, len - 1);
@@ -2798,11 +2940,12 @@ void Driver::tick(int ch)
                             // its last frame -- one step past the end LSDj writes a
                             // flat wave and the channel goes quiet.
                             if (next >= len) {
-                                if (!v.frameSilenced) { v.frameSilenced = true; Frame flat; flat.s.fill(7); loadFrame(ch, flat, false); }
+                                if (!v.frameSilenced) { v.frameSilenced = true; Frame flat; flat.s.fill(7); queueFrame(ch, flat); }   // section 171: through the sync grid
                                 next = len - 1;
                             }
                             break;
-                        case FrameLoop::PingPong: if (next >= len) { next = len - 2 < loop ? loop : len - 2; v.frameDir = -1; } else if (next < loop) { next = loop + 1 < len ? loop + 1 : loop; v.frameDir = 1; } break;
+                        case FrameLoop::PingPong:
+                        case FrameLoop::Resync:   if (next >= len) { next = len - 2 < loop ? loop : len - 2; v.frameDir = -1; } else if (next < loop) { next = loop + 1 < len ? loop + 1 : loop; v.frameDir = 1; } break;
                     }
                     if (next != int(v.frameStep)) setFrameStep(ch, next, true);
                 }
@@ -3023,7 +3166,11 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
     // a tracker's do -- bends and controllers never do, and tracker cells
     // already sit on ticks.
     size_t ei = 0;
-    auto moveTo = [&](uint64_t c) { if (c != cycle_) { cycle_ = c; burst_ = 0; } };
+    // Section 171: the clock only moves forward. A wave frame's wait (the ROM's
+    // busy-wait to the sync boundary) puts the tick and the pitch work of that
+    // interrupt behind the write, so a tick landing on such an instant keeps
+    // the later cycle rather than stepping back to its own.
+    auto moveTo = [&](uint64_t c) { if (c > cycle_ + burst_) { cycle_ = c; burst_ = 0; } };
     auto offOf = [&](uint32_t o) { return numSamples ? std::min<uint32_t>(o, numSamples - 1) : 0u; };
     // Section 160: the instants are the ROM's grid, each run at the first
     // frame at or after its cycle -- the frame the Clock lands a tick on, so
@@ -3047,6 +3194,14 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
             if (at > cycle_ + burst_) moveTo(at);
             for (int ch = 0; ch < 4; ++ch) {
                 Voice& v = v_[size_t(ch)];
+                // Section 171: a frame the tick has stepped to is written at the
+                // wave's sync boundary, when the ROM's check at the head of the
+                // interrupt finds one before the next; the handler's wait puts
+                // its own pitch work, and the tick, after the write.
+                if (ch == 2 && v.active && v.framePending) {
+                    const uint64_t due = waveSyncDue(ch, at);
+                    if (due) { if (due > cycle_ + burst_) moveTo(due); writeWaveFrame(ch, v.framePendingBytes); }
+                }
                 // Section 163: the refresh after a note -- the finetune lands
                 // here, at the first instant after the note's own writes.
                 if (v.active && v.fineTunePending) { v.fineTunePending = false; if (v.pitchClockOn) v.pitchWrite = true; else writePeriod(ch, false); }

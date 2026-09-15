@@ -203,6 +203,13 @@ public:
     /// The lowest note the channel has a period for (section 71).
     static int  lowestNote(bool waveChannel);
     static double periodRealForNote(double note, bool waveChannel);   ///< unrounded, for Drum
+    /// Section 169: 9.x DRUM pitch. One entry of the ROM's linear period table
+    /// (108 entries, 0 to 2044), a note's position in it (entry and fraction),
+    /// and the period a position in 1/256 entries reads out, rounded as the ROM
+    /// rounds it. The table is generated from its rule, never stored.
+    static int    drumEntry(int k);
+    static double drumPosOf(double note, bool waveChannel);
+    static int    drumPeriod(int32_t pos256);
     /// P's step per pitch update in 1/256 of a semitone, for a magnitude 0-127
     /// (docs/LSDJ_PARITY.md section 5). Public so a test can pin the table.
     static int  bendStepFor(int magnitude);
@@ -387,6 +394,13 @@ private:
         bool     frameFresh = false;
         std::array<uint8_t, 16> ram{};
         bool     ramValid = false;
+        /// Section 171: a frame the tick has stepped to, waiting for the wave's
+        /// sync boundary; `waveSyncBase` is the cycle of the last wave trigger,
+        /// where the ROM's phase word was zeroed.
+        bool     framePending = false;
+        std::array<uint8_t, 16> framePendingBytes{};
+        uint64_t waveSyncBase = 0;
+        bool     waveSyncValid = false;
         // kit
         /// Section 122: this run was started by an `A`, so it advances one row
         /// a tick whatever the instrument's table mode says. Cleared when the
@@ -482,7 +496,7 @@ private:
     void beginRelease(int ch);                ///< the Release note-off mode
     void stepRelease(int ch);                 ///< WAV/KIT: 100 -> 50 -> 25 -> mute, a tick apart
     void latch(int ch);
-    void writePeriod(int ch, bool trigger);
+    void writePeriod(int ch, bool trigger, bool preTriggered = false);
     /// NRx2 (or NR32 on the wave channel) from the running state, with the
     /// trigger a note-on, R or an E that moves the envelope needs. Every
     /// other level change goes through setLevel() instead (section 26).
@@ -575,6 +589,8 @@ private:
     /// around the note's own period write and only when the table started with
     /// that note; the update after the trigger picks the column up.
     bool plainTrigger_ = false;
+    /// Section 169: a DRUM note-on writes its table entry without the fraction.
+    bool plainDrum_ = false;
     /// Section 125: a note-on's trigger carries the **plain** note -- the
     /// vibrato reaches the channel on the next pitch update, as the table's
     /// transpose column does (section 84). Scoped to writePeriod's trigger.
@@ -619,12 +635,19 @@ private:
     int     tableTransposeOf(const Voice& v) const;   ///< the table row's transpose column in force, else 0 (sections 7, 45)
     int     vibratoFine(const Voice& v) const;        ///< 1/256 semitones, from the phase
     double  vibratoDrumUnits(const Voice& v) const;   ///< the same swing in period units (Drum)
+    bool    drumRom(const Voice& v) const;             ///< section 169: the ROM's table machine applies
     /// One step of the instrument's own envelope, run in software off the
     /// pitch clock at the measured rate (docs/LSDJ_PARITY.md section 7).
     void    stepSoftEnvelope(int ch);
     int32_t slideResidual(const Voice& v) const;      ///< what is left of the slide, 1/256 semitones
     int tableRowTransposeOf(const Voice& v) const;    ///< the live run's current row's own column (section 152)
     void loadFrame(int ch, const bank::Frame& f, bool trigger);
+    /// Section 171: the ROM's one wave RAM writer -- off, the bytes, on, the
+    /// `$7E0` pre-trigger, the pan, the period -- and the sync grid around it.
+    void writeWaveFrame(int ch, const std::array<uint8_t, 16>& bytes);
+    void queueFrame(int ch, const bank::Frame& f);            ///< hold a frame for the next sync boundary
+    uint64_t waveSyncDue(int ch, uint64_t at) const;          ///< the cycle a pending frame is written at, 0 if not from this instant
+    const bank::Frame* frameAt(int ch, int idx) const;        ///< frame `idx` of the voice's slot, past its end the next slot's
     void updateWaveTimer(int ch, uint16_t freq, bool trigger);
     void scheduleStreams(uint64_t cycleStart, uint64_t cycleEnd);
     void kitNextChunk(int ch, std::array<uint8_t, 16>& chunk, bool& ended);

@@ -2066,7 +2066,7 @@ TEST_CASE("a slide holds its aim through the table and stops at the bottom of th
     for (int b = 0; b < 900 && periods.size() < 400; ++b)
         for (const auto& x : r.block(b == 0 ? std::vector<NoteEvent>{ e } : std::vector<NoteEvent>{}, 128)) {
             if (x.addr == 0xFF1D) lo = x.value;
-            else if (x.addr == 0xFF1E) {
+            else if (x.addr == 0xFF1E && !(x.value & 0x80)) {      // section 171: the $7E0 pre-trigger is not a pitch
                 const int per = ((x.value & 7) << 8) | lo;
                 if (periods.empty() || per != periods.back()) periods.push_back(per);
             }
@@ -2314,7 +2314,9 @@ TEST_CASE("a kick played twice never plays its raw pitch on its own", "[driver][
         auto hit = [&](std::vector<NoteEvent> ev) {
             const auto w = r.block(std::move(ev), 512);
             std::vector<int> periods;
-            for (const auto& x : w) if (x.addr == 0xFF1D) periods.push_back(x.value);
+            // Section 171: the wave's $7E0 pre-trigger pair is not a pitch write.
+            for (size_t k = 0; k < w.size(); ++k)
+                if (w[k].addr == 0xFF1D && !(k + 1 < w.size() && w[k + 1].addr == 0xFF1E && (w[k + 1].value & 0x80))) periods.push_back(w[k].value);
             return periods;
         };
         const auto first = hit({ Rig::on(2, 108, 100) });
@@ -3517,6 +3519,83 @@ TEST_CASE("a slide replaces a running bend, and in Drum it walks the register", 
     REQUIRE(late > 2);
     for (int k = late; k < int(d.size()); ++k) { INFO("late step " << k); CHECK(std::abs(d[size_t(k)] - d[size_t(late)]) <= 1); }
     CHECK(d[size_t(late)] < d[0]);                       // and slower than the bend was
+}
+
+TEST_CASE("a wave frame is written at the wave's sync boundary, through the ROM's writer", "[driver][wave]")
+{
+    // Section 171. A run stepping every tick at 163 BPM on a note whose period
+    // is $797: the sync period is four wave cycles, 26880 cycles, and each
+    // frame lands within a DIV tick and a write's worth of a boundary counted
+    // from the trigger before it -- never on the tick itself.
+    Rig r;
+    r.tickHz = 163.0 * 24.0 / 60.0;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    auto& w = r.bank.waves[0];
+    w.used = true; w.frames.clear();
+    for (int f = 0; f < 16; ++f) { bank::Frame fr; fr.s.fill(uint8_t(f)); w.frames.push_back(fr); }
+    auto& i = r.bank.instruments[1];
+    i = Instrument::defaults(InstrumentType::Wave, "Run");
+    i.used = true; i.wave = 1; i.frameLength = 4; i.frameAdvance = 1; i.frameLoop = FrameLoop::Loop; i.vib.depth = 0;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(2, p);
+    std::vector<RegWrite> all;
+    auto collect = [&](const std::vector<RegWrite>& ws) { all.insert(all.end(), ws.begin(), ws.end()); };
+    collect(r.block({ cellOn(2, 75, 2) }, 480));                      // D#5: wave period $797
+    for (int k = 0; k < 40; ++k) collect(r.block({}, 480));
+    // The writer's order after the bytes: on, the $7E0 pre-trigger, the pan, the period.
+    std::vector<uint64_t> offs;
+    for (size_t k = 0; k + 6 < all.size(); ++k) {
+        if (all[k].addr != 0xFF1A || all[k].value != 0x00) continue;
+        offs.push_back(all[k].cycle);
+        size_t j = k + 1;
+        while (j < all.size() && all[j].addr >= 0xFF30 && all[j].addr <= 0xFF3F) ++j;
+        REQUIRE(j + 5 < all.size());
+        CHECK(all[j].addr == 0xFF1A); CHECK(all[j].value == 0x80);
+        CHECK(all[j + 1].addr == 0xFF1D); CHECK(all[j + 1].value == 0xE0);
+        CHECK(all[j + 2].addr == 0xFF1E); CHECK(all[j + 2].value == 0x87);
+        CHECK(all[j + 3].addr == 0xFF25);
+        CHECK(all[j + 4].addr == 0xFF1D); CHECK(all[j + 4].value == 0x97);
+        CHECK(all[j + 5].addr == 0xFF1E); CHECK(all[j + 5].value == 0x07);
+    }
+    REQUIRE(offs.size() >= 8);
+    const uint64_t tick = uint64_t(4194304.0 * 60.0 / (24.0 * 163.0));
+    for (size_t k = 1; k < offs.size(); ++k) {
+        const uint64_t gap = offs[k] - offs[k - 1];
+        INFO("frame " << k << " gap " << gap);
+        const uint64_t m = gap % 26880;                    // on the grid, within DIV's 256-cycle tick and the writes
+        CHECK((m < 400 || m > 26880 - 300));
+        CHECK(gap >= 26880); CHECK(gap <= tick + 26880);   // never earlier than its tick, never a period later
+    }
+}
+
+TEST_CASE("RESYNC writes each frame at its tick, and a run starts at the instrument's start frame", "[driver][wave]")
+{
+    // Section 171: PLAY = 4 retriggers at the tick, no boundary; and a run of
+    // eight from start frame 4 plays 4 6 8 A D F, then the next slot's 1 and 3.
+    Rig r;
+    r.tickHz = 100.0;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    for (int slot = 0; slot < 2; ++slot) {
+        auto& w = r.bank.waves[size_t(slot)];
+        w.used = true; w.frames.clear();
+        for (int f = 0; f < 16; ++f) { bank::Frame fr; fr.s.fill(uint8_t(f)); fr.s[0] = uint8_t(slot); w.frames.push_back(fr); }
+    }
+    auto& i = r.bank.instruments[1];
+    i = Instrument::defaults(InstrumentType::Wave, "Resync");
+    i.used = true; i.wave = 1; i.frameLength = 8; i.frameAdvance = 2; i.frameLoop = FrameLoop::Resync; i.frameStart = 4; i.vib.depth = 0;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(2, p);
+    std::vector<RegWrite> all;
+    auto collect = [&](const std::vector<RegWrite>& ws) { all.insert(all.end(), ws.begin(), ws.end()); };
+    collect(r.block({ cellOn(2, 60, 2) }, 480));
+    for (int k = 0; k < 40; ++k) collect(r.block({}, 480));
+    std::vector<int> w0; std::vector<uint64_t> at;
+    for (size_t k = 0; k + 1 < all.size(); ++k)
+        if (all[k].addr == 0xFF1A && all[k].value == 0x00 && all[k + 1].addr == 0xFF30) { w0.push_back(all[k + 1].value); at.push_back(all[k].cycle); }
+    REQUIRE(w0.size() >= 12);
+    // W0 = slot << 4 | frame: slot 1's frames 4 6 8 A D F, slot 2's 1 3, then back down.
+    const int want[12] = { 0x04, 0x06, 0x08, 0x0A, 0x0D, 0x0F, 0x11, 0x13, 0x11, 0x0F, 0x0D, 0x0A };
+    for (int k = 0; k < 12; ++k) { INFO("frame " << k); CHECK(w0[size_t(k)] == want[k]); }
+    const uint64_t two = uint64_t(2.0 * 4194304.0 / 100.0);
+    for (size_t k = 2; k < at.size(); ++k) { INFO("step " << k); CHECK(at[k] - at[k - 1] <= two + 400); CHECK(at[k] - at[k - 1] + 400 >= two); }
 }
 
 TEST_CASE("a table's volume column on the wave channel is the NR32 level", "[driver][wave]")

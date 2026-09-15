@@ -43,7 +43,12 @@ design-log section the change touches. Update this file at the end of every chan
   table's position is the instrument's across the channels; §167: `R`'s nibble moves the
   hardware, `E` and a table's volume column walk relative to the machine's level
   (`Voice::lsdjLevel`); §168: the interrupt runs pitch, fast retrigger, envelope, and the
-  roll's trigger has no length bit. `CHANGES.md` has the round. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
+  roll's trigger has no length bit; §169: DRUM pitch is the ROM's linear table with a per-note
+  fraction (`drumEntry`, `drumPosOf`, `drumPeriod`; the note-on drops the fraction); §170: the
+  wave `FINETUNE` (byte 12, `LsdjModel::waveFineTuneByte`); §171: the wave frame writer -- the
+  `$7E0` pre-trigger sequence, the sync grid ("silky wave": `waveSyncDue`, `writeWaveFrame`,
+  `queueFrame`, the driver's clock monotonic), the start frame (`Instrument::frameStart`),
+  `RESYNC` (`FrameLoop::Resync`); the CGB frame streaming is gone. `CHANGES.md` has the round. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
   `probe/raw.py TAG [ch] [n]` prints the first raw writes of both sides. 287 core tests, 11
   plugin checks.
 - The probe rig for this campaign lives in the container at `/root/lsdj/probe/`: `vs_matrix.py`
@@ -53,7 +58,8 @@ design-log section the change touches. Update this file at the end of every chan
   to a work-RAM range with the pc), `probe_cmp.py` (the batch compare), `rawwin.py NAME CH T0
   T1` (both sides' raw writes in a time window), `songvar.py NAME CH T1 --set OFF=VAL` (the ROM
   alone on a patched song), `tbl.py NAME T...` (a song's tables; TALLOC is a byte per table).
-  `lsdjref_pc --watch` wants `--keys 180` and 400 frames or more.
+  `lsdjref_pc --watch` wants `--keys 180` and 400 frames or more. `frtimes.py TAG` prints both
+  sides' wave frame writes with the frame each names (the `Fr_*` cases tag sixteen frames).
 
 ## Done (2026-09-09)
 
@@ -916,6 +922,18 @@ design-log section the change touches. Update this file at the end of every chan
   the ROM (an `SS_ch0` replica with `$CBC1`/`$C956` watched would settle it); `EGOFLEX`'s PU1
   writes one extra period at tick time when an `L` row applies. The fold (above) still shows as
   a first-batch difference in `AtblW_L`, `ENV_R`, `FT40_R01`.
+- **The ROM's CPU cost, measured and not modelled** (§171's probes, `CASTSHDW`/`READROOM`/
+  `REACTION`): (1) in a four-channel song the note-on tick reaches the wave's table row 0 some
+  3.5 ms after the wave trigger (`$C2D4` watched: +3.5 ms in `READROOM`, +3.7 in `CASTSHDW`,
+  +1.1 in the one-channel replica), past the next instant, so a row-0 `P` on a note-on takes its
+  first step one instant later than ChipBoy's and the `L` that follows finds the pitch one step
+  higher (`CASTSHDW`'s kick: `$606` against `$5EB` after the handover; the replica `Wv_cast10`
+  is exact). (2) A frame's busy-wait near the window's edge runs the handler past the next timer
+  overflow; the lost interrupt is replayed by the VBlank budget and the ROM's tick clock slips
+  one instant for good (`REACTION`'s pulses: +2.8 ms at the second note, +7 ms at 2.6 s, +35 ms
+  at 8 s -- an effective tempo 0.4 % under 280). A DAW-synced ChipBoy should not drift, so this
+  is left as the ROM's own defect. (3) A `K` on a wave note writes `NR31` in the kill; ChipBoy's
+  rides the refresh. The Instrument tab has no field for `frameStart` (imported songs only).
 - **Kits are not the ROM's** (task open, `LSDJ_COMMAND_MATRIX.md` §11.8): the importer indexes
   kits by their position in the ROM's list where the ROM uses bank = kit + 8 (gaps break
   `EGOFLEX`'s `18`-`1A` and `READROOM`'s `1C`-`1F`), byte 3 and 11 are both lengths in 16-byte

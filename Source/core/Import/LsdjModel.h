@@ -97,6 +97,7 @@ struct LsdjModel {
     /// formats 7 and 8 keep it in byte 3 and every format from 9 in byte 2,
     /// while the synth moves the other way at format 17.
     int            waveRepeatByte;
+    int            waveFineTuneByte; ///< the wave instrument's FINETUNE, a signed byte of 1/256 semitones (section 170); -1 when unread
     int            waveOctave;       ///< semitones added to a wave note (section 45)
     bool           pu2Transpose;     ///< instrument byte 2 applies on PU2 (section 49)
     int            noisePitchByte;   ///< the noise instrument byte holding PITCH (0 FREE, else SAFE); -1 when the version has none (section 86)

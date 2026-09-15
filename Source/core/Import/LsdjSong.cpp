@@ -469,6 +469,12 @@ struct Reader {
                 // off the synth byte was right only for formats 9 to 15.
                 const int loopPos = b[size_t(m.waveRepeatByte == 3 ? 3 : 2)] & 15;
                 o.wave = uint8_t(waveSlotFor(synth));
+                // Section 171: on the 9.x layout byte 3 is the frame index whole,
+                // synth above and the start frame below; the ROM adds the run's
+                // steps to it unwrapped, and in MANUAL it is the frame that plays.
+                o.frameStart = uint8_t(m.waveByte == 3 ? (wb & 15) : 0);
+                // Section 170: the wave FINETUNE, a signed byte of 1/256 semitones.
+                if (m.waveFineTuneByte >= 0) o.fineTune = b[size_t(m.waveFineTuneByte)];
                 o.pitchSpeed = m.pitchLaw == PitchLaw::Register ? bank::PitchSpeed::Drum : pitchSpeedOf(b[5]);
                 o.pitchRegisterUnits = m.pitchLaw == PitchLaw::Register;      // section 88
                 // docs/LSDJ_VERSIONS.md: a wave instrument walks a run of frames
@@ -487,17 +493,20 @@ struct Reader {
                     const int len = 16 - int(b[10] & 15);
                     o.frameLength = uint8_t(len);
                     o.frameLoopStep = uint8_t(std::max(0, len - (16 - loopPos)));
-                    switch (b[9] & 3) {
+                    // Section 171: PLAY is the whole byte -- 4 is 9.2.E's RESYNC,
+                    // ping-pong with every frame written at its tick.
+                    switch (b[9]) {
                         case 0: o.frameAdvance = 0; o.frameLoop = bank::FrameLoop::Loop; break;      // MANUAL: only an F moves it
                         case 1: o.frameLoop = bank::FrameLoop::Once; break;
                         case 3: o.frameLoop = bank::FrameLoop::PingPong; break;
+                        case 4: o.frameLoop = bank::FrameLoop::Resync; break;
                         default: o.frameLoop = bank::FrameLoop::Loop; break;
                     }
                     // Section 91: SPEED is a **signed** byte and the run advances
                     // every `speed + 4` ticks, so FD is one tick and not 255.
                     // Every wave instrument in the user's SAMESONG stores a
                     // negative speed, which read unsigned froze the run.
-                    if (b[9] & 3) o.frameAdvance = uint8_t(std::clamp(signedByte(b[11]) + 4, 1, 255));
+                    if (b[9]) o.frameAdvance = uint8_t(std::clamp(signedByte(b[11]) + 4, 1, 255));
                 }
             } else if (t == 2) {
                 if (!kitInstrument(i, b, o, name)) return false;

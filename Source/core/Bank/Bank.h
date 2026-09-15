@@ -45,7 +45,7 @@ enum class TableMode : uint8_t { Tick = 0, Step = 1 };
 /// A note that arrives over a held one: Legato changes the pitch only (a bare
 /// note), Retrig starts the instrument again (section 8).
 enum class Overlap : uint8_t { Legato = 0, Retrig = 1 };
-enum class FrameLoop : uint8_t { Loop = 0, Once = 1, PingPong = 2 };
+enum class FrameLoop : uint8_t { Loop = 0, Once = 1, PingPong = 2, Resync = 3 };   ///< Resync: ping-pong, each frame written at its tick (section 171)
 /// How S and P move the noise channel (docs/COMMANDS_AND_TEMPO.md section 66):
 /// Notes walks the map by note, Register subtracts from NR43 nibble by nibble.
 enum class NoiseSweepDomain : uint8_t { Notes = 0, Register = 1 };
@@ -227,8 +227,9 @@ struct InstrumentCore {
     /// Section 112: LSDj's byte 11, a detune of `fineTune / 256` of a semitone
     /// -- **down** on PU1 and **up** on PU2, so a pair of pulses beat against
     /// each other. A cell's `F` replaces it for the note in progress; the next
-    /// note-on brings it back. Pulse only: the byte is SPEED on a wave
-    /// instrument (section 65) and nothing on noise.
+    /// note-on brings it back. On a **wave** instrument it is LSDj's byte 12,
+    /// a signed byte of 1/256 semitones with no channel sign (section 170);
+    /// nothing on noise.
     uint8_t  fineTune = 0;
     /// Section 88: `P` bends the **period register** by its signed byte of
     /// units a pitch clock, exactly, rather than by a step from the semitone
@@ -246,6 +247,10 @@ struct InstrumentCore {
     uint8_t  frameLoopStep = 0;
     uint8_t  frameAdvance = 0;       ///< ticks per frame, 0 holds
     FrameLoop frameLoop = FrameLoop::Loop;
+    /// Section 171: the frame the run starts at (LSDj's byte 3 low nibble; in
+    /// MANUAL the frame that plays). The run's steps are added to it unwrapped,
+    /// so a run past the slot's sixteenth frame reads the next slot's.
+    uint8_t  frameStart = 0;
     uint8_t  waveLevel = 3;          ///< 0 mute, 1 25%, 2 50%, 3 100%
     // kit
     uint8_t  kit = 1;                ///< kit slot 1-32

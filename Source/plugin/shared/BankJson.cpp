@@ -109,6 +109,7 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     if (i.noiseLsdjMap) o->setProperty("noiseLsdjMap", true);          // section 81
     if (i.noisePitch != NoisePitch::Free) o->setProperty("noisePitch", int(i.noisePitch));   // section 86
     o->setProperty("wave", int(i.wave)); o->setProperty("frameAdvance", int(i.frameAdvance)); o->setProperty("frameLoop", int(i.frameLoop)); o->setProperty("waveLevel", int(i.waveLevel));
+    if (i.frameStart) o->setProperty("frameStart", int(i.frameStart));   // section 171
     o->setProperty("kit", int(i.kit)); o->setProperty("kitLoop", int(i.kitLoop));
     o->setProperty("lfsr7", i.lfsr7); o->setProperty("noiseManual", i.noiseManual); o->setProperty("noiseShift", int(i.noiseShift)); o->setProperty("noiseDivisor", int(i.noiseDivisor)); o->setProperty("noiseSweep", int(i.noiseSweep));
     return var(o);
@@ -182,7 +183,8 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.sweepRate = uint8_t(std::clamp(getOr(o, "sweepRate", 0), 0, 7)); i.sweepDown = bool(o->getProperty("sweepDown")); i.sweepShift = uint8_t(std::clamp(getOr(o, "sweepShift", 0), 0, 7));
     i.noiseLsdjMap = bool(o->getProperty("noiseLsdjMap"));             // section 81
     i.noisePitch = NoisePitch(std::clamp(getOr(o, "noisePitch", 0), 0, 2));                 // section 86
-    i.wave = uint8_t(std::clamp(getOr(o, "wave", 1), 1, kWaveSlots));   /* section 103 */ i.frameAdvance = uint8_t(std::clamp(getOr(o, "frameAdvance", 0), 0, 15)); i.frameLoop = FrameLoop(std::clamp(getOr(o, "frameLoop", 0), 0, 2)); i.waveLevel = uint8_t(std::clamp(getOr(o, "waveLevel", 3), 0, 3));
+    i.wave = uint8_t(std::clamp(getOr(o, "wave", 1), 1, kWaveSlots));   /* section 103 */ i.frameAdvance = uint8_t(std::clamp(getOr(o, "frameAdvance", 0), 0, 15)); i.frameLoop = FrameLoop(std::clamp(getOr(o, "frameLoop", 0), 0, 3)); i.waveLevel = uint8_t(std::clamp(getOr(o, "waveLevel", 3), 0, 3));
+    i.frameStart = uint8_t(std::clamp(getOr(o, "frameStart", 0), 0, 15));   // section 171
     i.kit = uint8_t(std::clamp(getOr(o, "kit", 1), 1, 32)); i.kitLoop = KitLoop(std::clamp(getOr(o, "kitLoop", 0), 0, 2));
     i.lfsr7 = bool(o->getProperty("lfsr7")); i.noiseManual = bool(o->getProperty("noiseManual")); i.noiseShift = uint8_t(std::clamp(getOr(o, "noiseShift", 5), 0, 13)); i.noiseDivisor = uint8_t(std::clamp(getOr(o, "noiseDivisor", 1), 0, 7)); i.noiseSweep = int8_t(std::clamp(getOr(o, "noiseSweep", 0), -7, 7));
 }

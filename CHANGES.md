@@ -28,7 +28,7 @@ intended product rather than a progress report.
 
 ### 2026-09-15 -- the third parity campaign: 9.4.2's code, and what it corrected
 
-`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§168. The audit target is
+`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§171. The audit target is
 LSDj 9.4.2 now, read as code: the dispatcher, every handler's address, the work RAM the commands
 share, the order a phrase step and a table tick run their columns, and a two-sided probe rig that
 builds a song, traces the ROM and ChipBoy and reports the first register batch that differs (200
@@ -108,11 +108,41 @@ cases over nineteen letters). What differed, and what changed:
   no length bit** (§168): `R 8y`'s trigger lands before the envelope step of the same instant
   (`SAMESONG`'s hats write `C8` then step to B) and writes `NRx4 = $80 | period`, where ChipBoy
   kept the instrument's length bit.
+- **DRUM pitch is the ROM's linear table with a per-note fraction** (§169, correcting §88's
+  19.11-units-a-semitone line and §99's period-unit slide). The table is 108 entries of
+  `round(k · 2044 / 107)`; a note is an entry and a fraction (the boot tables at `$CD28`/`$CD94`,
+  now computed), every effect moves the same 1/256-entry word FAST mode uses, and 0:`$1B28`
+  rounds the interpolation on the product's low byte. The note-on writes the entry **without**
+  the fraction (`$7E9` for note `55`, `$7F0` at the refresh) -- §6.13's "half a step in" was never
+  a step. `CASTSHDW`'s and `READROOM`'s wave kicks now walk the ROM's periods unit for unit; the
+  swept drums of every 9.x song open on the ROM's value. The period-unit machinery stays for
+  kits and the register-unit formats.
+- **The wave `FINETUNE` is read** (§170): byte 12, a signed 1/256 of a semitone the refresh
+  adds; `CASTSHDW`'s `0E`, `REACTION`'s `05`/`14` and `DELIVERY`'s `0A` were played untuned.
+- **The wave frame writer** (§171). Every wave RAM write goes out the ROM's way: off, the
+  bytes, on, the `$7E0` pre-trigger, the pan, then the period without a trigger bit; the
+  note-on writes `NR32` first and `NR31` rides the refresh. A synth run's frame is written at
+  the wave's **sync boundary** -- `2^k` cycles of the wave, at least 16384 cycles, from the last
+  trigger, at the first instant that finds one before the next ("silky wave") -- and the
+  instant's pitch work and a tick on that instant follow the write, so the driver's clock now
+  only moves forward. That is what made ChipBoy's synth runs rougher than LSDj's: the frame
+  landed on the tick, wherever the wave was. The run starts at byte 3's low nibble
+  (`Instrument::frameStart`; `DELIVERY`'s `0F` plays frame `$33`), steps past the slot read the
+  next slot, a one-frame `ONCE` still steps to the silence, and `PLAY` = 4 is `RESYNC`
+  (`FrameLoop::Resync`: ping-pong written at the tick; `REACTION`'s `0C`, `READROOM`'s `02`,
+  imported as `MANUAL` before). The CGB streaming path of section 6.5 is gone for frames -- the
+  ROM never streams -- and stays for kits.
 
 Not modelled, from the same reading: the ROM multiplies a roll's period by instrument byte 8 + 1
 (no ChipBoy field; no song of the save sets it); `R`'s restart of stage 1 indexes the step table
 with the reload it already holds; `Z` draws from an LCG (`0:$33EB`) whose state the editor's own
-code advances, so its sequence is not reproducible from the song.
+code advances, so its sequence is not reproducible from the song. A wave speed of `FC` (a step at the
+note's own tick, then every 256) and `PLAY` = 5 are not modelled either. Two timing effects of the
+ROM's own CPU cost are measured and left (`docs/HANDOFF.md`): in a four-channel song the note-on
+tick reaches the wave's table row 0 about 3.5 ms after the trigger, past the next instant, so a
+row-0 `P` starts one instant later than in a one-channel probe; and a frame's busy-wait can lose a
+timer interrupt that the VBlank budget replays, slipping the ROM's whole tick clock by an instant
+(`REACTION`: 2.8 ms at its second note, 35 ms by eight seconds).
 
 Left as measured (§147): the fold -- the ROM triggers on the instrument's values and lets a table's
 row 0, a cell's `R` or `S` land a millisecond later as their own writes.

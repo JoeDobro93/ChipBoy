@@ -665,6 +665,28 @@ TEST_CASE("the song's own transpose is read and added to every chain row", "[lsd
     CHECK(told);
 }
 
+TEST_CASE("a 9.x wave instrument brings its start frame, its FINETUNE and the RESYNC play mode", "[lsdj]")
+{
+    // Sections 170 and 171: byte 3 is the frame index whole, byte 12 the
+    // FINETUNE (a signed byte of 1/256 semitones), byte 9 = 4 is RESYNC.
+    auto song = blankSong(22);
+    song[kInstAlloc + 0] = 1;
+    uint8_t* i0 = song.data() + kInst;
+    i0[0] = 1; i0[1] = 0x20; i0[2] = 0x0F; i0[3] = 0x23; i0[7] = 3; i0[9] = 4; i0[10] = 0x08; i0[11] = 0xFE; i0[12] = 0xF0;
+    song[kPhraseAlloc] |= 1; song[kNotes] = 60 - 35; song[kPhraseInst] = 0;
+    song[kChainPhrases] = 0; song[kRows + 0] = 0xFF; song[kRows + 1] = 0xFF; song[kRows + 2] = 0; song[kRows + 3] = 0xFF;
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes));
+    const auto& w = bank->instruments[0];
+    CHECK(int(w.frameStart) == 3);
+    CHECK(int(w.fineTune) == 0xF0);                                   // -16/256 of a semitone, read signed by the driver
+    CHECK(w.frameLoop == bank::FrameLoop::Resync);
+    CHECK(int(w.frameLength) == 8);
+    CHECK(int(w.frameAdvance) == 2);                                   // FE + 4
+    CHECK(int(bank->waves[size_t(w.wave - 1)].frames[0].s[0]) == 0);  // synth 2 is blank in this song, the slot exists
+}
+
 TEST_CASE("the wave instrument's synth comes from byte 2 before 9 and REPEAT from its own", "[lsdj]")
 {
     // Section 60: the synth is byte 2 up to format 15 and byte 3 from 17.
