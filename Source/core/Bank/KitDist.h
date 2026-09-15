@@ -22,9 +22,10 @@ enum class KitDist : uint8_t {
     Soft,   ///< half slope outside a knee four either side of the middle
     Fold,   ///< the sum mirrored at 0 and 15
     Fold2,  ///< the mirror with twice the slope outside
-    Wrap    ///< `(s - 8) & 15` -- the sum wraps round
+    Wrap,   ///< `(s - 8) & 15` -- the sum wraps round
+    Raw     ///< section 172: LSDj's "raw memory" page, a 256-byte table the kit carries
 };
-constexpr int kKitDistCount = 5;
+constexpr int kKitDistCount = 6;
 
 /// One entry of LSDj's table: `row` indexes it by 16, `col` by 1. Only `Fold2`
 /// tells the two apart.
@@ -46,6 +47,7 @@ inline int kitDistEntry(KitDist mode, int row, int col)
             const int h = k <= 4 ? k : (k >= 13 ? 8 : (half > 7 ? 7 : half));
             return clamp(s >= 8 ? 8 + h : 8 - h);
         }
+        case KitDist::Raw: break;   // section 172: a table of its own, kitMixByte()
     }
     return clamp(s);
 }
@@ -59,6 +61,23 @@ inline uint8_t kitMix(KitDist mode, int index, int first, int second)
     return uint8_t((index & 1) == 0 ? kitDistEntry(mode, b, a) : kitDistEntry(mode, a, b));
 }
 
+/// Section 172: one mixed **byte** through a curve, as the ROM's table does it
+/// -- the high nibble from row b, column a, the low from row a, column b.
+inline uint8_t kitMixByteCurve(KitDist mode, uint8_t a, uint8_t b)
+{
+    return uint8_t((kitMix(mode, 0, a >> 4, b >> 4) << 4) | kitMix(mode, 1, a & 15, b & 15));
+}
+
+/// Section 172: one mixed byte through a raw 256-byte page, exactly as
+/// `$D480` computes it: `swap(T[bh * 16 + ah]) + T[al * 16 + bl]`, eight bits
+/// with the carries left in.
+inline uint8_t kitMixRaw(const uint8_t* table, uint8_t a, uint8_t b)
+{
+    const uint8_t hi = table[((b >> 4) << 4) | (a >> 4)];
+    const uint8_t sw = uint8_t((hi << 4) | (hi >> 4));
+    return uint8_t(sw + table[((a & 15) << 4) | (b & 15)]);
+}
+
 /// The name shown in the editor and written to a bank.
 inline const char* kitDistName(KitDist m)
 {
@@ -68,6 +87,7 @@ inline const char* kitDistName(KitDist m)
         case KitDist::Fold:  return "fold";
         case KitDist::Fold2: return "fold2";
         case KitDist::Wrap:  return "wrap";
+        case KitDist::Raw:   return "raw";
     }
     return "clip";
 }

@@ -957,7 +957,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         case InstrumentType::Wave: {
             // waveAt, not wave: every one of the sixteen slots holds frames and
             // sounds, drawn or not, because the bank is one flat table (section 103).
-            v.frameCount = 0; v.frameDir = 1; v.frameFresh = true; v.frameSilenced = false; v.kitOn = false; v.streamActive = false;
+            v.frameCount = 0; v.frameDir = 1; v.frameFresh = true; v.frameSilenced = false; v.kitOn = false;
             v.framePending = false;
             // The run starts at its first step, the instrument's start frame
             // (sections 65, 171); startVoice put the voice there, so an F on
@@ -971,16 +971,17 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         }
         case InstrumentType::Kit: {
             const Kit* kit = bank_ ? bank_->kit(core.kit) : nullptr;
-            v.kitOn = false; v.kitPair = false; v.streamActive = false;
+            v.kitOn = false; v.kitPair = false; v.kitALive = false; v.kitBLive = false; v.framePending = false;
             if (!kit || kit->samples.empty()) { stopVoice(ch, true); break; }
             // the sample mapped to this note, else the nearest below
             int best = -1; int bestDist = 1000;
             for (size_t i = 0; i < kit->samples.size(); ++i) { const int d = std::abs(int(kit->samples[i].note) - int(note)); if (d < bestDist) { bestDist = d; best = int(i); } }
-            v.kitIdx = uint8_t(best); v.kitPos = 0; v.kitLoopsStreamed = 0;
-            v.kitLen = uint32_t(kit->samples[size_t(best)].data.size());
-            v.kitLoopPoint = std::min(kit->samples[size_t(best)].loopPoint, v.kitLen);
-            v.kitLoop = core.kitLoop;
-            v.kitOn = v.kitLen > 0;
+            const auto& sa = kit->samples[size_t(best)];
+            v.kitIdx = uint8_t(best); v.kitPos = 0;
+            v.kitLen = uint32_t(sa.data.size());
+            v.kitLoopPoint = std::min(sa.loopPoint, v.kitLen);
+            v.kitLoop = kit->perSampleLoop ? sa.loop : core.kitLoop;
+            v.kitALive = v.kitLen > 0;
             // The VEL column names a second sample by index + 1 (plan-kit-pairs):
             // out of range -- which every ordinary velocity is -- plays one.
             v.kitDist = kit->dist;
@@ -989,18 +990,16 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
             v.kitIdxB = uint8_t(v.kitPair ? second : 0); v.kitPosB = 0;
             v.kitLenB = v.kitPair ? uint32_t(kit->samples[size_t(v.kitIdxB)].data.size()) : 0;
             v.kitLoopPointB = v.kitPair ? std::min(kit->samples[size_t(v.kitIdxB)].loopPoint, v.kitLenB) : 0;
-            std::array<uint8_t, 16> chunk{}; bool ended = false;
-            kitNextChunk(ch, chunk, ended);
-            Frame f; for (int i = 0; i < 16; ++i) { f.s[size_t(i * 2)] = uint8_t(chunk[size_t(i)] >> 4); f.s[size_t(i * 2 + 1)] = uint8_t(chunk[size_t(i)] & 15); }
+            v.kitLoopB = v.kitPair ? (kit->perSampleLoop ? kit->samples[size_t(v.kitIdxB)].loop : core.kitLoop) : KitLoop::Once;
+            v.kitBLive = v.kitLenB > 0;
+            v.kitHalf = kit->halfSpeed; v.kitPhase = false;
+            v.kitOn = v.kitALive || v.kitBLive;
+            // Section 172: the note-on writes NR32 and NR33 and nothing else;
+            // the first frame comes with the next instant's mixer.
             writeEnvelope(ch, false);
-            loadFrame(ch, f, true);
-            if (model_ == Console::CGB && v.kitOn) {
-                // CGB: the next chunk streams in behind the read pointer.
-                std::array<uint8_t, 16> next{}; bool e2 = false;
-                kitNextChunk(ch, next, e2);
-                v.streamData = next; v.streamActive = true; v.streamByte = 0;
-                if (e2 && v.kitLoop == KitLoop::Once) v.kitOn = false;
-            }
+            const int per = computePeriod(ch);
+            if (per >= 0) emit(regAddr(2, 3), uint8_t(per & 0xFF), true);
+            if (!v.kitOn) stopVoice(ch, true);
             break;
         }
         case InstrumentType::Noise: {
@@ -1053,7 +1052,7 @@ void Driver::killDac(int ch)
 void Driver::stopVoice(int ch, bool kill)
 {
     Voice& v = v_[size_t(ch)];
-    v.active = false; v.tableOn = false; v.tableTspHoldOn = false; v.sliding = false; v.chordN = 0; v.kitOn = false; v.kitPair = false; v.streamActive = false; v.pendingOn = false;
+    v.active = false; v.tableOn = false; v.tableTspHoldOn = false; v.sliding = false; v.chordN = 0; v.kitOn = false; v.kitPair = false; v.kitALive = false; v.kitBLive = false; v.pendingOn = false;
     v.pitchClockOn = false; v.releasing = false; v.pulseReleasing = false;
     v.shapedOn = false; v.shapedRelease = false; v.tableJustStarted = false; v.lsdjStage = 0;
     // A kill or a stop ends the phrase: a key released afterwards must not
@@ -1465,6 +1464,10 @@ void Driver::writePeriod(int ch, bool trigger, bool preTriggered)
     }
     int per = computePeriod(ch);
     if (per < 0) per = 0;
+    // Section 173: a cell's L skips the note-on's lookup (2:$4A07), so the
+    // trigger carries the period the channel last wrote -- none at the song's
+    // start -- and the slide's own writes bring the new note.
+    if (own && v.slideOnTrigger) { per = v.lastPeriod < 0 ? 0 : int(v.lastPeriod); v.slideOnTrigger = false; }
     v.basePeriod = int16_t(per);
     // Where the channel is now, for an L that fires later: the pitch without
     // the vibrato, in 1/256 semitones, the slide it is in the middle of
@@ -1485,7 +1488,6 @@ void Driver::writePeriod(int ch, bool trigger, bool preTriggered)
     // Section 171: the wave refresh (2:$1C7A) writes NR31 after the period,
     // every time; the note-on's burst and the frame writer carry none.
     if (ch == 2 && !trigger && !preTriggered) emit(regAddr(2, 1), v.inst.length ? uint8_t(256 - std::min<int>(256, v.inst.length)) : uint8_t(0));
-    if (ch == 2) updateWaveTimer(ch, f, trigger);
     v.lastPeriod = int16_t(f);
 }
 
@@ -1744,21 +1746,6 @@ void Driver::writeNr50(uint8_t l, uint8_t r) { emit(0xFF24, uint8_t(((l & 7) << 
 
 /* --------------------------------------------------------- wave RAM */
 
-void Driver::updateWaveTimer(int ch, uint16_t freq, bool trigger)
-{
-    Voice& v = v_[size_t(ch)];
-    const uint32_t period = uint32_t(2048 - freq) * 2;
-    if (trigger) {
-        // The trigger's write is the last one emitted; its cycle is where the
-        // channel restarts. First fetch one period plus the measured six
-        // cycles later (reference section 5).
-        const uint64_t at = out_->back().cycle;
-        v.nextFetch = at + period + 6; v.fetchIndex = 1; v.fetchPeriod = period; v.timerValid = true;
-    } else {
-        v.fetchPeriod = period;   // the fetch in flight keeps its old time
-    }
-}
-
 static std::array<uint8_t, 16> frameBytes(const Frame& f)
 {
     std::array<uint8_t, 16> bytes{};
@@ -1781,20 +1768,29 @@ void Driver::writeWaveFrame(int ch, const std::array<uint8_t, 16>& bytes)
     // never streams a frame behind the read pointer, it retriggers at the
     // wave's own cycle boundary (the sync grid), which is what hides the click.
     v.waveSyncBase = cycle_ + burst_; v.waveSyncValid = true;   // the phase word is zeroed here (0:$0784)
+    waveRamBurst(ch, bytes);
+    writePeriod(ch, false, true);
+    v.framePending = false;
+}
+
+/// Section 171/172: the wave RAM write itself, shared by the frame writer and
+/// the kit mixer (0:$0787, 0:$0535): the wave's pan bits cleared, the DAC off,
+/// the sixteen bytes, the DAC on, the $7E0 pre-trigger -- sixty-four cycles a
+/// sample, so the first fetch is at once -- and the pan restored. The caller
+/// writes the real period after it, without a trigger bit.
+void Driver::waveRamBurst(int ch, const std::array<uint8_t, 16>& bytes)
+{
+    Voice& v = v_[size_t(ch)];
+    if (known_[0x15]) emit(0xFF25, uint8_t(shadow_[0x15] & 0xBB), true);
     emit(regAddr(2, 0), 0x00, true);
     v.dacOn = false;
     for (int i = 0; i < 16; ++i) emit(uint16_t(0xFF30 + i), bytes[size_t(i)], true);
-    v.ram = bytes; v.ramValid = true; v.streamActive = false;
+    v.ram = bytes; v.ramValid = true;
     emit(regAddr(2, 0), 0x80, true);
     v.dacOn = true;
-    // The $7E0 pre-trigger (0:$07BC): sixty-four cycles a sample, so the
-    // first fetch is at once, then the real period without a trigger bit.
     emit(regAddr(2, 3), 0xE0, true);
     emit(regAddr(2, 4), 0x87, true);
-    updateWaveTimer(ch, 0x7E0, true);
     writeNr51(true);
-    writePeriod(ch, false, true);
-    v.framePending = false;
 }
 
 void Driver::queueFrame(int ch, const Frame& f)
@@ -1838,90 +1834,50 @@ const Frame* Driver::frameAt(int ch, int idx) const
     return &w->frames[size_t(fr)];
 }
 
-void Driver::kitNextChunk(int ch, std::array<uint8_t, 16>& chunk, bool& ended)
+/// Section 172: the ROM's kit mixer, once an interrupt (0:$03A9-$0590). At
+/// the head of the frame each side that has reached its end loops or dies;
+/// when neither is live the DAC goes off and the note is over. Otherwise
+/// sixteen bytes from each live side -- raw when one, through the page table
+/// when both -- go out through the wave RAM burst, and the side's position
+/// moves sixteen bytes whatever the period. Half speed runs every other
+/// instant. Bytes past a side's end read as silence (the ROM reads on into
+/// the next sample for the rest of that frame).
+void Driver::kitFrame(int ch)
 {
     Voice& v = v_[size_t(ch)];
     const Kit* kit = bank_ ? bank_->kit(v.inst.kit) : nullptr;
-    ended = false;
-    if (!kit || v.kitIdx >= kit->samples.size()) { chunk.fill(0x88); ended = true; return; }
-    const auto& data = kit->samples[v.kitIdx].data;
-    const bool pair = v.kitPair && v.kitIdxB < kit->samples.size();
-    const std::vector<uint8_t>* dataB = pair ? &kit->samples[v.kitIdxB].data : nullptr;
-    for (int i = 0; i < 32; ++i) {
-        uint8_t s = 8;
-        if (v.kitPos < v.kitLen) s = data[v.kitPos++];
-        else if (v.kitLoop == KitLoop::Loop) { v.kitPos = 0; s = v.kitLen ? data[v.kitPos++] : 8; }
-        else if (v.kitLoop == KitLoop::FromPoint && v.kitLoopPoint < v.kitLen) { v.kitPos = v.kitLoopPoint; s = data[v.kitPos++]; }
-        else ended = true;
-        if (dataB != nullptr) {
-            // The second sample follows the same loop rule but never ends the
-            // note: past its end it is silence (plan-kit-pairs).
-            uint8_t b = 8;
-            if (v.kitPosB < v.kitLenB) b = (*dataB)[v.kitPosB++];
-            else if (v.kitLoop == KitLoop::Loop && v.kitLenB) { v.kitPosB = 0; b = (*dataB)[v.kitPosB++]; }
-            else if (v.kitLoop == KitLoop::FromPoint && v.kitLoopPointB < v.kitLenB) { v.kitPosB = v.kitLoopPointB; b = (*dataB)[v.kitPosB++]; }
-            s = bank::kitMix(v.kitDist, i, s, b);
-        }
-        if (i & 1) chunk[size_t(i >> 1)] = uint8_t(chunk[size_t(i >> 1)] | (s & 15));
-        else chunk[size_t(i >> 1)] = uint8_t(s << 4);
+    if (!kit || !v.kitOn) return;
+    if (v.kitHalf) { v.kitPhase = !v.kitPhase; if (!v.kitPhase) return; }
+    auto head = [](bool& live, uint32_t& pos, uint32_t len, uint32_t loopPoint, KitLoop loop) {
+        if (!live || pos < len) return;
+        if (loop == KitLoop::Loop) pos = 0;
+        else if (loop == KitLoop::FromPoint && loopPoint < len) pos = loopPoint;
+        else live = false;
+    };
+    head(v.kitALive, v.kitPos, v.kitLen, v.kitLoopPoint, v.kitLoop);
+    head(v.kitBLive, v.kitPosB, v.kitLenB, v.kitLoopPointB, v.kitLoopB);
+    if (!v.kitALive && !v.kitBLive) {
+        emit(regAddr(2, 0), 0x00, true);
+        v.dacOn = false; v.kitOn = false; v.active = false;
+        return;
     }
-}
-
-void Driver::scheduleStreams(uint64_t cycleStart, uint64_t cycleEnd)
-{
-    Voice& v = v_[2];
-    if (!v.timerValid || !v.dacOn || v.fetchPeriod == 0) return;
-    // The fetch model advances every block, streaming or not, so a frame
-    // change that arrives later finds the read pointer where it really is.
-    // (Walking only while streaming let the model go stale, and a CGB frame
-    // change then spent its bytes on fetches that were already in the past.)
-    if (v.nextFetch + uint64_t(v.fetchPeriod) * 64 < cycleStart) {
-        const uint64_t k = (cycleStart - v.nextFetch) / v.fetchPeriod;
-        v.nextFetch += k * v.fetchPeriod;
-        v.fetchIndex = uint32_t((v.fetchIndex + k) & 31);
+    const std::vector<uint8_t>* da = v.kitALive && v.kitIdx < kit->samples.size() ? &kit->samples[v.kitIdx].data : nullptr;
+    const std::vector<uint8_t>* db = v.kitBLive && v.kitPair && v.kitIdxB < kit->samples.size() ? &kit->samples[v.kitIdxB].data : nullptr;
+    std::array<uint8_t, 16> bytes{};
+    for (int i = 0; i < 16; ++i) {
+        auto take = [](const std::vector<uint8_t>* d, uint32_t& pos) {
+            uint8_t hi = 8, lo = 8;
+            if (d) { if (pos < d->size()) hi = (*d)[pos] & 15; ++pos; if (pos < d->size()) lo = (*d)[pos] & 15; ++pos; }
+            return uint8_t((hi << 4) | lo);
+        };
+        const uint8_t a = take(da, v.kitPos);
+        const uint8_t b = take(db, v.kitPosB);
+        bytes[size_t(i)] = (da && db) ? kitMixByte(*kit, a, b) : (da ? a : b);
     }
-    int guard = 0;
-    while (v.nextFetch < cycleEnd && guard++ < 200000) {
-        const uint64_t t = v.nextFetch;
-        const uint32_t pos = v.fetchIndex & 31;          // position after this fetch
-        if (model_ == Console::CGB) {
-            // Trailing writes: during the second nibble of byte j, write byte j for the next loop.
-            if ((pos & 1) == 1 && v.streamActive) {
-                const uint8_t j = uint8_t(pos >> 1);
-                if (j == v.streamByte) {
-                    if (t + v.fetchPeriod / 2 >= cycleStart) emitAt(t + v.fetchPeriod / 2, uint16_t(0xFF30 + j), v.streamData[j]);
-                    if (++v.streamByte >= 16) {
-                        v.streamActive = false;
-                        if (v.kitOn) { std::array<uint8_t, 16> chunk{}; bool ended = false; kitNextChunk(2, chunk, ended); if (ended && v.kitLoop == KitLoop::Once) { v.kitOn = false; v.streamData.fill(0x88); } else { v.streamData = chunk; } v.streamActive = true; v.streamByte = 0; }
-                    }
-                }
-            }
-        } else if (v.kitOn && pos == 31) {
-            // DMG: refill before fetch 32 wraps the position. The channel is
-            // switched off for the burst, which is the granularity of DMG
-            // sample playback (section 9.8).
-            std::array<uint8_t, 16> chunk{}; bool ended = false;
-            kitNextChunk(2, chunk, ended);
-            const uint64_t at = t + v.fetchPeriod - 20 * 19 - 8;
-            uint64_t c = std::max(at, cycleStart);
-            if (ended && v.kitLoop == KitLoop::Once) {
-                emitAt(c, 0xFF1A, 0x00);   // done: DAC off, silence
-                v.dacOn = false; v.kitOn = false; v.timerValid = false; v.active = false;
-                return;
-            }
-            emitAt(c, 0xFF1A, 0x00); c += kBurstSpacing;
-            for (int i = 0; i < 16; ++i) { emitAt(c, uint16_t(0xFF30 + i), chunk[size_t(i)]); c += kBurstSpacing; }
-            v.ram = chunk;
-            emitAt(c, 0xFF1A, 0x80); c += kBurstSpacing;
-            const uint16_t f = uint16_t(std::max<int16_t>(0, v.lastPeriod));
-            emitAt(c, 0xFF1E, uint8_t((f >> 8) | 0x80 | lengthBit(v.inst)));
-            v.nextFetch = c + v.fetchPeriod + 6; v.fetchIndex = 1;
-            ++v.kitLoopsStreamed;
-            continue;
-        }
-        v.nextFetch = t + v.fetchPeriod;
-        v.fetchIndex = (v.fetchIndex + 1) & 31;
-    }
+    if (!da) v.kitPos += 32;
+    if (!db) v.kitPosB += 32;
+    waveRamBurst(ch, bytes);
+    writePeriod(ch, false, true);
 }
 
 /* ----------------------------------------------------------- commands */
@@ -2190,7 +2146,9 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             if (fromTable && inNoteOn_) { fromFine = int32_t(std::lround((noteOfVoice(ch) - tableTransposeOf(v)) * 256.0)); have = true; }
             v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0; v.slideStep256 = 0;
             const int dur = std::clamp<int>(c.a, 0, 255) + 1;
-            if (!have) { if (live) writePeriod(ch, false); break; }
+            // Section 173: with nothing to slide from, the step's L still skips
+            // the lookup -- the trigger carries no period and the refresh the note.
+            if (!have) { if (!fromTable && inNoteOn_) v.slideOnTrigger = true; if (live) writePeriod(ch, false); break; }
             // The note with its transposes and the column in force, and no
             // offset: what the slide aims from.
             const int32_t colFine = int32_t(tableTransposeOf(v)) * 256;
@@ -2212,6 +2170,7 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
                 v.slideOff256 = from;
                 v.slideStep256 = int32_t(-from / dur);      // C++ truncates toward zero
                 v.slideLeft = dur; v.slideTotal = dur; v.sliding = true;
+                if (!fromTable && inNoteOn_) v.slideOnTrigger = true;   // section 173
             }
             if (live) writePeriod(ch, false);
             break;
@@ -3198,7 +3157,8 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
                 // wave's sync boundary, when the ROM's check at the head of the
                 // interrupt finds one before the next; the handler's wait puts
                 // its own pitch work, and the tick, after the write.
-                if (ch == 2 && v.active && v.framePending) {
+                if (ch == 2 && v.active && v.kitOn) kitFrame(ch);          // section 172: the mixer first (0:$03A9)
+                else if (ch == 2 && v.active && v.framePending) {
                     const uint64_t due = waveSyncDue(ch, at);
                     if (due) { if (due > cycle_ + burst_) moveTo(due); writeWaveFrame(ch, v.framePendingBytes); }
                 }
@@ -3312,7 +3272,6 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
     for (size_t i = 0; i < pendingCount_; ++i) { if (pendingFrom_[i]) pendingFrom_[i]->held = true; pendingFrom_[i] = nullptr; }
 
     // --- wave RAM streaming, cycle domain ---------------------------------
-    scheduleStreams(cycleAt(frameAbs), cycleAt(blockEnd));
 
     std::stable_sort(out.begin(), out.end(), [](const RegWrite& a, const RegWrite& b) { return a.cycle < b.cycle; });
     if (writeLog_) for (size_t i = logFrom; i < out.size(); ++i) writeLog_->push_back(out[i]);

@@ -32,7 +32,7 @@ struct ImportSummary {
 /// instrument is noted and skipped.
 bool importSong(const uint8_t* song, size_t size, const LsdjModel& model,
                 bank::Bank& bank, tracker::Song& out, ImportSummary& summary, ImportNotes& notes,
-                const std::vector<LsdjKit>* kits = nullptr);
+                const std::vector<LsdjKit>* kits = nullptr, const LsdjRawPages* rawPages = nullptr);
 
 /// The ChipBoy note whose noise pair has the same LFSR clock as an NR43
 /// byte, the one nearest `prefer` on a tie (section 45); the map continues

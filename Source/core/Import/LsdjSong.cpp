@@ -57,11 +57,14 @@ struct KitUse {
     int kitA = -1, kitB = -1;        ///< LSDj kit numbers
     KitDist dist = KitDist::Clip;    ///< how a note's two samples are summed (section 117)
     int distByte = -1;               ///< byte 10 when it names no table of LSDj's, else -1
-    int lenA = 0, lenB = 0;          ///< frames of 32 samples, 0 whole
-    /// (LSDj kit number, sample digit) -> the ChipBoy sample's index in the
-    /// slot. An instrument whose two kits are the same one shares them, so a
-    /// note that plays a sample against itself names the one entry twice.
-    std::map<std::pair<int, int>, int> sampleOf;
+    /// Section 172: each side's own LEN and OFFSET in frames of 32 samples (LEN
+    /// 0 is the whole sample), its LOOP bit and its ATK bit.
+    int lenA = 0, lenB = 0, offA = 0, offB = 0;
+    bool loopA = false, loopB = false, atkA = false, atkB = false;
+    /// (side, LSDj kit number, sample digit) -> the ChipBoy sample's index in
+    /// the slot: the two sides cut and loop their samples differently, so a kit
+    /// named on both keeps one entry per side.
+    std::map<std::tuple<int, int, int>, int> sampleOf;
 };
 /// What a kit note byte becomes: the note column names one sample and the VEL
 /// column the second, by index + 1 (docs/plan-kit-pairs.md).
@@ -74,6 +77,7 @@ struct Reader {
     tracker::Song& song;
     ImportNotes& notes;
     const std::vector<LsdjKit>* kits = nullptr;
+    const LsdjRawPages* rawPages = nullptr;      ///< section 172
     std::map<int, KitUse> kitUse;                        // LSDj instrument -> its kit
     int kitSlots = 0;
     double tickMs = 0.0;
@@ -542,23 +546,32 @@ struct Reader {
     {
         if (kitSlots >= bank::kKitSlots) { notes.add("kit instrument " + name + ": ChipBoy's 32 kit slots are full; skipped"); return false; }
         KitUse use;
-        // Section 96: LENGTH is byte 11 and there is only one of it -- it cuts
-        // both kits, in 32 nibble frames, 0 meaning the whole sample. Byte 3,
-        // which this read as kit A's length, is not a length at all.
-        use.kitA = b[2] & 0x3F; use.kitB = b[9] & 0x3F; use.lenA = b[11]; use.lenB = b[11];
-        const int count = int(kits->size());
-        if (use.kitA >= count && use.kitB >= count) { notes.add("kit instrument " + name + " names kits " + hex2(use.kitA) + " and " + hex2(use.kitB) + ", which this ROM does not have; skipped"); return false; }
+        // Section 172, read in 9.4.2's loader (2:$5C77): each side has its own
+        // bytes. A: kit byte 2 & 3F, ATK bit 7 of byte 2, LEN byte 3, OFFSET
+        // byte 12, LOOP bit 6 of byte 5. B: kit byte 9 & 3F, ATK bit 7 of byte
+        // 9, LEN byte 11, OFFSET byte 13, LOOP bit 5 of byte 5. Half speed is
+        // bit 6 of byte 2 and sets both sides' period.
+        use.kitA = b[2] & 0x3F; use.kitB = b[9] & 0x3F;
+        use.lenA = b[3]; use.lenB = b[11]; use.offA = b[12]; use.offB = b[13];
+        use.atkA = (b[2] & 0x80) != 0; use.atkB = (b[9] & 0x80) != 0;
+        use.loopA = (b[5] & 0x40) != 0; use.loopB = (b[5] & 0x20) != 0;
+        const bool half = (b[2] & 0x40) != 0;
+        const LsdjKit* ka = lsdjKitByNumber(*kits, use.kitA);
+        const LsdjKit* kb = lsdjKitByNumber(*kits, use.kitB);
+        if (ka == nullptr && kb == nullptr) { notes.add("kit instrument " + name + " names kits " + hex2(use.kitA) + " and " + hex2(use.kitB) + ", which this ROM does not have (a kit is its number plus eight as a bank); skipped"); return false; }
         use.kitSlot = ++kitSlots;
         auto& k = bank.kits[size_t(use.kitSlot - 1)];
         k = bank::Kit{};
         k.used = true;
-        k.name = (use.kitA < count ? (*kits)[size_t(use.kitA)].name : std::string("?")) + (use.kitB < count && use.kitB != use.kitA ? "+" + (*kits)[size_t(use.kitB)].name : std::string());
-        k.period = kitPeriodOfSpeed(b[8]);
-        // Section 96: bit 5 of byte 5 is LOOP, and it repeats the sample -- cut
-        // to LENGTH -- for as long as the note holds.
-        const bank::KitLoop loop = (b[5] & 0x20) ? bank::KitLoop::Loop : bank::KitLoop::Once;
-        k.loop = loop;
-        o.kit = uint8_t(use.kitSlot); o.kitLoop = loop; o.waveLevel = 3;
+        k.name = (ka ? ka->name : std::string("?")) + (kb && use.kitB != use.kitA ? "+" + kb->name : std::string());
+        k.period = kitPeriodOfSpeed(b[8], half);
+        k.halfSpeed = half;
+        k.perSampleLoop = true;
+        k.loop = use.loopA ? bank::KitLoop::Loop : bank::KitLoop::Once;
+        o.kit = uint8_t(use.kitSlot); o.kitLoop = k.loop;
+        // Section 172: VOLUME is byte 1's NR32 code, as a wave instrument's.
+        static const uint8_t kLevel[4] = { 0, 3, 2, 1 };
+        o.waveLevel = kLevel[(b[1] >> 5) & 3];
         // Section 97: a kit reads `PITCH` out of byte 5 like every other
         // instrument, and `P` then moves its period **register** by the whole
         // byte -- once a pitch clock under FAST and DRUM, once a tick under
@@ -567,14 +580,14 @@ struct Reader {
         o.env.mode = bank::EnvMode::Chip;
         // Section 117: byte 10 is `DIST` -- the page of the table LSDj mixes a
         // note's two samples through, `D0` to `D3`, and which curve each page
-        // names depends on the version.
+        // names depends on the version. Section 172: any other page is memory
+        // as it stands; the pages read from the ROM come with the kits.
         const int distPage = int(b[10]) - int(kKitDistFirstPage);
         if (distPage >= 0 && distPage < kKitDistPages && m.kitDist != nullptr) use.dist = m.kitDist[distPage];
+        else if (rawPages != nullptr && rawPages->count(int(b[10]))) { use.dist = KitDist::Raw; k.distTable = rawPages->at(int(b[10])); }
         else use.distByte = int(b[10]);
         k.dist = use.dist;
         kitUse[i] = use;
-        if (b[12] || b[13]) notes.add("kit instrument " + name + ": the sample offsets (" + hex2(b[12]) + ", " + hex2(b[13]) + ") are not mapped; samples play from their start");
-        if (b[5] & 0x40) notes.add("kit instrument " + name + ": a half-speed flag in byte 5 is not mapped");
         return true;
     }
     /// What a kit note byte plays: its high digit names a sample of the
@@ -589,30 +602,37 @@ struct Reader {
         if (it == kitUse.end()) return {};
         KitUse& use = it->second;
         auto& kit = bank.kits[size_t(use.kitSlot - 1)];
-        auto cut = [](std::vector<uint8_t> v, int frames) { if (frames > 0 && size_t(frames) * 32 < v.size()) v.resize(size_t(frames) * 32); return v; };
-        // The ChipBoy index of one kit's sample, adding it the first time.
-        auto indexOf = [&](int kitNo, int digit, int len) -> int {
-            if (digit == 0 || kitNo < 0 || kitNo >= int(kits->size())) return -1;
-            const auto& ks = (*kits)[size_t(kitNo)].samples;
+        // Section 172: what a side plays -- from the sample's start plus OFFSET
+        // (ATK: from the start itself, looping from OFFSET) to its end or to
+        // OFFSET + LEN frames; LOOP ON repeats it, OFF takes the sample's own
+        // loop bit from the bank header, ATK loops from OFFSET.
+        auto indexOf = [&](int side, int kitNo, int digit, int len, int off, bool loopOn, bool atk) -> int {
+            const LsdjKit* lk = digit == 0 ? nullptr : lsdjKitByNumber(*kits, kitNo);
+            if (lk == nullptr) return -1;
+            const auto& ks = lk->samples;
             if (digit - 1 >= int(ks.size())) { notes.add("kit note " + hex2(noteByte) + " at " + where + " names sample " + std::to_string(digit) + " of kit " + hex2(kitNo) + ", which has only " + std::to_string(ks.size()) + ": LSDj reads past the kit's sample list there and streams nothing (measured on 9.2.L), so this step is silent in ChipBoy too"); return -1; }
-            const auto key = std::make_pair(kitNo, digit);
+            const auto key = std::make_tuple(side, kitNo, digit);
             if (auto f = use.sampleOf.find(key); f != use.sampleOf.end()) return f->second;
             if (kit.samples.size() >= 32) { notes.add("kit instrument at " + where + " uses more than 32 different sounds; the rest are silent"); return -1; }
+            const auto& src = ks[size_t(digit - 1)].nibbles;
+            const size_t start = std::min(src.size(), size_t(off) * 32);
+            const size_t end = len > 0 ? std::min(src.size(), start + size_t(len) * 32) : src.size();
+            const bool loops = loopOn || ((lk->loopBits >> (digit - 1)) & 1);
             bank::KitSample out;
-            out.name = ks[size_t(digit - 1)].name;
-            out.data = cut(ks[size_t(digit - 1)].nibbles, len);
+            out.name = src.empty() ? std::string() : ks[size_t(digit - 1)].name;
+            if (atk) { out.data.assign(src.begin(), src.begin() + std::ptrdiff_t(end)); out.loopPoint = uint32_t(start); out.loop = loops ? bank::KitLoop::FromPoint : bank::KitLoop::Once; }
+            else { out.data.assign(src.begin() + std::ptrdiff_t(start), src.begin() + std::ptrdiff_t(end)); out.loopPoint = 0; out.loop = loops ? bank::KitLoop::Loop : bank::KitLoop::Once; }
             out.note = uint8_t(36 + int(kit.samples.size()));
-            out.loopPoint = 0;
             kit.samples.push_back(std::move(out));
             const int at = int(kit.samples.size()) - 1;
             use.sampleOf[key] = at;
             return at;
         };
-        const int a = indexOf(use.kitA, noteByte >> 4, use.lenA);
-        const int b = indexOf(use.kitB, noteByte & 15, use.lenB);
+        const int a = indexOf(0, use.kitA, noteByte >> 4, use.lenA, use.offA, use.loopA, use.atkA);
+        const int b = indexOf(1, use.kitB, noteByte & 15, use.lenB, use.offB, use.loopB, use.atkB);
         if (a < 0 && b < 0) return {};
         if (a >= 0 && b >= 0 && use.distByte >= 0)
-            notes.add("kit instrument " + hex2(inst) + ": DIST is " + hex2(use.distByte) + ", which names none of LSDj's four mixing tables -- the ROM reads unrelated memory there and streams noise; ChipBoy clips instead");
+            notes.add("kit instrument " + hex2(inst) + ": DIST is " + hex2(use.distByte) + ", a page of memory none of the ROM's read pages covers -- the ROM mixes through whatever sits there; ChipBoy clips instead");
         KitCell out;
         out.note = kit.samples[size_t(a >= 0 ? a : b)].note;
         out.vel = (a >= 0 && b >= 0) ? uint8_t(b + 1) : uint8_t(0);
@@ -1161,14 +1181,14 @@ int chipboyNoteForNr43(uint8_t v, int prefer) { return chipboyNoteForClock(noise
 
 bool importSong(const uint8_t* bytes, size_t size, const LsdjModel& model,
                 bank::Bank& bank, tracker::Song& out, ImportSummary& summary, ImportNotes& notes,
-                const std::vector<LsdjKit>* kits)
+                const std::vector<LsdjKit>* kits, const LsdjRawPages* rawPages)
 {
     if (bytes == nullptr || size < 0x8000) return false;
     summary = ImportSummary{};
     { auto blank = std::make_unique<bank::Bank>(); bank = std::move(*blank); }
     { auto blank = std::make_unique<tracker::Song>(); out = std::move(*blank); }
     Reader r(bytes, model, bank, out, notes);
-    r.kits = kits;
+    r.kits = kits; r.rawPages = rawPages;
     // Section 158: the project tempo byte reads as a T byte does -- 0-39 are
     // 256-295 BPM on the formats whose T does that (REACTION is $24, 292 BPM).
     const int tempo = model.tempoLowIsHigh ? bank::tempoBpmOfByte(bytes[kTempo]) : std::clamp<int>(bytes[kTempo], 40, 255);

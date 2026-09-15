@@ -238,6 +238,7 @@ private:
         double   drumOffset = 0.0;    ///< Drum-mode P, in period register units
         int16_t  bendSpeed = 0;       ///< P's signed argument, -128..127
         bool     sliding = false;
+        bool     slideOnTrigger = false;   ///< section 173: a cell's L under this note-on -- the trigger carries the old period
         int32_t  slideOff256 = 0;     ///< what is left of the slide, 1/256 semitones
         int32_t  slideStep256 = 0;    ///< and what one update takes off it
         int32_t  slideLeft = 0, slideTotal = 0;   ///< updates remaining, and the duration
@@ -407,7 +408,12 @@ private:
         /// instrument's own table (or a cell's TBL column) starts the run.
         bool     tableTicks = false;
         bool     kitOn = false; uint8_t kitIdx = 0; uint32_t kitPos = 0; uint32_t kitLen = 0; uint32_t kitLoopPoint = 0; bank::KitLoop kitLoop = bank::KitLoop::Once;
-        uint32_t kitLoopsStreamed = 0;
+        /// Section 172: the two sides of a kit note as the ROM keeps them --
+        /// each live until its end (or looping), a frame of sixteen bytes an
+        /// instant (every other one at half speed), the note over when neither
+        /// is live.
+        bool     kitALive = false, kitBLive = false, kitHalf = false, kitPhase = false;
+        bank::KitLoop kitLoopB = bank::KitLoop::Once;
         /// The second sample a cell's VEL column names (plan-kit-pairs): its
         /// own cursor, summed into the first through the kit's `dist`. It
         /// never ends the note -- past its end it reads as silence, 8.
@@ -457,8 +463,7 @@ private:
         uint8_t  retrigBase = 15;
         uint32_t rng = 1;
         // model of the wave channel timer, for streaming
-        uint64_t nextFetch = 0; uint32_t fetchPeriod = 0; uint32_t fetchIndex = 0; bool timerValid = false;
-        bool     streamActive = false; uint8_t streamByte = 0; std::array<uint8_t, 16> streamData{};
+
     };
 
     // block state
@@ -645,12 +650,11 @@ private:
     /// Section 171: the ROM's one wave RAM writer -- off, the bytes, on, the
     /// `$7E0` pre-trigger, the pan, the period -- and the sync grid around it.
     void writeWaveFrame(int ch, const std::array<uint8_t, 16>& bytes);
+    void waveRamBurst(int ch, const std::array<uint8_t, 16>& bytes);   ///< the pan-muted off/bytes/on/$7E0 sequence
     void queueFrame(int ch, const bank::Frame& f);            ///< hold a frame for the next sync boundary
     uint64_t waveSyncDue(int ch, uint64_t at) const;          ///< the cycle a pending frame is written at, 0 if not from this instant
     const bank::Frame* frameAt(int ch, int idx) const;        ///< frame `idx` of the voice's slot, past its end the next slot's
-    void updateWaveTimer(int ch, uint16_t freq, bool trigger);
-    void scheduleStreams(uint64_t cycleStart, uint64_t cycleEnd);
-    void kitNextChunk(int ch, std::array<uint8_t, 16>& chunk, bool& ended);
+    void kitFrame(int ch);                                    ///< section 172: one kit frame from the instant loop
     int  computePeriod(int ch);
     uint8_t levelFromVelocity(uint8_t vel) const;
     void refreshView(int ch);

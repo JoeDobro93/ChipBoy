@@ -237,7 +237,7 @@ void KitsPanel::rebuildContent()
         auto s = std::make_unique<Segmented>(StringArray{ "One-shot", "Loop", "From point" });
         s->setMini(true);
         s->setTooltip("How every sample of this kit plays; the instrument's own loop setting overrides per note");
-        s->onChange = [this](int v) { editKit("loop", [v](bank::Kit& k) { k.loop = bank::KitLoop(std::clamp(v, 0, 2)); }); };
+        s->onChange = [this](int v) { editKit("loop", [v](bank::Kit& k) { k.loop = bank::KitLoop(std::clamp(v, 0, 2)); for (auto& smp : k.samples) smp.loop = k.loop; }); };   // section 172: the samples' own follow
         const int h = s->preferredHeight(), w = s->preferredWidth();
         loop_ = grid->addField("Loop", "whole kit", std::move(s), h, w);
     }

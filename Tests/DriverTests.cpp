@@ -335,33 +335,44 @@ TEST_CASE("wave instruments load wave RAM through the DMG dance", "[driver]")
     CHECK(dacOn < trig);
 }
 
-TEST_CASE("kits stream wave RAM every 32 samples on DMG", "[driver]")
+TEST_CASE("a kit writes a frame every instant on both consoles, through the ROM's sequence", "[driver][kit]")
 {
-    Rig r;
-    ChannelParams p; p.instrument = 16; r.drv.setParams(2, p);   // Kit 1
-    auto w = r.block({ Rig::on(2, 36, 100) }, 4800);              // 100 ms
-    int refills = 0;
-    for (auto& x : w) if (x.addr == 0xFF1E && (x.value & 0x80)) ++refills;
-    // 11 468 Hz / 32 = 358 loops per second: about 36 in 100 ms, plus the first trigger.
-    CHECK(refills >= 30);
-    CHECK(refills <= 40);
-    // the kick is 0.3 s long: still playing
-    CHECK(r.drv.view(2).active);
-    std::vector<RegWrite> rest;
-    for (int i = 0; i < 3; ++i) { w = r.block({}, 4800); rest.insert(rest.end(), w.begin(), w.end()); }
-    CHECK_FALSE(r.drv.view(2).active);         // ended: one-shot
-    CHECK(has(rest, 0xFF1A, 0x00));
-}
-
-TEST_CASE("kits stream without a re-trigger on CGB", "[driver]")
-{
-    Rig r(Console::CGB);
-    ChannelParams p; p.instrument = 16; r.drv.setParams(2, p);
-    auto w = r.block({ Rig::on(2, 36, 100) }, 4800);
-    int triggers = 0, ram = 0;
-    for (auto& x : w) { if (x.addr == 0xFF1E && (x.value & 0x80)) ++triggers; if (x.addr >= 0xFF30 && x.addr <= 0xFF3F) ++ram; }
-    CHECK(triggers == 1);                      // only the note-on
-    CHECK(ram > 16 * 30);                      // trailing writes, one loop ahead
+    // Section 172: the note-on writes NR32 and NR33; from the next instant on
+    // the mixer writes sixteen bytes an instant -- pan bits cleared, DAC off,
+    // the bytes, DAC on, the $7E0 pre-trigger, the pan, the period -- and the
+    // DAC goes off at the instant after the sample's last frame.
+    for (const auto model : { Console::DMG, Console::CGB }) {
+        Rig r(model);
+        ChannelParams p; p.instrument = 16; r.drv.setParams(2, p);   // Kit 1
+        auto w = r.block({ Rig::on(2, 36, 100) }, 4800);              // 100 ms
+        int frames = 0, triggers = 0, ram = 0;
+        for (size_t k = 0; k < w.size(); ++k) {
+            const auto& x = w[k];
+            if (x.addr == 0xFF1A && x.value == 0x00) {
+                ++frames;
+                REQUIRE(k + 21 < w.size());
+                CHECK(w[k - 1].addr == 0xFF25);                                   // the pan, wave bits cleared
+                CHECK((w[k - 1].value & 0x44) == 0);
+                for (int i = 0; i < 16; ++i) CHECK(w[k + 1 + size_t(i)].addr == 0xFF30 + i);
+                CHECK(w[k + 17].addr == 0xFF1A); CHECK(w[k + 17].value == 0x80);
+                CHECK(w[k + 18].addr == 0xFF1D); CHECK(w[k + 18].value == 0xE0);
+                CHECK(w[k + 19].addr == 0xFF1E); CHECK(w[k + 19].value == 0x87);
+                CHECK(w[k + 20].addr == 0xFF25);
+                CHECK(w[k + 21].addr == 0xFF1D);
+            }
+            if (x.addr == 0xFF1E && (x.value & 0x80)) ++triggers;
+            if (x.addr >= 0xFF30 && x.addr <= 0xFF3F) ++ram;
+        }
+        // 358 instants a second: about 36 frames in 100 ms, one trigger each.
+        CHECK(frames >= 33); CHECK(frames <= 38);
+        CHECK(triggers == frames);
+        CHECK(ram == 16 * frames);
+        CHECK(r.drv.view(2).active);                // the kick is 0.3 s long: still playing
+        std::vector<RegWrite> rest;
+        for (int i = 0; i < 3; ++i) { w = r.block({}, 4800); rest.insert(rest.end(), w.begin(), w.end()); }
+        CHECK_FALSE(r.drv.view(2).active);         // ended: one-shot
+        CHECK(has(rest, 0xFF1A, 0x00));
+    }
 }
 
 TEST_CASE("the tick grid is independent of block size", "[driver]")
@@ -3410,9 +3421,10 @@ TEST_CASE("a kit note's VEL column names a second sample, summed through the kit
     i0.used = true; i0.kit = 1;
     ChannelParams p; p.instrument = 2; r.drv.setParams(2, p);
 
-    /// The sixteen bytes of the first chunk, as 32 nibbles.
+    /// The sixteen bytes of the first frame, as 32 nibbles. Section 172: the
+    /// frame comes with the instant after the note-on, so the block spans one.
     auto firstChunk = [&](uint8_t vel) {
-        auto w = r.block({ cellOn(2, 60, 2, vel) }, 64);
+        auto w = r.block({ cellOn(2, 60, 2, vel) }, 480);
         std::array<int, 16> byteOf{}; byteOf.fill(-1);
         for (const auto& x : w) if (x.addr >= 0xFF30 && x.addr <= 0xFF3F && byteOf[size_t(x.addr - 0xFF30)] < 0) byteOf[size_t(x.addr - 0xFF30)] = x.value;
         std::vector<int> nib;

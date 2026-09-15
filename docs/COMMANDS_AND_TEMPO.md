@@ -5366,3 +5366,62 @@ sets `Voice::framePending` and the instant loop runs the ROM's check (`waveSyncP
 `waveSyncBase` = the last trigger's cycle) and writes at the boundary through
 `writeWaveFrame()`, which is also the note-on's and `RESYNC`'s writer; the trigger is the
 `$7E0` pre-trigger followed by the period. The CGB streaming path stays for kits only.
+
+## 172. Kits as the ROM plays them: the bank, the two sides' bytes, a frame an interrupt, the raw pages
+
+`UNMASKED`'s kits "are not processed correctly", and the reading of 9.4.2's kit machine (matrix
+§11.8, `0:$0391`-`$0590`, `0:$15A0`-`$1700`, the loader `2:$5C77`-`$5DB9`) says why on every
+count. What the ROM does, and what ChipBoy did:
+
+- **Kit number `k` is ROM bank `k + 8`** (`0:$1478`), so a ROM with gaps in its kit banks
+  numbers past them; ChipBoy numbered the kits it found in order (`EGOFLEX`'s `18`-`1A`,
+  `READROOM`'s `1C`-`1F` and `UNMASKED`'s `0C`/`0E` named the wrong kits or none).
+- **Each side has its own bytes.** Kit A: number `byte 2 & $3F`, `ATK` bit 7 of byte 2, half
+  speed bit 6 of byte 2 (both sides), `LEN` byte 3, `OFFSET` byte 12, `LOOP` bit 6 of byte 5. Kit
+  B: number `byte 9 & $3F`, `ATK` bit 7 of byte 9, `LEN` byte 11, `OFFSET` byte 13, `LOOP` bit 5
+  of byte 5. `LEN` and `OFFSET` are in 16-byte frames (32 samples); the loader shifts them by
+  four into a byte offset (`$C4EA`/`$C4EB`, `$C4EF`/`$C4F0`). §96 had one `LENGTH` for both
+  sides and no offsets; §97 had no `ATK`.
+- **What a side plays** (`0:$15C3`-`$165D`): from the bank's offset word for the digit's sample,
+  plus `OFFSET`, to the sample's end or `OFFSET + LEN` when `LEN` is not `ALL` (0). `LOOP ON`
+  restarts there at the end; `ATK` starts at the sample's own beginning and loops from `OFFSET`;
+  `OFF` stops the side. A side with `LOOP` off takes the sample's own loop bit from the bank
+  header (`$405C`/`$405D`, one bit a sample) -- `0:$1599` skips that read when the instrument's
+  bit is set. `SPEED` half runs the mixer every other interrupt at period `$692 + FINETUNE`
+  (`0:$03B0`; full speed is `$749 + FINETUNE`, byte 8 signed), and `VOLUME` is byte 1's `NR32`
+  code like a wave instrument's, which ChipBoy set to 100 % for every kit.
+- **A frame an interrupt.** The note-on writes `NR32` and `NR33` and nothing else; from the next
+  interrupt on, before the pitch work, the mixer copies sixteen bytes from each live side --
+  raw when one side plays, through the page table when both -- and writes them: `NR51` with the
+  wave's bits cleared, `NR30 = 00`, the bytes, `NR30 = 80`, `NR33 = E0`, `NR34 = 87`, `NR51`
+  restored, then `NR33`/`NR34` with the kit period. The side's position moves sixteen bytes a
+  frame whatever the period, so a `P` on a kit repeats or skips samples rather than resampling.
+  When both sides have ended the next interrupt writes `NR30 = 00`. ChipBoy streamed a frame
+  behind the read pointer on CGB and refilled at the 32nd fetch on DMG, following the period.
+  (The wave frame writer of §171 mutes `NR51` the same way, `0:$0787`.)
+- **The page table.** Two live sides mix byte by byte: `out = swap(T[bh · 16 + ah]) +
+  T[al · 16 + bl]`, T the 256 bytes at page `byte 10`. `$D0`-`$D3` are §117's curves. Any other
+  page is memory as it stands (the manual's "A + (LEFT, LEFT) while HARD is selected"):
+  `UNMASKED`'s `8E` is VRAM `$8E00`, the font tiles the ROM loads at boot from its own data
+  (ROM `$7842A` on 9.4.2, the same bytes in every RAM dump of the run), and the 8-bit adds carry
+  between the nibbles. Reading that page from the ROM beside the save reproduces the mix; what
+  it cannot reproduce is that a read during the LCD's mode 3 returns `$FF` (the frame's `FE`
+  bytes, about a third of them), which depends on where the interrupt falls in the scanline.
+
+ChipBoy: `LsdjKit::bank`/`loopBits` and a lookup by number; `KitSample::loop` beside
+`loopPoint` (`Kit::perSampleLoop` says the samples carry their own), `Kit::halfSpeed`,
+`KitDist::Raw` with `Kit::distTable`; the importer reads both sides' bytes, cuts and offsets
+each sample per side, reads the volume, and takes a raw page from the ROM's font block for the
+9.x model; the driver writes kit frames from the instant loop (`kitFrame()`), a frame an
+instant or every other one, through the ROM's sequence, and drops the fetch model and the CGB
+stream (`scheduleStreams`, `updateWaveTimer`). The mode-3 `$FF` reads are not modelled.
+
+## 173. A cell's `L` skips the note-on's lookup: the trigger carries the old period
+
+§152 has the slide as an offset beside the transposes, aimed at the new note from where the
+channel is. One more thing the step reader does (`2:$4A07`, matrix §11.3 item 4): with an `L`
+on the step the period lookup is skipped, so the note-on's own trigger writes whatever the
+channel wrote last -- `EGOFLEX`'s first wave note, `L 60` on the song's first row, triggers at
+period `$000` and the epilogue refresh 3.5 ms later brings `$416`. ChipBoy triggered on the new
+note. `Voice::slideOnTrigger`, set by a cell's `L` inside the note-on, makes the trigger (and a
+wave's post-`$7E0` write) carry `lastPeriod`, 0 when there is none.

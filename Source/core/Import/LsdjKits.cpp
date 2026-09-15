@@ -25,6 +25,8 @@ std::vector<LsdjKit> readKits(const uint8_t* rom, size_t size)
         if (rom[base] != 0x60 || rom[base + 1] != 0x40) continue;
         LsdjKit kit;
         kit.name = text(rom + base + kKitNameAt, 6);
+        kit.bank = int(base / kBankSize);
+        kit.loopBits = uint16_t(rom[base + 0x5C] | (rom[base + 0x5D] << 8));   // section 172
         // Sixteen little-endian words: the address, in the 4000-7FFF window,
         // where each sample ends -- word 0 is the 60 40 magic read as 4060,
         // which is also where the first sample starts.
@@ -44,10 +46,26 @@ std::vector<LsdjKit> readKits(const uint8_t* rom, size_t size)
     return kits;
 }
 
-uint16_t kitPeriodOfSpeed(uint8_t speedByte)
+const LsdjKit* lsdjKitByNumber(const std::vector<LsdjKit>& kits, int k)
+{
+    for (const auto& kit : kits) if (kit.bank == k + 8) return &kit;
+    return nullptr;
+}
+
+uint16_t kitPeriodOfSpeed(uint8_t speedByte, bool halfSpeed)
 {
     const int signedSpeed = speedByte >= 128 ? int(speedByte) - 256 : int(speedByte);
-    return uint16_t(std::clamp(1865 + signedSpeed, 0, 2047));
+    return uint16_t(std::clamp((halfSpeed ? 1682 : 1865) + signedSpeed, 0, 2047));
+}
+
+LsdjRawPages lsdjRawPages(const uint8_t* rom, size_t size, const std::string& version)
+{
+    LsdjRawPages pages;
+    // Read on 9.4.2: VRAM $8E00 during playback is the ROM's font block at
+    // $7842A, the same bytes in every RAM dump of a run (section 172).
+    if (rom != nullptr && version == "9.4.2" && size >= size_t(0x7842A) + 256)
+        pages[0x8E] = std::vector<uint8_t>(rom + 0x7842A, rom + 0x7842A + 256);
+    return pages;
 }
 
 } // namespace chipboy::lsdj

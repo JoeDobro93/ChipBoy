@@ -397,6 +397,11 @@ struct KitSample {
     uint8_t  note = 60;              ///< the MIDI note that plays it
     std::vector<uint8_t> data;       ///< 4-bit samples, one per byte, 0-15
     uint32_t loopPoint = 0;
+    /// Section 172: how this sample repeats when the kit says its samples carry
+    /// their own (`Kit::perSampleLoop`): LSDj's OFF / ON (from `loopPoint`,
+    /// which the importer makes 0 by cutting the data at the offset) / ATK
+    /// (from the start, then from `loopPoint`).
+    KitLoop  loop = KitLoop::Once;
 };
 struct Kit {
     bool        used = false;
@@ -407,7 +412,18 @@ struct Kit {
     /// How a cell that names two samples -- one in the note column, one in VEL
     /// -- sums them (section 117, plan-kit-pairs).
     KitDist     dist = KitDist::Clip;
+    /// Section 172: `Raw` mixes through this 256-byte page of the ROM's memory.
+    std::vector<uint8_t> distTable;
+    bool        perSampleLoop = false;   ///< the samples' own `loop` fields apply, not `loop`
+    bool        halfSpeed = false;       ///< a frame every other instant (LSDj's SPEED half)
 };
+
+/// Section 172: one mixed byte of a kit's two live samples.
+inline uint8_t kitMixByte(const Kit& k, uint8_t a, uint8_t b)
+{
+    if (k.dist == KitDist::Raw && k.distTable.size() == 256) return kitMixRaw(k.distTable.data(), a, b);
+    return kitMixByteCurve(k.dist == KitDist::Raw ? KitDist::Clip : k.dist, a, b);
+}
 
 struct Bank {
     std::array<Instrument, kInstrumentSlots> instruments;

@@ -11,7 +11,10 @@ void sniffRom(const juce::File& file, int preferFormat, SavePreview& out)
     out.kits.clear();
     if (out.romFile != juce::File()) {
         juce::MemoryBlock rom;
-        if (out.romFile.loadFileAsData(rom)) out.kits = lsdj::readKits(static_cast<const uint8_t*>(rom.getData()), rom.getSize());
+        if (out.romFile.loadFileAsData(rom)) {
+            out.kits = lsdj::readKits(static_cast<const uint8_t*>(rom.getData()), rom.getSize());
+            out.rawPages = lsdj::lsdjRawPages(static_cast<const uint8_t*>(rom.getData()), rom.getSize(), out.romVersion.toStdString());
+        }
     }
 }
 } // namespace

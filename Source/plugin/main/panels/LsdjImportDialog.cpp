@@ -145,7 +145,7 @@ void LsdjImportDialog::runImport()
         auto bank = std::make_shared<bank::Bank>();
         auto tune = std::make_shared<tracker::Song>();
         lsdj::ImportSummary sum; lsdj::ImportNotes notes;
-        if (!lsdj::importSong(song.data(), song.size(), model, *bank, *tune, sum, notes, preview_.kits.empty() ? nullptr : &preview_.kits)) { allNotes.add(r->name.toStdString() + ": the song could not be read"); continue; }
+        if (!lsdj::importSong(song.data(), song.size(), model, *bank, *tune, sum, notes, preview_.kits.empty() ? nullptr : &preview_.kits, &preview_.rawPages)) { allNotes.add(r->name.toStdString() + ": the song could not be read"); continue; }
         for (const auto& l : notes.lines) allNotes.add(r->name.toStdString() + ": " + l);
         lastTab = processor_.addTab(std::shared_ptr<const tracker::Song>(std::move(tune)), std::shared_ptr<const bank::Bank>(std::move(bank)),
                                     r->name, "LSDj " + String(CharPointer_UTF8(" \xc2\xb7 ")) + r->name);

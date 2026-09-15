@@ -319,10 +319,15 @@ var kitToVarImpl(const Kit& k, int slot)
     auto* o = new DynamicObject();
     o->setProperty("slot", slot); o->setProperty("name", String(k.name)); o->setProperty("period", int(k.period)); o->setProperty("loop", int(k.loop));
     o->setProperty("dist", String(kitDistName(k.dist)));   /* section 117 */
+    // Section 172: the raw page, the half-speed flag and the samples' own loops.
+    if (k.dist == KitDist::Raw && k.distTable.size() == 256) o->setProperty("distTable", Base64::toBase64(k.distTable.data(), k.distTable.size()));
+    if (k.halfSpeed) o->setProperty("halfSpeed", true);
+    if (k.perSampleLoop) o->setProperty("perSampleLoop", true);
     Array<var> samples;
     for (const auto& s : k.samples) {
         auto* so = new DynamicObject();
         so->setProperty("name", String(s.name)); so->setProperty("note", int(s.note)); so->setProperty("loopPoint", int(s.loopPoint)); so->setProperty("length", int(s.data.size()));
+        if (k.perSampleLoop) so->setProperty("loop", int(s.loop));
         MemoryBlock packed((s.data.size() + 1) / 2, true);
         for (size_t i = 0; i < s.data.size(); ++i) { auto* b = static_cast<uint8_t*>(packed.getData()); if (i & 1) b[i / 2] |= uint8_t(s.data[i] & 15); else b[i / 2] = uint8_t(s.data[i] << 4); }
         so->setProperty("data", Base64::toBase64(packed.getData(), packed.getSize()));
@@ -341,12 +346,21 @@ void kitFromVarImpl(const var& v, Kit& k)
         const String d = o->getProperty("dist").toString();
         for (int m = 0; m < kKitDistCount; ++m) if (d == kitDistName(KitDist(m))) { k.dist = KitDist(m); break; }
     }
+    k.distTable.clear();
+    if (k.dist == KitDist::Raw) {
+        MemoryOutputStream mo; Base64::convertFromBase64(mo, o->getProperty("distTable").toString());
+        if (mo.getDataSize() == 256) k.distTable.assign(static_cast<const uint8_t*>(mo.getData()), static_cast<const uint8_t*>(mo.getData()) + 256);
+        else k.dist = KitDist::Clip;
+    }
+    k.halfSpeed = bool(o->getProperty("halfSpeed"));
+    k.perSampleLoop = bool(o->getProperty("perSampleLoop"));
     k.samples.clear();
     if (auto* samples = o->getProperty("samples").getArray())
         for (const auto& sv : *samples) {
             if (k.samples.size() >= size_t(kMaxKitSamples)) break;
             auto* so = sv.getDynamicObject(); if (!so) continue;
             KitSample s; s.name = so->getProperty("name").toString().toStdString(); s.note = uint8_t(std::clamp(getOr(so, "note", 60), 0, 127)); s.loopPoint = uint32_t(std::max(0, getOr(so, "loopPoint", 0)));
+            s.loop = KitLoop(std::clamp(getOr(so, "loop", int(k.loop)), 0, 2));
             const int len = std::max(0, getOr(so, "length", 0));
             MemoryOutputStream mo; Base64::convertFromBase64(mo, so->getProperty("data").toString());
             const auto* b = static_cast<const uint8_t*>(mo.getData());

@@ -28,7 +28,7 @@ intended product rather than a progress report.
 
 ### 2026-09-15 -- the third parity campaign: 9.4.2's code, and what it corrected
 
-`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§171. The audit target is
+`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§173. The audit target is
 LSDj 9.4.2 now, read as code: the dispatcher, every handler's address, the work RAM the commands
 share, the order a phrase step and a table tick run their columns, and a two-sided probe rig that
 builds a song, traces the ROM and ChipBoy and reports the first register batch that differs (200
@@ -132,6 +132,26 @@ cases over nineteen letters). What differed, and what changed:
   (`FrameLoop::Resync`: ping-pong written at the tick; `REACTION`'s `0C`, `READROOM`'s `02`,
   imported as `MANUAL` before). The CGB streaming path of section 6.5 is gone for frames -- the
   ROM never streams -- and stays for kits.
+- **Kits as the ROM plays them** (§172, correcting §96, §97 and §117's reach). A kit number is
+  its ROM bank minus eight, gaps included (ChipBoy numbered the banks it found: `UNMASKED`'s
+  `0C`/`0E`, `EGOFLEX`'s `18`-`1A` and `READROOM`'s `1C`-`1F` played the wrong kits or none;
+  a number with no kit bank is silent on the ROM and now here). Each side has its own bytes
+  -- `LEN` 3/11, `OFFSET` 12/13 in 16-byte frames, `LOOP` bits 6/5 of byte 5, `ATK` bit 7 of
+  bytes 2/9 (start at the beginning, loop from the offset), the bank header's own loop bit
+  when the instrument's is off, half speed bit 6 of byte 2 (`$692` + speed, a frame every
+  other instant), `VOLUME` from byte 1 (every kit was 100 %). The mixer runs from the instant
+  loop: the note-on writes `NR32` and `NR33`, every instant writes sixteen bytes from each
+  live side -- raw when one, through the page byte by byte when both, `swap(T[bh · 16 + ah]) +
+  T[al · 16 + bl]` with the carries -- as `NR51` muted, `NR30` off, the bytes, on, the `$7E0`
+  pre-trigger, `NR51`, the period; a side's position moves sixteen bytes a frame whatever the
+  period, and the DAC goes off at the instant after the last side ends. `DIST` pages outside
+  `D0`-`D3` are memory: `UNMASKED`'s `8E` is the font block, read from the ROM beside the save
+  (`KitDist::Raw`, `Kit::distTable`, `lsdjRawPages`). The fetch model and the CGB stream
+  (`scheduleStreams`, `updateWaveTimer`) are gone; the JSON carries `halfSpeed`,
+  `perSampleLoop`, a sample's `loop` and the raw `distTable`.
+- **A cell's `L` skips the note-on's lookup** (§173): the trigger carries the last period the
+  channel wrote, none at the song's start (`EGOFLEX`'s first wave note opens at `$000` for the
+  3.5 ms to the refresh).
 
 Not modelled, from the same reading: the ROM multiplies a roll's period by instrument byte 8 + 1
 (no ChipBoy field; no song of the save sets it); `R`'s restart of stage 1 indexes the step table
@@ -142,7 +162,11 @@ ROM's own CPU cost are measured and left (`docs/HANDOFF.md`): in a four-channel 
 tick reaches the wave's table row 0 about 3.5 ms after the trigger, past the next instant, so a
 row-0 `P` starts one instant later than in a one-channel probe; and a frame's busy-wait can lose a
 timer interrupt that the VBlank budget replays, slipping the ROM's whole tick clock by an instant
-(`REACTION`: 2.8 ms at its second note, 35 ms by eight seconds).
+(`REACTION`: 2.8 ms at its second note, 35 ms by eight seconds). A kit side's last frame reads
+on into the next sample for the bytes past its end (ChipBoy reads silence), and a raw page read
+during the LCD's mode 3 returns `$FF` (`UNMASKED`'s frames: about a third of the bytes, `FE` after
+the add), which the mixer's position in the scanline decides; four more bytes of that first frame
+differ for a reason not found (VRAM bank 1 is the suspect).
 
 Left as measured (§147): the fold -- the ROM triggers on the instrument's values and lets a table's
 row 0, a cell's `R` or `S` land a millisecond later as their own writes.

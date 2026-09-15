@@ -48,7 +48,15 @@ design-log section the change touches. Update this file at the end of every chan
   wave `FINETUNE` (byte 12, `LsdjModel::waveFineTuneByte`); §171: the wave frame writer -- the
   `$7E0` pre-trigger sequence, the sync grid ("silky wave": `waveSyncDue`, `writeWaveFrame`,
   `queueFrame`, the driver's clock monotonic), the start frame (`Instrument::frameStart`),
-  `RESYNC` (`FrameLoop::Resync`); the CGB frame streaming is gone. `CHANGES.md` has the round. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
+  `RESYNC` (`FrameLoop::Resync`); the CGB frame streaming is gone; §172: kits as the ROM plays
+  them -- bank = number + 8 (`lsdjKitByNumber`), both sides' LEN/OFFSET/LOOP/ATK bytes and the
+  header's loop bits (`KitSample::loop`, `Kit::perSampleLoop`), half speed (`Kit::halfSpeed`),
+  the volume, a frame an instant through the ROM's sequence (`kitFrame`, `waveRamBurst`), the
+  raw DIST page from the ROM (`KitDist::Raw`, `Kit::distTable`, `lsdjRawPages`, carried by
+  `SavePreview::rawPages`); the fetch model and `scheduleStreams` are gone; §173: a cell's `L`
+  makes the trigger carry the old period. `UNMASKED`'s wave channel now opens on the ROM's
+  writes; `EGOFLEX`'s wave channel matches the ROM's state sequence for 1.75 s, `REACTION`'s
+  for 3.4 s. `CHANGES.md` has the round. 289 core tests. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
   `probe/raw.py TAG [ch] [n]` prints the first raw writes of both sides. 287 core tests, 11
   plugin checks.
 - The probe rig for this campaign lives in the container at `/root/lsdj/probe/`: `vs_matrix.py`
@@ -934,6 +942,15 @@ design-log section the change touches. Update this file at the end of every chan
   at 8 s -- an effective tempo 0.4 % under 280). A DAW-synced ChipBoy should not drift, so this
   is left as the ROM's own defect. (3) A `K` on a wave note writes `NR31` in the kill; ChipBoy's
   rides the refresh. The Instrument tab has no field for `frameStart` (imported songs only).
+- **Kits, left after §172**: a raw DIST page read in the LCD's mode 3 returns `$FF` (about a
+  third of `UNMASKED`'s mixed bytes come out `FE`), which the mixer's position in the scanline
+  decides -- modelling it needs the instant's scanline phase and the mixer's per-byte cost;
+  four more bytes of `UNMASKED`'s first frame differ from the font page's mix (VRAM bank 1
+  is the suspect: `lsdjref_pc --dump-ram` dumps one bank); a side's last frame reads on past
+  its end into the next sample (ChipBoy: silence); the Kits tab edits `loop` for every sample
+  at once and has no `halfSpeed` or per-side fields. The songs' remaining wave divergences are
+  timing: `EGOFLEX` at 1.78 s and `REACTION` at 3.4 s drift a frame write against the ROM by
+  the lost-interrupt slip above.
 - **Kits are not the ROM's** (task open, `LSDJ_COMMAND_MATRIX.md` §11.8): the importer indexes
   kits by their position in the ROM's list where the ROM uses bank = kit + 8 (gaps break
   `EGOFLEX`'s `18`-`1A` and `READROOM`'s `1C`-`1F`), byte 3 and 11 are both lengths in 16-byte

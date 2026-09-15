@@ -31,6 +31,7 @@ struct SavePreview {
     juce::String romVersion;             ///< "9.3.9" from a ROM beside the save, empty when none
     juce::File romFile;
     std::vector<lsdj::LsdjKit> kits;     ///< that ROM's kit banks, for the kit instruments
+    lsdj::LsdjRawPages rawPages;         ///< section 172: the memory pages a kit's DIST can name, as the ROM fills them
 };
 
 /// Reads the save and indexes it; false with a message when it is not one. A

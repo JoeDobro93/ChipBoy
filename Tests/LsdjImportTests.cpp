@@ -913,7 +913,7 @@ TEST_CASE("a kit instrument's DIST curve sums its two samples", "[lsdj]")
     }
     SECTION("a mixed kit note") {
         // One ROM bank per kit: kit 00 a ramp, kit 01 a flat 15.
-        std::vector<uint8_t> rom(2 * 0x4000, 0);
+        std::vector<uint8_t> rom(10 * 0x4000, 0);
         auto bankAt = [&](int b, const char* name, const std::vector<uint8_t>& sample) {
             uint8_t* p = rom.data() + size_t(b) * 0x4000;
             p[0] = 0x60; p[1] = 0x40;
@@ -925,8 +925,8 @@ TEST_CASE("a kit instrument's DIST curve sums its two samples", "[lsdj]")
         };
         std::vector<uint8_t> ramp(64), full(64, 15);
         for (size_t k = 0; k < ramp.size(); ++k) ramp[k] = uint8_t((k + 1) % 16);
-        bankAt(0, "RAMPKT", ramp);
-        bankAt(1, "FULLKT", full);
+        bankAt(8, "RAMPKT", ramp);                          // section 172: kit 00 is bank 8
+        bankAt(9, "FULLKT", full);
         const auto kits = readKits(rom.data(), rom.size());
         REQUIRE(kits.size() == 2);
 
@@ -983,9 +983,10 @@ TEST_CASE("a kit instrument's DIST curve sums its two samples", "[lsdj]")
 
 TEST_CASE("a kit instrument takes its samples from the ROM beside the save", "[lsdj]")
 {
-    // A ROM of two kit banks, built here: bank 0 (kit 00) "TESTKT" with two
-    // samples, bank 1 (kit 01) "SECOND" with one.
-    std::vector<uint8_t> rom(2 * 0x4000, 0);
+    // A ROM of two kit banks, built here: bank 8 (kit 00, section 172: a kit
+    // is its number plus eight) "TESTKT" with two samples, bank 9 (kit 01)
+    // "SECOND" with one.
+    std::vector<uint8_t> rom(10 * 0x4000, 0);
     auto bankAt = [&](int bank, const char* name, const std::vector<std::vector<uint8_t>>& samples) {
         uint8_t* b = rom.data() + size_t(bank) * 0x4000;
         b[0] = 0x60; b[1] = 0x40;
@@ -1001,19 +1002,23 @@ TEST_CASE("a kit instrument takes its samples from the ROM beside the save", "[l
     std::vector<uint8_t> ramp(128), flat(64, 8), tri(96);
     for (size_t k = 0; k < ramp.size(); ++k) ramp[k] = uint8_t(k % 16);
     for (size_t k = 0; k < tri.size(); ++k) tri[k] = uint8_t(k % 32 < 16 ? k % 16 : 15 - k % 16);
-    bankAt(0, "TESTKT", { ramp, flat });
-    bankAt(1, "SECOND", { tri });
+    bankAt(8, "TESTKT", { ramp, flat });
+    bankAt(9, "SECOND", { tri });
+    rom[8 * 0x4000 + 0x5C] = 0x02;                          // the header's loop bits: sample 2 of kit 00 loops on its own
     const auto kits = readKits(rom.data(), rom.size());
     REQUIRE(kits.size() == 2);
-    CHECK(kits[0].name == "TESTKT"); CHECK(kits[0].samples.size() == 2); CHECK(kits[0].samples[0].nibbles == ramp); CHECK(kits[0].samples[1].nibbles == flat);
+    CHECK(kits[0].name == "TESTKT"); CHECK(kits[0].bank == 8); CHECK(kits[0].loopBits == 2);
+    CHECK(kits[0].samples.size() == 2); CHECK(kits[0].samples[0].nibbles == ramp); CHECK(kits[0].samples[1].nibbles == flat);
     CHECK(kits[1].samples.size() == 1); CHECK(kits[1].samples[0].nibbles == tri);
+    CHECK(lsdjKitByNumber(kits, 1) == &kits[1]); CHECK(lsdjKitByNumber(kits, 2) == nullptr);
     CHECK(kitPeriodOfSpeed(0x00) == 1865); CHECK(kitPeriodOfSpeed(0xD0) == 1817); CHECK(kitPeriodOfSpeed(0x40) == 1929);
+    CHECK(kitPeriodOfSpeed(0x00, true) == 1682);
 
-    // A song with one kit instrument: kit A = 00, kit B = 01, both cut to two
-    // frames by the instrument's one LENGTH (byte 11, section 96), speed D0.
+    // A song with one kit instrument: kit A = 00, kit B = 01, each side cut to
+    // two frames by its own LEN (bytes 3 and 11, section 172), speed D0.
     auto song = blankSong(22);
     song[kInstAlloc + 0] = 1;
-    uint8_t* i0 = song.data() + kInst; i0[0] = 2; i0[1] = 0xA8; i0[2] = 0x00; i0[3] = 0; i0[7] = 3; i0[8] = 0xD0; i0[9] = 0x01; i0[11] = 2;
+    uint8_t* i0 = song.data() + kInst; i0[0] = 2; i0[1] = 0xA8; i0[2] = 0x00; i0[3] = 2; i0[7] = 3; i0[8] = 0xD0; i0[9] = 0x01; i0[11] = 2;
     std::memcpy(song.data() + kNames, "DRUMS", 5);
     song[kPhraseAlloc] |= 1;
     song[kNotes + 0] = 0x10; song[kPhraseInst + 0] = 0;     // kit A sample 1: the ramp, two frames of it
@@ -1037,14 +1042,38 @@ TEST_CASE("a kit instrument takes its samples from the ROM beside the save", "[l
     CHECK(kit.samples[1].data == flat);                     // already two frames
     CHECK(kit.samples[2].data.size() == 64);                // and the 96-nibble triangle is cut too
     CHECK(inst.kitLoop == bank::KitLoop::Once);             // byte 5 has no LOOP bit
-    {   // Section 96: bit 5 of byte 5 is LOOP.
-        i0[5] = 0x20;
+    CHECK(kit.perSampleLoop);
+    CHECK(kit.samples[0].loop == bank::KitLoop::Once);
+    CHECK(kit.samples[1].loop == bank::KitLoop::Loop);       // the header's own bit, LOOP off on the instrument
+    CHECK(int(inst.waveLevel) == 3);                         // byte 1's NR32 code: A8 is 100 %
+    {   // Section 172: bit 6 of byte 5 loops side A, bit 5 side B; OFFSET (byte
+        // 12) starts A a frame in; ATK (bit 7 of byte 2) starts at the sample's
+        // beginning and loops from the offset; bit 6 of byte 2 is half speed.
+        i0[5] = 0x60; i0[12] = 1; i0[2] = 0x80 | 0x40;
         auto b2 = std::make_unique<bank::Bank>(); auto o2 = std::make_unique<tracker::Song>();
         ImportSummary s2; ImportNotes n2;
         REQUIRE(importSong(song.data(), song.size(), lsdjLatestModel(), *b2, *o2, s2, n2, &kits));
         CHECK(b2->instruments[0].kitLoop == bank::KitLoop::Loop);
-        CHECK(b2->kits[0].loop == bank::KitLoop::Loop);
-        i0[5] = 0;
+        const auto& k2 = b2->kits[0];
+        CHECK(k2.loop == bank::KitLoop::Loop);
+        CHECK(k2.halfSpeed); CHECK(k2.period == 1682 - 48);
+        REQUIRE(k2.samples.size() == 3);
+        CHECK(k2.samples[0].loop == bank::KitLoop::FromPoint);   // ATK
+        CHECK(k2.samples[0].loopPoint == 32);                    // from the offset
+        CHECK(k2.samples[0].data.size() == 96);                  // the start, then two frames past the offset
+        CHECK(k2.samples[2].loop == bank::KitLoop::Loop);        // side B, bit 5
+        i0[5] = 0; i0[12] = 0; i0[2] = 0;
+    }
+    {   // Section 172: a raw DIST page comes from the ROM with the kits.
+        i0[10] = 0x8E;
+        LsdjRawPages pages; pages[0x8E] = std::vector<uint8_t>(256, 0x0F);
+        auto b3 = std::make_unique<bank::Bank>(); auto o3 = std::make_unique<tracker::Song>();
+        ImportSummary s3; ImportNotes n3;
+        REQUIRE(importSong(song.data(), song.size(), lsdjLatestModel(), *b3, *o3, s3, n3, &kits, &pages));
+        CHECK(b3->kits[0].dist == bank::KitDist::Raw);
+        REQUIRE(b3->kits[0].distTable.size() == 256);
+        CHECK(bank::kitMixByte(b3->kits[0], 0x12, 0x34) == uint8_t(0xF0 + 0x0F));   // swap(T) + T, eight bits
+        i0[10] = 0xD0;
     }
     const auto* p = out->phrase(1);
     REQUIRE(p != nullptr);
