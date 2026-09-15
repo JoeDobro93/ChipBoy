@@ -226,32 +226,9 @@ private:
         int32_t  slideOff256 = 0;     ///< what is left of the slide, 1/256 semitones
         int32_t  slideStep256 = 0;    ///< and what one update takes off it
         int32_t  slideLeft = 0, slideTotal = 0;   ///< updates remaining, and the duration
-        /// The table transpose the slide was aimed through, held for its whole
-        /// run so a table row stepping off that column cannot drag the target
-        /// with it (section 71). Only a slide a transposed table row started
-        /// holds one.
-        int32_t  slideTspFine = 0;
-        bool     slideTspHeld = false;
-        /// Section 111: a cell's `L` keeps the pitch the channel is already on
-        /// for its own update -- the column it was sitting under and all -- and
-        /// the slide and the suppression begin on the **next** one. The column
-        /// rides in `slideTspFine` for that one update and this drops it.
-        bool     slideTspDrop = false;
+        /// Section 152: a slide is the offset beside the transposes -- it holds no
+        /// copy of the table's column, which stays live under it.
         int32_t  pitchNowFine = 0;    ///< where the channel is, as of the last write, 1/256 semitones
-        /// Section 110: how much of `pitchNowFine` is a transpose rather than
-        /// the note -- the table's column, plus whatever a held slide stands in
-        /// for it. A cell's `L` slides the note alone, so this is what it takes
-        /// off the pitch it starts from, and reading the *live* column instead
-        /// is wrong at a note-on, where the new instrument's table has already
-        /// restarted on a row that transposes nothing.
-        int32_t  pitchNowTspFine = 0;
-        /// Section 111: the table's transpose column as it stood at that same
-        /// write, whether or not a slide was suppressing it. A cell's `L` holds
-        /// the channel where it is for one update *with this column on top*, and
-        /// the live column is no use for it: inside a note-on the table has
-        /// already restarted on a row that transposes nothing, and during a
-        /// slide `pitchNowTspFine` has been zeroed by the suppression.
-        int32_t  pitchNowColFine = 0;
         bool     pitchValid = false;  ///< something has sounded, so a slide has somewhere to come from
         bool     pitchClockOn = false;
         bool     pitchWrite = false;  ///< something moved the pitch last update: write it once more
@@ -305,10 +282,13 @@ private:
         /// Section 66's Register domain: the nibble-wise delta S and P have
         /// taken off NR43 so far, and the P that keeps taking it every tick.
         uint8_t  noiseReg = 0, noiseRegStep = 0;
+        bool     noiseStepFresh = false;  ///< section 150: a noise `P`'s first step is the next tick's
         int16_t  noiseBend256 = 0;    ///< Notes domain: P's map entries a tick, in 1/256
         int32_t  noiseBend9 = 0;      ///< and what it has accumulated between whole entries
         int8_t   instTranspose = 0;   ///< the instrument's PU2 transpose, or what an F on PU2 set (section 49)
         uint8_t  chord[3] = { 0, 0, 0 }; uint8_t chordN = 0, chordIdx = 0, chordCount = 0;
+        bool     chordFresh = false;  ///< section 149: a `C` on a running voice plays the root on its own tick
+        bool     hopTaken = false;    ///< section 155: the table `H` just read took its hop
         uint8_t  dutyIdx = 0, duty = 2;
         /// Section 140: the `instKey` the live table position is parked under,
         /// or kNoStepKey while the table is not a STEP one. 0x10000 is a local
@@ -381,7 +361,7 @@ private:
         /// Section 99: in Drum the slide is linear in the **period register**,
         /// not in semitones, so it runs on `drumOffset`. `drumSlideHold` keeps
         /// the table's transpose column out of the note once it has been folded
-        /// into that offset, as `slideTspHeld` does for the semitone slide.
+        /// into that offset (the semitone slide holds nothing, section 152).
         double   drumSlideStep = 0.0;
         uint16_t drumSlideLeft = 0;
         bool     drumSlideHold = false;
@@ -617,6 +597,7 @@ private:
     /// pitch clock at the measured rate (docs/LSDJ_PARITY.md section 7).
     void    stepSoftEnvelope(int ch);
     int32_t slideResidual(const Voice& v) const;      ///< what is left of the slide, 1/256 semitones
+    int tableRowTransposeOf(const Voice& v) const;    ///< the live run's current row's own column (section 152)
     void loadFrame(int ch, const bank::Frame& f, bool trigger);
     void updateWaveTimer(int ch, uint16_t freq, bool trigger);
     void scheduleStreams(uint64_t cycleStart, uint64_t cycleEnd);

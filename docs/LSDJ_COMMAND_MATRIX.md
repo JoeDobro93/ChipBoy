@@ -1099,3 +1099,217 @@ and `LSDJ_PARITY.md` §5 rather than here.
 
 Note-ons against the ROM over 23.8 s, longest common run: **PU1 67/103, PU2 104/153,
 WAV 198/219, NOI 32/32.** PU1 and PU2 are the weak ones.
+
+## 11. The 9.4.2 ROM's own map -- the third campaign's starting point
+
+Everything in this section was read off the 9.4.2 ROM's code (bank 02 unless said), not off a
+trace, and the address that answered each question is given so it can be re-read. It supersedes
+the addresses in §3 and in `tools/lsdjref/README.md` where they differ. Nothing here is a listing:
+it is what the code does, in ChipBoy's terms, and what state it keeps.
+
+### 11.1 The dispatcher and its three callers
+
+`$478D` reads the letter code from `$C8C4`, returns for codes ≥ `$13` (`Z` never reaches the
+table), and jumps through the twenty words at `$47A2`. A handler gets the channel in `$FF8B`, the
+value in `$FF8F` and, in `$C527`, the **slot**: `ch` for a phrase cell, `ch + 4` for a table's
+CMD 1, `ch + 8` for its CMD 2. Three call sites: the phrase step at `$4B5B`, CMD 1 at `$5320`, CMD
+2 at `$5338`. The handlers on 9.4.2:
+
+| letter | address | letter | address | letter | address |
+|---|---|---|---|---|---|
+| `A` | `$4679` | `K` | `$6600` | `R` | `$64AA` |
+| `C` | `$476C` | `L` | `$4286` | `S` | `$4812` |
+| `E` | `$46D8` | `M` | `$6253` | `T` | `$6676` |
+| `F` | `$46F7` | `O` | `$666C` | `V` | `$7DEB` |
+| -- | -- | `P` | `$6653` | `W` | `$47C8` |
+
+`B`, `D`, `G`, `H` and `Z` have no entry and are handled where the row is read: a phrase's at
+`$770C` (`B` `$773B`, `D` `$7797`, `G` `$77EE`, `H` `$7139`), a table's at `$525B` and `$52B1`
+(`H` `$55F9`/`$560E`, `B` `$737C`, `G` `$4E15`; `Z` `$7467`/`$7489`, phrase `$7458`, all through
+`$73CA`). `C` in a table is also inline (`$5286`): the value goes to `$C218 + ch` and the handler
+is not called, so a table's `C 00` does not refresh the note where a phrase's does.
+
+### 11.2 The work RAM the commands share
+
+Per channel unless said (`+ ch`); per slot means twelve entries, `+ slot`.
+
+| what | where |
+|---|---|
+| note byte of the step, instrument byte | `$C0CC`, `$C0C8` (`FF` none) |
+| the note the channel holds (bare notes, `L`, `R` read it) | `$C0E8`; `$C41F` last note; noise `$C2E7`, `$C4FD` |
+| period image (lo, hi) PU1 / PU2 / WAV | `$C0F4` / `$C0F6` / `$C0F8` |
+| pitch offset, 1/256 semitone, 16-bit | `$C337 + 2ch` |
+| `P` step per update, `L` target | `$C2D0 + 2ch`, `$C248 + 2ch` |
+| vibrato: phase, depth word, amplitude, shape | `$C308 + 2ch`, `$C314 + 2ch`, `$C324`, `$C310`; active when `$C315 + 2ch` ≠ 0 |
+| chain + table transpose in force (PU1, PU2, WAV) | `$C343`/`$C347`, `$C344`/`$C348`, `$C345`/`$C349`; their sum `$C174 + ch` |
+| "refresh the note's registers this tick" | `$C34E + ch` (`$C3` from a note or `C 00`, `1` from `F`, `R`) |
+| "the pitch is moving, do not refresh" | `$C3F9 + ch` |
+| instrument PITCH: TICK / DRUM / STEP flag | `$C35F + ch` (byte 5 bit 4) / `$C330 + ch` (bit 6) / `$C35C + ch` (bit 7) |
+| transpose off (byte 5 bit 5), table STEP (bit 3) | `$C333 + ch`, `$C33F + ch` |
+| table number (`FF` off), row positions CMD 1 / CMD 2 | `$C204`, `$C208` / `$C20C`; STEP mode at `$C250 + $C210[ch]` |
+| table lanes' countdown, "row 0 not yet run", ticks to next row | `$C154` (`$20` at start), `$C2EC`, `$C164` |
+| env lane: countdown, row pointer | `$C0C4 + ch`, `$C0BC + 2ch` |
+| CMD/RATE and its countdown | `$C8C6 + ch`, `$C8CA + ch` |
+| `C` value, chord phase | `$C218`, `$C21C` |
+| `K`/`R` pending bits (bit 0 `K`, bit 1 `R`), countdowns | `$C2F0` per slot; `$C230` (`K`), `$C23C` (`R`) per slot |
+| `R` count and level nibble | `$C8CE`, `$C224` per slot |
+| `Z` memory: last code / value per lane | phrase `$C371`/`$C3B5 + ch`; CMD 1 `$C375`/`$C3B9 + table`; CMD 2 `$C395`/`$C3D9 + table` |
+| `S` accumulator (PU1), finetune (`F`), PU2 transpose (`F`'s high digit) | `$C2E4`, `$C696`/`$C697`, `$C4D3` |
+| pan bits (bit 7 = muted) | `$C0A0 + ch` |
+| the kit: banks A/B, pointers, ends, loop starts, mix page | `$C4F4`/`$C4F5`, `$C4F9`/`$C4FB`, `$C4DA`, `$C4D4`/`$C4D8`, `$C4F8` |
+
+### 11.3 What a phrase step does, in order (`$4960`-`$4B66`, entered per channel)
+
+1. The command code goes to `$C8C4`. A step with **no note** jumps straight to the command
+   (`$4B48`): nothing else below runs.
+2. The note is stored (`$C41F`), and on noise `$C2E7`/`$C4FD` = note − 1 with the transpose
+   accumulator `$C8F2` cleared; a noise `S` on the same step is applied to the note **before**
+   it plays and its code is then cleared (`$498F`), so it never reaches the dispatcher.
+3. An instrument byte clears `$C3F9` (pitch moving) and the `P` step (`$C2D0`).
+4. The period is looked up from the note table -- RAM `$CF28` normally, ROM 0:`$09B9` for DRUM
+   (`$C330`) -- with PU2's `$C4D3` added to the note. An `L` on the step (`$4A07`) skips the
+   lookup: the old note stays and slides. A kit note goes its own way (`$4B67`).
+5. `$4A33`-`$4A9E`: with an instrument (or on the wave channel always): `$5735` loads the instrument (a wave `F` on the step, code 6, is
+   folded in first: `$4A5E`, and a wave note with `$C8F5` kit set goes to `$4A7E`); `$6014` then
+   `$61B6` (pan) and `$46C7` clears the slot's `K`/`R` bits for the phrase lane **and both table
+   lanes** (`$C2F0`, `$C2F4`, `$C2F8`).
+6. Without an instrument, the registers are written directly: PU1 `NR13`/`NR14` with the length
+   bit kept (`$4AE9`), PU2 the same (`$4AB1`), wave `NR33`/`NR34` (`$4AC4`), noise `$5F5C`.
+7. `$4AFA`: the pitch offset `$C337 + 2ch` is reset to its zero (the word `$8000`; the note
+   index carries a `$7F` bias that this cancels), a DRUM note gets its own pitch-fall table entry (`$4B18`), `$C34E` is set to `$C3`
+   (refresh), the note is copied to `$C0E8`/`$C0EC`.
+8. The command is dispatched (`$4B5B`) with `$FF8F` = its value, slot = ch.
+9. `$C160 + ch` is decremented.
+
+The DRUM/FAST/TICK pitch machine is a 16-bit **note.fraction** (`$C337`), turned into a period
+by 0:`$1B28`: `period = table[note] + (table[note+1] − table[note]) · fraction / 256`, rounded.
+The refresh 0:`$1BA7` (PU1; PU2 `$1BF6`, WAV `$1AA7`'s caller) adds the transposes (`$C174`), the
+`F` finetune (`$C696`, subtracted as `fine · 8 / 256` semitones) and the vibrato (`$C31C`) to
+that, writes `NR13`/`NR14` keeping the length-enable bit and, when it is clear, `NR11` = the duty
+image. No trigger: a refresh never retriggers.
+
+### 11.4 What a table tick does, in order (`$5163`, per channel, wave first, then PU1, PU2, NOI)
+
+1. The **envelope lane** (`$5193`): its own countdown `$C0C4 + ch`; at zero the row's byte is
+   read at `$C0BC + 2ch`; a low nibble of `0` ends the lane, `F` hops to the row named by the
+   high nibble (once per tick, `$51CB`), any other sets the countdown to `len − 1` and advances
+   the pointer. The high nibble then goes to `E`'s wave handler on the wave channel (`$5219`) and
+   to `$7F3E` elsewhere, which walks the software level (`$C2D8`/`$C2D9`/`$C2DB`) one step at a
+   time toward it with the zombie write `NRx2 = 08` upward and 0:`$2F97` downward, and zeroes
+   the ADSR state. This lane runs whether or not the command lanes step this tick.
+2. If the table is in STEP mode and has already run its row (`$C33F+ch` = `FF`), stop here.
+3. The command lanes step when `$C164 + ch` is zero or `$C154 + ch` is `$20` (the tick after a
+   start). `$5625`: if `$C2EC` says the table just started, clear it (row 0 is the row this
+   tick) and on noise clear `$C8F2`; else advance all five row pointers. `$5661`: bump the
+   position byte (`$C208`), reload the pointers at 16.
+4. CMD 1 is read (`$50DF`): code → `$C369`, value → `$C36F`; `H` returns at once; `Z` is
+   resolved now (`$7467`) into the last code and a new value; anything else is remembered as
+   the table's last command (`$C375`/`$C3B9 + table`). Then inline: `H` hops (`$55F9`, guarded
+   to one hop per tick by `$C8F8`, re-reading the new row), `B` maybe-hops (`$737C`), `C` stores
+   its value, `G` sets the groove (`$4E15`). CMD 2 the same (`$5117`, `$C36A`/`$C370`).
+5. `$5300`: unless CMD 1 is `L`, the **transpose column** is applied (`$4FBE`): on PU1/PU2 the
+   row's byte becomes `$C347`/`$C348` and a *change* sets the refresh flag; on a kit it is added
+   to the period every tick; on noise the delta against `$C8F2` transposes the note (`$4637`).
+   This runs every tick the lanes are live, not only on a row step -- which is why a row
+   without a transpose puts the note back (§145's control) and why a noise note keeps a
+   transpose across an `A` (§145: the note absorbed it).
+6. `$56EB`: in TICK mode with the lanes just started, the next row's tick count is set
+   (`$48AB`); in STEP mode the flag becomes `FF` (`$5702`) so the row runs once per note.
+7. CMD 1 is dispatched with slot `ch + 4`, then CMD 2 with slot `ch + 8`.
+8. `$C164 + ch` counts down.
+
+So within one row the order is: envelope, transpose, CMD 1, CMD 2 -- and the transpose is
+skipped when CMD 1 is `L`, because a table `L`'s target is the transpose column of its own row
+(`$42CD`: target = held note + row transpose, clamped to 1..`$6C`).
+
+### 11.5 STEP tables, and what an `A` does to a STEP instrument
+
+`$C33F + ch` is byte 5 bit 3 at instrument load (`$5973`, `$5B67`, `$5C5E`, `$5D4B`). With it set,
+the row positions live at `$C250 + $C210[ch]` (`$C210` is the instrument number, `$4C91`): a STEP
+table's position is **per instrument** and survives the note. The row runs on the note's tick and
+the flag is then `FF` until the next note; the envelope lane keeps its own countdown throughout.
+An `A` (`$4679`) writes `$C33F + ch = 0`: a table started by `A` runs in TICK mode whatever the
+instrument says, with positions `$C208`/`$C20C` reset to `FF` (row 0 on the next step), `$C154 =
+$20`, `$C164 = 0`, `$C2EC` set. `A 20`-`A FF` (any value with bits 5-7) sets `$C204 + ch = FF`:
+table off. On a retrigger by `R` (`$67CE`) the same reset happens only if `$C2E8 + ch`
+(the instrument's own table flag) is set, and it re-reads the instrument's table number
+(`$C220 + ch`).
+
+### 11.6 The five that are not commands: `B`, `D`, `G`, `H`, `Z`
+
+- **`B`** in a phrase (`$773B`): two random draws (`$5072`, 0-15) against the two digits; the
+  first gates the left kit, the second the note and the right kit, into `$C8FA`. In a table
+  (`$737C`): one draw against the high digit, and a hop to the low digit's row when it passes,
+  through the same row setter as `H` (`$5475`).
+- **`D`** (`$7797`): the step is deferred by the value in ticks (`$C0FC + ch`, counted in
+  `$55B8`), then re-entered through `$74A8` with `$C0F0 + ch` marking the deferred step.
+- **`G`** (`$4E15`, tables; `$77EE`, phrases): the groove number to `$C154 + ch` and the row
+  counter `$C15C + ch` reset to `FF`.
+- **`H`** in a table (`$4E28`): the hop count per (channel, column, row) lives at `$C180 +
+  ((row + 2ch + col) · 16)`; `FF` means "not started" and is loaded from the high digit; `0`
+  (forever) never counts. The target row is the low digit; the column is kept by bit 4 of the
+  position byte.
+- **`Z`** (`$73CA`): `random(x) << 4 + random(y)` is **added to the last non-`Z`, non-`H`
+  command's value of the same lane** -- the value cell of the lane gets the sum, the lane's code
+  cell gets the last code, and the last-value memory is **not** updated, so repeated `Z`s
+  randomise from the same base. `random(n)` (`$6486`) is `LCG mod (n + 1)`, LCG 0:`$33EB`:
+  `r = 17·r + $5C93`. The lanes are the phrase per channel, and CMD 1 and CMD 2 **per table**.
+
+### 11.7 The handlers, in one line each (what was not in §6)
+
+- `A`: above. `C`: `$C218 + ch = v`; `C 00` sets the refresh flag on pulse/wave and reloads
+  the note on noise. `E`: wave `NR32` from bits 0-1 (0 mute, 1 25 %, 2 50 %, 3 100 %); the
+  others to the software ADSR (`$69FF`/`$6A35`/`$6A6B`). `F`: PU1 finetune `(v & F)·8`,
+  PU2 the same plus `v >> 4` semitones (`$C4D3`, added to PU2's note index); wave `$6338`;
+  the kit's moves the sample position (§11.8); noise nothing. `W`: pulse duty bits into
+  the `NR11`/`NR21` image; wave high digit − 1 → synth speed (`$C8C3`), low digit → length
+  (`$C8C2`) then `$5782`. `S`: PU1 accumulates into `$C2E4` (high nibble added, low nibble added
+  mod 16) and refreshes (`$6058`); **PU2 does nothing**; wave `$4033`; noise transposes the note
+  by the byte with wrap at `$78` and retriggers only on a 15-bit → 7-bit crossing when
+  PITCH = FREE (`$465A`).
+- `K`: `K 00` kills now (`$6584`: `$5F68`, clears the three lanes' `K`/`R` bits, table off,
+  `$C41F` = 0, ...); `K xx` arms the slot's countdown = `xx` from a phrase and `xx − 1` from a
+  table (`$6618`).
+- `R`: `R 8x` is resync (`$64B9`: `$C148`/`$C14C + ch` from CMD/RATE); otherwise the count is
+  `(x − 1)` with `x = 0` meaning once (`$64F9`), the level nibble goes to `$C224 + slot`, the
+  slot's `R` bit is set, and a **phrase** `R` fires on the next tick (`$C23C + slot = 0`) where
+  a **table** `R` fires now (`$657D` → `$66F4`). The retrigger (`$66F4`) resets the vibrato
+  phase, sets the refresh flag, restarts the ADSR (0:`$4000` with the channel's `$CBBC`
+  block), and, from a phrase slot with the instrument's table on, restarts the table.
+- `L`: target as in §11.4/§11.3; speed `v`: the per-update step is `(target − offset) / (v + 1)`
+  (`$4276` is the 16-bit divide; `v = FF` divides by 255), stored in `$C2D0`; `L 00` jumps
+  (`$4303`). Pulse `P` (`$45D8`): step = the 256-word curve at `$43D8` (see §11.9), ×4 in
+  TICK mode, into `$C2D0`, `L` target cleared; noise `P` stores the byte (`$C362`) and a flag
+  for the noise tick. `M`: both nibbles through the 128-entry table at `$D400` (built at boot).
+  `O`: bits 0-1 into `$C0A0 + ch`, `NR51` rewritten unless muted. `T`: `$C529`, bank 0 `$179A`.
+- `V`: `V 00` stops a running vibrato (`$7EB3`) and starts the slowest, shallowest one
+  otherwise (9.1.0); the **depth digit** picks the amplitude from 16 bytes at `$7D9B`
+  (0 4 9 16 22 30 39 48 56 66 76 88 99 111 123 135, in 1/32 semitone), the **speed digit** the
+  phase increment from `$7DAB` (`1024·(s+1)`, FAST/DRUM) or `$7DCB` (683 910 1024 1365 1820
+  2048 2731 3641 4096 5461 7282 8192 10923 14564 16384 21845 -- 96, 72, 64, 48, 36, 32, ... 3
+  ticks a cycle: 9.1.0's rhythmic vibrato) in TICK mode and always on noise; a saw shape
+  negates it. A new vibrato starts at phase `$FC00` (`$0000` or `$8000` for the other shapes).
+
+### 11.8 The kit machine (bank 0, `$0400`-`$0590`, `$15A0`-`$1700`)
+
+Kit number `k` is ROM bank `k + 8` (0:`$1478`), gaps or not. A note digit `d` names sample
+`d − 1` of that bank's sixteen-word offset list; byte 12/13 (`$C4EB`/`$C4EA`) shifts the start in
+16-byte frames; byte 3 (A) / byte 11 (B) cut the sample to that many frames (`$1628`); per-sample
+loop bits sit in the bank header at `$405C`/`$405D` (`$15AC`) and byte 5 bit 6 loops A
+regardless. Each 16-byte frame is copied through HRAM `$FFA0`: one sample raw (`$0423`, `$04DA`),
+two samples through the mixer the ROM builds in RAM at `$D480` -- `out = swap(T[bh·16 + ah]) +
+T[al·16 + bl]` per byte, 8-bit, where `T` is the 256 bytes at **page `byte 10`**: `$D0`-`$D3` are
+HARD/SOFT/FOLD/WRAP built at boot, any other value reads that page of the address space as it
+stands (`$8E` is VRAM tile data, static during playback but `FF` when the LCD is in mode 3, which
+is why the same two frames come out different). The frame is written to wave RAM with the DAC
+off, then triggered at period `$7E0` and immediately given the kit period (`$0566`-`$057D`: 9.2.0's
+"new sample playback routine"). The kit period is `$749 + speed` (byte 8, signed) or `$592 +
+speed` when byte 2 bit 6 sets half speed (`$5CA7`-`$5CF2`).
+
+### 11.9 `P`'s curve, and the units
+
+`$43D8` is 256 words indexed by the byte: `0 1 2 3 4 6 8 10 12 15 18 21 24 28 32 36 40 45 50 …
+2080` for `01`-`7F` and the negatives for `FF`-`80`, i.e. for `n = |v|` and `g = (n − 1) div 4`,
+`step = (g + 1)·n − 2g(g + 1)`, signed -- a curve that is linear in runs of four and grows
+quadratically. The unit is 1/256 of a semitone per update; the update is the 360 Hz timer in
+FAST/DRUM and the tick in TICK, where the step is ×4.

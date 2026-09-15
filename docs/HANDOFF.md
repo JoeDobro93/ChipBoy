@@ -18,6 +18,23 @@ design-log section the change touches. Update this file at the end of every chan
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
 
+## Done (2026-09-15) -- the third parity campaign, on 9.4.2's code
+
+- The harness rig on a fresh container: RGBDS prebuilt, SameBoy boot ROMs assembled, the
+  plugin tools built, `lsdjref_pc --dump-ram` added (WRAM, VRAM, HRAM at the end of a run: how
+  the kit mixer at RAM `$D480` and the DIST pages were read). `probe_fmt22.py` writes a wave
+  instrument's byte 1 as the `NR32` byte (`0x20` = 100 %) and takes a byte-5 flags argument.
+- `docs/LSDJ_COMMAND_MATRIX.md` §11: 9.4.2's dispatcher, every handler's address, the work-RAM
+  map, the phrase step's and the table tick's order, STEP tables, `B D G H Z`, the kit machine.
+- §147-§156 of the design log, with code and eight Catch2 cases (274 core tests): slides as an
+  offset beside live transposes (the held column is gone), a self-hop holds, bare `S`/`W`, the
+  chord's phase, the noise `P`'s first step, `V 00`, the nine-octave wrap, `A` to an empty table,
+  the generated noise map. `CHANGES.md` has the round.
+- The probe rig for this campaign lives in the container at `/root/lsdj/probe/`: `vs_matrix.py`
+  (the interaction cases, two-sided, `--show` for the first differing batch), `songdiff.py NAME`
+  (a whole song of the 9.4.2 save, both sides), `watch.py SAV RANGE` (the ROM's writes to a
+  work-RAM range with the pc), `probe_cmp.py` (the batch compare).
+
 ## Done (2026-09-09)
 
 - Song format 7 (embeds the bank; converts older), link region v4, 76 host parameters.
@@ -852,6 +869,28 @@ design-log section the change touches. Update this file at the end of every chan
   every song's numbers and what is still wrong.
 
 ## Open issues
+
+- **From the third campaign (9.4.2), measured and left** (`docs/COMMANDS_AND_TEMPO.md` §147):
+  the fold -- the ROM triggers on the instrument's values and a table's row 0 (`E` as a zombie walk
+  of twelve triplets, `S` as a second trigger, `W`, `F`), a cell's `R` (a second trigger) and a
+  TICK-mode `L`'s first step land about a millisecond later as their own writes, where ChipBoy
+  folds them into the burst. A TICK-mode vibrato is a unit deeper in ChipBoy than the ROM's
+  (`V 42`: ±3 against ±2 at `NR13 97`; the ROM's shape routine at 0:`$1986` was not read). The
+  nine-octave wrap fires two updates early (the ROM interpolates within the last semitone toward
+  its 109th entry; ChipBoy's table has 108). A TICK instrument's table row 0 transpose is not on
+  the note-on's trigger (`Ltbl_tick`: the ROM writes `+4` two milliseconds after, ChipBoy at the
+  next row). The transpose landing under a running table slide is one update late in ChipBoy
+  (`Ltbl_live`). `T` inside a table is not applied (the Clock's timeline is built from phrase
+  cells; no song of the user's has one). At the end of a chain the ROM leaves the channel
+  sounding where ChipBoy kills it. The noise vibrato (`V 42`, `V F8`) differs after nine ticks.
+- **Kits are not the ROM's** (task open, `LSDJ_COMMAND_MATRIX.md` §11.8): the importer indexes
+  kits by their position in the ROM's list where the ROM uses bank = kit + 8 (gaps break
+  `EGOFLEX`'s `18`-`1A` and `READROOM`'s `1C`-`1F`), byte 3 and 11 are both lengths in 16-byte
+  frames, `DIST` is a memory page (`UNMASKED`'s `8E` mixes through VRAM tile data and `FF`s in
+  LCD mode 3; `REACTION`'s `87 A0 2C`, `CASTSHDW`'s `BB`), and the ROM triggers each frame at
+  period `$7E0` before the real one.
+- **§110's suppression of the column under a cell's slide is not what 9.4.2 does** (§152): it was
+  measured on 9.2.L; re-check there before the version models are touched.
 
 - ~~Table rows: LSDj measured two ticks per row.~~ Closed (§44): re-measured on a 9.3.9
   ROM with a transpose column, a row is **one tick** in LSDj too; the two ticks were the

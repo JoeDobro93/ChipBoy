@@ -215,10 +215,14 @@ Bank Bank::factory()
     { Table t; t.used = true; t.name = "Kick shape"; const int8_t v[] = { 15, 12, 8, 4 }; for (int i = 0; i < 4; ++i) t.steps[size_t(i)].vol = v[i]; t.end = TableEnd::Stop; b.tables[3] = t; }
     // The note starts an octave below and the second row slides back up to it:
     // L's argument is the duration now, 60 updates being a sixth of a second.
+    // Section 152: a table's L aims at its own row's transpose as an offset
+    // while the previous row's column stays in force, so the slide up is
+    // `+12` beside the L and `-12` held on the row after (LSDj's own idiom).
     { Table t; t.used = true; t.name = "Slide up";
       t.steps[0].hasTranspose = true; t.steps[0].transpose = -12;
-      t.steps[1].hasTranspose = true; t.steps[1].transpose = 0; t.steps[1].cmd1 = { Cmd::L, 60, 0, 0 };
-      t.end = TableEnd::Stop; b.tables[4] = t; }
+      t.steps[1].hasTranspose = true; t.steps[1].transpose = 12; t.steps[1].cmd1 = { Cmd::L, 60, 0, 0 };
+      t.steps[2].hasTranspose = true; t.steps[2].transpose = -12; t.steps[2].cmd1 = { Cmd::H, 0, 2, 0 };
+      t.end = TableEnd::Loop; b.tables[4] = t; }
     { Table t; t.used = true; t.name = "Octave hop"; t.steps[0].hasTranspose = true; t.steps[0].transpose = 12; t.steps[1].hasTranspose = true; t.steps[1].transpose = 0; t.end = TableEnd::Loop; b.tables[5] = t; }
     // P's argument is two's complement now and its step comes from the measured
     // table (section 34, docs/LSDJ_PARITY.md section 5): -44 is about one

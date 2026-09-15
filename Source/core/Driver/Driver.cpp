@@ -645,7 +645,7 @@ void Driver::noteOff(int ch, uint8_t note)
 void Driver::beginRelease(int ch)
 {
     Voice& v = v_[size_t(ch)];
-    v.active = false; v.tableOn = false; v.sliding = false; v.slideTspFine = 0; v.slideTspHeld = false; v.slideTspDrop = false; v.chordN = 0;
+    v.active = false; v.tableOn = false; v.sliding = false; v.chordN = 0;
     v.pitchClockOn = false; v.retrigEvery = 0; v.retrigOn = false; v.retrigFast = false; v.retrigFastCount = 0; v.bendSpeed = 0;
     // A shaped envelope has its own release: from the level the note-off found
     // to silence, one level per tick, over its own curve (section 27). A level
@@ -719,10 +719,17 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         // The cell's own commands, once, at this step: a persistent letter
         // written on a bare note changes the running state and stays until a
         // plain note reloads the instrument (section 12).
+        // Section 148: a bare note's `S` retriggers and its `W` writes the duty;
+        // both only emit when live, so they are owed after the period.
+        const bool pulseInst = v.inst.type == InstrumentType::Pulse;
+        auto has = [&](Cmd want) { return v.noteCmd[0].cmd == want || v.noteCmd[1].cmd == want; };
+        const bool oweS = pulseInst && ch == 0 && has(Cmd::S), oweW = pulseInst && has(Cmd::W);
         applyCellCommands(ch, v.noteCmd[0], v.noteCmd[1]);
         v.noteCmd[0] = {}; v.noteCmd[1] = {};
         inNoteOn_ = was;
         writePeriod(ch, false);
+        if (oweW) emit(regAddr(ch, 1), uint8_t((v.duty << 6) | lengthCode6(v.inst.length)), true);
+        if (oweS) retrigger(ch, true, false);
         // Section 146: and now what they owe, in the ROM's order -- the period
         // with no trigger, then `E`'s trigger where the LENGTH counter asks for
         // one (section 138), then the level's own writes. `setLevel()` is right
@@ -760,7 +767,6 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     v.fineTune = (v.inst.type == InstrumentType::Pulse && v.inst.fineTune != 0)
                      ? int16_t(ch == 1 ? int(v.inst.fineTune) : -int(v.inst.fineTune))
                      : int16_t(0); v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0;
-    v.slideTspFine = 0; v.slideTspHeld = false; v.slideTspDrop = false;   // a note starts on its own pitch (section 71)
     v.drumSlideStep = 0.0; v.drumSlideLeft = 0; v.drumSlideHold = false;   // section 99
     v.chordN = 0; v.chordIdx = 0; v.chordCount = 0;
     // Section 123: `lastCellCmd` -- what a `Z` on a later row re-runs -- is
@@ -851,7 +857,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     if (base < 0 && core.type != InstrumentType::Noise && core.type != InstrumentType::Kit) {
         // Below the chip's range: does not sound (C4). The key is still held,
         // so the held stack stays as it is.
-        v.basePeriod = 0; v.tableOn = false; v.sliding = false; v.slideTspFine = 0; v.slideTspHeld = false; v.slideTspDrop = false; v.chordN = 0; v.pitchClockOn = false;
+        v.basePeriod = 0; v.tableOn = false; v.sliding = false; v.chordN = 0; v.pitchClockOn = false;
         killDac(ch);
         v.active = true; view_[size_t(ch)].outOfRange = true;
         return;
@@ -970,7 +976,7 @@ void Driver::killDac(int ch)
 void Driver::stopVoice(int ch, bool kill)
 {
     Voice& v = v_[size_t(ch)];
-    v.active = false; v.tableOn = false; v.sliding = false; v.slideTspFine = 0; v.slideTspHeld = false; v.slideTspDrop = false; v.chordN = 0; v.kitOn = false; v.kitPair = false; v.streamActive = false; v.pendingOn = false;
+    v.active = false; v.tableOn = false; v.sliding = false; v.chordN = 0; v.kitOn = false; v.kitPair = false; v.streamActive = false; v.pendingOn = false;
     v.pitchClockOn = false; v.releasing = false; v.pulseReleasing = false;
     v.shapedOn = false; v.shapedRelease = false; v.tableJustStarted = false;
     // A kill or a stop ends the phrase: a key released afterwards must not
@@ -1065,17 +1071,10 @@ double Driver::noteOfVoice(int ch) const
     const Voice& v = v_[size_t(ch)];
     double note = v.note + v.noteTsp + v.instTranspose + v.p.transpose + v.bend;
     if (v.chordN) note += v.chord[v.chordIdx % v.chordN];
-    // A slide aimed through a table's transpose keeps that column for its whole
-    // run (section 71): the table steps on every tick, and a slide of any
-    // length outlives the row that started it, so reading the live column would
-    // move the target out from under the slide and throw the pitch by the
-    // transpose in one update.
-    // What a slide made of the table's transpose column (section 71). While it
-    // runs it stands in for the column, so a table stepping off the row that
-    // aimed it cannot drag the pitch; once it lands the channel keeps the note
-    // it reached and the column applies on top of that again.
-    note += double(v.slideTspFine) / 256.0;
-    if (!((v.sliding && v.slideTspHeld) || v.drumSlideHold)) note += double(tableTransposeOf(v));
+    // Section 152: the table's column is live under a slide -- the ROM adds the
+    // transposes in force at every pitch write and the slide moves an offset
+    // beside them. Only Drum's period-unit slide folds the column in (§99).
+    if (!v.drumSlideHold) note += double(tableTransposeOf(v));
     const int32_t fine = v.fineOffset + v.fineTune + slideResidual(v);
     return note + double(fine) / 256.0;
 }
@@ -1087,11 +1086,17 @@ int Driver::tableTransposeOf(const Voice& v) const
 {
     if (plainTrigger_) return 0;                   // section 84
     if (!bank_) return 0;
+    // Section 152: a row whose CMD 1 is an `L` does not apply its column -- the
+    // ROM skips the column on that tick and the previous row's stays in force.
     auto rowOf = [this](uint8_t slot, uint8_t row) {
         const Table* t = bank_->table(slot);
         if (!t) return 0;
-        const auto& st = t->steps[row];
-        return st.hasTranspose ? int(st.transpose) : 0;
+        for (int back = 0; back < kTableSteps; ++back) {
+            const auto& st = t->steps[(row + kTableSteps - back) % kTableSteps];
+            if (st.cmd1.cmd == Cmd::L) continue;
+            return st.hasTranspose ? int(st.transpose) : 0;
+        }
+        return 0;
     };
     // Section 145: the column has one owner at a time. While a nested run is live
     // the parent's own column is not read at all -- measured on PU1, a parent's
@@ -1111,6 +1116,18 @@ int Driver::tableTransposeOf(const Voice& v) const
     }
     // Lane 1 is the one a row's own columns belong to.
     return v.tableOn ? rowOf(v.tableSlot, v.tableRow) : 0;
+}
+
+/// The live run's current row's own transpose column, `L` rows included: what
+/// a table's `L` aims at (section 152).
+int Driver::tableRowTransposeOf(const Voice& v) const
+{
+    if (!bank_) return 0;
+    const bool nest = v.nestOn && v.nestRowLive;
+    const Table* t = bank_->table(nest ? v.nestSlot : v.tableSlot);
+    if (!t || !(nest || v.tableOn)) return 0;
+    const auto& st = t->steps[nest ? v.nestRow[1] : v.tableRow];
+    return st.hasTranspose ? int(st.transpose) : 0;
 }
 
 int Driver::computePeriod(int ch)
@@ -1141,7 +1158,19 @@ int Driver::computePeriod(int ch)
     }
     // period = periodOf(noteFine) (section 7): the note, the vibrato, P and a
     // slide are all semitones outside Drum, so the whole pitch is one number.
-    const double note = noteOfVoice(ch) + (plainVib_ ? 0.0 : double(vibratoFine(v)) / 256.0);
+    double note = noteOfVoice(ch) + (plainVib_ ? 0.0 : double(vibratoFine(v)) / 256.0);
+    // Section 153: a pitch a bend or a slide has carried past the note table's
+    // ends comes round nine octaves (0:$1B28 takes the offset's high byte down
+    // or up by $6C), except that up to eight semitones below the bottom the
+    // register is 0 and the note keeps sounding (section 125).
+    if (v.fineOffset != 0 || v.sliding || v.bendSpeed != 0) {
+        const double d = std::floor(note - double(lowestNote(wave)));
+        if (d >= 108.0) { v.fineOffset -= 108 * 256; note -= 108.0; }
+        else if (d < 0.0) {
+            if (d >= -8.0) return 0;
+            if (d >= -74.0) { v.fineOffset += 108 * 256; note += 108.0; }
+        }
+    }
     const int per = periodForNote(note, wave);
     if (per >= 0) return std::clamp(per, 0, 2047);
     // Section 125: off the bottom of the note table. A pitch **effect** that
@@ -1212,10 +1241,6 @@ void Driver::pitchStep(int ch, bool onTick)
         moving = true;
     }
     if (v.sliding) {
-        // Section 111: the update the L was processed on kept the pitch the
-        // channel was already on; from this one the slide owns it and the
-        // table's column stays out of the way.
-        if (v.slideTspDrop) { v.slideTspDrop = false; v.slideTspFine = 0; }
         if (v.slideLeft > 0) {
             v.slideOff256 += v.slideStep256;
             if (--v.slideLeft == 0 && v.slideOff256 == 0) v.sliding = false;
@@ -1354,12 +1379,6 @@ void Driver::writePeriod(int ch, bool trigger)
     // included.
     {
         v.pitchNowFine = int32_t(std::lround(noteOfVoice(ch) * 256.0));
-        // Section 110: and how much of it is transpose rather than note, the
-        // same two terms noteOfVoice() added.
-        v.pitchNowTspFine = v.slideTspFine;
-        if (!((v.sliding && v.slideTspHeld) || v.drumSlideHold))
-            v.pitchNowTspFine += int32_t(tableTransposeOf(v)) * 256;
-        v.pitchNowColFine = int32_t(tableTransposeOf(v)) * 256;
         v.pitchValid = true;
     }
     const uint16_t f = uint16_t(per);
@@ -1765,8 +1784,15 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             // Section 77: the noise channel takes it too -- the chord's semitones
             // walk the note map exactly as a table's transpose column does.
             v.chord[0] = 0; v.chord[1] = uint8_t(std::clamp<int>(c.a, 0, 60)); v.chord[2] = uint8_t(std::clamp<int>(c.b, 0, 60));
-            v.chordN = c.b ? 3 : (c.a ? 2 : 0);
-            v.chordIdx = 0; v.chordCount = 0;
+            {
+                // Section 149: the ROM's C stores the value and leaves the phase
+                // alone -- a C landing on a running chord carries on from where
+                // the phase is; one starting a chord plays the root on its tick.
+                const bool running = v.chordN != 0;
+                v.chordN = c.b ? 3 : (c.a ? 2 : 0);
+                if (!running) { v.chordIdx = 0; v.chordCount = 0; v.chordFresh = v.ticks > 1; }
+                else if (v.chordN) v.chordIdx = uint8_t(v.chordIdx % v.chordN);
+            }
             break;
         case Cmd::B:
             // Section 73. Inside a **table** it is a hop to row `y` taken with
@@ -1885,9 +1911,9 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
                 uint8_t& left = nestLane_ ? v.nestHopLeft[lane == 2 ? 1 : 0] : lane == 2 ? v.hopLeft2 : v.hopLeft;
                 uint8_t& from = nestLane_ ? v.nestHopFrom[lane == 2 ? 1 : 0] : lane == 2 ? v.hopFrom2 : v.hopFrom;
                 const uint8_t here = nestLane_ ? v.nestRow[size_t(lane)] : lane == 2 ? v.tableRow2 : v.tableRow;
-                if (times == 0) { step = uint8_t(row); left = 0; }
-                else if (left == 0 && from != here) { from = here; left = uint8_t(times); step = uint8_t(row); }
-                else if (left > 0) { if (--left > 0) step = uint8_t(row); else from = 0xFF; }
+                if (times == 0) { step = uint8_t(row); left = 0; v.hopTaken = true; }
+                else if (left == 0 && from != here) { from = here; left = uint8_t(times); step = uint8_t(row); v.hopTaken = true; }
+                else if (left > 0) { if (--left > 0) { step = uint8_t(row); v.hopTaken = true; } else from = 0xFF; }
             }
             break;
             // Section 128: `K n` dies n ticks after **this** tick -- the tick
@@ -1917,8 +1943,10 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
                 // `vv + 1` updates with the register walking in a straight line,
                 // which is what the wave kick's sweep is.
                 const bool waveCh = v.inst.type == InstrumentType::Wave;
-                const int tsp = tableTransposeOf(v);
-                const double baseNote = noteOfVoice(ch) - double(tsp);
+                // Section 152: a table's L aims at its own row's column, which
+                // tableTransposeOf() no longer reports on an L row.
+                const int tsp = fromTable ? tableRowTransposeOf(v) : tableTransposeOf(v);
+                const double baseNote = noteOfVoice(ch) - double(tableTransposeOf(v));
                 const int floorPer = periodForNote(double(lowestNote(waveCh)), waveCh);
                 const int basePer = periodForNote(baseNote, waveCh);
                 if (basePer < 0) { if (live) writePeriod(ch, false); break; }
@@ -1934,78 +1962,35 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
                 if (live) writePeriod(ch, false);
                 break;
             }
+            // Section 152: the slide is the offset beside the transposes. Where
+            // the channel is now is the last write; inside a note-on a table's
+            // row 0 finds the note itself, without the column.
             int32_t fromFine = v.pitchNowFine;
             bool have = v.pitchValid;
-            // Section 68: a table row that carries a transpose *and* an L means
-            // the note sounds plain and slides to the transposed one -- LSDj's
-            // wave kick is exactly that, `TSP C4` beside `L20`. Inside the
-            // note-on the channel has no pitch yet, so the slide starts from
-            // the note without the table's column rather than from stale state.
             if (fromTable && inNoteOn_) { fromFine = int32_t(std::lround((noteOfVoice(ch) - tableTransposeOf(v)) * 256.0)); have = true; }
             v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0; v.slideStep256 = 0;
             const int dur = std::clamp<int>(c.a, 0, 255) + 1;
             if (!have) { if (live) writePeriod(ch, false); break; }
-            // Section 71: the slide aims at a note the channel can sound. A
-            // table transpose can name one far below the register -- the wave
-            // kick's is sixty semitones down -- and LSDj divides the distance
-            // to the *reachable* note by x + 1, so the sweep lands on the
-            // bottom of the range exactly as the last update falls due rather
-            // than tearing past it at a rate meant for somewhere lower.
-            // The pitch without the table's transpose column: the slide holds
-            // its own copy of that column, so the base it walks over stands
-            // still while the table steps.
-            const double liveTsp = double(tableTransposeOf(v));
-            const int32_t liveFine = int32_t(std::lround(liveTsp * 256.0));
-            // The note as the table names it, with neither the column nor what
-            // an earlier slide made of it: a table's transpose is always read
-            // from the note, so that is what this one aims from too.
-            const int32_t baseFine = int32_t(std::lround(noteOfVoice(ch) * 256.0)) - v.slideTspFine - liveFine;
+            // The note with its transposes and the column in force, and no
+            // offset: what the slide aims from.
+            const int32_t colFine = int32_t(tableTransposeOf(v)) * 256;
+            const int32_t plainFine = int32_t(std::lround(noteOfVoice(ch) * 256.0)) - colFine - v.fineOffset;
             const int32_t floorFine = int32_t(lowestNote(wave)) * 256;
-            // Section 110: a **table**'s L aims through the column -- the note
-            // sounds plain and slides to the transposed one, which is the wave
-            // kick's `TSP C4` beside `L 20` (section 68). A **cell**'s L has
-            // nothing to do with the column: measured on 9.2.L, it slides the
-            // bare note and the column is suppressed for the whole run, coming
-            // back the moment the slide ends. `SAMESONG`'s phrase 21 is that --
-            // instrument 0B's table blips an octave every third tick, and
-            // sliding from the blip put the whole bend an octave up.
-            const int32_t aimFine = fromTable ? liveFine : 0;
-            const int32_t target = std::max(floorFine, baseFine + aimFine);
-            // A cell's L starts from where the *note* is, not from where the
-            // column has just put it -- and the amount to take off is what was
-            // folded into that pitch when it was written, not the column as it
-            // reads now. At a note-on they differ: the new instrument's table
-            // has already restarted on row 0, which transposes nothing, while
-            // the pitch the channel is sitting on still carries the old table's
-            // column. `SAMESONG`'s phrase 23 is that -- a note that brings its
-            // own instrument *and* an L -- and reading the live column there
-            // left the bend an octave up, sliding the wrong way.
-            if (!fromTable) fromFine -= v.pitchNowTspFine;
-            const int32_t from = fromFine - target;
+            // A table's L aims the offset at its own row's transpose (the column
+            // in force is the previous row's: tableTransposeOf() skips an L
+            // row); a cell's at the new note, offset zero. Both land where the
+            // ROM's target note is clamped to the table's ends (section 71's
+            // reachable note), the offset short by the same amount.
+            int32_t target = plainFine + colFine;
+            if (fromTable) { v.fineOffset = int32_t(tableRowTransposeOf(v)) * 256; target += v.fineOffset; }
+            else v.fineOffset = 0;
+            const int32_t aim = std::max(floorFine, target);
+            v.fineOffset += aim - target;
+            const int32_t from = fromFine - aim;
             if (from != 0) {
                 v.slideOff256 = from;
                 v.slideStep256 = int32_t(-from / dur);      // C++ truncates toward zero
                 v.slideLeft = dur; v.slideTotal = dur; v.sliding = true;
-                // Section 71: hold a column that puts the base exactly on the
-                // target, so the residual runs to zero right where the slide
-                // is aimed however the table steps under it.
-                v.slideTspHeld = true;
-                v.slideTspFine = target - baseFine;
-                // Section 111: a cell's L does not move the pitch on its own
-                // update -- measured on 9.2.L, the ROM writes the value the
-                // channel was already on, column and all, and the ramp starts
-                // one pitch update later. Carrying that column in slideTspFine
-                // for exactly one update is what holds it there; the slide
-                // advance drops it. A table's L has no column of its own to
-                // hold, and aims through the live one (section 68).
-                if (!fromTable && v.pitchNowColFine != 0) {
-                    v.slideTspFine = v.pitchNowColFine;
-                    v.slideTspDrop = true;
-                }
-            } else {
-                v.slideTspFine = target - baseFine;      // L 00: it is simply there
-                v.slideTspHeld = false;
-                v.slideTspDrop = false;
             }
             if (live) writePeriod(ch, false);
             break;
@@ -2037,6 +2022,7 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
                 const uint8_t xy = uint8_t(std::clamp<int>(c.a, 0, 255));
                 if (v.inst.noiseDomain == bank::NoiseSweepDomain::Register) v.noiseRegStep = xy;
                 else v.noiseBend256 = int16_t(int(int8_t(xy)) * 256 / 4);
+                v.noiseStepFresh = true;                  // section 150: the first step is the next tick's
                 break;
             }
             const int speed = int(int8_t(uint8_t(std::clamp<int>(c.a, 0, 255))));
@@ -2104,7 +2090,7 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
                 // Section 66: Register takes the byte off NR43 nibble by nibble
                 // -- the deltas compose, so one running byte holds them all.
                 if (v.inst.noiseDomain == bank::NoiseSweepDomain::Register) v.noiseReg = bank::noiseNibbleAdd(v.noiseReg, xy);
-                else v.noiseTsp = int16_t(std::clamp(int(v.noiseTsp) + int(int8_t(xy)), -256, 256));
+                else v.noiseTsp = int16_t(std::clamp(int(v.noiseTsp) + int(int8_t(xy)), -30000, 30000));   // section 156: the map wraps, so this never stops
                 if (live) writePeriod(ch, false);                            // NR43 alone: the LFSR keeps running
                 break;
             }
@@ -2137,7 +2123,9 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             // zero alone is the slowest vibrato and depth zero alone the
             // shallowest (an eighth of a semitone), so neither nibble stops it
             // by itself; only both together do.
-            v.vibDelay = 0; v.vibOn = (c.a & 15) != 0 || (c.b & 15) != 0;
+            // Section 151: and `V 00` on a channel with none running starts that
+            // slowest, shallowest one (the ROM's `$7DEB`).
+            v.vibDelay = 0; v.vibOn = ((c.a & 15) != 0 || (c.b & 15) != 0) ? true : !v.vibOn;
             if (noise && v.vibDepth && pitchSpeed(v) != PitchSpeed::Tick) v.pitchClockOn = true;
             if (live) writePeriod(ch, false);
             break;
@@ -2414,7 +2402,7 @@ void Driver::beginNestedRun(int ch, uint8_t slot)
     for (int i = 0; i < 3; ++i) { v.nestStep[size_t(i)] = 0; v.nestRow[size_t(i)] = 0; v.nestWait[size_t(i)] = 0; }
     v.nestHopLeft[0] = v.nestHopLeft[1] = 0; v.nestHopFrom[0] = v.nestHopFrom[1] = 0xFF;
     v.nestVolOn = true;
-    v.nestOn = slot != 0 && bank_ && bank_->table(slot);
+    v.nestOn = slot != 0;                        // section 154
     // Its row 0 is the **next** tick's, one tick after the row that started it,
     // as the ROM's is (section 122).
     v.nestJustStarted = v.nestOn;
@@ -2445,7 +2433,7 @@ void Driver::beginTableRun(int ch, uint8_t slot, bool fromCommand)
     v.tableWait = v.tableWait2 = v.tableWaitE = 0;
     v.hopLeft = v.hopLeft2 = 0; v.hopFrom = v.hopFrom2 = 0xFF;
     v.volLaneOn = true;
-    v.tableOn = slot != 0 && bank_ && bank_->table(slot);
+    v.tableOn = slot != 0;                       // section 154: an empty slot runs as sixteen empty rows
     if (v.tableOn) ++v.tableRun;
     // Section 84: the noise channel has no pitch clock of its own, so without
     // this the update that carries the table's row-0 transpose never comes and
@@ -2495,7 +2483,7 @@ void Driver::stepTableLane(int ch, int lane, bool nest)
     bool& on = nest ? v.nestOn : v.tableOn;
     if (!on) return;
     const Table* t = bank_ ? bank_->table(nest ? v.nestSlot : v.tableSlot) : nullptr;
-    if (!t) { on = false; return; }
+    if (!t) return;                                   // section 154: an empty table, its rows do nothing
     if (v.delay > 0) { --v.delay; return; }
     uint8_t& step = nest ? v.nestStep[size_t(lane)] : lane == 2 ? v.tableStep2 : lane == 0 ? v.tableStepE : v.tableStep;
     uint8_t& row  = nest ? v.nestRow[size_t(lane)]  : lane == 2 ? v.tableRow2  : lane == 0 ? v.tableRowE  : v.tableRow;
@@ -2561,6 +2549,7 @@ void Driver::stepTableLane(int ch, int lane, bool nest)
         const bool z = raw.cmd == Cmd::Z;
         const Command c = z ? resolveRandom(ch, raw, lane) : raw;
         const uint16_t runWas = v.tableRun;
+        v.hopTaken = false;
         if (c.cmd != Cmd::None) applyCommand(ch, c, true, lane, z);
         // Section 122: an `A` on this row started a different table and put
         // every lane back to row 0. The bookkeeping below belongs to the table
@@ -2570,7 +2559,9 @@ void Driver::stepTableLane(int ch, int lane, bool nest)
         if (v.tableRun != runWas) return;
         wait = tableRowTicks(ch, row);
         if (!on) return;                                  // the command stopped it
-        if (raw.cmd == Cmd::H && step != was) continue;   // hopped: that row plays now
+        // Section 155: a hop to another row plays that row now; a hop to this
+        // same row holds it -- the row runs again next tick, and hops again.
+        if (raw.cmd == Cmd::H && v.hopTaken) { v.hopTaken = false; if (step != was) continue; return; }
         if (v.tableHopped) { v.tableHopped = false; return; }   // a B took its hop (section 73)
         if (step + 1 < kTableSteps) { ++step; return; }
         switch (t->end) {
@@ -2694,7 +2685,10 @@ void Driver::tick(int ch)
     // (section 37). The note's own tick plays the root: the chord steps from
     // the tick after it (measured -- C 3 7 wrote 1798, then 1837, then 1881,
     // a tick apart).
-    if (v.chordN && v.ticks > 1 && ++v.chordCount >= uint8_t(v.inst.chordRate + 1)) { v.chordCount = 0; v.chordIdx = uint8_t((v.chordIdx + 1) % v.chordN); }
+    if (v.chordN && v.ticks > 1) {
+        if (v.chordFresh) v.chordFresh = false;      // section 149: a C on a running voice plays the root on its own tick
+        else if (++v.chordCount >= uint8_t(v.inst.chordRate + 1)) { v.chordCount = 0; v.chordIdx = uint8_t((v.chordIdx + 1) % v.chordN); }
+    }
     // duty sequence
     if (v.inst.type == InstrumentType::Pulse && v.inst.dutySeqLen) {
         v.dutyIdx = uint8_t((v.dutyIdx + 1) % v.inst.dutySeqLen);
@@ -2705,11 +2699,12 @@ void Driver::tick(int ch)
     if (v.inst.type == InstrumentType::Noise && v.noiseSweep) { v.noiseShift = uint8_t(std::clamp<int>(int(v.noiseShift) + v.noiseSweep, 0, 13)); v.inst.noiseManual = true; }
     // Section 66: P on noise. Register takes its byte off NR43 every tick;
     // Notes walks the map, its speed a fraction of an entry a tick.
-    if (v.inst.type == InstrumentType::Noise && v.noiseRegStep) { v.noiseReg = bank::noiseNibbleAdd(v.noiseReg, v.noiseRegStep); writePeriod(ch, false); }
+    if (v.inst.type == InstrumentType::Noise && v.noiseStepFresh) v.noiseStepFresh = false;   // section 150
+    else if (v.inst.type == InstrumentType::Noise && v.noiseRegStep) { v.noiseReg = bank::noiseNibbleAdd(v.noiseReg, v.noiseRegStep); writePeriod(ch, false); }
     else if (v.inst.type == InstrumentType::Noise && v.noiseBend256) {
         v.noiseBend9 += v.noiseBend256;
         const int whole = v.noiseBend9 / 256;
-        if (whole != 0) { v.noiseBend9 -= whole * 256; v.noiseTsp = int16_t(std::clamp(int(v.noiseTsp) + whole, -256, 256)); writePeriod(ch, false); }
+        if (whole != 0) { v.noiseBend9 -= whole * 256; v.noiseTsp = int16_t(std::clamp(int(v.noiseTsp) + whole, -30000, 30000)); writePeriod(ch, false); }   // section 156
     }
     // R: the interval is **y ticks** and `y = 0` retriggers **once** (section 76,
     // measured on 9.3.9). x = 8 resyncs instead: the retrigger runs on the pitch

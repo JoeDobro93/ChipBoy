@@ -4831,3 +4831,153 @@ The bare-note branch of `startVoice()` remembers the level before the cell's com
 `inNoteOn_` is back off and the period is written, pays what they owe: the pending retrigger first,
 then the level if it changed, which is the ROM's order. `setLevel()` is unchanged -- it is right for a
 plain note, where the burst carries the level.
+
+## 147. The third campaign: 9.4.2's code, and the model the pitch commands share
+
+The audit target moved from 9.3.9 to 9.4.2 (the current release; the user's project is written in
+it). The command map, the work-RAM map, the order a phrase step and a table tick run their columns
+in, and the five letters handled where a row is read are in `docs/LSDJ_COMMAND_MATRIX.md` §11,
+read off the ROM with the address of every answer. Two things from it bind the sections below.
+
+**The pitch of a pulse or wave note is three numbers added at every write** (0:`$1BA7`):
+the held note, the transposes in force (chain, chord and the table's column, summed into
+`$C174` whenever one of them changes), and one **offset** in 1/256 semitone (`$C337 + 2ch`)
+that `P`, `L` and, separately, the vibrato move. The offset is what a slide slides. The sum goes
+through the note table with linear interpolation (0:`$1B28`) and is written without a trigger.
+So a transpose column landing under a slide moves the pitch at once, and a slide never holds a
+copy of anything.
+
+**The two-sided rig** (`tools/lsdjref/`, `/root/lsdj/probe/vs_matrix.py` in the container): one
+script builds a probe song, traces the ROM and ChipBoy, groups each channel's register writes
+into batches a millisecond apart, reduces each batch to the state it leaves (the trigger bit
+counted, the length bits masked) and reports the first batch that differs. Nineteen letters in
+a phrase cell, a command-only cell, a bare note's cell, a table's CMD 1, CMD 2 and a row after a
+transpose, on PU1, WAV and NOI: 200 cases, of which the ones below differed. Differences of
+the fold kind -- the ROM triggers on the instrument's values and lets a table's row 0 or a cell's
+`R`/`S` land a millisecond later as its own writes, where ChipBoy folds them into the burst
+(§3, §124) -- are left as they are: `S` retriggers on both sides, `E`'s zombie walk and the
+double trigger are inside a millisecond of the note.
+
+## 148. A bare note's `S` retriggers, and its `W` writes the duty
+
+Measured (ROM `S 21` on a bare note two rows after a plain one, PU1): the bare note's period
+goes out, then `NR10` with the new sweep, `NR11`, `NR12` at the level in force with the add bit
+(`$606A`: `level << 4 | 8`), the period again and `NR14` with the trigger -- `$4828` accumulates
+the byte and jumps to the refresh at `$6058`, which always triggers. `W 01` on a bare note
+writes `NR11` with the new duty and nothing else (`$47E5`). ChipBoy wrote the period alone in
+both cases: a bare note applies its cell's letters with the burst suppressed (§146), and `S` and
+`W` only emit when live.
+
+### As built
+
+The bare-note branch of `startVoice()` notes whether the cell carried an `S` (PU1) or a `W`
+(a pulse) and, after the period, pays them: `W` emits `NR11`; `S` emits `NR10` and a full
+retrigger without restarting the envelope, which is the ROM's refresh.
+
+## 149. A `C` that lands on a tick that is not the note's plays the root on that tick
+
+Measured: `C 37` on a bare note (and on a table's row 1) gives the root on that tick and +3 on
+the next; ChipBoy gave +3 at once. `$4F3A` reads the chord phase, adds the semitone it names,
+then advances it -- and the handler at `$476C` only stores the value. ChipBoy advanced the phase
+before the first read whenever the voice was past its first tick. Now a `C` set on a voice
+already past its first tick marks the chord fresh, and the tick that finds it fresh plays the
+root and clears the mark. A `C` beside a plain note is unchanged (the first tick already played
+the root there).
+
+## 150. A noise `P`'s first step lands on the tick after its row
+
+`P 20` on a noise note: the ROM writes the note on its own tick and the first step (`S` by the
+byte) on the next (`$6653` stores the byte and a flag, and the noise pitch tick reads them a tick
+later); ChipBoy stepped on the note's own tick, which is `READROOM`'s row 04 being one step out
+(HANDOFF's item 6). Now the step set by a `P` waits one tick.
+
+## 151. `V 00` starts a vibrato when none is running
+
+`$7DEB`: a zero byte stops a vibrato if one is running and otherwise starts one at speed 0 and
+depth 0 (9.1.0's note). Measured: `V 00` on a plain note gives a slow swing of one period unit
+either side (one cycle every 64 updates). ChipBoy's §126 had the whole-byte zero as "off"
+outright; it is now a toggle.
+
+## 152. A slide is the offset beside the transposes; the column stays live under it
+
+Three measurements on 9.4.2 against §68, §71, §110 and §111:
+
+```
+table row 0 tsp F4 + L 08, rows 1-2 tsp +4        ROM: slides an octave down at 360 Hz and the +4
+                                                  lands on it at tick 1 (65 -> 7B), the slide going on
+cell L 30 under a table whose column blips +12    ROM: the blips land during the slide (A0 -> D0 D1 D2 -> A4)
+table row 0 tsp +12, row 1 tsp -12 + L 08,        ROM: +12 on the note, then a nine-update slide down
+rows 2-15 tsp +12 (the manual's own example)      to the plain note -- the +12 stays, the offset goes to -12
+table row 0 tsp +4, row 1 tsp 0 + L 03            ROM: +4 at the note, no slide at all, plain from tick 2
+```
+
+The column is not suppressed while a slide runs (§110 said it was; its measurement was of
+`SAMESONG` phrase 21 on 9.2.L and is not reproduced by the ROM's code: `$4FBE` writes the
+column into `$C347`, sets the refresh flag when it changes, and the 360 Hz update at 0:`$0584`
+calls the refresh that adds it), and a slide holds no copy of the column (§71). A **table's `L`**
+(`$42CD`) aims the offset at its own row's transpose -- `target = held note + row tsp`, clamped to
+the table's ends, and the difference to the held note is the offset the slide walks to -- while
+that row's own column is **not** applied (`$5303`: the column is skipped on a tick whose CMD 1 is
+`L`), so the transpose in force stays the previous row's. Speed is `x + 1` updates whatever the
+place, at 360 Hz in FAST and DRUM and per tick in TICK (`$4276` divides the distance by `x + 1`,
+`FF` by 255).
+
+A **cell's `L`** aims the offset at `(new note − held note)`, the held note being the last plain
+one (`$4B43` skips the update of `$C0E8` on a step with `L`), from wherever `P` and earlier slides
+have left the offset; the transposes stay live on top. Its first step is the update after the
+note's own tick (§111 stands).
+
+### As built
+
+`noteOfVoice()` always adds the table's column (Drum's hold apart), and the held-column fields
+(`slideTspFine`, `slideTspHeld`, `slideTspDrop`, `pitchNowTspFine`, `pitchNowColFine`) are gone.
+`tableTransposeOf()` returns the previous row's column for a row whose CMD 1 is `L` (walking back
+past consecutive `L` rows). The `L` handler: a table `L` sets `fineOffset` to its row's transpose
+times 256 and puts the distance from the pitch now to `note + column in force + that` into the
+residual; a cell `L` sets `fineOffset` to zero and the residual to the distance from the pitch now
+to the new note with the live column. Both slide the residual to zero in `x + 1` updates as
+before, and `P` still takes the residual over into `fineOffset` (§99).
+
+## 153. `P` past either end of the note table wraps by nine octaves
+
+`P 20` on a plain note runs the period up to `$7FF` and then the ROM writes `$056`: 0:`$1B28`
+takes a note index at or above `$6C` (108) down by `$6C` and one below zero up by it, so the pitch
+comes round nine octaves lower and goes on climbing (9.1.0's "adjusted pitch wrap"). ChipBoy
+stopped at the top (`§125` measured the bottom as a clamp on 9.2.L with a vibrato; a bend on 9.4.2
+wraps). `periodForNote()` now wraps the semitone index into the table's range before the lookup
+when a bend or slide carries it out, and clamps only a plain note.
+
+## 154. An `A` to a table with nothing in it runs it, and `A 21`-`A FF` stop the table
+
+`$4679` masks the byte with `$E0`: any value of `$20` and up is the stop, and `A 00`-`A 1F` start
+that table whether or not the editor has allocated it -- an empty table is sixteen empty rows,
+and `A 01` from a table whose row 0 transposes ends the transposing (measured: +4 on the note, the
+plain note from the `A`'s tick, and nothing more). ChipBoy's importer skipped tables with no
+content, so the `A` named a slot with no table and the driver ignored it, the parent looping on;
+and it mapped `A 21`-`A FF` to tables. Now the importer keeps an empty table any `A` names, maps
+the high values to the stop, and the driver starts a run on an empty slot.
+
+## 155. A table `H` to its own row holds the row
+
+`$4E28` sets the lane's position to the target row and `$5475` re-reads it next tick, where the
+same `H` hops again (the once-per-tick guard `$C8F8` only stops a second hop in the *same* tick):
+`H 02` on row 2 runs row 2 -- its transpose column included -- every tick until the note ends,
+which is the idiom LSDj's own tables use to hold a transpose under a slide. ChipBoy's lane
+treated a hop that landed on the row it was on as no hop and stepped on to the next row. Now a
+taken hop to the same row returns without advancing, and the factory *Slide up* table is
+written in that idiom: `-12` on row 0, `+12` beside the `L` on row 1, `-12` held by `H 02` on
+row 2 (§152).
+
+## 156. The noise map is the ROM's 120 entries, generated, and `P` and `S` walk it round
+
+The 9.4.2 noise map is 120 bytes at bank 02:`$5EE4`, read at `$5F5C` by the note index (note byte
+− 1, `$4988`). It is exactly this rule: every (shift, divisor) pair with shift 0-13 and divisor 0-7
+(0 counting as a half), sorted by the clock they give from slowest to fastest, two pairs with the
+same clock kept once as the one with the larger shift -- sixty entries for the 15-bit half -- and
+the same sixty with the width bit set for the 7-bit half. `LsdjModel`'s measured `kNoise9` had
+two entries too many near the bottom (`24 2F` after `A5`) and two more further up, so every note
+from byte 13 up was one or two entries off; it is now generated from the rule and checked byte for
+byte. A noise `P` walks the index by a quarter of the byte a tick (§66) and an `S` by the byte,
+and the index wraps at 120 (`$4637`, §83) -- ChipBoy clamped the walk at ±256 entries, so a long
+`P 20` (measured: 90 70 50 30 then the 7-bit `DC` with the restart, `D9`, `C8`, …, a tick apart,
+for as long as the note lasts) stopped after thirty ticks.

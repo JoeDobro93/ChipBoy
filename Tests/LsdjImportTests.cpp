@@ -1251,3 +1251,17 @@ TEST_CASE("a cell with a blank instrument column keeps its note", "[lsdj]")
         CHECK(int(p->cells[4].note) == 67); CHECK(int(p->cells[4].inst) != 0);
     }
 }
+
+TEST_CASE("the 9.x noise map is the ROM's, generated from the clock order", "[import][noise][rom942]")
+{
+    // Section 156: bank 02:$5EE4 on 9.4.2, checked byte for byte there; these
+    // are the entries the measured table had shifted or missing.
+    const auto* m = lsdjModelForFormat(22);
+    REQUIRE(m != nullptr); REQUIRE(m->noiseMap != nullptr);
+    const uint8_t* map = m->noiseMap;
+    CHECK(map[0] == 0xD7); CHECK(map[3] == 0xD4); CHECK(map[4] == 0xC7);
+    CHECK(map[12] == 0xA7); CHECK(map[13] == 0xB3); CHECK(map[15] == 0xD0);
+    CHECK(map[31] == 0x90); CHECK(map[55] == 0x30); CHECK(map[59] == 0x00);
+    CHECK(map[60] == 0xDF); CHECK(map[63] == 0xDC); CHECK(map[71] == 0xD9); CHECK(map[119] == 0x08);
+    for (int i = 0; i < 60; ++i) { CHECK((map[i] & 8) == 0); CHECK(map[60 + i] == (map[i] | 8)); }
+}

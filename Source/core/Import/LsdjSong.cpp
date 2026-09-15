@@ -627,11 +627,12 @@ struct Reader {
                     // `A 0` already stops a run. Measured on 9.2.L: the table
                     // stops dead where the A20 lands and the pitch stays on the
                     // row it last reached.
-                    if (v == 0x20) { out = { Cmd::A, 0, 0, 0 }; return true; }
+                    // Section 154: the ROM masks the byte with E0, so A 21-A FF stop too.
+                    if (v & 0xE0) { out = { Cmd::A, 0, 0, 0 }; return true; }
                     cell->table = uint8_t(std::min(v + 1, int(bank::kTableSlots)));
                     return false;
                 }
-                out = { Cmd::A, int16_t(v == 0x20 ? 0 : std::min(v + 1, int(bank::kTableSlots))), 0, 0 }; return true;
+                out = { Cmd::A, int16_t((v & 0xE0) ? 0 : std::min(v + 1, int(bank::kTableSlots))), 0, 0 }; return true;
             case 'C':
                 // C reaches the noise channel only from format 4 (LSDj 5.7.8);
                 // before that the ROM ignores it there (docs/LSDJ_VERSIONS.md).
@@ -755,10 +756,20 @@ struct Reader {
     void tables(ImportSummary& sum)
     {
         const auto& users = tableUse;
+        // Section 154: a table an `A` names runs whether or not it holds
+        // anything -- its empty rows replace the run that was on -- so it is
+        // kept as an empty table rather than skipped.
+        std::set<int> named;
+        for (size_t i = 0; i < 0x1000; ++i)
+            if (letterOf(at(kPhraseCmd + i)) == 'A' && (at(kPhraseCmdV + i) & 0xE0) == 0) named.insert(int(at(kPhraseCmdV + i)));
+        for (size_t i = 0; i < size_t(kLsdjTables) * 16; ++i) {
+            if (letterOf(at(kTableCmd1 + i)) == 'A' && (at(kTableCmd1V + i) & 0xE0) == 0) named.insert(int(at(kTableCmd1V + i)));
+            if (letterOf(at(kTableCmd2 + i)) == 'A' && (at(kTableCmd2V + i) & 0xE0) == 0) named.insert(int(at(kTableCmd2V + i)));
+        }
         for (int t = 0; t < kLsdjTables; ++t) {
             // Allocated, or holding anything: LSDj 9's allocation bytes miss
             // tables its instruments name (measured on the user's saves).
-            bool content = at(kTableAlloc + size_t(t)) != 0;
+            bool content = at(kTableAlloc + size_t(t)) != 0 || named.count(t) != 0;
             for (int r = 0; r < 16 && !content; ++r) { const size_t i = size_t(t) * 16 + size_t(r); content = at(kTableEnv + i) || at(kTableTsp + i) || at(kTableCmd1 + i) || at(kTableCmd2 + i); }
             if (!content) continue;
             int noiseBase = -1, noiseInst = -1; bool others = false; std::set<int> bases;

@@ -1063,7 +1063,10 @@ TEST_CASE("P bends by the measured table, and Drum wraps", "[driver][pitch]")
             CHECK(per[size_t(i)] == Driver::periodForNote(72.0 - double(i + 1) * 544.0 / 256.0, false));
         }
         p.cmd[0] = { Cmd::P, 0, 0, 0 }; r.drv.setParams(0, p);
-        r.block({}, 4096);
+        // A slot change lands on the next tick, a second away at this rate;
+        // until then the bend runs on, and past the table's bottom it comes
+        // round nine octaves rather than stopping (section 153).
+        r.block({}, 4194304 + 4096);
         const int stopped = int(r.drv.view(0).period);
         r.block({}, 8192);
         CHECK(int(r.drv.view(0).period) == stopped);
@@ -2044,11 +2047,13 @@ TEST_CASE("a STEP table's position is the instrument's own", "[driver][table]")
     b = Instrument::defaults(InstrumentType::Noise, "B");
     b.pan = Pan::Both; b.table = 6; b.tableMode = TableMode::Step;
     auto& ta = r.bank.tables[4];                          // slot 5: left, right, blank, hop
+    ta = Table{};                                         // the factory slot holds a preset with rows of its own
     ta.used = true; ta.name = "pans";
     ta.steps[0].cmd1 = Command{ Cmd::O, 1, 0, 0 };
     ta.steps[1].cmd1 = Command{ Cmd::O, 2, 0, 0 };
     ta.steps[3].cmd1 = Command{ Cmd::H, 0, 0, 0 };
     auto& tb = r.bank.tables[5];                          // slot 6: B's own, a transpose
+    tb = Table{};
     tb.used = true; tb.name = "tsp";
     tb.steps[0].hasTranspose = true; tb.steps[0].transpose = -6;
     tb.steps[3].cmd1 = Command{ Cmd::H, 0, 0, 0 };
@@ -2118,6 +2123,7 @@ TEST_CASE("a slide holds its aim through the table and stops at the bottom of th
     // note 24 in x + 1 updates instead of tearing past it.
     Rig r;
     auto& tb = r.bank.tables[0];
+    tb = Table{};                                      // the factory slot holds a preset with rows of its own
     tb.used = true; tb.name = "Kick";
     tb.steps[0].hasTranspose = true; tb.steps[0].transpose = -60;
     tb.steps[0].cmd1 = Command{ Cmd::L, 0x20, 0, 0 };
@@ -4305,4 +4311,154 @@ TEST_CASE("a shaped envelope stage shorter than its levels walks through them", 
     INFO("zombie steps down: " << steps);
     CHECK(steps >= 6);                               // it walks the levels, not one jump
     CHECK(int(r.drv.view(0).envVol) == 4);           // and lands on the sustain
+}
+
+/* --------------------------------------- the third campaign, on 9.4.2's code */
+
+TEST_CASE("a bare note's S retriggers and its W writes the duty", "[driver][commands][rom942]")
+{
+    // Section 148: the ROM's S refresh ($6058) always triggers, and W writes NR11.
+    Rig r; r.tickHz = 100.0; r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    r.bank.instruments[0].vib.depth = 0;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    r.block({ cellOn(0, 69, 1) }, 480);
+    NoteEvent bare = cellOn(0, 71, 0); bare.cmd1 = { Cmd::S, 2, 1, 0 };
+    auto w = r.block({ bare }, 480);
+    CHECK(has(w, 0xFF10));                                    // the sweep byte goes out
+    CHECK(anyTrigger(w, 0xFF14));                             // and the refresh triggers
+    NoteEvent bare2 = cellOn(0, 72, 0); bare2.cmd1 = { Cmd::W, 1, 0, 0 };
+    w = r.block({ bare2 }, 480);
+    const RegWrite* d = last(w, 0xFF11);
+    REQUIRE(d != nullptr);
+    CHECK((d->value >> 6) == 1);
+    CHECK_FALSE(anyTrigger(w, 0xFF14));                       // W alone does not retrigger
+}
+
+TEST_CASE("a C on a running voice plays the root on its own tick, and a second C keeps the phase", "[driver][commands][rom942]")
+{
+    // Section 149: $4F3A reads the phase, adds, then advances; $476C stores the value only.
+    Rig r; r.tickHz = 100.0; r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    r.bank.instruments[0].vib.depth = 0;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    r.block({ cellOn(0, 69, 1) }, 480); r.block({}, 480);
+    NoteEvent bare = cellOn(0, 71, 0); bare.cmd1 = { Cmd::C, 3, 7, 0 };
+    r.block({ bare }, 480);
+    CHECK(int(r.drv.view(0).period) == note(71));             // the root on the C's tick
+    r.block({}, 480);
+    CHECK(int(r.drv.view(0).period) == note(74));             // +3 on the next
+    NoteEvent again = cellOn(0, 71, 0); again.cmd1 = { Cmd::C, 3, 7, 0 };
+    r.block({ again }, 480);
+    CHECK(int(r.drv.view(0).period) == note(78));             // the phase carries on: +7, not the root
+    r.block({}, 480);
+    CHECK(int(r.drv.view(0).period) == note(71));
+}
+
+TEST_CASE("a noise P's first step lands on the tick after its row", "[driver][commands][rom942]")
+{
+    // Section 150.
+    Rig r; r.tickHz = 100.0; r.song.noteSource[3] = tracker::NoteSource::Tracker;
+    auto& n = r.bank.instruments[20]; n = Instrument::defaults(InstrumentType::Noise, "N"); n.used = true;
+    ChannelParams p; p.instrument = 21; p.velocityMode = 2; r.drv.setParams(3, p);
+    NoteEvent e = cellOn(3, 60, 21); e.cmd1 = { Cmd::P, 0x20, 0, 0 };
+    auto w = r.block({ e }, 480);
+    std::vector<int> nr43;
+    for (const auto& x : w) if (x.addr == 0xFF22 && (nr43.empty() || nr43.back() != x.value)) nr43.push_back(x.value);
+    CHECK(nr43.size() == 1);                                  // the note's own byte, nothing moved yet
+    w = r.block({}, 480);
+    CHECK(has(w, 0xFF22));                                    // the first step, a tick later
+}
+
+TEST_CASE("V 00 starts the slowest vibrato when none runs, and stops one that does", "[driver][commands][pitch][rom942]")
+{
+    // Section 151 ($7DEB).
+    Rig r; r.tickHz = 100.0; r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    r.bank.instruments[0].vib.depth = 0;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    NoteEvent e = cellOn(0, 69, 1); e.cmd1 = { Cmd::V, 0, 0, 0 };
+    r.block({ e }, 480);
+    auto w = r.block({}, 48000);
+    CHECK(periodWrites(w).size() > 4);                        // the pitch moves: a vibrato runs
+    NoteEvent off = cellOn(0, 69, 0); off.cmd1 = { Cmd::V, 0, 0, 0 };
+    r.block({ off }, 480);
+    w = r.block({}, 48000);
+    CHECK(periodWrites(w).size() <= 2);                       // and V 00 again stops it
+}
+
+TEST_CASE("a table's L aims at its own row's transpose as an offset while the column in force stays", "[driver][table][commands][rom942]")
+{
+    // Section 152: the manual's own example, then an L row whose transpose is 0.
+    Rig r; r.tickHz = 100.0; r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    Table t; t.used = true; t.name = "Manual";
+    t.steps[0].hasTranspose = true; t.steps[0].transpose = 12;
+    t.steps[1].hasTranspose = true; t.steps[1].transpose = -12; t.steps[1].cmd1 = { Cmd::L, 8, 0, 0 };
+    for (int i = 2; i < 16; ++i) { t.steps[size_t(i)].hasTranspose = true; t.steps[size_t(i)].transpose = 12; }
+    t.end = TableEnd::Loop;
+    r.bank.tables[0] = t;
+    auto& in = r.bank.instruments[0]; in.vib.depth = 0; in.table = 1; in.pitchSpeed = PitchSpeed::Fast;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    auto w = r.block({ cellOn(0, 69, 1) }, 480);
+    CHECK(has(w, 0xFF13, note(81) & 0xFF));                  // +12 on the note
+    r.block({}, 480);                                         // row 1: the L
+    r.block({}, 4800);                                        // the nine-update slide is long done
+    CHECK(int(r.drv.view(0).period) == note(69));             // +12 in force, offset -12: the plain note
+    Table u; u.used = true; u.name = "Hold";
+    u.steps[0].hasTranspose = true; u.steps[0].transpose = 4;
+    u.steps[1].cmd1 = { Cmd::L, 3, 0, 0 };
+    u.end = TableEnd::Loop;
+    r.bank.tables[0] = u;
+    r.block({ cellOn(0, 69, 1) }, 480);
+    CHECK(int(r.drv.view(0).period) == note(73));
+    r.block({}, 480);                                         // row 1: L 03 with no transpose -- nothing moves
+    CHECK(int(r.drv.view(0).period) == note(73));
+    r.block({}, 480);                                         // row 2, no transpose: plain
+    CHECK(int(r.drv.view(0).period) == note(69));
+}
+
+TEST_CASE("a bend past the top of the note table comes round nine octaves", "[driver][pitch][rom942]")
+{
+    // Section 153 (0:$1B28).
+    Rig r; r.tickHz = 100.0; r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    auto& in = r.bank.instruments[0]; in.vib.depth = 0; in.pitchSpeed = PitchSpeed::Fast;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    NoteEvent e = cellOn(0, 100, 1); e.cmd1 = { Cmd::P, 0x20, 0, 0 };
+    const auto per = periodWrites(r.block({ e }, 48000));
+    REQUIRE(per.size() > 40);
+    bool wrapped = false; size_t at = 0;
+    for (size_t i = 1; i < per.size(); ++i) if (per[i] < per[i - 1] - 500) { wrapped = true; at = i; break; }
+    CHECK(wrapped);                                           // it came round
+    CHECK(per.back() != 2047);                                // and did not stick at the top
+    if (wrapped && at + 3 < per.size()) CHECK(per[at + 3] > per[at]);   // climbing again
+}
+
+TEST_CASE("an A to an empty table runs it", "[driver][table][rom942]")
+{
+    // Section 154.
+    Rig r; r.tickHz = 100.0; r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    Table t; t.used = true; t.name = "Parent";
+    t.steps[0].hasTranspose = true; t.steps[0].transpose = 4;
+    t.steps[1].cmd1 = { Cmd::A, 2, 0, 0 };
+    t.end = TableEnd::Loop; r.bank.tables[0] = t;
+    r.bank.tables[1] = Table{};
+    auto& in = r.bank.instruments[0]; in.vib.depth = 0; in.table = 1;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    r.block({ cellOn(0, 69, 1) }, 480);
+    CHECK(int(r.drv.view(0).period) == note(73));
+    r.block({}, 480);                                         // row 1: the A
+    r.block({}, 480 * 20);
+    CHECK(int(r.drv.view(0).period) == note(69));             // sixteen empty rows, and no row 0 coming round
+}
+
+TEST_CASE("a table H to its own row holds the row", "[driver][table][rom942]")
+{
+    // Section 155.
+    Rig r; r.tickHz = 100.0; r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    Table t; t.used = true; t.name = "Hold";
+    t.steps[0].hasTranspose = true; t.steps[0].transpose = -12; t.steps[0].cmd1 = { Cmd::H, 0, 0, 0 };
+    t.end = TableEnd::Loop; r.bank.tables[0] = t;
+    auto& in = r.bank.instruments[0]; in.vib.depth = 0; in.table = 1;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    r.block({ cellOn(0, 69, 1) }, 480);
+    CHECK(int(r.drv.view(0).period) == note(57));
+    r.block({}, 480 * 30);
+    CHECK(int(r.drv.view(0).period) == note(57));             // still on row 0, thirty ticks on
 }

@@ -26,6 +26,33 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-15 -- the third parity campaign: 9.4.2's code, and what it corrected
+
+`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§156. The audit target is
+LSDj 9.4.2 now, read as code: the dispatcher, every handler's address, the work RAM the commands
+share, the order a phrase step and a table tick run their columns, and a two-sided probe rig that
+builds a song, traces the ROM and ChipBoy and reports the first register batch that differs (200
+cases over nineteen letters). What differed, and what changed:
+
+- **A slide is the offset beside the transposes** (§152, correcting §68, §71, §110, §111's held
+  column). The ROM adds the held note, the transposes in force and one 1/256-semitone offset at
+  every pitch write; `L` slides the offset. So a table's column stays live under a slide or a bend,
+  a table's `L` aims at its own row's transpose as an offset while that row's column is not applied
+  (the previous row's stays), and a cell's `L` aims at the new note. The factory *Slide up* table is
+  re-expressed in LSDj's idiom (`-12`, then `+12` beside the `L`, then `-12` held by `H 02`), and the
+  demo song and hybrid state were regenerated for it.
+- A table `H` to its own row holds the row (§155); ChipBoy stepped past it.
+- A bare note's `S` retriggers and its `W` writes the duty (§148); a `C` on a running voice plays
+  the root on its own tick and a second `C` keeps the phase (§149); a noise `P`'s first step is the
+  next tick's (§150, `READROOM`'s row 04); `V 00` starts the slowest vibrato when none runs (§151).
+- A bend past either end of the note table comes round nine octaves (§153); `A` to an empty table
+  runs it and `A 21`-`A FF` stop (§154).
+- The 9.x noise map is generated from the ROM's rule and checked byte for byte (§156): the measured
+  one had four entries wrong, and the map's walk under `P`/`S` no longer stops at ±256.
+
+Left as measured (§147): the fold -- the ROM triggers on the instrument's values and lets a table's
+row 0, a cell's `R` or `S` land a millisecond later as their own writes.
+
 ### 2026-09-12 — `R` fires on its own tick, and a pulse instrument has a `LENGTH`
 
 `docs/COMMANDS_AND_TEMPO.md` §134. The user's `READROOM`: `R` "isn't working" on `PU1`'s phrase `3C`

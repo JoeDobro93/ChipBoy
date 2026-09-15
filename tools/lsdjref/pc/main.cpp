@@ -49,12 +49,13 @@ static bool readFile(const std::string& p, std::vector<uint8_t>& out)
 static uint32_t encodeGrey(GB_gameboy_t*, uint8_t r, uint8_t g, uint8_t b){ return uint32_t((r*77+g*151+b*28)>>8); }
 int main(int argc, char** argv)
 {
-    std::string rom, sav, out, boot, keys; long frames = 420;
+    std::string rom, sav, out, boot, keys, dumpRam; long frames = 420;
     for (int i = 1; i < argc; ++i) { std::string a = argv[i];
         auto nx = [&]{ return std::string(argv[++i]); };
         if (a=="--rom") rom=nx(); else if (a=="--sav") sav=nx(); else if (a=="--out") out=nx();
         else if (a=="--bootrom-dir") boot=nx(); else if (a=="--keys") keys=nx();
         else if (a=="--frames") frames=atol(nx().c_str());
+        else if (a=="--dump-ram") dumpRam=nx();   // WRAM C000-DFFF, VRAM 8000-9FFF, HRAM, raw and in that order
         else if (a=="--watch") { std::string w = nx(); size_t d = w.find('-');
             g_watchLo = (int) strtol(w.substr(0, d).c_str(), 0, 16);
             g_watchHi = d == std::string::npos ? g_watchLo : (int) strtol(w.substr(d+1).c_str(), 0, 16); } }
@@ -78,5 +79,16 @@ int main(int argc, char** argv)
     for (auto& w : g_w) fprintf(o, "%llu,%04X,%02X,%04X,%02X\n",
         (unsigned long long) w.cyc, w.addr, w.val, w.pc, w.bank);
     if (o != stdout) fclose(o);
+    if (!dumpRam.empty()) {
+        // The RAM as it stands at the end of the run: what the ROM built there
+        // (a mixing table, a generated routine) can then be read like the ROM.
+        FILE* d = fopen(dumpRam.c_str(), "wb");
+        for (GB_direct_access_t what : { GB_DIRECT_ACCESS_RAM, GB_DIRECT_ACCESS_VRAM, GB_DIRECT_ACCESS_HRAM }) {
+            size_t size = 0; uint16_t bank = 0;
+            const void* mem = GB_get_direct_access(&gb, what, &size, &bank);
+            if (mem && d) fwrite(mem, 1, size, d);
+        }
+        if (d) fclose(d);
+    }
     GB_free(&gb); return 0;
 }

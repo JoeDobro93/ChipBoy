@@ -156,39 +156,39 @@ class Probe:
                     self.s[cc + o + step] = code(letter); self.s[vv + o + step] = val
 
     # -- instrument ---------------------------------------------------------
-    def pulse(self, i, env=0xF0, duty=2, pan=3, table=None, sweep=0x00, finetune=0):
+    def pulse(self, i, env=0xF0, duty=2, pan=3, table=None, sweep=0x00, finetune=0, b5=0):
         b = IP + i * 16
         for k in range(16): self.s[b + k] = 0
         self.allocInst(i)
         self.s[b + 0] = 0                                   # type: pulse
         self.s[b + 1] = env                                 # NRx2-shaped envelope
         self.s[b + 4] = (~sweep) & 0xFF                     # stored inverted
-        self.s[b + 5] = 0x00                                # no vib, tick table, transpose on
+        self.s[b + 5] = b5                                  # byte 5: bit 7 STEP, 6 DRUM, 5 transpose off, 4 TICK, 3 table STEP, 2-1 vib shape, 0 vib dir
         self.s[b + 6] = (0x20 | (table & 0x1F)) if table is not None else 0
         self.s[b + 7] = ((duty & 3) << 6) | (pan & 3)
         self.s[b + 11] = finetune
         return i
 
-    def wave(self, i, env=0x03, pan=3, table=None, synth=0, loop=0):
+    def wave(self, i, env=0x20, pan=3, table=None, synth=0, loop=0, b5=0):
         b = IP + i * 16
         for k in range(16): self.s[b + k] = 0
         self.allocInst(i)
         self.s[b + 0] = 1
         self.s[b + 1] = env
         self.s[b + 3] = ((synth & 15) << 4) | (loop & 15)   # 9.x: byte 3 (section 60)
-        self.s[b + 5] = 0x00
+        self.s[b + 5] = b5
         self.s[b + 6] = (0x20 | (table & 0x1F)) if table is not None else 0
         self.s[b + 7] = pan & 3
         return i
 
-    def noise(self, i, env=0xF0, pan=3, table=None, shape=0xFF):
+    def noise(self, i, env=0xF0, pan=3, table=None, shape=0xFF, b5=0):
         b = IP + i * 16
         for k in range(16): self.s[b + k] = 0
         self.allocInst(i)
         self.s[b + 0] = 3
         self.s[b + 1] = env
         self.s[b + 4] = shape
-        self.s[b + 5] = 0x00
+        self.s[b + 5] = b5
         self.s[b + 6] = (0x20 | (table & 0x1F)) if table is not None else 0
         self.s[b + 7] = pan & 3
         return i

@@ -28,18 +28,41 @@ constexpr uint8_t kEnvPeriods9[16] = { 0, 1, 2, 3, 4, 6, 8, 11, 15, 20, 27, 36, 
 // byte 1**, which is MIDI 36. Bytes 1-60 are the 15-bit half and 61-120 the
 // 7-bit half; byte 121 and up read past the end on the ROM. The index wraps
 // modulo 120, measured in both directions.
-constexpr uint8_t kNoise9[120] = {
-    0xD7, 0xD6, 0xD5, 0xD4, 0xC7, 0xD3, 0xC5, 0xD2, 0xB7, 0xC3, 0xB5, 0xD1,   // 36-47
-    0xA7, 0xB3, 0xA5, 0xD0, 0x97, 0xA3, 0x95, 0xC0, 0x87, 0x93, 0x85, 0xB0,   // 48-59
-    0x77, 0x83, 0x75, 0xA0, 0x67, 0x73, 0x65, 0x90, 0x57, 0x63, 0x55, 0x80,   // 60-71
-    0x47, 0x53, 0x45, 0x70, 0x37, 0x43, 0x35, 0x60, 0x27, 0x33, 0x25, 0x50,   // 72-83
-    0x17, 0x23, 0x15, 0x40, 0x07, 0x13, 0x05, 0x30, 0x03, 0x20, 0x10, 0x00,   // 84-95
-    0xDF, 0xDE, 0xDD, 0xDC, 0xCF, 0xDB, 0xCD, 0xDA, 0xBF, 0xCB, 0xBD, 0xD9,   // 96-107 (7-bit)
-    0xAF, 0xBB, 0xAD, 0xD8, 0x9F, 0xAB, 0x9D, 0xC8, 0x8F, 0x9B, 0x8D, 0xB8,   // 108-119
-    0x7F, 0x8B, 0x7D, 0xA8, 0x6F, 0x7B, 0x6D, 0x98, 0x5F, 0x6B, 0x5D, 0x88,   // 120-131
-    0x4F, 0x5B, 0x4D, 0x78, 0x3F, 0x4B, 0x3D, 0x68, 0x2F, 0x3B, 0x2D, 0x58,   // 132-143
-    0x1F, 0x2B, 0x1D, 0x48, 0x0F, 0x1B, 0x0D, 0x38, 0x0B, 0x28, 0x18, 0x08    // 144-155
+// Section 156: the ROM's own map, generated rather than measured. 9.4.2 keeps
+// 120 bytes at bank 02:$5EE4: every (shift, divisor) pair the chip has with
+// shift 0-13 and divisor 0-7 (0 counting as a half), sorted by the clock they
+// give from slowest to fastest, two pairs with the same clock kept once as the
+// one with the larger shift -- sixty entries, the 15-bit half -- and the same
+// sixty with the width bit set as the 7-bit half. Checked byte for byte
+// against the ROM. Index 0 is note byte 1 (MIDI 36) and the index wraps
+// modulo 120 (section 83).
+struct NoiseMap9 {
+    uint8_t v[120] = {};
+    constexpr NoiseMap9()
+    {
+        // The clock is 524288 / divisor / 2^(shift + 1): comparing
+        // divisor * 2^(shift + 1), with divisor 0 as a half (so everything
+        // doubled), orders the pairs the same way with no floating point.
+        long long key[112] = {}; uint8_t byte[112] = {};
+        int n = 0;
+        for (int sh = 0; sh <= 13; ++sh)
+            for (int dv = 0; dv <= 7; ++dv) {
+                const long long k = (dv == 0 ? 1LL : 2LL * dv) << (sh + 1);   // larger = slower
+                const uint8_t b = uint8_t((sh << 4) | dv);
+                // Insertion sort: slowest first, and among equal clocks the larger shift first.
+                int i = n;
+                while (i > 0 && (key[i - 1] < k || (key[i - 1] == k && (byte[i - 1] >> 4) < sh))) { key[i] = key[i - 1]; byte[i] = byte[i - 1]; --i; }
+                key[i] = k; byte[i] = b; ++n;
+            }
+        int out = 0;
+        for (int i = 0; i < n && out < 60; ++i) {
+            if (i > 0 && key[i] == key[i - 1]) continue;              // the same clock, kept once
+            v[out] = byte[i]; v[60 + out] = uint8_t(byte[i] | 8); ++out;
+        }
+    }
 };
+constexpr NoiseMap9 kNoiseMap9{};
+constexpr const uint8_t* kNoise9 = kNoiseMap9.v;
 // The whole table swept on 9.3.9, note byte 1 to 120 (docs/LSDJ_COMMAND_MATRIX
 // section 6.15): the 15-bit half is bytes 1-60 and the 7-bit half bytes 61-120,
 // and byte 121 upward is off the end and reads as junk. Byte n is MIDI n + 35,
