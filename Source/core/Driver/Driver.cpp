@@ -645,7 +645,7 @@ void Driver::noteOff(int ch, uint8_t note)
 void Driver::beginRelease(int ch)
 {
     Voice& v = v_[size_t(ch)];
-    v.active = false; v.tableOn = false; v.sliding = false; v.chordN = 0;
+    v.active = false; v.tableOn = false; v.tableTspHoldOn = false; v.sliding = false; v.chordN = 0;
     v.pitchClockOn = false; v.retrigEvery = 0; v.retrigOn = false; v.retrigFast = false; v.retrigFastCount = 0; v.bendSpeed = 0;
     // A shaped envelope has its own release: from the level the note-off found
     // to silence, one level per tick, over its own curve (section 27). A level
@@ -796,12 +796,11 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // Section 140: park the position of whatever was playing **before** the slot
     // is overwritten, so it is filed under the table it belongs to.
     parkStep(ch);
-    v.nestOn = false; v.nestSlot = 0; v.nestJustStarted = false;   // section 131
-    v.nestRowLive = false; v.nestTspHeld = 0;                      // section 145
     v.tableSlot = tbl; v.tableOn = tbl && bank_ && bank_->table(tbl);
     const bool wasFromCmd = v.tableTicks;
     v.tableTicks = false;                                 // the instrument's own table again (section 122)
     v.tableWait = v.tableWait2 = v.tableWaitE = 0;        // every lane starts its row afresh (section 64)
+    v.tableTspHoldOn = false;                     // section 157: a note starts on its own column
     if (v.tableOn) ++v.tableRun;                  // a note-on starts a run of its own (section 32)
     // A Step-mode table advances one row per trigger instead of restarting,
     // which is the whole point of it; a table that was not already running
@@ -857,7 +856,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     if (base < 0 && core.type != InstrumentType::Noise && core.type != InstrumentType::Kit) {
         // Below the chip's range: does not sound (C4). The key is still held,
         // so the held stack stays as it is.
-        v.basePeriod = 0; v.tableOn = false; v.sliding = false; v.chordN = 0; v.pitchClockOn = false;
+        v.basePeriod = 0; v.tableOn = false; v.tableTspHoldOn = false; v.sliding = false; v.chordN = 0; v.pitchClockOn = false;
         killDac(ch);
         v.active = true; view_[size_t(ch)].outOfRange = true;
         return;
@@ -976,7 +975,7 @@ void Driver::killDac(int ch)
 void Driver::stopVoice(int ch, bool kill)
 {
     Voice& v = v_[size_t(ch)];
-    v.active = false; v.tableOn = false; v.sliding = false; v.chordN = 0; v.kitOn = false; v.kitPair = false; v.streamActive = false; v.pendingOn = false;
+    v.active = false; v.tableOn = false; v.tableTspHoldOn = false; v.sliding = false; v.chordN = 0; v.kitOn = false; v.kitPair = false; v.streamActive = false; v.pendingOn = false;
     v.pitchClockOn = false; v.releasing = false; v.pulseReleasing = false;
     v.shapedOn = false; v.shapedRelease = false; v.tableJustStarted = false;
     // A kill or a stop ends the phrase: a key released afterwards must not
@@ -1085,6 +1084,7 @@ double Driver::noteOfVoice(int ch) const
 int Driver::tableTransposeOf(const Voice& v) const
 {
     if (plainTrigger_) return 0;                   // section 84
+    if (v.tableTspHoldOn) return int(v.tableTspHold);   // section 157: the A's row's column, until the new row 0
     if (!bank_) return 0;
     // Section 152: a row whose CMD 1 is an `L` does not apply its column -- the
     // ROM skips the column on that tick and the previous row's stays in force.
@@ -1098,23 +1098,8 @@ int Driver::tableTransposeOf(const Voice& v) const
         }
         return 0;
     };
-    // Section 145: the column has one owner at a time. While a nested run is live
-    // the parent's own column is not read at all -- measured on PU1, a parent's
-    // +4 beside a called +12 gives the period for +12 and not the sum, the +4 is
-    // gone on the next tick, and neither the parent's later rows nor its row 0
-    // coming round again reach the note.
-    if (v.nestOn) {
-        // Its first row is the tick **after** the `A`'s (section 122), which is
-        // what `nestRowLive` waits for. Until then the column the `A`'s own row
-        // carried is the one in force, which is how that row transposes its own
-        // tick. On **noise** it stays added to the nested run's rows for as long
-        // as the run lasts (section 144's sum, which the noise map's 7-bit top
-        // had made look like the general law).
-        if (!v.nestRowLive) return int(v.nestTspHeld);
-        const int held = v.inst.type == InstrumentType::Noise ? int(v.nestTspHeld) : 0;
-        return held + rowOf(v.nestSlot, v.nestRow[1]);
-    }
-    // Lane 1 is the one a row's own columns belong to.
+    // Lane 1 is the one a row's own columns belong to (section 157: one run per
+    // channel -- an `A` inside a table replaces it).
     return v.tableOn ? rowOf(v.tableSlot, v.tableRow) : 0;
 }
 
@@ -1122,11 +1107,10 @@ int Driver::tableTransposeOf(const Voice& v) const
 /// a table's `L` aims at (section 152).
 int Driver::tableRowTransposeOf(const Voice& v) const
 {
-    if (!bank_) return 0;
-    const bool nest = v.nestOn && v.nestRowLive;
-    const Table* t = bank_->table(nest ? v.nestSlot : v.tableSlot);
-    if (!t || !(nest || v.tableOn)) return 0;
-    const auto& st = t->steps[nest ? v.nestRow[1] : v.tableRow];
+    if (!bank_ || !v.tableOn) return 0;
+    const Table* t = bank_->table(v.tableSlot);
+    if (!t) return 0;
+    const auto& st = t->steps[v.tableRow];
     return st.hasTranspose ? int(st.transpose) : 0;
 }
 
@@ -1766,18 +1750,16 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
     const bool live = v.active && !inNoteOn_;
     switch (c.cmd) {
         case Cmd::A:                                  // table select, 0 stops
-            if (c.a <= 0) { if (nestLane_) v.nestOn = false; else v.tableOn = false; }
-            else if (fromTable) beginNestedRun(ch, uint8_t(std::clamp<int>(c.a, 1, kTableSlots)));   // section 131
+            if (c.a <= 0) v.tableOn = false;
             else {
+                // Section 157: inside a table the `A` **replaces** the table --
+                // the ROM keeps one table number per channel -- and the new
+                // one's row 0 is the next tick's (section 122). On noise the
+                // column in force is absorbed into the note first (section 145:
+                // the ROM's noise transposes are deltas on the note, and the
+                // accumulator is cleared without undoing them).
+                if (fromTable) { v.tableTspHold = int8_t(tableTransposeOf(v)); v.tableTspHoldOn = true; }
                 beginTableRun(ch, uint8_t(std::clamp<int>(c.a, 1, kTableSlots)), true);   // section 122: an A runs on ticks
-                // Section 122 corrects section 113: the table an `A` inside
-                // another table starts fires its row 0 on the **next tick**,
-                // one tick later than the table that started it -- measured on
-                // 9.2.L with a table whose rows each carry an `E`. §113 fired
-                // it at once because in STEP mode no next tick ever came; now
-                // that an `A`-started run ticks whatever the instrument says,
-                // the next tick arrives and firing here as well ran two rows in
-                // the first tick and swallowed row 1.
             }
             break;
         case Cmd::C:                                  // 0, x, y one step per chordRate + 1 ticks
@@ -1801,7 +1783,7 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             // letter is the note's gate and was read at the note-on, so there is
             // nothing left to do here.
             if (fromTable && randomArg(ch, 255) < int16_t((c.a & 15) * 16)) {
-                uint8_t& step = nestLane_ ? v.nestStep[size_t(lane)] : lane == 2 ? v.tableStep2 : v.tableStep;
+                uint8_t& step = lane == 2 ? v.tableStep2 : v.tableStep;
                 step = uint8_t(c.b & 15);
                 v.tableHopped = true;
             }
@@ -1906,11 +1888,10 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             if (fromTable) {
                 // Each command column hops its own lane (section 64).
                 const int times = std::clamp<int>(c.a, 0, 15), row = std::clamp<int>(c.b, 0, 15);
-                // Section 131: the nested run hops its own lanes.
-                uint8_t& step = nestLane_ ? v.nestStep[size_t(lane)] : lane == 2 ? v.tableStep2 : v.tableStep;
-                uint8_t& left = nestLane_ ? v.nestHopLeft[lane == 2 ? 1 : 0] : lane == 2 ? v.hopLeft2 : v.hopLeft;
-                uint8_t& from = nestLane_ ? v.nestHopFrom[lane == 2 ? 1 : 0] : lane == 2 ? v.hopFrom2 : v.hopFrom;
-                const uint8_t here = nestLane_ ? v.nestRow[size_t(lane)] : lane == 2 ? v.tableRow2 : v.tableRow;
+                uint8_t& step = lane == 2 ? v.tableStep2 : v.tableStep;
+                uint8_t& left = lane == 2 ? v.hopLeft2 : v.hopLeft;
+                uint8_t& from = lane == 2 ? v.hopFrom2 : v.hopFrom;
+                const uint8_t here = lane == 2 ? v.tableRow2 : v.tableRow;
                 if (times == 0) { step = uint8_t(row); left = 0; v.hopTaken = true; }
                 else if (left == 0 && from != here) { from = here; left = uint8_t(times); step = uint8_t(row); v.hopTaken = true; }
                 else if (left > 0) { if (--left > 0) { step = uint8_t(row); v.hopTaken = true; } else from = 0xFF; }
@@ -2285,7 +2266,7 @@ Command* Driver::zSlot(int ch, bool fromTable, int lane)
 {
     Voice& v = v_[size_t(ch)];
     if (!fromTable) return &v.lastCellCmd;
-    const uint8_t slot = nestLane_ ? v.nestSlot : v.tableSlot;   // section 131
+    const uint8_t slot = v.tableSlot;
     if (slot == 0 || slot > kTableSlots) return nullptr;
     return &zRec_[size_t(slot - 1)][lane == 2 ? 1 : 0];
 }
@@ -2382,48 +2363,9 @@ uint16_t Driver::tableRowTicks(int ch, int row) const
     return uint16_t(n ? n : 1);
 }
 
-/// Section 131: an `A` inside a table starts its table **beside** the one that
-/// started it. Measured on 9.2.L: `SAMESONG`'s wave instrument has an `A 02` in
-/// CMD 2 of its table's row 0, and both the `A`'s table (its `E`s reach `NR32`)
-/// and the table that started it (its `Z` on an `F` goes on jumping the wave a
-/// group) run -- taking either away takes only its own effect with it. §122
-/// replaced the run, which lost whichever of the two was not the `A`'s.
-void Driver::beginNestedRun(int ch, uint8_t slot)
-{
-    Voice& v = v_[size_t(ch)];
-    // Section 145: the row that carried the `A` comes round again -- every
-    // sixteenth tick for a table that runs its length -- and the ROM's note does
-    // not go back to the parent's transpose column when it does. Reading the same
-    // `A` again while its own run is live leaves that run walking, which is also
-    // what keeps the called table's rows on the ROM's ticks: its loop and the
-    // parent's row land together, so the two cannot be told apart there.
-    if (v.nestOn && v.nestSlot == slot) return;
-    v.nestSlot = slot;
-    for (int i = 0; i < 3; ++i) { v.nestStep[size_t(i)] = 0; v.nestRow[size_t(i)] = 0; v.nestWait[size_t(i)] = 0; }
-    v.nestHopLeft[0] = v.nestHopLeft[1] = 0; v.nestHopFrom[0] = v.nestHopFrom[1] = 0xFF;
-    v.nestVolOn = true;
-    v.nestOn = slot != 0;                        // section 154
-    // Its row 0 is the **next** tick's, one tick after the row that started it,
-    // as the ROM's is (section 122).
-    v.nestJustStarted = v.nestOn;
-    // Section 145: and so is its transpose column -- the parent's is still the
-    // live one for this tick. On noise what the parent's column has in force now
-    // stays added for as long as the nested run lasts.
-    v.nestRowLive = false;
-    v.nestTspHeld = 0;
-    if (v.tableOn && bank_) {
-        if (const Table* parent = bank_->table(v.tableSlot)) {
-            const auto& st = parent->steps[v.tableRow];      // lane 1's row: the column in force
-            if (st.hasTranspose) v.nestTspHeld = int8_t(st.transpose);
-        }
-    }
-}
-
 void Driver::beginTableRun(int ch, uint8_t slot, bool fromCommand)
 {
     Voice& v = v_[size_t(ch)];
-    v.nestOn = false; v.nestSlot = 0; v.nestJustStarted = false;   // section 131
-    v.nestRowLive = false; v.nestTspHeld = 0;                      // section 145
     v.tableSlot = slot; v.tableGroove = 0;
     v.tableTicks = fromCommand;                 // section 122
 
@@ -2475,22 +2417,18 @@ void Driver::stepTable(int ch)
 
 /// One lane of the table (section 64): 1 is the transpose column and CMD 1,
 /// 2 is CMD 2, 0 is the volume column and its LEN. Each keeps its own row.
-void Driver::stepTableLane(int ch, int lane, bool nest)
+void Driver::stepTableLane(int ch, int lane)
 {
     Voice& v = v_[size_t(ch)];
-    // Section 131: the nested run an `A` started keeps its own pointers, so the
-    // table that started it goes on walking its own rows beside it.
-    bool& on = nest ? v.nestOn : v.tableOn;
+    bool& on = v.tableOn;
     if (!on) return;
-    const Table* t = bank_ ? bank_->table(nest ? v.nestSlot : v.tableSlot) : nullptr;
+    const Table* t = bank_ ? bank_->table(v.tableSlot) : nullptr;
     if (!t) return;                                   // section 154: an empty table, its rows do nothing
     if (v.delay > 0) { --v.delay; return; }
-    uint8_t& step = nest ? v.nestStep[size_t(lane)] : lane == 2 ? v.tableStep2 : lane == 0 ? v.tableStepE : v.tableStep;
-    uint8_t& row  = nest ? v.nestRow[size_t(lane)]  : lane == 2 ? v.tableRow2  : lane == 0 ? v.tableRowE  : v.tableRow;
-    uint16_t& wait = nest ? v.nestWait[size_t(lane)] : lane == 2 ? v.tableWait2 : lane == 0 ? v.tableWaitE : v.tableWait;
-    bool& volOn = nest ? v.nestVolOn : v.volLaneOn;
-    const bool wasNest = nestLane_; nestLane_ = nest;
-    struct Restore { bool& f; bool was; ~Restore() { f = was; } } restore{ nestLane_, wasNest };
+    uint8_t& step = lane == 2 ? v.tableStep2 : lane == 0 ? v.tableStepE : v.tableStep;
+    uint8_t& row  = lane == 2 ? v.tableRow2  : lane == 0 ? v.tableRowE  : v.tableRow;
+    uint16_t& wait = lane == 2 ? v.tableWait2 : lane == 0 ? v.tableWaitE : v.tableWait;
+    bool& volOn = v.volLaneOn;
     if (lane == 0 && !volOn) return;
     if (lane == 0) {
         // The volume lane runs its own little program: it ends at its first
@@ -2551,12 +2489,17 @@ void Driver::stepTableLane(int ch, int lane, bool nest)
         const uint16_t runWas = v.tableRun;
         v.hopTaken = false;
         if (c.cmd != Cmd::None) applyCommand(ch, c, true, lane, z);
-        // Section 122: an `A` on this row started a different table and put
-        // every lane back to row 0. The bookkeeping below belongs to the table
-        // that has just gone, and `step` is now the new one's -- advancing it
-        // here swallowed the new table's row 0. Its first row is the next
-        // tick's, one tick after the row that started it, as the ROM's is.
-        if (v.tableRun != runWas) return;
+        // Section 157: an `A` on this row replaced the table and put every lane
+        // back to row 0; its first row is the next tick's (section 122). The
+        // ROM has already read this row's CMD 2 and dispatches it after the
+        // `A` in CMD 1, so that one command is applied here before leaving.
+        if (v.tableRun != runWas) {
+            if (lane == 1 && s.cmd2.cmd != Cmd::None && s.cmd2.cmd != Cmd::A) {
+                const bool z2 = s.cmd2.cmd == Cmd::Z;
+                applyCommand(ch, z2 ? resolveRandom(ch, s.cmd2, 2) : s.cmd2, true, 2, z2);
+            }
+            return;
+        }
         wait = tableRowTicks(ch, row);
         if (!on) return;                                  // the command stopped it
         // Section 155: a hop to another row plays that row now; a hop to this
@@ -2638,6 +2581,7 @@ void Driver::tick(int ch)
     // ... so the comparison leaves the pitch effects' own offsets out of it.
     const auto tickNote = [&] { return noteOfVoice(ch) - double(v.fineOffset + slideResidual(v)) / 256.0; };
     const double noteBeforeTick = tickNote();
+    bool tspReleased = false;                     // section 157: the noise note took the held column
     // A K comes due **before** the table's rows are read (section 128), so a
     // looping table whose own row re-arms the K cannot keep it from ever
     // firing -- `K 10` in a sixteen row table dies on the tick the row comes
@@ -2649,23 +2593,21 @@ void Driver::tick(int ch)
     else if (v.inst.tableMode == TableMode::Tick || v.tableTicks) {   // section 122
         // Each lane counts down its own row (section 64).
         uint16_t* const waits[3] = { &v.tableWaitE, &v.tableWait, &v.tableWait2 };
+        const uint16_t run = v.tableRun;
+        // Section 157: the new table's row 0 takes the column over from the
+        // `A`'s row now; on noise what that row had in force is on the note.
+        if (v.tableTspHoldOn) {
+            v.tableTspHoldOn = false;
+            if (v.inst.type == InstrumentType::Noise) { v.noiseTsp = int16_t(std::clamp(int(v.noiseTsp) + int(v.tableTspHold), -30000, 30000)); tspReleased = true; }
+        }
         for (int lane = 0; lane < 3; ++lane) {
             if (*waits[lane] > 1) { --*waits[lane]; continue; }
             stepTableLane(ch, lane);
             if (!v.active) return;
-        }
-    }
-    // Section 131: the nested run walks a row a tick of its own, whatever the
-    // instrument's table mode is, beside the run that started it.
-    if (v.nestJustStarted) v.nestJustStarted = false;
-    else if (v.nestOn) {
-        for (int lane = 0; lane < 3; ++lane) {
-            if (v.nestWait[size_t(lane)] > 1) { --v.nestWait[size_t(lane)]; continue; }
-            // Section 145: lane 1 carries the transpose column, so reaching its
-            // first row is what hands the column over from the parent.
-            if (lane == 1) v.nestRowLive = true;
-            stepTableLane(ch, lane, true);
-            if (!v.active) return;
+            // Section 157: an `A` in this row replaced the table; the lanes
+            // after it belong to the row that is gone, and the new table's row
+            // 0 is the next tick's.
+            if (v.tableRun != run) break;
         }
     }
     if (!v.active) return;
@@ -2757,7 +2699,7 @@ void Driver::tick(int ch)
     // transpose column, the channel's own transpose -- goes out here, and only
     // when it really changed something.
     if (retrig) retrigger(ch, true);
-    else if (v.inst.type == InstrumentType::Noise) { if (v.noiseSweep || tickNote() != noteBeforeTick) writePeriod(ch, false); }   // a table's transpose reaches NR43 (section 45)
+    else if (v.inst.type == InstrumentType::Noise) { if (v.noiseSweep || tspReleased || tickNote() != noteBeforeTick) writePeriod(ch, false); }   // a table's transpose reaches NR43 (section 45)
     else if (tickNote() != noteBeforeTick) writePeriod(ch, false);
 }
 

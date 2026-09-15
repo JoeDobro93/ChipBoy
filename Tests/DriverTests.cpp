@@ -1944,95 +1944,6 @@ TEST_CASE("a shaped envelope's first step lands on its own pitch clock", "[drive
     CHECK(steps[0].first > 3.0);
 }
 
-TEST_CASE("a nested run owns the transpose column, and on noise the A's row stays added", "[driver][table]")
-{
-    // Sections 144 and 145: an `A` in a table row starts a run beside its parent
-    // (§131) and that run's transpose column is the one the note reads -- from the
-    // tick **after** the `A`, not on it. On a pulse the parent's column is then not
-    // read at all; on **noise** what it had in force on the `A`'s tick stays added,
-    // which is the sum §144 measured at the top of the noise map and took for the
-    // general law. Each step below is one tick (tickHz 100, 480 samples at 48 kHz),
-    // and the register is read after each.
-    auto seq = [](int ch, uint16_t addr, int parentTsp, int nestTsp, int ticks = 4) {
-        Rig r;
-        // Both tables start empty: the factory bank's own slots hold presets, and
-        // a preset's commands would sweep the period under the test.
-        // Both run their sixteen rows and loop, as LSDj's do: the parent's row 0 is
-        // then back on the sixteenth tick and the called table's on the seventeenth.
-        auto& t1 = r.bank.tables[4] = Table{};             // slot 5: the parent
-        t1.used = true; t1.name = "parent"; t1.end = TableEnd::Loop;
-        t1.steps[0].cmd2 = Command{ Cmd::A, 6, 0, 0 };     // CMD 2 calls slot 6 (section 131)
-        // The parent's transpose is on the `A`'s row alone, which is what the ROM
-        // probe had: its later rows are what a held column and a live one differ on.
-        if (parentTsp != 0) { t1.steps[0].hasTranspose = true; t1.steps[0].transpose = int8_t(parentTsp); }
-        auto& t2 = r.bank.tables[5] = Table{};             // slot 6: the one it calls
-        t2.used = true; t2.name = "nested"; t2.end = TableEnd::Loop;
-        for (int k = 0; k < 4; ++k)
-            if (nestTsp != 0) { t2.steps[k].hasTranspose = true; t2.steps[k].transpose = int8_t(nestTsp); }
-        r.tickHz = 100.0;
-        r.song.noteSource[size_t(ch)] = tracker::NoteSource::Tracker;
-        // A bare instrument, not whichever factory preset sits in slot 1: a
-        // preset's own vibrato would move the period between the ticks read here.
-        auto& i = r.bank.instruments[0];
-        i = Instrument::defaults(ch == 3 ? InstrumentType::Noise : InstrumentType::Pulse, "probe");
-        i.pan = Pan::Both; i.table = 5;
-        ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(ch, p);
-        std::vector<int> out;
-        int held = -1;
-        for (int k = 0; k < ticks; ++k) {
-            const auto w = r.block(k == 0 ? std::vector<NoteEvent>{ cellOn(ch, 48, 1) } : std::vector<NoteEvent>{}, 480);
-            if (const RegWrite* x = last(w, addr)) held = int(x->value);
-            out.push_back(held);
-        }
-        return out;
-    };
-    auto show = [](const char* n, const std::vector<int>& x) {
-        std::string out = n; out += " ";
-        for (int k : x) out += std::to_string(k) + " ";
-        return out;
-    };
-    SECTION("a pulse reads the called table's row alone")
-    {
-        // NR13 is the low byte of the period, which these transposes move without
-        // wrapping it.
-        // Eighteen ticks: the parent's row 0 comes round on the sixteenth, where
-        // the ROM's note stays on the called table's column and does not go back.
-        const auto plain      = seq(0, 0xFF13, 0, 0, 18);
-        const auto parentOnly = seq(0, 0xFF13, 4, 0, 18);
-        const auto nestOnly   = seq(0, 0xFF13, 0, 12, 18);
-        const auto both       = seq(0, 0xFF13, 4, 12, 18);
-        const auto sum        = seq(0, 0xFF13, 0, 16, 18); // +4 and +12 together, if they added
-        INFO(show("plain", plain) << show("parent", parentOnly) << show("nest", nestOnly)
-             << show("both", both) << show("+16", sum));
-        REQUIRE(plain[0] > 0);
-        CHECK(plain[2] == plain[0]);                       // nothing else moves the period here
-        CHECK(parentOnly[0] != plain[0]);                  // the `A`'s own row transposes its own tick
-        CHECK(both[0] == parentOnly[0]);
-        CHECK(nestOnly[1] != plain[1]);                    // and the called table's row the next one
-        CHECK(both[1] == nestOnly[1]);                     // the parent's is not read beside it
-        CHECK(both[1] != sum[1]);                          // so the two do not add here
-        CHECK(parentOnly[2] == plain[2]);                  // nor does the parent hold its own
-        CHECK(both[16] == plain[16]);                      // nor when its row 0 comes round again
-        CHECK(both[17] == nestOnly[1]);                    // where the called table's row 0 is due
-    }
-    SECTION("noise keeps the A's row added")
-    {
-        // NR43 is the noise clock, which the map moves a whole entry at a time.
-        const auto plain  = seq(3, 0xFF22, 0, 0);
-        const auto parent = seq(3, 0xFF22, 4, 0);
-        const auto four   = seq(3, 0xFF22, 0, 4);
-        const auto eight  = seq(3, 0xFF22, 0, 8);
-        const auto both   = seq(3, 0xFF22, 4, 4);
-        INFO(show("plain", plain) << show("parent", parent) << show("+4", four)
-             << show("+8", eight) << show("both", both));
-        REQUIRE(four[2] > 0);
-        REQUIRE(four[2] != eight[2]);                      // the two are distinguishable here
-        CHECK(both[2] == eight[2]);                        // +4 held beside the called +4 is +8
-        CHECK(both[2] != four[2]);
-        CHECK(parent[2] != plain[2]);                      // and it is held with nothing called at all
-    }
-}
-
 TEST_CASE("a STEP table's position is the instrument's own", "[driver][table]")
 {
     // Section 140: measured on the ROM, two instruments keep their own position
@@ -4004,31 +3915,6 @@ TEST_CASE("U sets the wave run's speed and length", "[driver][wave]")
     CHECK(five[1] == 3); CHECK(five[2] == 7); CHECK(five[3] == 11); CHECK(five[4] == 15);
 }
 
-TEST_CASE("an A inside a table runs its table beside the one that started it", "[driver][table]")
-{
-    // Section 131: `SAMESONG`'s wave instrument runs a table whose CMD 2 starts
-    // another while CMD 1 goes on re-rolling its own `F`, and the started
-    // table's own CMD 1 reaches the registers too -- so both tables are running
-    // whole. §122 replaced the run and lost the first; §130's lane-scoping kept
-    // it but lost the second, which is what silenced the nested table's `E`s.
-    Rig r;
-    r.tickHz = 100.0;
-    r.song.noteSource[0] = tracker::NoteSource::Tracker;
-    auto& a = r.bank.tables[0]; a.used = true; a.end = TableEnd::Stop;   // slot 1
-    a.steps[0].cmd2 = { Cmd::A, 2, 0, 0 };                              // CMD 2 starts slot 2
-    a.steps[1].cmd1 = { Cmd::E, 9, 0, 0 };                              // CMD 1 stays here
-    auto& b = r.bank.tables[1]; b.used = true; b.end = TableEnd::Stop;   // slot 2
-    b.steps[1].cmd1 = { Cmd::O, 1, 0, 0 };                              // and its own CMD 1 runs
-    r.bank.instruments[0].table = 1;
-    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
-    r.block({ cellOn(0, 69, 1) }, 480);
-    for (int k = 0; k < 3; ++k) r.block({}, 480);
-    // The table that started the `A` reached its own row 1 and set the level...
-    CHECK(r.drv.view(0).volume == 9);
-    // ...and the nested table reached its row 1 and set the pan.
-    CHECK(r.drv.view(0).pan == uint8_t(bank::Pan::Left));
-}
-
 TEST_CASE("R fires a retrigger on the command's own tick", "[driver][commands]")
 {
     // Section 134: the ROM retriggers on the tick the `R` is read and then every
@@ -4461,4 +4347,70 @@ TEST_CASE("a table H to its own row holds the row", "[driver][table][rom942]")
     CHECK(int(r.drv.view(0).period) == note(57));
     r.block({}, 480 * 30);
     CHECK(int(r.drv.view(0).period) == note(57));             // still on row 0, thirty ticks on
+}
+
+TEST_CASE("an A inside a table replaces the table", "[driver][table][rom942]")
+{
+    // Section 157 (correcting 131): the ROM keeps one table number per channel.
+    // Measured: a parent whose row 1 carries `A` in CMD 2 never reaches its own
+    // row 2 (`W 03`) again, and the called table's row 3 (`+4`) lands on tick 5
+    // and every sixteen ticks after.
+    Rig r; r.tickHz = 100.0; r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    Table a; a.used = true; a.end = TableEnd::Loop;
+    a.steps[0].cmd1 = { Cmd::W, 1, 0, 0 };
+    a.steps[1].cmd2 = { Cmd::A, 2, 0, 0 };
+    a.steps[2].cmd1 = { Cmd::W, 3, 0, 0 };
+    r.bank.tables[0] = a;
+    Table b; b.used = true; b.end = TableEnd::Loop;
+    b.steps[3].hasTranspose = true; b.steps[3].transpose = 4;
+    r.bank.tables[1] = b;
+    auto& in = r.bank.instruments[0]; in.vib.depth = 0; in.table = 1;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    auto w = r.block({ cellOn(0, 69, 1) }, 480);                    // tick 0: row 0, W 01
+    const RegWrite* d = last(w, 0xFF11); REQUIRE(d != nullptr); CHECK((d->value >> 6) == 1);
+    r.block({}, 480);                                               // tick 1: the A
+    for (int k = 2; k <= 4; ++k) {                                  // ticks 2-4: the called table's rows 0-2
+        w = r.block({}, 480);
+        CHECK_FALSE(has(w, 0xFF11));                                // the parent's W 03 never comes
+        CHECK(int(r.drv.view(0).period) == note(69));
+    }
+    r.block({}, 480);                                               // tick 5: row 3, +4
+    CHECK(int(r.drv.view(0).period) == note(73));
+    r.block({}, 480);
+    CHECK(int(r.drv.view(0).period) == note(69));
+    for (int k = 7; k <= 20; ++k) r.block({}, 480);
+    r.block({}, 480);                                               // tick 21: row 3 again
+    CHECK(int(r.drv.view(0).period) == note(73));
+}
+
+TEST_CASE("the transpose column after an A is the new table's, and on noise the note keeps the old one", "[driver][table][noise][rom942]")
+{
+    // Sections 145 and 157: `parent 0 A+4 / called 0 +12` gives +4, +12, plain on
+    // a pulse (1964 1995 1943 in the ROM's periods) and +4, +16, +4 on noise.
+    Rig r; r.tickHz = 100.0; r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    Table a; a.used = true; a.end = TableEnd::Loop;
+    a.steps[0].hasTranspose = true; a.steps[0].transpose = 4; a.steps[0].cmd1 = { Cmd::A, 2, 0, 0 };
+    Table b; b.used = true; b.end = TableEnd::Loop;
+    b.steps[0].hasTranspose = true; b.steps[0].transpose = 12;
+    r.bank.tables[0] = a; r.bank.tables[1] = b;
+    auto& in = r.bank.instruments[0]; in.vib.depth = 0; in.table = 1;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    r.block({ cellOn(0, 69, 1) }, 480);
+    CHECK(int(r.drv.view(0).period) == note(73));
+    r.block({}, 480);
+    CHECK(int(r.drv.view(0).period) == note(81));
+    r.block({}, 480);
+    CHECK(int(r.drv.view(0).period) == note(69));
+    // Noise: the same two tables under a noise instrument. The column's deltas
+    // are on the note, so the +4 stays under the called table.
+    r.song.noteSource[3] = tracker::NoteSource::Tracker;
+    auto& n = r.bank.instruments[20]; n = Instrument::defaults(InstrumentType::Noise, "N"); n.used = true; n.table = 1;
+    ChannelParams q; q.instrument = 21; q.velocityMode = 2; r.drv.setParams(3, q);
+    auto nr43 = [&](const std::vector<RegWrite>& w) { const RegWrite* l = last(w, 0xFF22); return l ? int(l->value) : -1; };
+    const int t0 = nr43(r.block({ cellOn(3, 60, 21) }, 480));
+    const int t1 = nr43(r.block({}, 480));
+    const int t2 = nr43(r.block({}, 480));
+    CHECK(t0 >= 0); CHECK(t1 >= 0);
+    CHECK(t1 != t0);                                                // +16 on tick 1
+    CHECK((t2 == t0 || t2 < 0));                                    // +4 again on tick 2 (or no write: the same byte)
 }

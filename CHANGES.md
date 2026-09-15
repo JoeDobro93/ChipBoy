@@ -49,6 +49,9 @@ cases over nineteen letters). What differed, and what changed:
   runs it and `A 21`-`A FF` stop (§154).
 - The 9.x noise map is generated from the ROM's rule and checked byte for byte (§156): the measured
   one had four entries wrong, and the map's walk under `P`/`S` no longer stops at ±256.
+- An `A` inside a table **replaces** the table (§157, correcting §131's side-by-side runs): the ROM
+  keeps one table number per channel. The nested-run machinery is gone; the `A`'s row keeps its
+  column until the new table's row 0 steps, and on noise the note absorbs it (§145).
 
 Left as measured (§147): the fold -- the ROM triggers on the instrument's values and lets a table's
 row 0, a cell's `R` or `S` land a millisecond later as their own writes.

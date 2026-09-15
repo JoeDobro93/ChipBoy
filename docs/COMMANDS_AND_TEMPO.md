@@ -4981,3 +4981,28 @@ byte. A noise `P` walks the index by a quarter of the byte a tick (§66) and an 
 and the index wraps at 120 (`$4637`, §83) -- ChipBoy clamped the walk at ±256 entries, so a long
 `P 20` (measured: 90 70 50 30 then the 7-bit `DC` with the restart, `D9`, `C8`, …, a tick apart,
 for as long as the note lasts) stopped after thirty ticks.
+
+## 157. An `A` inside a table replaces the table
+
+§131 had the table an `A` starts running **beside** the one that started it, measured on 9.2.L from
+`SAMESONG`'s wave instrument. The ROM keeps one table number per channel (`$C204 + ch`) and one set
+of row positions, and the `A` handler at `$4679` overwrites them: measured on 9.4.2, a parent whose
+row 1 carries `A 01` in CMD 2 never reaches its own row 2 (`W 03`) or row 4 (`W 02`) again, and only
+the called table's `+4` (its row 3) comes back, on tick 5 and every sixteenth tick after; a parent
+row 3 `E 38` after an `A` on row 1 never lands either. What §131 saw was an `A` naming its own table,
+whose row 0 then re-rolls every tick.
+
+What the `A`'s own tick still does: the row's transpose was applied before the dispatch, and the
+row's CMD 2 is dispatched after an `A` in CMD 1 (`$5323` reads the code it already has). The new
+table's row 0 runs on the next tick (§122). On noise the column in force is a delta already on the
+note (`$4FBE` → `$4637`) and `$5655` clears the accumulator without undoing it, so the parent's
+transpose stays under the called table (§145's noise law); on the pitched channels the new table's
+own rows set the column from its row 0.
+
+### As built
+
+The nested run (`nestOn`, its lanes, `nestTspHeld`, `nestRowLive`, `beginNestedRun`) is gone. A
+table `A` absorbs the column into the noise note, calls `beginTableRun()` and marks the run just
+started so row 0 is the next tick's; the lane that ran the `A` applies the row's CMD 2 if the `A`
+was in CMD 1, and the tick stops stepping the lanes of the row that is gone. `tableTransposeOf()`
+is the one run's row, with §152's `L`-row rule.
