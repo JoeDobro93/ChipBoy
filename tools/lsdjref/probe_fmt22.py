@@ -156,7 +156,7 @@ class Probe:
                     self.s[cc + o + step] = code(letter); self.s[vv + o + step] = val
 
     # -- instrument ---------------------------------------------------------
-    def pulse(self, i, env=0xF0, duty=2, pan=3, table=None, sweep=0x00, finetune=0, b5=0):
+    def pulse(self, i, env=0xF0, duty=2, pan=3, table=None, sweep=0x00, finetune=0, b5=0, extra=None):
         b = IP + i * 16
         for k in range(16): self.s[b + k] = 0
         self.allocInst(i)
@@ -167,9 +167,10 @@ class Probe:
         self.s[b + 6] = (0x20 | (table & 0x1F)) if table is not None else 0
         self.s[b + 7] = ((duty & 3) << 6) | (pan & 3)
         self.s[b + 11] = finetune
+        for k, v in (extra or {}).items(): self.s[b + k] = v      # any byte, for the ROM's own reading of it
         return i
 
-    def wave(self, i, env=0x20, pan=3, table=None, synth=0, loop=0, b5=0):
+    def wave(self, i, env=0x20, pan=3, table=None, synth=0, loop=0, b5=0, extra=None):
         b = IP + i * 16
         for k in range(16): self.s[b + k] = 0
         self.allocInst(i)
@@ -179,9 +180,10 @@ class Probe:
         self.s[b + 5] = b5
         self.s[b + 6] = (0x20 | (table & 0x1F)) if table is not None else 0
         self.s[b + 7] = pan & 3
+        for k, v in (extra or {}).items(): self.s[b + k] = v
         return i
 
-    def noise(self, i, env=0xF0, pan=3, table=None, shape=0xFF, b5=0):
+    def noise(self, i, env=0xF0, pan=3, table=None, shape=0xFF, b5=0, extra=None):
         b = IP + i * 16
         for k in range(16): self.s[b + k] = 0
         self.allocInst(i)
@@ -191,6 +193,7 @@ class Probe:
         self.s[b + 5] = b5
         self.s[b + 6] = (0x20 | (table & 0x1F)) if table is not None else 0
         self.s[b + 7] = pan & 3
+        for k, v in (extra or {}).items(): self.s[b + k] = v
         return i
 
     def write(self, path):

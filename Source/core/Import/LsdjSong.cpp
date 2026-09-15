@@ -1157,7 +1157,9 @@ bool importSong(const uint8_t* bytes, size_t size, const LsdjModel& model,
     { auto blank = std::make_unique<tracker::Song>(); out = std::move(*blank); }
     Reader r(bytes, model, bank, out, notes);
     r.kits = kits;
-    const int tempo = std::clamp<int>(bytes[kTempo], 40, 255);
+    // Section 158: the project tempo byte reads as a T byte does -- 0-39 are
+    // 256-295 BPM on the formats whose T does that (REACTION is $24, 292 BPM).
+    const int tempo = model.tempoLowIsHigh ? bank::tempoBpmOfByte(bytes[kTempo]) : std::clamp<int>(bytes[kTempo], 40, 255);
     summary.tempoBpm = tempo;
     out.tempoBpm = tempo;
     out.transpose = int8_t(signedByte(bytes[kSongTranspose]));      // the PROJECT screen's TRANSPOSE (section 61)

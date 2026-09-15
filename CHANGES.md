@@ -28,7 +28,7 @@ intended product rather than a progress report.
 
 ### 2026-09-15 -- the third parity campaign: 9.4.2's code, and what it corrected
 
-`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§156. The audit target is
+`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§159. The audit target is
 LSDj 9.4.2 now, read as code: the dispatcher, every handler's address, the work RAM the commands
 share, the order a phrase step and a table tick run their columns, and a two-sided probe rig that
 builds a song, traces the ROM and ChipBoy and reports the first register batch that differs (200
@@ -52,6 +52,12 @@ cases over nineteen letters). What differed, and what changed:
 - An `A` inside a table **replaces** the table (§157, correcting §131's side-by-side runs): the ROM
   keeps one table number per channel. The nested-run machinery is gone; the `A`'s row keeps its
   column until the new table's row 0 steps, and on noise the note absorbs it (§145).
+- The project tempo byte reads as a `T` byte (§158): `REACTION` is `$24` = 292 BPM, and the
+  importer had clamped it to 40. `R`'s level nibble moves the start a shaped envelope runs from
+  (§158, `READROOM`'s noise `R F0`): ChipBoy stepped back up to the instrument's start first.
+- `Z` re-rolls the last command's **byte**, carry and all, and the letter reads its fields from the
+  result (§159): ChipBoy added the draws to the fields, so a one-value letter's `Z` never landed
+  (`CASTSHDW`'s `W 00` / `Z 02` duty re-roll).
 
 Left as measured (§147): the fold -- the ROM triggers on the instrument's values and lets a table's
 row 0, a cell's `R` or `S` land a millisecond later as their own writes.

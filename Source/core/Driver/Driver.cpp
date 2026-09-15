@@ -773,7 +773,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // **not** reset here. Measured on 9.2.L: the record outlives the note-on and
     // even a different instrument, and clearing it made every `Z` after the
     // first note inert.
-    v.dutyIdx = 0; v.killAt = -1; v.panQueued = 0; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.retrigOn = false; v.retrigPending = 0; v.retrigFast = false; v.retrigFastCount = 0; v.envCount = 0; v.frameStep = 0; v.frameIdx = 0;   // the run starts at its first step (section 65)
+    v.dutyIdx = 0; v.killAt = -1; v.panQueued = 0; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.shapedStartOffset = 0; v.retrigOn = false; v.retrigPending = 0; v.retrigFast = false; v.retrigFastCount = 0; v.envCount = 0; v.frameStep = 0; v.frameIdx = 0;   // the run starts at its first step (section 65)
     v.rng = v.rng * 1664525u + 1013904223u + note;
     restartPitchClock(ch);
     // volume from velocity: a MIDI note asks the Velocity mode, a cell's VEL is
@@ -1509,7 +1509,8 @@ uint8_t Driver::shapedLevel(const Voice& v) const
     if (v.shapedRelease) return clamp15(envSegmentLevel(v.shapedFrom, 0, stagePos(int(e.releaseTicks), int(e.releaseFine)), pos, e.releaseCurve));
     const int a = stagePos(int(e.attackTicks), int(e.attackFine)), d = stagePos(int(e.decayTicks), int(e.decayFine)),
               f = stagePos(int(e.fadeTicks), int(e.fadeFine)), t = pos;
-    if (t < a) return clamp15(envSegmentLevel(e.start, e.peak, a, t, e.attackCurve));
+    // Section 158: an `R`'s level nibble moves the start the envelope runs from.
+    if (t < a) return clamp15(envSegmentLevel(clamp15(int(e.start) + int(v.shapedStartOffset)), e.peak, a, t, e.attackCurve));
     if (t < a + d) return clamp15(envSegmentLevel(e.peak, e.sustain, d, t - a, e.decayCurve));
     // The third stage (section 51): the sustain fades to a level and holds there.
     if (f > 0 && t < a + d + f) return clamp15(envSegmentLevel(e.sustain, e.fadeTo, f, t - a - d, e.fadeCurve));
@@ -2280,9 +2281,21 @@ Command Driver::resolveRandom(int ch, const Command& z, int lane)
     const Command* rec = zSlot(ch, lane != 0, lane);
     Command c = rec ? *rec : Command{};
     if (c.cmd == Cmd::None || c.cmd == Cmd::Z || c.cmd == Cmd::H) return {};
-    // Z's own arguments are nibbles (section 34).
-    c.a = int16_t(c.a + randomArg(ch, z.a & 15));
-    c.b = int16_t(c.b + randomArg(ch, z.b & 15));
+    // Section 159 (the ROM's $73CA): `random(x) << 4 + random(y)` is added to
+    // the last command's **byte**, with the carry, and the letter reads its
+    // own fields from what comes out -- so a `Z 02` on a `W 00` is a duty of 0,
+    // 1 or 2, and on a `P 05` a bend of 5-7. Z's own arguments are nibbles.
+    const int add = (randomArg(ch, z.a & 15) << 4) | randomArg(ch, z.b & 15);
+    switch (c.cmd) {
+        case Cmd::V: case Cmd::C: case Cmd::R: case Cmd::M: case Cmd::E: case Cmd::S: case Cmd::B: {
+            const int byte = ((((c.a & 15) << 4) | (c.b & 15)) + add) & 0xFF;
+            c.a = int16_t(byte >> 4); c.b = int16_t(byte & 15);
+            break;
+        }
+        case Cmd::T: c.a = int16_t(tempoBpmOfByte((tempoByteOfBpm(c.a) + add) & 0xFF)); break;
+        case Cmd::G: c.a = int16_t(((std::max(0, int(c.a) - 1) + add) & 0xFF) + 1); break;   // a slot counts from 00 in the byte (section 52)
+        default:     c.a = int16_t((int(c.a) + add) & 0xFF); break;                          // D K L P and the small ones: one byte
+    }
     return c;
 }
 
@@ -2738,8 +2751,13 @@ void Driver::retrigger(int ch, bool full, bool restartEnv)
     // nothing measured behind it, and it is what silenced `READROOM`'s rolls.
     // It accumulates over the retriggers from that start (section 136): R F4 is
     // 9, 8, 7, 6 from a volume of nine, not 9, 8, 8, 8.
-    if (v.retrigStep)
+    if (v.retrigStep) {
         v.envVol = uint8_t(std::clamp<int>(int(v.retrigBase) + int(v.retrigStep) * int(v.retrigCount), 0, 15));
+        // Section 158: the shaped envelope runs on from this level, not back
+        // from its own start -- measured, `R F0` on an ADSR note falls 5 -> 1
+        // where the plain note falls 6 -> 1, with no step back up.
+        if (v.inst.env.mode == EnvMode::Shaped) v.shapedStartOffset = int8_t(std::clamp(int(v.retrigStep) * int(v.retrigCount), -15, 15));
+    }
     if (pulse) {
         if (ch == 0) emit(0xFF10, uint8_t(~v.sweepByte), true);
         emit(regAddr(ch, 1), uint8_t((v.duty << 6) | lengthCode6(v.inst.length)), true);

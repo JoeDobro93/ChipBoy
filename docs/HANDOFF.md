@@ -29,8 +29,10 @@ design-log section the change touches. Update this file at the end of every chan
 - §147-§156 of the design log, with code and eight Catch2 cases (274 core tests): slides as an
   offset beside live transposes (the held column is gone), a self-hop holds, bare `S`/`W`, the
   chord's phase, the noise `P`'s first step, `V 00`, the nine-octave wrap, `A` to an empty table,
-  the generated noise map; §157: an `A` inside a table replaces it (the nested run is gone).
-  `CHANGES.md` has the round.
+  the generated noise map; §157: an `A` inside a table replaces it (the nested run is gone);
+  §158: the project tempo byte reads as a `T` byte (`REACTION` at 292 BPM) and `R`'s nibble
+  moves a shaped envelope's start; §159: `Z` re-rolls the command's byte. `CHANGES.md` has the
+  round. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`.
 - The probe rig for this campaign lives in the container at `/root/lsdj/probe/`: `vs_matrix.py`
   (the interaction cases, two-sided, `--show` for the first differing batch), `songdiff.py NAME`
   (a whole song of the 9.4.2 save, both sides), `watch.py SAV RANGE` (the ROM's writes to a

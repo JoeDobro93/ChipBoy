@@ -4414,3 +4414,25 @@ TEST_CASE("the transpose column after an A is the new table's, and on noise the 
     CHECK(t1 != t0);                                                // +16 on tick 1
     CHECK((t2 == t0 || t2 < 0));                                    // +4 again on tick 2 (or no write: the same byte)
 }
+
+TEST_CASE("a table Z on a W re-rolls the duty", "[driver][table][rom942]")
+{
+    // Section 74's law on a table's CMD 2: `W 00` on row 0, `Z 02` on row 1 --
+    // the ROM's duty comes out 0, 1 or 2 on the Z's tick (CASTSHDW's PU1).
+    Rig r; r.tickHz = 100.0; r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    Table t; t.used = true; t.end = TableEnd::Loop;
+    t.steps[0].cmd2 = { Cmd::W, 0, 0, 0 };
+    t.steps[1].cmd2 = { Cmd::Z, 0, 2, 0 };
+    r.bank.tables[0] = t;
+    auto& in = r.bank.instruments[0]; in.vib.depth = 0; in.table = 1; in.duty = 2;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    int changed = 0;
+    for (int n = 0; n < 6; ++n) {
+        auto w = r.block({ cellOn(0, 69, 1) }, 480);
+        const RegWrite* d0 = last(w, 0xFF11); REQUIRE(d0 != nullptr); CHECK((d0->value >> 6) == 0);   // row 0: W 00
+        w = r.block({}, 480);                                                                            // row 1: the Z
+        if (const RegWrite* d1 = last(w, 0xFF11); d1 != nullptr && (d1->value >> 6) != 0) ++changed;
+        r.block({}, 480 * 2);
+    }
+    CHECK(changed > 0);                                   // random, but not never
+}

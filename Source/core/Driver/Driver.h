@@ -282,6 +282,7 @@ private:
         uint8_t  chord[3] = { 0, 0, 0 }; uint8_t chordN = 0, chordIdx = 0, chordCount = 0;
         bool     chordFresh = false;  ///< section 149: a `C` on a running voice plays the root on its own tick
         bool     hopTaken = false;    ///< section 155: the table `H` just read took its hop
+        int8_t   shapedStartOffset = 0;   ///< section 158: what `R`'s level nibble took off the shaped envelope's start
         uint8_t  dutyIdx = 0, duty = 2;
         /// Section 140: the `instKey` the live table position is parked under,
         /// or kNoStepKey while the table is not a STEP one. 0x10000 is a local

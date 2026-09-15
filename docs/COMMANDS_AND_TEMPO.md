@@ -5006,3 +5006,31 @@ table `A` absorbs the column into the noise note, calls `beginTableRun()` and ma
 started so row 0 is the next tick's; the lane that ran the `A` applies the row's CMD 2 if the `A`
 was in CMD 1, and the tick stops stepping the lanes of the row that is gone. `tableTransposeOf()`
 is the one run's row, with §152's `L`-row rule.
+
+## 158. The project tempo byte reads as a `T` byte, and `R`'s level nibble moves a shaped envelope's start
+
+Two more from the song diffs of the 9.4.2 project.
+
+**`REACTION` plays at 292 BPM**, not 40: its tempo byte is `$24`, and the ROM's tempo routine
+reads the project byte exactly as it reads a `T` (`$179A` is one routine: 0-39 are 256-295 BPM,
+the manual's `T 00`-`T 27`). The importer clamped the project byte to 40, so every row of the song
+was seven times too long; it now goes through `tempoBpmOfByte()` on the formats whose `T` does.
+
+**`READROOM`'s noise row 2** (`R F0` on a note whose instrument has an ADSR envelope, `62` / `36`):
+the ROM triggers at 6, retriggers at 5 a millisecond later (the nibble's −1) and the envelope then
+falls from 5 to 1 in four milliseconds, where the plain note falls from 6 to 1 in five. ChipBoy
+retriggered at 5 and then, on the next tick, stepped back **up** to 6 -- the shaped envelope's own
+curve from its own start -- before falling. The level nibble moves the start the shaped envelope
+runs from: `shapedStartOffset` is what `R`'s step has taken off, applied to the first stage's
+start level and cleared by the next note.
+
+## 159. `Z` re-rolls the last command's byte
+
+The ROM's `$73CA` adds `random(x) << 4 + random(y)` to the last command's **byte**, carry and all,
+and the letter's handler then reads its own fields from the result. ChipBoy added the two draws to
+the command's `a` and `b` fields, which for a one-value letter left the draw in a field the letter
+never reads: `CASTSHDW`'s pulse table -- `W 00` on row 0, `Z 02` on row 1 -- re-rolls the duty on
+the ROM (0, 1 or 2; the trace alternates `NR11 = 80` and `00`) and never changed it in ChipBoy.
+`resolveRandom()` now works on the byte: the nibble letters (`V C R M E S B`) re-split it, `T` goes
+through its byte encoding, `G` through its slot-from-zero byte, and the rest (`D K L P A W F O`)
+take it as their one value, the letter's own clamp applying after.
