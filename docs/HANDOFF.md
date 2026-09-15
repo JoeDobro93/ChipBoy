@@ -60,8 +60,12 @@ design-log section the change touches. Update this file at the end of every chan
   `vibWave`, `vibIncFor`, `vibStartPhase`), a live `L` writing nothing until the next instant;
   §175: `R`'s nibble rewrites the three envelope levels and restarts the machine. The noise
   channels of `REPTCOMP` and `UNMASKED` match the ROM's state sequence whole, `READROOM`'s to
-  change 592, `CASTSHDW`'s and `EGOFLEX`'s were whole already. `CHANGES.md` has the round.
-  289 core tests. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
+  change 592, `CASTSHDW`'s and `EGOFLEX`'s were whole already. §176: `K` walks the machine's
+  level to 0 and `lsdjZombieStep` no longer double-counts the chip level (`REPTCOMP` PU2 and
+  `REACTION` NOI whole, `DELIVERY` NOI to 6.9 s); §177: a bare cell takes its chain row's
+  transpose (`EGOFLEX`'s pad slides); §178: the sync phase word accumulates across period
+  changes (`Voice::wavePhase`, `waveSyncStep()` before the channels). `CHANGES.md` has the
+  round. 292 core tests. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
   `probe/raw.py TAG [ch] [n]` prints the first raw writes of both sides. 287 core tests, 11
   plugin checks.
 - The probe rig for this campaign lives in the container at `/root/lsdj/probe/`: `vs_matrix.py`
@@ -925,16 +929,16 @@ design-log section the change touches. Update this file at the end of every chan
   Timing (§160): the ROM's interrupt latency -- the trace shows its sub-ticks 4096 to 23084
   cycles apart inside one second where the ideal grid is 11712 -- is not modelled, so a ROM
   trace and ChipBoy's differ by up to a few milliseconds per write while averaging the same.
-- **Left open after §164-§168, each with the probe that shows it** (`songdiff.py NAME --seq
-  --ch 3`): `RC_noi` -- after `REPTCOMP`'s `R B0` the ROM's machine issues only two stage-2
-  triplets and never steps up, so some tick-side `R` state (`$C224`, `$C8CE`, `$C23C`, `$C2F0`,
-  readers unread) cuts the machine short; `REACTION`'s noise walks six steps where ChipBoy
-  walks two (instruments `06`/`07`, unprobed); `DELIVERY`'s noise note with `E 1B` on the cell
-  opens at `98` in the ROM and `88` here (an `E` on noise may not walk; probe `E1B_noi`);
-  `SAMESONG`'s noise roll and its PU1 machine, and `UNMASKED`'s PU2 machine, run one instant off
-  the ROM (an `SS_ch0` replica with `$CBC1`/`$C956` watched would settle it); `EGOFLEX`'s PU1
-  writes one extra period at tick time when an `L` row applies. The fold (above) still shows as
-  a first-batch difference in `AtblW_L`, `ENV_R`, `FT40_R01`.
+- **Closed by §175-§178**: `RC_noi` (§175), `REACTION`'s six-step walk and `DELIVERY`'s `E 1B`
+  opening (§176: the double-counted chip level), `EGOFLEX`'s wave (§177). Still one instant off
+  the ROM and traced to its tick-handler latency, not to logic: `SAMESONG`'s noise roll (row 0's
+  `R 82` is read 4 ms into the note-on's handler, after the next interrupt's retrigger stage,
+  so the ROM's first roll trigger is at +4 instants, ChipBoy's at +3), `SAMESONG`'s PU1 and
+  `UNMASKED`'s PU2 machines, `REACTION`'s pulses at the wave's sync wait (the ROM's note-on
+  frame lands 0.8 ms into the interrupt, so the ROM waits for the boundary from the next
+  instant with a 0.5 ms wait where ChipBoy waits 2.6 ms from the one before -- the boundary is
+  the same). The fold (above) still shows as a first-batch difference in `AtblW_L`, `ENV_R`,
+  `FT40_R01`.
 - **The ROM's CPU cost, measured and not modelled** (§171's probes, `CASTSHDW`/`READROOM`/
   `REACTION`): (1) in a four-channel song the note-on tick reaches the wave's table row 0 some
   3.5 ms after the wave trigger (`$C2D4` watched: +3.5 ms in `READROOM`, +3.7 in `CASTSHDW`,
@@ -963,10 +967,15 @@ design-log section the change touches. Update this file at the end of every chan
   PU2 at 7, `REACTION` PU2 at 15, the `V42_tbl_r1tsp` probe at batch 57) -- or the fold
   (`DELIVERY` NOI at 39: the cell's `E` lands after the trigger; `DELIVERY` WAV at 0: the
   table's `E 03`), or `Z` (`CASTSHDW` PU1 at 5, `EGOFLEX` PU1 at 62, `UNMASKED`'s pulses
-  after their `Z`-rolled `R`s). Still to read: `REACTION` NOI at change 328 (a walk of six
-  against two, instruments `06`/`07`), `READROOM` NOI at 592, `SAMESONG` NOI's roll phase
-  (`SS_noi` batch 4, one instant), the `RR_noise_*` probes, `REPTCOMP` PU2 at 17, `CASTSHDW`
-  WAV at 30 and `READROOM` WAV at 27 (the note-on tick's late row-0 `P`, above).
+  after their `Z`-rolled `R`s). After §176-§178 every song's first divergence is one of those
+  three classes: identical whole -- `CASTSHDW` PU2/NOI, `DELIVERY` PU2, `EGOFLEX` NOI,
+  `READROOM` PU1/PU2, `REPTCOMP` PU2/NOI, `UNMASKED` NOI, `REACTION` WAV to its last change;
+  latency -- `REACTION` PU1/PU2/NOI, `SAMESONG` all four, `READROOM` NOI at 592, `DELIVERY`
+  NOI at 827 and PU1 at its last change, `UNMASKED` PU2, `EGOFLEX` PU2 and WAV (1.79 s: a frame
+  write against a slide step); the fold -- `REPTCOMP` PU1 (`W` on the cell) and WAV (row 0's
+  `F` after the note-on's frame), `DELIVERY` WAV (`E 03`), `CASTSHDW`/`READROOM` WAV (row-0
+  `P`); `Z` -- `CASTSHDW` PU1, `EGOFLEX` PU1, `UNMASKED` PU1; kits -- `UNMASKED` WAV at 3 (the
+  mode-3 `FF`s and the four bytes).
 - **Kits are not the ROM's** (task open, `LSDJ_COMMAND_MATRIX.md` §11.8): the importer indexes
   kits by their position in the ROM's list where the ROM uses bank = kit + 8 (gaps break
   `EGOFLEX`'s `18`-`1A` and `READROOM`'s `1C`-`1F`), byte 3 and 11 are both lengths in 16-byte

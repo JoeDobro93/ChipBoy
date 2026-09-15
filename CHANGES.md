@@ -28,7 +28,7 @@ intended product rather than a progress report.
 
 ### 2026-09-15 -- the third parity campaign: 9.4.2's code, and what it corrected
 
-`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§175. The audit target is
+`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§178. The audit target is
 LSDj 9.4.2 now, read as code: the dispatcher, every handler's address, the work RAM the commands
 share, the order a phrase step and a table tick run their columns, and a two-sided probe rig that
 builds a song, traces the ROM and ChipBoy and reports the first register batch that differs (200
@@ -167,6 +167,23 @@ cases over nineteen letters). What differed, and what changed:
   48`, `R B0` → `24 21 08`) stop after two steps as the ROM's do, `READROOM`'s `R F0` after
   five; both songs' noise channels now match the ROM's state sequence (`REPTCOMP` whole,
   `READROOM` to 0.39 s and beyond, `UNMASKED` whole).
+- **`K` walks the machine's level to 0, and the chip level is the writes'** (§176): the kill's
+  tick side zeroes the pitch effects and walks the machine's copy of the level to 0 with one
+  `09 11 18` triplet a level. ChipBoy's kill wrote nothing on an lsdj-machine voice because
+  `lsdjZombieStep` moved the chip model's level by hand on top of `emitNrx2`'s own modelling,
+  so three steps left the model at 0 while the machine said 3. `REPTCOMP`'s PU2 (`E67`, `K03`)
+  and `REACTION`'s noise now match the ROM whole; `DELIVERY`'s noise `E 1B` opening (`98`
+  against `88`) went with it.
+- **A bare cell takes its own chain row's transpose** (§177): the phrase reader adds the chain
+  transpose as it reads the cell, instrument column or none. ChipBoy's bare note kept the
+  previous plain note's transpose, so `EGOFLEX`'s pad (`L 60` on a bare note in a chain row
+  transposed 20 after one transposed 12) had nothing to slide and stayed a minor sixth low; it
+  slides 36 → 44 over 97 instants now, as the ROM does.
+- **The sync phase word accumulates** (§178, refining §171): the ROM adds `4 · ΔDIV` to a
+  running word every interrupt and reduces it modulo that interrupt's sync period, so a slide
+  moves the grid with the note; ChipBoy re-derived the phase from the trigger with the current
+  period. `Voice::wavePhase`/`waveDivLast`, fed by `waveSyncStep()` before the channels' pitch
+  work (the ROM's order, `0:$0391`) whether or not a frame is pending.
 
 Not modelled, from the same reading: the ROM multiplies a roll's period by instrument byte 8 + 1
 (no ChipBoy field; no song of the save sets it); `R`'s restart of stage 1 indexes the step table
@@ -184,7 +201,12 @@ the add), which the mixer's position in the scanline decides; four more bytes of
 differ for a reason not found (VRAM bank 1 is the suspect).
 
 Left as measured (§147): the fold -- the ROM triggers on the instrument's values and lets a table's
-row 0, a cell's `R` or `S` land a millisecond later as their own writes.
+row 0, a cell's `R` or `S` land a millisecond later as their own writes -- and its tick-handler
+latency: a note-on tick that loads tables runs 3-4 ms, past the next interrupt, so a row-0 `R 82`
+roll fires one instant later than ChipBoy's (`SAMESONG`'s noise), the wave's note-on frame lands
+0.8 ms into the interrupt (the sync boundary is the same, the instant that waits for it is not),
+and a table row's `E` or a machine step trades places with the trigger that follows it
+(`DELIVERY`'s noise at 6.9 s). Same values, a few milliseconds apart.
 
 ### 2026-09-12 — `R` fires on its own tick, and a pulse instrument has a `LENGTH`
 

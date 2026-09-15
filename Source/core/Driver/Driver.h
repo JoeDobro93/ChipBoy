@@ -396,11 +396,14 @@ private:
         std::array<uint8_t, 16> ram{};
         bool     ramValid = false;
         /// Section 171: a frame the tick has stepped to, waiting for the wave's
-        /// sync boundary; `waveSyncBase` is the cycle of the last wave trigger,
-        /// where the ROM's phase word was zeroed.
+        /// sync boundary. Section 178: the ROM's phase word (`$C363`), in
+        /// 64-cycle units, fed 4 x DIV's 8-bit delta every instant and reduced
+        /// modulo the sync period of that instant, and the DIV byte it was
+        /// last fed at (`$C400`); both are zeroed at a wave trigger.
         bool     framePending = false;
         std::array<uint8_t, 16> framePendingBytes{};
-        uint64_t waveSyncBase = 0;
+        uint16_t wavePhase = 0;
+        uint8_t  waveDivLast = 0;
         bool     waveSyncValid = false;
         // kit
         /// Section 122: this run was started by an `A`, so it advances one row
@@ -652,7 +655,7 @@ private:
     void writeWaveFrame(int ch, const std::array<uint8_t, 16>& bytes);
     void waveRamBurst(int ch, const std::array<uint8_t, 16>& bytes);   ///< the pan-muted off/bytes/on/$7E0 sequence
     void queueFrame(int ch, const bank::Frame& f);            ///< hold a frame for the next sync boundary
-    uint64_t waveSyncDue(int ch, uint64_t at) const;          ///< the cycle a pending frame is written at, 0 if not from this instant
+    uint64_t waveSyncStep(int ch, uint64_t at);               ///< section 178: the phase word fed for this instant; the cycle a pending frame is written at, 0 if not from this one
     const bank::Frame* frameAt(int ch, int idx) const;        ///< frame `idx` of the voice's slot, past its end the next slot's
     void kitFrame(int ch);                                    ///< section 172: one kit frame from the instant loop
     int  computePeriod(int ch);

@@ -3579,6 +3579,46 @@ TEST_CASE("a wave frame is written at the wave's sync boundary, through the ROM'
     }
 }
 
+TEST_CASE("the sync phase carries what an earlier period left in it across a pitch jump", "[driver][wave][rom942]")
+{
+    // Section 178. A low note (sync period 843 units, unshifted) for three
+    // ticks, a table transpose to a high one (298 units) on tick 3, and a
+    // frame queued on tick 4: its boundary counts from the last 843-unit
+    // boundary before the jump, not from the trigger.
+    Rig r;
+    r.tickHz = 50.0;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    auto& w = r.bank.waves[0];
+    w.used = true; w.frames.clear();
+    for (int f = 0; f < 16; ++f) { bank::Frame fr; fr.s.fill(uint8_t(f)); w.frames.push_back(fr); }
+    auto& t = r.bank.tables[0]; t = bank::Table{}; t.used = true; t.end = TableEnd::Stop;
+    for (int row = 3; row < 16; ++row) { t.steps[size_t(row)].hasTranspose = true; t.steps[size_t(row)].transpose = 30; }
+    auto& i = r.bank.instruments[1];
+    i = Instrument::defaults(InstrumentType::Wave, "Jump");
+    i.used = true; i.wave = 1; i.table = 1; i.frameLength = 4; i.frameAdvance = 4; i.frameLoop = FrameLoop::Loop; i.vib.depth = 0;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(2, p);
+    std::vector<RegWrite> all;
+    auto collect = [&](const std::vector<RegWrite>& ws) { all.insert(all.end(), ws.begin(), ws.end()); };
+    collect(r.block({ cellOn(2, 39, 2) }, 960));
+    for (int k = 0; k < 12; ++k) collect(r.block({}, 960));
+    const auto units = [](int per) { int s = 2048 - per; for (int k = 0; s < 256 && k < 6; ++k) s <<= 1; return uint64_t(s); };
+    const uint64_t s1 = units(Driver::periodOfSemitone(39, true)), s2 = units(Driver::periodOfSemitone(69, true));
+    REQUIRE(s1 == 843); REQUIRE(s2 == 298);
+    const uint64_t tick = uint64_t(4194304.0 / 50.0);
+    std::vector<uint64_t> offs;
+    for (const auto& x : all) if (x.addr == 0xFF1A && x.value == 0x00) offs.push_back(x.cycle);
+    REQUIRE(offs.size() >= 2);
+    const uint64_t t0 = offs[0];                                   // the note's own writer zeroes the word
+    REQUIRE(offs[1] > 4 * tick);                                   // the run's first step, on tick 4
+    const uint64_t q = (3 * tick - t0) / (64 * s1);                // whole old-period grids before the jump
+    REQUIRE(q == 4);
+    const uint64_t w1 = offs[1] - t0 - q * s1 * 64;                // from the last old boundary, in the new period
+    const uint64_t m = w1 % (s2 * 64);
+    INFO("write " << offs[1] << " t0 " << t0 << " m " << m);
+    CHECK((m < 400 || m > s2 * 64 - 400));
+    CHECK(((offs[1] - t0) % (s2 * 64)) > 4000);                    // section 171's from-scratch grid would not put it here
+}
+
 TEST_CASE("RESYNC writes each frame at its tick, and a run starts at the instrument's start frame", "[driver][wave]")
 {
     // Section 171: PLAY = 4 retriggers at the tick, no boundary; and a run of
@@ -4763,4 +4803,62 @@ TEST_CASE("a roll's trigger carries the machine's level, comes before the step, 
     CHECK((rollNr44 & 0x40) == 0);
     CHECK(rollLevel == 12);                                   // C, then the step to B follows
     CHECK(sawStepAfterRoll);
+}
+
+TEST_CASE("K walks the machine's level to 0, one triplet a level, after the steps the machine made", "[driver][commands][rom942]")
+{
+    // Section 176, REPTCOMP's PU2: `E67` on the note (level 6, rate 7), the
+    // machine steps 6 -> 3 in three instants' worth of rate, and `K` writes
+    // three down-triplets -- the ROM's walk from its own copy of the level.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[1] = tracker::NoteSource::Tracker;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "P");
+    i.used = true; i.env.mode = bank::EnvMode::Shaped; i.env.start = 0; i.envVol = 0;
+    i.env.lsdj = true; i.env.lsdjByte1 = 0x07; i.env.lsdjByte9 = 0xC0; i.env.lsdjByte10 = 0x00;
+    ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(1, p);
+    NoteEvent on = cellOn(1, 60, 2); on.cmd1 = { Cmd::E, 6, 7, 0 };
+    std::vector<RegWrite> w = r.block({ on }, 480);
+    for (int k = 0; k < 36; ++k) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }   // 0.37 s: the machine has taken some of its rate-7 steps
+    const size_t before = w.size();
+    { auto more = r.block({ cellCmd(1, { Cmd::K, 0, 0, 0 }) }, 480); w.insert(w.end(), more.begin(), more.end()); }
+    int stepsBefore = 0, stepsAtKill = 0;
+    for (size_t k = 0; k < w.size(); ++k) if (w[k].addr == 0xFF17 && w[k].value == 0x09) (k < before ? stepsBefore : stepsAtKill)++;
+    CHECK(has(w, 0xFF17, 0x68));                      // the note's level is E's 6
+    CHECK(stepsBefore + stepsAtKill == 6);            // 6 -> 0 in all: the machine's steps and the kill's walk
+    CHECK(stepsAtKill == 6 - stepsBefore);
+    CHECK(stepsAtKill >= 3);                           // the machine had not walked past 3 by then
+    CHECK_FALSE(r.drv.view(1).active);
+    for (int k = 0; k < 4; ++k) { auto more = r.block({}, 480); for (const auto& x : more) CHECK(x.addr != 0xFF17); }   // dead: nothing more
+}
+
+TEST_CASE("a bare cell takes its own chain row's transpose, and its L slides there", "[driver][commands][rom942]")
+{
+    // Section 177, EGOFLEX's pad: phrase 2B (transpose 12) plays note 24 with
+    // the instrument, phrase 4D (transpose 20) the same note bare with `L 60`.
+    // The ROM slides 36 -> 44 over 97 instants; ChipBoy kept the old
+    // transpose and had nothing to slide.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[2] = tracker::NoteSource::Tracker;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Pad");
+    i.used = true; i.transpose = true;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(2, p);
+    NoteEvent first = cellOn(2, 24, 2); first.transpose = 12;
+    r.block({ first }, 480);
+    for (int k = 0; k < 5; ++k) r.block({}, 480);
+    NoteEvent bare = cellOn(2, 24, 0); bare.transpose = 20; bare.cmd1 = { Cmd::L, 0x60, 0, 0 };
+    std::vector<RegWrite> w = r.block({ bare }, 480);
+    for (int k = 0; k < 40; ++k) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+    int lo = -1, per = -1, writes = 0, firstPer = -1;
+    for (const auto& x : w) {
+        if (x.addr == 0xFF1D) lo = x.value;
+        else if (x.addr == 0xFF1E && lo >= 0) { per = ((x.value & 7) << 8) | lo; if (firstPer < 0) firstPer = per; ++writes; }
+    }
+    const int from = Driver::periodOfSemitone(36, true), to = Driver::periodOfSemitone(44, true);
+    CHECK(firstPer == from);                                   // the trigger carries the old period (section 173)
+    CHECK(writes > 60);                                        // a step an instant, 97 of them
+    CHECK(per == to);                                          // and it lands on the transposed note
 }

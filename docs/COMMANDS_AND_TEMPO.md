@@ -5470,3 +5470,58 @@ finds its target already reached, so the machine stops. §167's model kept the t
 (`62 36 00` → `52 26 00`) five steps against ChipBoy's six. ChipBoy: `retrigger()` shifts the
 voice's `lsdjByte1/9/10` by the nibble each time it fires and restarts the machine from the new
 level; the cumulative `retrigBase + step · count` stays for the chip envelope.
+
+## 176. `K` walks the machine's level to 0 with zombie steps, and the shadow level is the chip's
+
+§128 named the walk a `K` shares with `E` (`2:$7E75`, target 0) and §164-§167 gave the
+machine its own copy of the level (`$C2D8`/`$C2D9`/`$C2DB`). The kill's tick side is the
+same routine chain on every channel (`2:$664C`/`$669C` → `2:$6584` → `2:$5F68`): the fast
+retrigger, the `P` step and the vibrato increment are zeroed, the machine's mode is set to 0
+and the walk (`2:$7F3E`, entered at `$7F4D` NOI, `$7F58` PU2, `$7F63` PU1) compares the
+machine's copy of the level to 0 and issues one `09 11 18` triplet per level; WAV is
+`$5FB1` then `NR30=00`, no walk. `REPTCOMP`'s PU2 (`E67` on the note, `K03` four rows on):
+the ROM's machine has stepped 6 → 3 by the kill and the kill writes three triplets
+(0.441 s); `REACTION`'s NOI `K00` writes six.
+
+ChipBoy's kill wrote nothing on both, and the reason was a level kept twice. `emitNrx2`
+already moves the chip model's volume through each zombie write (`zombieAfter`, the triplet
+is one level down and `08` one up); `lsdjZombieStep` then moved `v.volume` again by hand, so
+after three steps the model's level was 0 while the machine's copy said 3, and the kill's
+walk to 0 found nothing to do. The hand step is gone: the chip model's level is whatever
+the writes made it, and the machine's copy (`lsdjLevel`) is the ROM's shadow. `killLevel`
+on an lsdj-machine pulse or noise voice now walks `lsdjLevel` to 0 (`lsdjWalkLevel(ch, 0)`)
+-- the ROM's target and the ROM's counter -- and the voice stops; wave and kit keep
+`NR30=00`. Non-lsdj instruments keep §128's walk of the chip level.
+
+## 177. A bare cell takes its own chain row's transpose
+
+The phrase reader adds the chain row's transpose to the note as it reads the cell (`2:$4A07`,
+before the instrument column is looked at, under the instrument's TRANSPOSE flag), so the
+note a cell with a blank instrument column plays is the transposed one, and its `L` aims
+there. `EGOFLEX`'s pad: phrase `2B` (chain transpose 12) plays note 01 with instrument 29,
+phrase `4D` (transpose 20) the same note bare with `L 60`; the ROM triggers on the old period
+(§173) and slides 36 → 44 over 97 instants (`$416` → `$589`, four or five units an instant,
+1.780 s on). ChipBoy's bare note kept the previous plain note's transpose -- `noteTsp` was
+only set when an instrument was loaded -- so the target was the note it was already on and
+nothing slid; the pad stayed a minor sixth low for the row and every frame after it landed on
+the wrong sync grid. `startVoice`'s bare path now takes `cellTranspose` under the flag, as the
+plain path does; a bare cell without an `L` moves to the transposed note at once (the period
+write it already made).
+
+## 178. The sync phase word accumulates: a slide moves the grid with the note
+
+§171 derived the wave's sync grid from the trigger: the phase was `4 · ΔDIV` since the last
+wave trigger, reduced modulo the sync period of the *current* note. The ROM's check
+(`0:$06A5`) keeps a running word instead: every interrupt (when no kit is playing, note or
+none) it adds `4 · (DIV − $C400)` -- DIV's 8-bit delta since the previous interrupt -- to
+`$C363`, stores DIV in `$C400`, forms `S = (2048 − period) << k` from the period register
+copy of *that* interrupt, and subtracts `S` until the word is below it. What an earlier
+period left in the word stays; a slide moves the grid with the note rather than re-deriving
+it from the trigger, and after a jump the boundaries sit at the last old-period boundary
+plus multiples of the new period. The busy-wait (`0:$074D`) counts `rem / 4` DIV ticks with
+`$C400` re-read each pass, so its length is what §171 said. Seen on `REACTION`'s sliding
+wave: ChipBoy's from-scratch phase waited a whole instant longer than the ROM's at 0.045 s
+and pushed every channel's pitch work behind it. ChipBoy: `wavePhase` and `waveDivLast` per
+wave voice, fed every instant by `waveSyncStep()` (before the channels, §171's order), both
+zeroed by the frame writer; the pending frame is written when the remainder is under 184
+units, as before.

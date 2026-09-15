@@ -770,6 +770,11 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         // runs on, the vibrato keeps its phase, the P offset stays, and a
         // slide in force starts from the pitch the channel is at.
         v.note = note; v.vel = vel; v.active = true;
+        // Section 177: the chain row's transpose is the cell's, read with the
+        // note (2:$4A07 adds it before the instrument column is looked at), so
+        // a bare cell in a new chain row moves to the transposed note and its
+        // `L` aims there -- EGOFLEX's pad slides 36 -> 44 across the row.
+        v.noteTsp = v.inst.transpose ? v.cellTranspose : int8_t(0);
         const bool was = inNoteOn_; inNoteOn_ = true;
         // Section 146: what the cell's commands do to the level is owed to the
         // note's own burst (section 3) and a bare note has none, so it is
@@ -1053,7 +1058,11 @@ void Driver::killLevel(int ch)
     if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) { killDac(ch); return; }
     if (!v.dacOn || !v.hwOn) { killDac(ch); return; }
     v.shapedTaken = true; v.envVol = 0; v.envRate = 0;
-    setLevel(ch);
+    // Section 176: the ROM's kill walks the machine's copy of the level to 0
+    // (2:$5F68 -> 2:$7F3E), one triplet a level; the chip level walk is the
+    // chip envelope's.
+    if (v.inst.env.lsdj) { lsdjWalkLevel(ch, 0); v.lsdjStage = 0; }
+    else setLevel(ch);
     v.killed = true;
 }
 
@@ -1684,7 +1693,9 @@ void Driver::lsdjZombieStep(int ch, bool down)
     const uint64_t at = burst_;
     if (down) { for (int i = 0; i < 3; ++i) { burst_ = at + uint64_t(i) * kZombieInner; emitNrx2(ch, kZombieDown[size_t(i)]); } burst_ = at + kZombieDownStep; }
     else { emitNrx2(ch, kZombieUp); burst_ = at + kZombieUpStep; }
-    v.volume = uint8_t((v.volume + (down ? 15 : 1)) & 15);   // the chip wraps
+    // Section 176: emitNrx2 has moved the chip model's level through each
+    // write; the machine's own copy is `lsdjLevel`, and counting here as well
+    // put the model a level ahead per step and left a `K` nothing to walk.
     v.envVol = v.volume;
 }
 
@@ -1768,7 +1779,7 @@ void Driver::writeWaveFrame(int ch, const std::array<uint8_t, 16>& bytes)
     // The channel must be off to reach wave RAM, on both consoles: the ROM
     // never streams a frame behind the read pointer, it retriggers at the
     // wave's own cycle boundary (the sync grid), which is what hides the click.
-    v.waveSyncBase = cycle_ + burst_; v.waveSyncValid = true;   // the phase word is zeroed here (0:$0784)
+    v.wavePhase = 0; v.waveDivLast = uint8_t((cycle_ + burst_) >> 8); v.waveSyncValid = true;   // the phase word and its DIV are zeroed here (0:$0784)
     waveRamBurst(ch, bytes);
     writePeriod(ch, false, true);
     v.framePending = false;
@@ -1800,24 +1811,31 @@ void Driver::queueFrame(int ch, const Frame& f)
     v.framePendingBytes = frameBytes(f); v.framePending = true;
 }
 
-/// Section 171: the ROM's check at the head of every interrupt. The phase since
-/// the last trigger, in 64-cycle units through DIV's 256-cycle ticks, is
-/// reduced modulo the sync period -- `(2048 - period) << k`, the smallest k
-/// that reaches 256 -- and a pending frame is written when the remainder is
-/// under 184 units: the handler waits `remainder / 4` DIV ticks and writes at
-/// the boundary. Returns that cycle, or 0 when this instant is not the one.
-uint64_t Driver::waveSyncDue(int ch, uint64_t at) const
+/// Section 171 and 178: the ROM's check at the head of every interrupt
+/// (0:$06A5). The phase word takes four times DIV's 8-bit delta since the
+/// last interrupt (64-cycle units) and is reduced modulo this instant's sync
+/// period -- `(2048 - period) << k`, the smallest k that reaches 256 -- by
+/// repeated subtraction, so it keeps what an earlier period left in it: a
+/// slide moves the grid with the note instead of re-deriving it from the
+/// trigger. A pending frame is written when the remainder is under 184
+/// units: the handler waits `remainder / 4` DIV ticks and writes at the
+/// boundary. Returns that cycle, or 0 when this instant is not the one.
+uint64_t Driver::waveSyncStep(int ch, uint64_t at)
 {
-    const Voice& v = v_[size_t(ch)];
-    if (!v.waveSyncValid || v.lastPeriod < 0 || at < v.waveSyncBase) return 0;
+    Voice& v = v_[size_t(ch)];
+    if (!v.waveSyncValid || v.lastPeriod < 0) return 0;
+    const uint64_t divNow = at >> 8;
+    const uint8_t divByte = uint8_t(divNow);
+    v.wavePhase = uint16_t(v.wavePhase + 4u * uint8_t(divByte - v.waveDivLast));
+    v.waveDivLast = divByte;
     int s = 2048 - (int(v.lastPeriod) & 0x7FF);
     if (s <= 0) return 0;
     for (int k = 0; s < 256 && k < 6; ++k) s <<= 1;
-    const uint64_t divNow = at >> 8, divBase = v.waveSyncBase >> 8;
-    const uint64_t phase = (4 * (divNow - divBase)) % uint64_t(s);
-    const uint64_t rem = uint64_t(s) - phase;
+    while (v.wavePhase >= s) v.wavePhase = uint16_t(v.wavePhase - s);
+    if (!v.active || !v.framePending) return 0;
+    const int rem = s - int(v.wavePhase);
     if (rem >= 184) return 0;
-    return ((divNow + (rem >> 2)) << 8) + 40;   // the wait's end, the DIV read and NR30 = 00
+    return ((divNow + uint64_t(rem >> 2)) << 8) + 40;   // the wait's end, the DIV read and NR30 = 00
 }
 
 /// Frame `idx` of the voice's slot, counted on the flat table: past the
@@ -3172,17 +3190,20 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
             // interleave with it on real hardware, and must not overtake
             // writes that were computed before it, so it follows the burst.
             if (at > cycle_ + burst_) moveTo(at);
+            {   // Section 171: a frame the tick has stepped to is written at the
+                // wave's sync boundary, when the ROM's check at the head of the
+                // interrupt (0:$0391) finds one before the next; the handler's
+                // wait puts every channel's pitch work, and the tick, after the
+                // write -- so it runs before the channels, as the ROM's does.
+                Voice& v = v_[2];
+                if (v.active && v.kitOn) kitFrame(2);                      // section 172: the mixer first (0:$03A9)
+                else {
+                    const uint64_t due = waveSyncStep(2, at);             // section 178: fed every instant, note or none
+                    if (due) { if (due > cycle_ + burst_) moveTo(due); writeWaveFrame(2, v.framePendingBytes); }
+                }
+            }
             for (int ch = 0; ch < 4; ++ch) {
                 Voice& v = v_[size_t(ch)];
-                // Section 171: a frame the tick has stepped to is written at the
-                // wave's sync boundary, when the ROM's check at the head of the
-                // interrupt finds one before the next; the handler's wait puts
-                // its own pitch work, and the tick, after the write.
-                if (ch == 2 && v.active && v.kitOn) kitFrame(ch);          // section 172: the mixer first (0:$03A9)
-                else if (ch == 2 && v.active && v.framePending) {
-                    const uint64_t due = waveSyncDue(ch, at);
-                    if (due) { if (due > cycle_ + burst_) moveTo(due); writeWaveFrame(ch, v.framePendingBytes); }
-                }
                 // Section 163: the refresh after a note -- the finetune lands
                 // here, at the first instant after the note's own writes.
                 if (v.active && v.fineTunePending) { v.fineTunePending = false; if (v.pitchClockOn) v.pitchWrite = true; else writePeriod(ch, false); }
