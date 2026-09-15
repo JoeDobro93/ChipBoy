@@ -56,7 +56,12 @@ design-log section the change touches. Update this file at the end of every chan
   `SavePreview::rawPages`); the fetch model and `scheduleStreams` are gone; §173: a cell's `L`
   makes the trigger carry the old period. `UNMASKED`'s wave channel now opens on the ROM's
   writes; `EGOFLEX`'s wave channel matches the ROM's state sequence for 1.75 s, `REACTION`'s
-  for 3.4 s. `CHANGES.md` has the round. 289 core tests. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
+  for 3.4 s; §174: the vibrato as the ROM's phase word, waveform and ladder (`Voice::vibPhase`,
+  `vibWave`, `vibIncFor`, `vibStartPhase`), a live `L` writing nothing until the next instant;
+  §175: `R`'s nibble rewrites the three envelope levels and restarts the machine. The noise
+  channels of `REPTCOMP` and `UNMASKED` match the ROM's state sequence whole, `READROOM`'s to
+  change 592, `CASTSHDW`'s and `EGOFLEX`'s were whole already. `CHANGES.md` has the round.
+  289 core tests. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
   `probe/raw.py TAG [ch] [n]` prints the first raw writes of both sides. 287 core tests, 11
   plugin checks.
 - The probe rig for this campaign lives in the container at `/root/lsdj/probe/`: `vs_matrix.py`
@@ -951,6 +956,17 @@ design-log section the change touches. Update this file at the end of every chan
   at once and has no `halfSpeed` or per-side fields. The songs' remaining wave divergences are
   timing: `EGOFLEX` at 1.78 s and `REACTION` at 3.4 s drift a frame write against the ROM by
   the lost-interrupt slip above.
+- **What the state-sequence survey shows now** (`songdiff.py NAME 8 --ch N --seq`, every song
+  and channel): most first divergences are the ROM's tick-handler latency reordering writes
+  that ChipBoy makes on the instant -- a tick's refresh landing 1-4 ms into the handler, after
+  the next interrupt's envelope step or pitch step (`SAMESONG` PU2 at change 11, `UNMASKED`
+  PU2 at 7, `REACTION` PU2 at 15, the `V42_tbl_r1tsp` probe at batch 57) -- or the fold
+  (`DELIVERY` NOI at 39: the cell's `E` lands after the trigger; `DELIVERY` WAV at 0: the
+  table's `E 03`), or `Z` (`CASTSHDW` PU1 at 5, `EGOFLEX` PU1 at 62, `UNMASKED`'s pulses
+  after their `Z`-rolled `R`s). Still to read: `REACTION` NOI at change 328 (a walk of six
+  against two, instruments `06`/`07`), `READROOM` NOI at 592, `SAMESONG` NOI's roll phase
+  (`SS_noi` batch 4, one instant), the `RR_noise_*` probes, `REPTCOMP` PU2 at 17, `CASTSHDW`
+  WAV at 30 and `READROOM` WAV at 27 (the note-on tick's late row-0 `P`, above).
 - **Kits are not the ROM's** (task open, `LSDJ_COMMAND_MATRIX.md` §11.8): the importer indexes
   kits by their position in the ROM's list where the ROM uses bank = kit + 8 (gaps break
   `EGOFLEX`'s `18`-`1A` and `READROOM`'s `1C`-`1F`), byte 3 and 11 are both lengths in 16-byte

@@ -28,7 +28,7 @@ intended product rather than a progress report.
 
 ### 2026-09-15 -- the third parity campaign: 9.4.2's code, and what it corrected
 
-`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§173. The audit target is
+`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§175. The audit target is
 LSDj 9.4.2 now, read as code: the dispatcher, every handler's address, the work RAM the commands
 share, the order a phrase step and a table tick run their columns, and a two-sided probe rig that
 builds a song, traces the ROM and ChipBoy and reports the first register batch that differs (200
@@ -152,6 +152,21 @@ cases over nineteen letters). What differed, and what changed:
 - **A cell's `L` skips the note-on's lookup** (§173): the trigger carries the last period the
   channel wrote, none at the song's start (`EGOFLEX`'s first wave note opens at `$000` for the
   3.5 ms to the refresh).
+- **The vibrato is the ROM's** (§174, correcting §114/§125's shapes and §119's phase): a 16-bit
+  phase word stepped by `1024 · (speed + 1)` an instant (or `65536 / n` a tick in TICK mode
+  and on noise), a 64-step waveform from `0:$0200` (triangle ±32 peaking at 16 and 48, saw
+  −32..+31, square ±32) indexed by the top six bits, and the depth as the multiplier ladder at
+  `0:$0300` (1 2 3 4 6 8 12 16 20 24 28 32 40 48 56 64 -- §125's depths were this exactly). The
+  direction bit sets the start phase (`$0000` up, `$8000` down, `$FC00` for a saw) instead of
+  flipping the sign, a `V` on a running vibrato keeps the phase, and a live `L` writes nothing
+  until the next instant (the ROM's handler only stores the step). The noise `V 42` probe
+  agrees now; the pulse and wave ones did already.
+- **`R`'s nibble rewrites the envelope's three levels** (§175, correcting §167): every retrigger
+  an `R` fires adds the signed nibble to bytes 1, 9 and 10 of the channel's copy (a zero byte
+  untouched, clamped at 0 and F) and restarts the machine on them. `REPTCOMP`'s hats (`74 71
+  48`, `R B0` → `24 21 08`) stop after two steps as the ROM's do, `READROOM`'s `R F0` after
+  five; both songs' noise channels now match the ROM's state sequence (`REPTCOMP` whole,
+  `READROOM` to 0.39 s and beyond, `UNMASKED` whole).
 
 Not modelled, from the same reading: the ROM multiplies a roll's period by instrument byte 8 + 1
 (no ChipBoy field; no song of the save sets it); `R`'s restart of stage 1 indexes the step table

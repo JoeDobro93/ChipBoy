@@ -250,7 +250,7 @@ private:
         bool     pitchWrite = false;  ///< something moved the pitch last update: write it once more
         uint8_t  pitchCount = 0;      ///< Tick mode: ticks since P and V last advanced
         uint32_t ticks = 0;
-        uint32_t vibPhase9 = 0;       ///< the vibrato phase in ninths of 1/64 of a cycle
+        uint16_t vibPhase = 0;        ///< section 174: the ROM's 16-bit vibrato phase; the top six bits index the waveform
         uint8_t  vibSpeed = 0, vibDepth = 0; bank::VibShape vibShape = bank::VibShape::Triangle;
         /// The vibrato runs. A `V` always turns it on -- its depth 0 is an eighth
         /// of a semitone, LSDj's smallest, and its speed 0 is the slowest, not

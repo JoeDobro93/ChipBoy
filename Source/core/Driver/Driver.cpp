@@ -31,20 +31,39 @@ constexpr uint64_t kPitchCycles = kGridMeanCycles;   ///< 11704: the grid's mean
 /// is the step: **one cycle is 64/(x+1) updates** (measured for every speed).
 /// It is carried in ninths of a phase unit so that Tick mode's steps, which
 /// are thirds and ninths of one, are exact.
-constexpr uint32_t kVibPhase = 64;
-constexpr uint32_t kVibNinths = kVibPhase * 9;
+/// Section 174: the vibrato phase increment per update. FAST/DRUM: `1024 ·
+/// (speed + 1)`, 64 / (speed + 1) updates a cycle. TICK, and always on noise:
+/// `round(65536 / n)` for n ticks a cycle, n = 96 72 64 48 36 32 24 18 16 12 9
+/// 8 6 4.5 4 3 (the ROM's words at 2:$7DCB, 9.1.0's rhythmic vibrato).
+constexpr uint16_t kVibTickInc[16] = { 683, 910, 1024, 1365, 1820, 2048, 2731, 3641, 4096, 5461, 7282, 8192, 10923, 14564, 16384, 21845 };
+inline uint16_t vibIncFor(int speed, bool onTick) { return onTick ? kVibTickInc[speed & 15] : uint16_t(1024 * ((speed & 15) + 1)); }
 
-/// Tick mode's phase step per tracker tick, in ninths of a phase unit
-/// (measured, docs/LSDJ_PARITY.md section 3): one cycle is 96, 72, 64, 48, 36,
-/// 32, 24, 18, 16, 12, 9, 8, 6, 4.5, 4 or 3 **ticks** -- the period halves
-/// every three speeds, so it is not 64/(x+1) as the pitch clock's is.
-constexpr uint32_t kVibTickStep9[16] = { 6, 8, 9, 12, 16, 18, 24, 32, 36, 48, 64, 72, 96, 128, 144, 192 };
+/// Section 174: the ROM's 64-step waveform (0:$0200), ±32: the triangle peaks
+/// at 16 and troughs at 48, the saw runs -32 to +31, the square is ±32.
+inline int vibWave(bank::VibShape shape, int i)
+{
+    switch (shape) {
+        case bank::VibShape::Triangle: return i <= 16 ? 2 * i : (i <= 32 ? 64 - 2 * i : (i <= 48 ? -2 * (i - 32) : -2 * (64 - i)));
+        case bank::VibShape::Saw:      return i - 32;
+        case bank::VibShape::Square:   return i < 32 ? 32 : -32;
+        case bank::VibShape::Off:      return 0;
+    }
+    return 0;
+}
 
 /// V's depth in 1/256 semitones: LSDj's own table, confirmed for every depth
-/// against the ROM -- 0 is an eighth of a semitone and 15 is eight.
+/// against the ROM -- 0 is an eighth of a semitone and 15 is eight. Section
+/// 174: it is the ROM's multiplier ladder (0:$0300) times the waveform's 32.
 constexpr int kVibDepth256[16] = {
     32, 64, 96, 128, 192, 256, 384, 512, 640, 768, 896, 1024, 1280, 1536, 1792, 2048
 };
+/// Section 174: where a vibrato starts -- $0000 with the direction bit set,
+/// else $8000, or $FC00 for the saw (2:$7E64).
+inline uint16_t vibStartPhase(bank::VibDir dir, bank::VibShape shape)
+{
+    if (dir == bank::VibDir::Up) return 0;
+    return shape == bank::VibShape::Saw ? uint16_t(0xFC00) : uint16_t(0x8000);
+}
 
 /// P's step per pitch update, in 1/256 of a semitone, for a magnitude 0-127.
 /// Measured over all 127 values: the step is the sum of a ramp that rises by
@@ -810,7 +829,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     v.instTranspose = (ch == 1 && core.type == InstrumentType::Pulse) ? core.pu2Transpose : int8_t(0);
     v.noiseTsp = 0; v.noiseReg = 0; v.noiseRegStep = 0; v.noiseBend256 = 0; v.noiseBend9 = 0;   // S and P on NOI start over (sections 55 and 66)
     v.instKey = instrumentKey(ch, vel);
-    v.ticks = 0; v.vibPhase9 = 0; v.pitchCount = 0;
+    v.ticks = 0; v.vibPhase = vibStartPhase(v.inst.vib.dir, v.inst.vib.shape); v.pitchCount = 0;
     // Section 112: a note starts on the instrument's own finetune, not on zero
     // -- down on PU1, up on PU2, so a pair of pulses beat. A cell's F writes
     // over it for the note in progress and the next note-on brings it back.
@@ -1108,26 +1127,11 @@ int32_t Driver::slideResidual(const Voice& v) const
 /// could not be read off the register log (docs/LSDJ_PARITY.md section 13).
 int Driver::vibratoFine(const Voice& v) const
 {
+    // Section 174: the waveform entry for the phase's top six bits times the
+    // depth's multiplier; the direction chose the start phase, not the sign.
     if (!v.vibOn || v.ticks < v.vibDelay) return 0;
-    const uint32_t ph = (v.vibPhase9 / 9u) % kVibPhase;         // 0-63
-    const int depth = kVibDepth256[v.vibDepth & 15];
-    double u = 0.0;                                             // -1 .. +1
-    switch (v.vibShape) {
-        case VibShape::Triangle:
-            u = ph <= 16 ? double(ph) / 16.0
-              : ph <= 48 ? 2.0 - double(ph) / 16.0
-                         : double(ph) / 16.0 - 4.0;
-            break;
-        // Section 114: centred, like the triangle -- measured on 9.2.L, every
-        // shape swings the full depth either side of the note and `vibDir` only
-        // picks which half comes first. Saw and Square used to run 0..+1, half
-        // the swing and all of it on one side.
-        case VibShape::Saw:    u = 2.0 * double(ph) / double(kVibPhase) - 1.0; break;
-        case VibShape::Square: u = ph < kVibPhase / 2 ? 1.0 : -1.0; break;
-        case VibShape::Off:    return 0;
-    }
-    const double off = u * double(depth);
-    return v.vibDir == VibDir::Up ? int(std::lround(off)) : -int(std::lround(off));
+    const int value = vibWave(v.vibShape, int(v.vibPhase >> 10) & 63);
+    return value * (kVibDepth256[v.vibDepth & 15] / 32);
 }
 
 /// The vibrato in Drum mode, in period units: the same triangle and the same
@@ -1337,10 +1341,7 @@ void Driver::pitchStep(int ch, bool onTick)
     // the note itself, at phase zero, and the swing starts from the one after
     // (measured). One cycle is 64/(x + 1) updates on the pitch clock, and in
     // Tick mode the measured table of tick counts.
-    if (vib) {
-        const uint32_t step = onTick ? kVibTickStep9[v.vibSpeed & 15] : 9u * uint32_t((v.vibSpeed & 15) + 1);
-        v.vibPhase9 = (v.vibPhase9 + step) % kVibNinths;
-    }
+    if (vib) v.vibPhase = uint16_t(v.vibPhase + vibIncFor(v.vibSpeed, onTick || v.inst.type == InstrumentType::Noise));   // section 174
 }
 
 void Driver::restartPitchClock(int ch)
@@ -2172,7 +2173,10 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
                 v.slideLeft = dur; v.slideTotal = dur; v.sliding = true;
                 if (!fromTable && inNoteOn_) v.slideOnTrigger = true;   // section 173
             }
-            if (live) writePeriod(ch, false);
+            // Section 174: the ROM's L handler (2:$4286) stores the step and
+            // writes nothing; the next instant's pitch work takes the first
+            // step. Only in TICK mode is the tick the pitch update.
+            if (live && pitchSpeed(v) == PitchSpeed::Tick) writePeriod(ch, false);
             break;
         }
         case Cmd::M: {
@@ -2305,7 +2309,13 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             // by itself; only both together do.
             // Section 151: and `V 00` on a channel with none running starts that
             // slowest, shallowest one (the ROM's `$7DEB`).
-            v.vibDelay = 0; v.vibOn = ((c.a & 15) != 0 || (c.b & 15) != 0) ? true : !v.vibOn;
+            {
+                const bool wasOn = v.vibOn;
+                v.vibDelay = 0; v.vibOn = ((c.a & 15) != 0 || (c.b & 15) != 0) ? true : !v.vibOn;
+                // Section 174: a V on a stopped vibrato starts the phase where
+                // the direction says; on a running one only the increment moves.
+                if (v.vibOn && !wasOn) v.vibPhase = vibStartPhase(v.vibDir, v.vibShape);
+            }
             if (noise && v.vibDepth && pitchSpeed(v) != PitchSpeed::Tick) v.pitchClockOn = true;
             if (live) writePeriod(ch, false);
             break;
@@ -2951,13 +2961,25 @@ void Driver::retrigger(int ch, bool full, bool restartEnv)
     // as a note-on and an instrument load do -- so the level it sounds at is
     // the envelope's own start and not wherever a fade had got to.
     if (v.retrigCount < 0xFFFF) ++v.retrigCount;
+    // Section 175: an R's nibble rewrites the three envelope levels in the
+    // channel's copy (2:$4000) before the machine restarts -- a zero byte left
+    // alone, an underflow clamped to 0, an overflow to F, the rates kept.
+    const bool lsdjMachine = v.inst.env.lsdj && v.inst.type != InstrumentType::Wave && v.inst.type != InstrumentType::Kit;
+    if (lsdjMachine && v.retrigStep) {
+        auto shift = [&](uint8_t& byte) {
+            if (byte == 0) return;
+            const int hi = std::clamp((byte >> 4) + int(v.retrigStep), 0, 15);
+            byte = uint8_t((hi << 4) | (byte & 15));
+        };
+        shift(v.inst.env.lsdjByte1); shift(v.inst.env.lsdjByte9); shift(v.inst.env.lsdjByte10);
+        v.lsdjLevel = uint8_t(v.inst.env.lsdjByte1 >> 4);
+    }
     if (restartEnv && v.inst.env.mode == EnvMode::Shaped) {
         v.shapedOn = true; v.shapedTaken = false; v.shapedRelease = false;
         v.shapedTick = 0; v.shapedClocks = 0; v.shapedPosMax = 0; v.shapedFrom = 0;
         lsdjEnvStart(v);                                          // section 164, 2:$6086: the first stage again
-        // Section 167: the machine's level is not reset by an `R`; the hardware
-        // is written from it (plus the nibble, below).
-        const uint8_t level = v.inst.env.lsdj && v.inst.type != InstrumentType::Wave && v.inst.type != InstrumentType::Kit ? v.lsdjLevel : shapedLevel(v);
+        // Section 175: the machine restarts from the rewritten level.
+        const uint8_t level = lsdjMachine ? v.lsdjLevel : shapedLevel(v);
         if (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) v.waveLevel = uint8_t(level / 4);
         else { v.envVol = level; v.envRate = 0; v.envDir = EnvDir::Up; v.retrigBase = level; }
     }
@@ -2967,8 +2989,7 @@ void Driver::retrigger(int ch, bool full, bool restartEnv)
     // nothing measured behind it, and it is what silenced `READROOM`'s rolls.
     // It accumulates over the retriggers from that start (section 136): R F4 is
     // 9, 8, 7, 6 from a volume of nine, not 9, 8, 8, 8.
-    if (v.retrigStep) {
-        if (v.inst.env.lsdj) v.retrigBase = v.lsdjLevel;           // section 167: from the machine's live level, which the nibble never moves
+    if (v.retrigStep && !lsdjMachine) {
         v.envVol = uint8_t(std::clamp<int>(int(v.retrigBase) + int(v.retrigStep) * int(v.retrigCount), 0, 15));
         // Section 158: the shaped envelope runs on from this level, not back
         // from its own start -- measured, `R F0` on an ADSR note falls 5 -> 1

@@ -5425,3 +5425,48 @@ channel wrote last -- `EGOFLEX`'s first wave note, `L 60` on the song's first ro
 period `$000` and the epilogue refresh 3.5 ms later brings `$416`. ChipBoy triggered on the new
 note. `Voice::slideOnTrigger`, set by a cell's `L` inside the note-on, makes the trigger (and a
 wave's post-`$7E0` write) carry `lastPeriod`, 0 when there is none.
+
+## 174. The vibrato is a 16-bit phase, a 64-step waveform and a multiplier ladder
+
+§114 and §125 measured every shape as a full swing either side of the note, the direction bit
+choosing which half comes first, and §119 the noise depth in map entries. The ROM's machine
+(`2:$7DEB` at the `V`, `0:$19FE` every pitch update, the shape at `0:$1986`):
+
+- **The phase** is a 16-bit word (`$C308 + 2ch`) that gains an increment every update, after
+  the offset is computed from it: `1024 · (speed + 1)` in FAST/DRUM (`$7DAB`, 64 / (speed + 1)
+  updates a cycle), or `round(65536 / n)` for n = 96 72 64 48 36 32 24 18 16 12 9 8 6 4.5 4 3
+  ticks a cycle in TICK and always on noise (`$7DCB`; ChipBoy's ninths table was this in
+  another unit). A `V` on a running vibrato only changes the increment; on a stopped one it
+  starts the phase at `$0000` when the instrument's direction bit is set, else at `$8000`, or
+  `$FC00` for the saw. The note-on stops it (`2:$5FA7` clears the increment); the instrument
+  has no vibrato of its own.
+- **The waveform** is 64 entries a shape at `0:$0200`, indexed by the phase's top six bits:
+  triangle `2i` up to 32 at 16, down through 0 at 32 to -32 at 48 and back; saw `i − 32`;
+  square `+32` / `−32`; the fourth quarter zero (shape 3, off). The negative entries are
+  stored one's-complemented and negated after the multiply, so both halves are the same size.
+- **The depth** is a jump into a ladder of `add` code at `0:$0300` -- the sixteen bytes at
+  `$7D9B` are its entry offsets -- that multiplies the entry by 1 2 3 4 6 8 12 16 20 24 28 32
+  40 48 56 64, so depth 0 swings ±32 (an eighth of a semitone in 1/256) and F ±2048, which is
+  §125's measured table exactly. The result is added to the note word before the slide offset.
+
+ChipBoy's triangle had the right depths and a symmetric 64-point shape; its saw and square ran
+`ph / 64` and `ph < 32` on a phase in ninths, its direction bit flipped the sign instead of the
+start, and its phase started at 0 at every V. `Voice::vibPhase` is the word, `vibratoFine()`
+the waveform times the ladder, the direction picks the start phase, and the increments are the
+ROM's.
+
+## 175. `R`'s level nibble rewrites the envelope's three levels and restarts the machine
+
+§167 read `R`'s nibble as a move of the hardware level alone. The ROM does more: every
+retrigger an `R` fires -- the command's own and each periodic one (`2:$674B`, `$6770`, `$67AE`
+call `2:$4000`) -- adds the nibble, as a signed high nibble, to **each of the three envelope
+bytes** in the channel's copy (bytes 1, 9 and 10: the level, the first stage's target and the
+second's), a zero byte left alone, an underflow clamped to level 0 and an overflow to F with the
+rate nibble kept, and then re-runs the note-on's envelope init (`2:$5735`) on the rewritten
+bytes. Watched on `REPTCOMP`'s hats (`$CBCA`-`$CBCC`): `74 71 48` with `R B0` becomes `24 21 08`
+-- level 2, hold four instants at its own first target, two steps to 0, and the third stage
+finds its target already reached, so the machine stops. §167's model kept the targets at 7 and
+4 and walked on to 0 from there: six steps where the ROM makes two, and `READROOM`'s `R F0`
+(`62 36 00` → `52 26 00`) five steps against ChipBoy's six. ChipBoy: `retrigger()` shifts the
+voice's `lsdjByte1/9/10` by the nibble each time it fires and restarts the machine from the new
+level; the cumulative `retrigBase + step · count` stays for the chip envelope.

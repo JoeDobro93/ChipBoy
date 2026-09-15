@@ -4707,9 +4707,11 @@ TEST_CASE("a STEP row's A does not move the instrument's position past its own r
     CHECK(lo == (Driver::periodForNote(72, false) & 0xFF));
 }
 
-TEST_CASE("R's level nibble leaves the machine's level alone, and the machine steps the hardware from where R put it", "[driver][shaped][rom942]")
+TEST_CASE("R's level nibble rewrites the envelope's levels and the machine restarts from there", "[driver][shaped][rom942]")
 {
-    // Section 167, REPTCOMP's instrument 16: 74 71 48 with R B0 on the note.
+    // Section 175, REPTCOMP's instrument 16: 74 71 48 with R B0 on the note
+    // becomes 24 21 08 -- level 2, a hold of four, two steps to 0, and the
+    // third stage finds its target reached: two steps and no more.
     Rig r;
     r.tickHz = 100.0;
     r.song.noteSource[3] = tracker::NoteSource::Tracker;
@@ -4729,13 +4731,11 @@ TEST_CASE("R's level nibble leaves the machine's level alone, and the machine st
         if (x.value == 0x08 || x.value == 0x09) steps.push_back({ int((x.cycle - note + 5852) / 11704), int(x.value) });
         else if (trigLevel < 0 || (x.cycle - note) < 2000) trigLevel = x.value >> 4;
     }
-    CHECK(trigLevel == 2);                                    // 7 - 5, the hardware
-    REQUIRE(steps.size() >= 3);
-    // A hold of 4 (the level is its own first target), then down a step an instant: never up.
+    CHECK(trigLevel == 2);                                    // 7 - 5
+    REQUIRE(steps.size() == 2);
+    // A hold of 4 (the level is its own first target), then down a step an instant to 0, then nothing.
     CHECK(steps[0].first == 5); CHECK(steps[0].second == 9);
     CHECK(steps[1].first == 6); CHECK(steps[1].second == 9);
-    CHECK(steps[2].first == 7); CHECK(steps[2].second == 9);
-    for (const auto& s : steps) CHECK(s.second == 9);
 }
 
 TEST_CASE("a roll's trigger carries the machine's level, comes before the step, and has no length bit", "[driver][commands][rom942]")
