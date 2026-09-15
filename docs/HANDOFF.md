@@ -65,8 +65,14 @@ design-log section the change touches. Update this file at the end of every chan
   `REACTION` NOI whole, `DELIVERY` NOI to 6.9 s); §177: a bare cell takes its chain row's
   transpose (`EGOFLEX`'s pad slides); §178: the sync phase word accumulates across period
   changes (`Voice::wavePhase`, `waveSyncStep()` before the channels); §179: a STEP table's
-  position advances a row a note past an `A` (the `STEP_*` probes match to the fold).
-  `CHANGES.md` has the round. 293 core tests. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
+  position advances a row a note past an `A`; §180: the fold undone -- the plain note-on runs
+  the ROM's phases (the cell's `E`/`F`/`S`-on-noise/`L` before the trigger, the burst on the
+  instrument's values, the other cell commands 0.3 ms in, a cell `R` 1 ms in, the table's row
+  0 1.2 ms in, a TICK period at 2 ms: `kCellDispatchCycles` and friends), a tick retrigger
+  restarts the machine at byte 1, the wave retrigger's two forms (`Voice::frameDirty`); §181:
+  a ONCE run's end stops the pitch effects, a note-on's noise `S` restart is judged against the
+  note (`noiseNr43()`). The matrix: 53 of 323 cases differ, all timing, random or unmodelled;
+  `REPTCOMP`'s wave channel is identical whole. `CHANGES.md` has the round. 295 core tests. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
   `probe/raw.py TAG [ch] [n]` prints the first raw writes of both sides. 287 core tests, 11
   plugin checks.
 - The probe rig for this campaign lives in the container at `/root/lsdj/probe/`: `vs_matrix.py`
@@ -914,16 +920,12 @@ design-log section the change touches. Update this file at the end of every chan
 
 ## Open issues
 
-- **From the third campaign (9.4.2), measured and left** (`docs/COMMANDS_AND_TEMPO.md` §147):
-  the fold -- the ROM triggers on the instrument's values and a table's row 0 (`E` as a zombie walk
-  of twelve triplets, `S` as a second trigger, `W`, `F`), a cell's `R` (a second trigger) and a
-  TICK-mode `L`'s first step land about a millisecond later as their own writes, where ChipBoy
-  folds them into the burst. A TICK-mode vibrato is a unit deeper in ChipBoy than the ROM's
+- **From the third campaign (9.4.2), measured and left** (`docs/COMMANDS_AND_TEMPO.md` §147,
+  §180): the fold is modelled since §180 with one-channel handler costs; what stays is the
+  four-channel latency below. A TICK-mode vibrato is a unit deeper in ChipBoy than the ROM's
   (`V 42`: ±3 against ±2 at `NR13 97`; the ROM's shape routine at 0:`$1986` was not read). The
   nine-octave wrap fires two updates early (the ROM interpolates within the last semitone toward
-  its 109th entry; ChipBoy's table has 108). A TICK instrument's table row 0 transpose is not on
-  the note-on's trigger (`Ltbl_tick`: the ROM writes `+4` two milliseconds after, ChipBoy at the
-  next row). The transpose landing under a running table slide is one update late in ChipBoy
+  its 109th entry; ChipBoy's table has 108). The transpose landing under a running table slide is one update late in ChipBoy
   (`Ltbl_live`). `T` inside a table is not applied (the Clock's timeline is built from phrase
   cells; no song of the user's has one). At the end of a chain the ROM leaves the channel
   sounding where ChipBoy kills it. The noise vibrato (`V 42`, `V F8`) differs after nine ticks.
@@ -968,15 +970,17 @@ design-log section the change touches. Update this file at the end of every chan
   PU2 at 7, `REACTION` PU2 at 15, the `V42_tbl_r1tsp` probe at batch 57) -- or the fold
   (`DELIVERY` NOI at 39: the cell's `E` lands after the trigger; `DELIVERY` WAV at 0: the
   table's `E 03`), or `Z` (`CASTSHDW` PU1 at 5, `EGOFLEX` PU1 at 62, `UNMASKED`'s pulses
-  after their `Z`-rolled `R`s). After §176-§178 every song's first divergence is one of those
-  three classes: identical whole -- `CASTSHDW` PU2/NOI, `DELIVERY` PU2, `EGOFLEX` NOI,
-  `READROOM` PU1/PU2, `REPTCOMP` PU2/NOI, `UNMASKED` NOI, `REACTION` WAV to its last change;
-  latency -- `REACTION` PU1/PU2/NOI, `SAMESONG` all four, `READROOM` NOI at 592, `DELIVERY`
-  NOI at 827 and PU1 at its last change, `UNMASKED` PU2, `EGOFLEX` PU2 and WAV (1.79 s: a frame
-  write against a slide step); the fold -- `REPTCOMP` PU1 (`W` on the cell) and WAV (row 0's
-  `F` after the note-on's frame), `DELIVERY` WAV (`E 03`), `CASTSHDW`/`READROOM` WAV (row-0
-  `P`); `Z` -- `CASTSHDW` PU1, `EGOFLEX` PU1, `UNMASKED` PU1; kits -- `UNMASKED` WAV at 3 (the
-  mode-3 `FF`s and the four bytes).
+  after their `Z`-rolled `R`s). After §176-§181 every song's first divergence is one of those
+  classes: identical whole -- `CASTSHDW` PU2/NOI, `DELIVERY` PU2, `EGOFLEX` NOI, `READROOM`
+  PU1/PU2, `REPTCOMP` PU2/WAV/NOI, `UNMASKED` NOI, `REACTION` WAV to its last change; latency --
+  `REACTION` PU1/PU2/NOI, `SAMESONG` all four, `READROOM` NOI at 592, `DELIVERY` NOI at 827
+  and PU1 at its last change, `REPTCOMP` PU1 at 339 (4.3 s), `UNMASKED` PU2, `EGOFLEX` PU2 and
+  WAV (1.79 s: a frame write against a slide step), and the four-channel note-on's late row-0
+  `P` on the kicks (`CASTSHDW` WAV at 30, `READROOM` WAV at 27, `DELIVERY` WAV at 30: one P
+  step more before the `L` takes over, so `CASTSHDW`'s kick halts at `$3A8` against `$3A6`);
+  `Z` -- `CASTSHDW` PU1, `EGOFLEX` PU1, `UNMASKED` PU1; kits -- `UNMASKED` WAV at 3 (the
+  mode-3 `FF`s and the four bytes). `CASTSHDW`'s wave still counts 3116 changes to the ROM's
+  1349: every kick's `P` runs one step further, which the halt does not undo.
 - **Kits are not the ROM's** (task open, `LSDJ_COMMAND_MATRIX.md` §11.8): the importer indexes
   kits by their position in the ROM's list where the ROM uses bank = kit + 8 (gaps break
   `EGOFLEX`'s `18`-`1A` and `READROOM`'s `1C`-`1F`), byte 3 and 11 are both lengths in 16-byte

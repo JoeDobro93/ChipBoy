@@ -112,6 +112,11 @@ constexpr int stagePos(int ticks, int fine) { return (ticks * kShapedFine + fine
 /// a hundred and twelve, one step up is a single write and they come
 /// sixty-eight apart.
 constexpr uint32_t kZombieInner = 16, kZombieDownStep = 112, kZombieUpStep = 68;
+/// Section 180: where the ROM's note-on handler is when it dispatches the cell's
+/// commands, fires a cell `R`'s retrigger, runs the table's row 0 and writes a
+/// TICK instrument's period -- one-channel measurements, in cycles after the
+/// trigger's burst starts.
+constexpr uint64_t kCellDispatchCycles = 1258, kRetrigPhaseCycles = 4194, kTableRowCycles = 5033, kTickPitchCycles = 8389;
 
 uint16_t regAddr(int ch, int r) { return uint16_t(0xFF10 + ch * 5 + r); }
 
@@ -885,6 +890,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     if (v.stepDirty) parkStep(ch);
     v.stepDirty = false;
     v.tableSlot = tbl; v.tableOn = tbl && bank_ && bank_->table(tbl);
+    v.tableJustStarted = v.tableOn;                       // section 84: the trigger is the plain note; row 0's column follows it (section 180)
     v.tableTicks = false;                                 // the instrument's own table again (section 122)
     v.tableWait = v.tableWait2 = v.tableWaitE = 0;        // every lane starts its row afresh (section 64)
     v.tableTspHoldOn = false;                     // section 157: a note starts on its own column
@@ -915,46 +921,46 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // the row only changes the running state, so the note's own writes carry
     // its transpose, its level and its commands; the rows after it step on the
     // ticks, and tableJustStarted keeps this tick from taking a second one.
-    if (v.tableOn) {
-        const uint8_t stepBefore = v.tableStep;
-        const bool wasIn = inNoteOn_; inNoteOn_ = true;
-        stepTable(ch);
-        inNoteOn_ = wasIn;
-        // Section 166: the instrument's position is written through at once
-        // for the next channel to take. When the row's own `A` has replaced
-        // the table, the position is still this note's row plus one: the ROM
-        // counts the instrument's steps, not the table the `A` moved to.
-        if (v.stepKey != kNoStepKey) {
-            if (v.tableSlot == tbl) parkStep(ch);
-            else {
-                StepPark& p = stepState_[size_t(v.stepKey)];
-                p.step = p.step2 = p.stepE = uint8_t((stepBefore + 1) % kTableSteps);
-                p.row = p.row2 = p.rowE = p.step; p.table = tbl; p.used = true;
-            }
-            v.stepDirty = false;
-        }
-        v.tableJustStarted = true;
-        // Section 84: the noise channel takes no pitch clock of its own, so the
-        // update that carries row 0's transpose has to be asked for here --
-        // after the table is certainly running, which restartPitchClock() above
-        // cannot know.
-        if (v.tableOn && core.type == InstrumentType::Noise) { v.pitchClockOn = true; v.pitchWrite = true; }
-    }
+    // Section 180: the table's row 0 runs after the burst now, in the
+    // handler's table phase, with its own writes (below).
     // instrument, then its table, then CMD1 and CMD2: the slots in force apply
     // to every note in their span (section 3). Their registers go out with the
-    // note's own writes below rather than twice.
-    fireSlots(ch);
+    // note's own writes below rather than twice -- but for a pulse's W and S,
+    // which the ROM writes after the trigger (section 180, below).
+    fireSlots(ch, false, 0);
     // Then the cell's own two commands, once (section 12): they are this
     // step's, not the lane's, so they are not left in force behind the note.
-    // Section 127: an `S` among them writes NR10 and retriggers **after** the
-    // note's burst, which is what the ROM does; the rest fold into the burst.
-    const bool cellSweep = v.noteCmd[0].cmd == Cmd::S || v.noteCmd[1].cmd == Cmd::S;
+    // Section 180: the ROM's reader pre-handles `E` (the envelope copy), `F`
+    // on the wave channel (the frame offset) and `L` (section 173) before the
+    // trigger, so the burst carries them; every other letter goes through the
+    // dispatcher after the trigger, as its own writes (below).
+    Command postCmd[2] = {};
     {
+        Command preCmd[2] = {};
+        for (int i = 0; i < 2; ++i) {
+            const Command& c = v.noteCmd[size_t(i)];
+            const bool waveish = core.type == InstrumentType::Wave || core.type == InstrumentType::Kit;
+            const bool pre = c.cmd == Cmd::E || c.cmd == Cmd::L
+                             || (c.cmd == Cmd::F && waveish)
+                             || (c.cmd == Cmd::W && waveish)                                   // ChipBoy's own wave-slot letter (section 115): the burst's frame is its
+                             || (c.cmd == Cmd::S && core.type == InstrumentType::Noise);   // the reader's noise path (2:$4973) takes it into the index
+            (pre ? preCmd : postCmd)[i] = c;
+        }
+        // The noise `S` is the one pre-trigger command that writes: the reader's
+        // noise path moves the map index, writes NR43 and restarts (NR42 at the
+        // level the machine holds, NR44 with $80 set) before the trigger.
+        Command noiseS[2] = {};
+        for (int i = 0; i < 2; ++i) if (preCmd[i].cmd == Cmd::S && core.type == InstrumentType::Noise) { noiseS[i] = preCmd[i]; preCmd[i] = {}; }
+        if (noiseS[0].cmd != Cmd::None || noiseS[1].cmd != Cmd::None) {
+            v.lastPeriod = int16_t(noiseNr43(ch));                   // the crossing is judged from the note itself (2:$4985 stores its index first)
+            applyCellCommands(ch, noiseS[0], noiseS[1]);             // live: its own writes
+        }
         const bool was = inNoteOn_; inNoteOn_ = true;
-        applyCellCommands(ch, v.noteCmd[0], v.noteCmd[1]);
+        applyCellCommands(ch, preCmd[0], preCmd[1]);
         v.noteCmd[0] = {}; v.noteCmd[1] = {};
         inNoteOn_ = was;
     }
+    const uint64_t burstStart = burst_;
 
     const int base = computePeriod(ch);
     if (base < 0 && core.type != InstrumentType::Noise && core.type != InstrumentType::Kit) {
@@ -974,17 +980,13 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
             emit(regAddr(ch, 1), uint8_t((v.duty << 6) | (len & 0x3F)), true);
             writeEnvelope(ch, false);   // the whole register; the trigger follows with the period
             writePeriod(ch, true);
-            // Section 127: the sweep unit reloads on a trigger, so an `S` on
-            // this row writes NR10 again after the note and triggers with it,
-            // exactly as it does on a row of its own.
-            if (ch == 0 && cellSweep) { emit(0xFF10, uint8_t(~v.sweepByte), true); writePeriod(ch, true); }
             break;
         }
         case InstrumentType::Wave: {
             // waveAt, not wave: every one of the sixteen slots holds frames and
             // sounds, drawn or not, because the bank is one flat table (section 103).
             v.frameCount = 0; v.frameDir = 1; v.frameFresh = true; v.frameSilenced = false; v.kitOn = false;
-            v.framePending = false;
+            v.framePending = false; v.frameDirty = true;              // section 180: the instrument load marks the frame (2:$578A)
             // The run starts at its first step, the instrument's start frame
             // (sections 65, 171); startVoice put the voice there, so an F on
             // this very row -- applied with the note's other commands -- still
@@ -1040,14 +1042,61 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // LSDj writes the pan at every note-on whether or not it moved (measured,
     // docs/LSDJ_PARITY.md section 2): a driver sets the mixer with the note.
     writeNr51(true);
-    // Section 134: an `R` among the note's own commands owes a retrigger, and
-    // the ROM emits it **after** the note's burst -- two triggers a fraction of
-    // a millisecond apart, as section 127's `S` does.
-    if (v.retrigPending) { const bool env = v.retrigPending == 1; v.retrigPending = 0; retrigger(ch, true, env); }
-    // Section 139: and then the table row's own `O`, which the ROM writes after
-    // both -- measured with an `R` on the row, where the order is note, pan,
-    // retrigger, row's pan.
+    if (!v.active) return;
+    // Section 180: the dispatcher's pass over the cell's other commands, 0.3 ms
+    // into the handler, each as its own writes -- `W`'s NR11, `S`'s NR10 and
+    // second trigger (section 127), `O`'s pan. A cell `R`'s retrigger is the
+    // retrigger phase's, 1 ms in (section 134: after the burst).
+    Command retrigCmd{};
+    for (int i = 0; i < 2; ++i) if (postCmd[i].cmd == Cmd::R) { retrigCmd = postCmd[i]; postCmd[i] = {}; }
+    {
+        burst_ = std::max(burst_, burstStart + kCellDispatchCycles);
+        fireSlots(ch, true, 1);                                   // a slot W or S in force, as its own writes
+        if (!v.active) return;
+        if (postCmd[0].cmd != Cmd::None || postCmd[1].cmd != Cmd::None) applyCellCommands(ch, postCmd[0], postCmd[1]);
+        if (!v.active) return;
+    }
+    if (retrigCmd.cmd != Cmd::None) {
+        burst_ = std::max(burst_, burstStart + kRetrigPhaseCycles);
+        applyCellCommands(ch, retrigCmd, Command{});
+        if (!v.active) return;
+    }
+    if (v.retrigPending) { burst_ = std::max(burst_, burstStart + kRetrigPhaseCycles); const bool env = v.retrigPending == 1; v.retrigPending = 0; retrigger(ch, true, env); }
     if (v.panQueued) { v.pan = Pan(v.panQueued - 1); v.panQueued = 0; writeNr51(); }
+    // Section 180: the table's row 0, in the handler's table phase 1.2 ms in,
+    // live: the volume lane walks, a `W` writes, an `F` writes its frame. The
+    // ROM's pitch work then carries the row's transpose -- at the next instant
+    // on the pitch clock, 2 ms in for a TICK instrument.
+    if (v.tableOn) {
+        burst_ = std::max(burst_, burstStart + kTableRowCycles);
+        const uint8_t stepBefore = v.tableStep;
+        const double noteBefore = noteOfVoice(ch);
+        stepTable(ch);
+        // Section 166: the instrument's position is written through at once
+        // for the next channel to take. When the row's own `A` has replaced
+        // the table, the position is still this note's row plus one: the ROM
+        // counts the instrument's steps, not the table the `A` moved to.
+        if (v.stepKey != kNoStepKey) {
+            if (v.tableSlot == tbl) parkStep(ch);
+            else {
+                StepPark& p = stepState_[size_t(v.stepKey)];
+                p.step = p.step2 = p.stepE = uint8_t((stepBefore + 1) % kTableSteps);
+                p.row = p.row2 = p.rowE = p.step; p.table = tbl; p.used = true;
+            }
+            v.stepDirty = false;
+        }
+        v.tableJustStarted = true;
+        if (!v.active) return;
+        // Section 84: the noise channel takes no pitch clock of its own, so the
+        // update that carries row 0's transpose has to be asked for here --
+        // after the table is certainly running, which restartPitchClock() above
+        // cannot know.
+        if (v.tableOn && core.type == InstrumentType::Noise) { v.pitchClockOn = true; v.pitchWrite = true; }
+        else if (noteOfVoice(ch) != noteBefore) {
+            if (v.pitchClockOn) v.pitchWrite = true;
+            else { burst_ = std::max(burst_, burstStart + kTickPitchCycles); writePeriod(ch, false); }
+        }
+    }
 }
 
 /// K, and the end of a note: LSDj takes the level to zero with the same
@@ -1374,31 +1423,13 @@ void Driver::restartPitchClock(int ch)
                      && pitchSpeed(v) != PitchSpeed::Tick;
 }
 
-void Driver::writePeriod(int ch, bool trigger, bool preTriggered)
+/// The NR43 the noise voice sounds at now: the note through the map with the
+/// transposes, the chord, the vibrato and the S delta (section 180 needs it
+/// before a note-on's own write, to judge a cell S's crossing).
+uint8_t Driver::noiseNr43(int ch)
 {
     Voice& v = v_[size_t(ch)];
-    // Section 171: the period after a wave's $7E0 pre-trigger is the note-on's
-    // own write in every way but the trigger bit.
-    const bool own = trigger || preTriggered;
-    // Section 84: the note-on triggers at the **plain** note and the table's
-    // transpose column reaches the channel on the next pitch update. Only the
-    // note's own write, and only when the table started with it, so a retrigger
-    // in the middle of a table keeps the column it is on.
-    const bool plain = own && v.tableJustStarted;
-    struct PlainScope {
-        bool& f; bool was;
-        PlainScope(bool& x, bool on) : f(x), was(x) { f = on; }
-        ~PlainScope() { f = was; }
-    } scope(plainTrigger_, plain);
-    // Section 125: and the vibrato is out of every trigger, not only one that
-    // starts a table -- measured on 9.2.L, a square vibrato's first swing shows
-    // up on the update after the note, never on the note's own write.
-    PlainScope vibScope(plainVib_, own);
-    // Section 169: a DRUM note-on's own trigger (and an S or R trigger before
-    // the refresh) carries the table entry without the note's fraction: the
-    // ROM's lookup stands in $C0F4 until the refresh rewrites it.
-    PlainScope drumScope(plainDrum_, own && v.fineTunePending);
-    if (v.inst.type == InstrumentType::Noise) {
+    {
         uint8_t s, d;
         if (v.inst.noiseManual) { s = v.noiseShift; d = v.noiseDiv; }
         else {
@@ -1449,6 +1480,36 @@ void Driver::writePeriod(int ch, bool trigger, bool preTriggered)
         v.noiseShift = s; v.noiseDiv = d;
         uint8_t nr = uint8_t((s << 4) | (v.lfsr7 ? 8 : 0) | (d & 7));
         if (v.inst.noiseDomain == bank::NoiseSweepDomain::Register && v.noiseReg) nr = bank::noiseNibbleSub(nr, v.noiseReg);
+        return nr;
+    }
+}
+
+void Driver::writePeriod(int ch, bool trigger, bool preTriggered)
+{
+    Voice& v = v_[size_t(ch)];
+    // Section 171: the period after a wave's $7E0 pre-trigger is the note-on's
+    // own write in every way but the trigger bit.
+    const bool own = trigger || preTriggered;
+    // Section 84: the note-on triggers at the **plain** note and the table's
+    // transpose column reaches the channel on the next pitch update. Only the
+    // note's own write, and only when the table started with it, so a retrigger
+    // in the middle of a table keeps the column it is on.
+    const bool plain = own && v.tableJustStarted;
+    struct PlainScope {
+        bool& f; bool was;
+        PlainScope(bool& x, bool on) : f(x), was(x) { f = on; }
+        ~PlainScope() { f = was; }
+    } scope(plainTrigger_, plain);
+    // Section 125: and the vibrato is out of every trigger, not only one that
+    // starts a table -- measured on 9.2.L, a square vibrato's first swing shows
+    // up on the update after the note, never on the note's own write.
+    PlainScope vibScope(plainVib_, own);
+    // Section 169: a DRUM note-on's own trigger (and an S or R trigger before
+    // the refresh) carries the table entry without the note's fraction: the
+    // ROM's lookup stands in $C0F4 until the refresh rewrites it.
+    PlainScope drumScope(plainDrum_, own && v.fineTunePending);
+    if (v.inst.type == InstrumentType::Noise) {
+        const uint8_t nr = noiseNr43(ch);
         // Sections 82 and 86: a pitch change can restart the channel. Under
         // PITCH = Free only one that turns the **7-bit** LFSR on does (turning
         // it off does not); under Safe every change does, which is the setting
@@ -1468,7 +1529,7 @@ void Driver::writePeriod(int ch, bool trigger, bool preTriggered)
         // level, and its trigger enables the length counter (NR44 = BF).
         if (restart) emitNrx2(ch, nrx2Hold(v.volume));
         if (trigger || restart) {
-            emit(regAddr(3, 4), uint8_t(restart ? 0xBF : (0x80 | lengthBit(v.inst))), true);
+            emit(regAddr(3, 4), uint8_t(restart ? (0xBF | lengthBit(v.inst)) : (0x80 | lengthBit(v.inst))), true);   // the restart ORs $80 into NR44 as read back (2:$4672)
             markTrigger(ch);
         }
         v.lastPeriod = int16_t(nr);
@@ -1784,7 +1845,7 @@ void Driver::writeWaveFrame(int ch, const std::array<uint8_t, 16>& bytes)
     v.wavePhase = 0; v.waveDivLast = uint8_t((cycle_ + burst_) >> 8); v.waveSyncValid = true;   // the phase word and its DIV are zeroed here (0:$0784)
     waveRamBurst(ch, bytes);
     writePeriod(ch, false, true);
-    v.framePending = false;
+    v.framePending = false; v.frameDirty = false;               // section 180: 2:$610B
 }
 
 /// Section 171/172: the wave RAM write itself, shared by the frame writer and
@@ -2253,7 +2314,8 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
                 v.fineQueued += int32_t(speed) * 8; v.bendSpeed = 0;
             }
             else v.bendSpeed = int16_t(speed);
-            if (live) writePeriod(ch, false);
+            // Section 180: the ROM's P handler stores the step and writes
+            // nothing; the next pitch update takes the first step.
             break;
         }
         case Cmd::R:
@@ -2536,13 +2598,21 @@ Command Driver::slotForNoteOn(int ch, int i)
     return resolveRandom(ch, c, 0);                             // the cell lane (section 74)
 }
 
-void Driver::fireSlots(int ch, bool live)
+void Driver::fireSlots(int ch, bool live, int phase)
 {
     const bool was = inNoteOn_;
     if (!live) inNoteOn_ = true;
+    const bool pulse = v_[size_t(ch)].inst.type == InstrumentType::Pulse;
     for (int i = 0; i < 2; ++i) {
         const Command c = slotForNoteOn(ch, i);
         if (c.cmd == Cmd::None || c.cmd == Cmd::D) continue;   // D was read before the note started
+        // Section 180: the letters the ROM dispatches after the trigger, with
+        // writes of their own -- a pulse's W and S, and V, P and C -- are
+        // applied after the burst (phase 1), as a cell's are; a note-on applies
+        // the rest before it (phase 0), where the burst carries them.
+        const bool post = (pulse && (c.cmd == Cmd::W || c.cmd == Cmd::S)) || c.cmd == Cmd::V || c.cmd == Cmd::P || c.cmd == Cmd::C;
+        if (phase == 0 && post) continue;
+        if (phase == 1 && !post) continue;
         applyCommand(ch, c, false, 1, v_[size_t(ch)].slot[size_t(i)].cmd == Cmd::Z);
     }
     inNoteOn_ = was;
@@ -2929,7 +2999,16 @@ void Driver::tick(int ch)
                             // its last frame -- one step past the end LSDj writes a
                             // flat wave and the channel goes quiet.
                             if (next >= len) {
-                                if (!v.frameSilenced) { v.frameSilenced = true; Frame flat; flat.s.fill(7); queueFrame(ch, flat); }   // section 171: through the sync grid
+                                if (!v.frameSilenced) {
+                                    v.frameSilenced = true; Frame flat; flat.s.fill(7); queueFrame(ch, flat);   // section 171: through the sync grid
+                                    // Section 181: the ROM's ONCE end (2:$5FCB) first runs the
+                                    // wave stop (2:$5FB1): the P or L step word, the vibrato
+                                    // increment and the fast retrigger are zeroed, so a slide
+                                    // under the run halts where the run ends (CASTSHDW's kick).
+                                    v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0; v.slideStep256 = 0;
+                                    v.drumSlideLeft = 0; v.drumSlideStep = 0.0; v.bendSpeed = 0; v.fineQueued = 0;
+                                    v.vibOn = false; v.retrigFast = false; v.retrigOn = false;
+                                }
                                 next = len - 1;
                             }
                             break;
@@ -2951,7 +3030,16 @@ void Driver::tick(int ch)
     // effect is moving it; what the *tick* moves -- a chord step, a table's
     // transpose column, the channel's own transpose -- goes out here, and only
     // when it really changed something.
-    if (retrig) retrigger(ch, true);
+    if (retrig) {
+        // Section 180: a tick's retrigger plays the note again, instrument load
+        // and frame writer included (2:$5782 marks the frame) -- so the run
+        // starts over at the instrument's start frame, as a note-on's does.
+        if (v.inst.type == InstrumentType::Wave) {
+            v.frameDirty = true; v.framePending = false; v.frameSilenced = false; v.frameFresh = true;
+            v.frameStep = 0; v.frameCount = 0; v.frameDir = 1; v.frameIdx = v.inst.frameStart;
+        }
+        retrigger(ch, true);
+    }
     else if (v.inst.type == InstrumentType::Noise) { if (v.noiseSweep || tspReleased || tickNote() != noteBeforeTick) writePeriod(ch, false); }   // a table's transpose reaches NR43 (section 45)
     else if (tickNote() != noteBeforeTick) writePeriod(ch, false);
 }
@@ -2992,8 +3080,11 @@ void Driver::retrigger(int ch, bool full, bool restartEnv)
             byte = uint8_t((hi << 4) | (byte & 15));
         };
         shift(v.inst.env.lsdjByte1); shift(v.inst.env.lsdjByte9); shift(v.inst.env.lsdjByte10);
-        v.lsdjLevel = uint8_t(v.inst.env.lsdjByte1 >> 4);
     }
+    // Section 180 (ENV_R): every tick-side retrigger re-runs the note-on's
+    // envelope init (2:$5735) on the copy, so the machine restarts at byte
+    // 1's level -- shifted or not -- rather than where it had walked to.
+    if (lsdjMachine && restartEnv) v.lsdjLevel = uint8_t(v.inst.env.lsdjByte1 >> 4);
     if (restartEnv && v.inst.env.mode == EnvMode::Shaped) {
         v.shapedOn = true; v.shapedTaken = false; v.shapedRelease = false;
         v.shapedTick = 0; v.shapedClocks = 0; v.shapedPosMax = 0; v.shapedFrom = 0;
@@ -3023,9 +3114,27 @@ void Driver::retrigger(int ch, bool full, bool restartEnv)
         emit(regAddr(3, 1), lengthCode6(v.inst.length), true);
     }
     if (pulse || noise) writeEnvelope(ch, false);
+    if (v.inst.type == InstrumentType::Wave) {
+        // Section 180: the ROM's wave note-on (2:$60FC) runs the frame writer
+        // only when the instrument load marked the frame; otherwise it is
+        // NR30 = 80, NR32 and NR34 with the trigger bit on the period it has
+        // (R01_ph_ch2: the R's own fire is the short form, the tick's the writer).
+        if (v.frameDirty) {
+            static const Frame silent{};
+            const Frame* f = frameAt(ch, int(v.frameIdx));
+            writeEnvelope(ch, false);
+            loadFrame(ch, f ? *f : silent, true);
+        } else {
+            emit(regAddr(2, 0), 0x80, true); v.dacOn = true;
+            emit(regAddr(2, 2), nr32Code(v.waveLevel), true);          // written again whatever it holds (2:$6120)
+            const uint16_t f = uint16_t(std::max<int16_t>(0, v.lastPeriod));
+            emit(regAddr(2, 4), uint8_t((f >> 8) | 0x80), true);
+            markTrigger(ch);
+        }
+        v.pitchWrite = true;
+        return;
+    }
     writePeriod(ch, true);
-    if (noise) { }                       // writePeriod carries NR43/NR44 for noise
-    else if (pulse || v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) { }
     v.pitchWrite = true;
 }
 

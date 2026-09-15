@@ -28,7 +28,7 @@ intended product rather than a progress report.
 
 ### 2026-09-15 -- the third parity campaign: 9.4.2's code, and what it corrected
 
-`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§179. The audit target is
+`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§181. The audit target is
 LSDj 9.4.2 now, read as code: the dispatcher, every handler's address, the work RAM the commands
 share, the order a phrase step and a table tick run their columns, and a two-sided probe rig that
 builds a song, traces the ROM and ChipBoy and reports the first register batch that differs (200
@@ -190,6 +190,28 @@ cases over nineteen letters). What differed, and what changed:
   row after the `A` and the `A`'s table is gone with the reload; `STEP_A2`, `STEP_A3`,
   `STEP_A_r1` and `STEP_H` (a hop's target row plays on the same note) now match the ROM to
   the fold.
+- **The fold undone** (§180, closing §147's largest class): the ROM's reader pre-handles a
+  cell's `E` (the envelope copy), `F` on the wave channel (the frame offset), `S` on the noise
+  channel (the map index and its restart), `L` and `D` before the trigger; the trigger carries
+  the instrument's values; the other cell commands are dispatched 0.3 ms in as their own
+  writes (`W`'s NR11, `S`'s NR10 and second trigger, `O`'s pan), a cell `R`'s retrigger fires 1
+  ms in, the table's row 0 runs 1.2 ms in (its volume lane's walk, its `W`, its `F` frame) and
+  a TICK instrument's period follows at 2 ms. ChipBoy's plain note-on now runs those phases
+  in that order with the one-channel costs; the trigger is plain (§84) and the row's column
+  follows. Found on the way and fixed with it: a cell `P` wrote the unchanged period at its
+  dispatch (the ROM's handler stores the step and writes nothing); a tick-side retrigger
+  restarted the machine at the level it had walked to where the ROM re-runs the note-on's init
+  (`ENV_R`); the wave retrigger has two forms -- the frame writer when the instrument load
+  marked the frame (`$C8F1`), else NR30, NR32 and NR34 alone (`R01_ph_ch2`); the noise
+  restart's NR44 is the register read back with `$80` set. The matrix went from 71 differing
+  cases of 323 to 53, all timing, random or unmodelled; `REPTCOMP`'s wave channel matches the
+  ROM whole, its PU1 to 4.3 s, `DELIVERY`'s wave to its kick's late row-0 `P`.
+- **A ONCE run's end stops the pitch effects; a note-on's noise `S` is judged against the
+  note** (§181): the ROM's ONCE end calls the wave stop a `K` uses, zeroing the P/L step, the
+  vibrato and the roll -- `CASTSHDW`'s kick slides to `$3A6` and holds where ChipBoy slid on
+  to the floor; and the reader stores the note's map index before a cell `S` moves it, so the
+  restart rule (an upward crossing of index 60, or always under SAFE) compares against the
+  note at a note-on (`S21_ph_ch3` restarts before its trigger now).
 
 Not modelled, from the same reading: the ROM multiplies a roll's period by instrument byte 8 + 1
 (no ChipBoy field; no song of the save sets it); `R`'s restart of stage 1 indexes the step table
@@ -206,13 +228,14 @@ during the LCD's mode 3 returns `$FF` (`UNMASKED`'s frames: about a third of the
 the add), which the mixer's position in the scanline decides; four more bytes of that first frame
 differ for a reason not found (VRAM bank 1 is the suspect).
 
-Left as measured (§147): the fold -- the ROM triggers on the instrument's values and lets a table's
-row 0, a cell's `R` or `S` land a millisecond later as their own writes -- and its tick-handler
-latency: a note-on tick that loads tables runs 3-4 ms, past the next interrupt, so a row-0 `R 82`
-roll fires one instant later than ChipBoy's (`SAMESONG`'s noise), the wave's note-on frame lands
-0.8 ms into the interrupt (the sync boundary is the same, the instant that waits for it is not),
-and a table row's `E` or a machine step trades places with the trigger that follows it
-(`DELIVERY`'s noise at 6.9 s). Same values, a few milliseconds apart.
+Left as measured: the ROM's tick-handler latency in a four-channel song. §180 models the fold with
+the one-channel costs (a cell command 0.3 ms in, a row 0 1.2 ms in); a note-on tick that loads
+tables in a full song runs 3-4 ms, past the next interrupt, so a row-0 `P` starts one instant later
+than ChipBoy's (`CASTSHDW`'s and `DELIVERY`'s kicks), a row-0 `R 82` roll fires one instant later
+(`SAMESONG`'s noise), the wave's note-on frame lands 0.8 ms into the interrupt (the sync boundary
+is the same, the instant that waits for it is not), and a machine step trades places with the
+trigger that follows it (`DELIVERY`'s noise at 6.9 s, `REPTCOMP`'s PU1 at 4.3 s). Same values, a
+few milliseconds apart.
 
 ### 2026-09-12 — `R` fires on its own tick, and a pulse instrument has a `LENGTH`
 

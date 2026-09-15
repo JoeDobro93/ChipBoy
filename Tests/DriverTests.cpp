@@ -488,6 +488,7 @@ TEST_CASE("E, W, P, S and A write what the letter says", "[driver][commands]")
         w = r2.block({ Rig::on(0, 69, 100) }, 4096);
         std::vector<uint8_t> nr10;
         for (const auto& x : w) if (x.addr == 0xFF10) nr10.push_back(x.value);
+        if (!nr10.empty() && nr10[0] == 0x00) nr10.erase(nr10.begin());   // section 180: the trigger's own NR10, the instrument's; row 0's S follows it
         INFO("NR10: " << [&]{ std::string o; for (auto x : nr10) { char b[8]; std::snprintf(b, sizeof b, "%02X ", x); o += b; } return o; }());
         REQUIRE(nr10.size() >= 4);
         CHECK(nr10[0] == 0xED); CHECK(nr10[1] == 0xCA);
@@ -635,10 +636,10 @@ TEST_CASE("a STEP table resumes at the row after its A on the next note, and the
     CHECK(duties(w) == std::vector<int>{ 2, 3, 0 });          // the note's own duty, then table 1's rows on the ticks
     w = r.block({ cellOn(0, 60, 2) }, 480);
     for (int k = 0; k < 5; ++k) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
-    CHECK(duties(w) == std::vector<int>{ 1 });                // row 1 of the instrument's table, and table 1 no more
+    CHECK(duties(w) == std::vector<int>{ 2, 1 });             // the trigger, then row 1 of the instrument's table (section 180); table 1 no more
     w = r.block({ cellOn(0, 60, 2) }, 480);
     for (int k = 0; k < 5; ++k) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
-    CHECK(duties(w) == std::vector<int>{ 2 });                // row 2: W02
+    CHECK(duties(w).front() == 2);                            // the trigger; row 2's W02 is the duty it already has
 }
 
 TEST_CASE("a K cell kills its own note and no other", "[driver][commands]")
@@ -3089,9 +3090,12 @@ TEST_CASE("F walks out of one wave slot into the next and wraps at the last", "[
         i.used = true; i.wave = 1; i.frameAdvance = 0; i.table = 8;   // no run of its own; only F moves it
         ChannelParams p; p.instrument = 2; p.velocityMode = 2; r->drv.setParams(2, p);
         std::vector<std::pair<int, int>> seen;   // slot, frame
+        // Section 180: a note-on writes the instrument's frame and then the
+        // row's F frame, so the last wave RAM write of the block is the one.
         auto slotOf = [](const std::vector<RegWrite>& w) {
-            for (const auto& x : w) if (x.addr >= 0xFF30 && x.addr <= 0xFF3F) return int(x.value & 15) + 1;
-            return 0;
+            int slot = 0;
+            for (const auto& x : w) if (x.addr >= 0xFF30 && x.addr <= 0xFF3F) slot = int(x.value & 15) + 1;
+            return slot;
         };
         auto writes = r->block({ Rig::on(2, 60, 100) }, 480);
         seen.push_back({ slotOf(writes), int(r->drv.view(2).frame) - 1 });
@@ -3404,7 +3408,10 @@ TEST_CASE("a wave note-on loads its frame once, not once per table lane", "[driv
     }
     INFO("triggers per tick: " << perTick[0] << " " << perTick[1] << " " << perTick[2] << " "
          << perTick[3] << " " << perTick[4] << " " << perTick[5] << " " << perTick[6]);
-    for (int k : perTick) CHECK(k <= 1);
+    // Section 180: the note-on's tick writes the instrument's frame and then
+    // row 0's F frame, as the ROM does (REPTCOMP's wave); a tick after it one.
+    CHECK(perTick[0] <= 2);
+    for (size_t k = 1; k < perTick.size(); ++k) CHECK(perTick[k] <= 1);
 }
 
 
@@ -3548,6 +3555,9 @@ TEST_CASE("a slide replaces a running bend, and in Drum it walks the register", 
     collect(r.block({ cellOn(2, 96, 2) }, 480));
     for (int k = 0; k < 12; ++k) collect(r.block({}, 480));
     REQUIRE(per.size() > 10);
+    // Section 180: the trigger is the DRUM table's entry below the note and the
+    // refresh the note itself (section 169), so the walk down starts there.
+    per.erase(per.begin());
     // Every step down, never back up: a wrap would show as a jump to the top.
     for (size_t k = 1; k < per.size(); ++k) { INFO("step " << k << " of " << per.size()); CHECK(per[k] <= per[k - 1]); }
     // The bend's own steps are the steep ones; after the slide takes over the
@@ -3645,6 +3655,81 @@ TEST_CASE("the sync phase carries what an earlier period left in it across a pit
     INFO("write " << offs[1] << " t0 " << t0 << " m " << m);
     CHECK((m < 400 || m > s2 * 64 - 400));
     CHECK(((offs[1] - t0) % (s2 * 64)) > 4000);                    // section 171's from-scratch grid would not put it here
+}
+
+TEST_CASE("a wave R's own fire is NR30, NR32 and the trigger; a tick's retrigger writes the frame again", "[driver][wave][rom942]")
+{
+    // Section 180 (R01_ph_ch2): the note-on's writer clears the ROM's frame
+    // flag, so the R's fire 1 ms in is the short form; the tick's retrigger
+    // reloads the instrument and runs the writer.
+    Rig r;
+    r.tickHz = 100.0;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    auto& w = r.bank.waves[0];
+    w.used = true; w.frames.clear();
+    for (int f = 0; f < 16; ++f) { bank::Frame fr; fr.s.fill(uint8_t(f)); w.frames.push_back(fr); }
+    auto& i = r.bank.instruments[1];
+    i = Instrument::defaults(InstrumentType::Wave, "Roll");
+    i.used = true; i.wave = 1; i.frameAdvance = 0; i.vib.depth = 0;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(2, p);
+    NoteEvent on = cellOn(2, 60, 2); on.cmd1 = { Cmd::R, 0, 1, 0 };
+    std::vector<RegWrite> all = r.block({ on }, 480);
+    { auto more = r.block({}, 480); all.insert(all.end(), more.begin(), more.end()); }
+    std::vector<size_t> trig;
+    for (size_t k = 0; k < all.size(); ++k) if (all[k].addr == 0xFF1E && (all[k].value & 0x80)) trig.push_back(k);
+    REQUIRE(trig.size() >= 3);                        // the note's own $7E0 pre-trigger, the R's fire, the tick's writer's
+    // The R's fire: NR30 = 80, NR32, NR34 | 80 -- no NR33, no wave RAM.
+    const size_t k1 = trig[1];
+    REQUIRE(k1 >= 2);
+    CHECK(all[k1 - 2].addr == 0xFF1A); CHECK(all[k1 - 2].value == 0x80);
+    CHECK(all[k1 - 1].addr == 0xFF1C);
+    bool ramBetween = false;
+    for (size_t k = trig[0] + 1; k < k1; ++k) if (all[k].addr >= 0xFF30 && all[k].addr <= 0xFF3F) ramBetween = true;
+    CHECK_FALSE(ramBetween);
+    CHECK(all[k1].cycle - all[trig[0]].cycle > 3000);   // a millisecond in, not in the burst
+    // The tick's: the writer, NR30 = 00 and sixteen bytes before its pre-trigger.
+    const size_t k2 = trig[2];
+    bool ramBefore = false;
+    for (size_t k = k1 + 1; k < k2; ++k) if (all[k].addr >= 0xFF30 && all[k].addr <= 0xFF3F) ramBefore = true;
+    CHECK(ramBefore);
+}
+
+TEST_CASE("a ONCE run's end halts a slide where it stands", "[driver][wave][rom942]")
+{
+    // Section 181 (CASTSHDW's kick): a two-frame ONCE run a tick a frame, a
+    // cell P bend on the note. The run ends after its second frame; the ROM's
+    // wave stop zeroes the step there, so the period holds from then on.
+    Rig r;
+    r.tickHz = 100.0;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    auto& w = r.bank.waves[0];
+    w.used = true; w.frames.clear();
+    for (int f = 0; f < 16; ++f) { bank::Frame fr; fr.s.fill(uint8_t(f)); w.frames.push_back(fr); }
+    auto& i = r.bank.instruments[1];
+    i = Instrument::defaults(InstrumentType::Wave, "Kick");
+    i.used = true; i.wave = 1; i.frameLength = 2; i.frameAdvance = 1; i.frameLoop = FrameLoop::Once; i.vib.depth = 0;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(2, p);
+    NoteEvent on = cellOn(2, 60, 2); on.cmd1 = { Cmd::P, int16_t(0xF0), 0, 0 };   // -16: a steady fall
+    std::vector<RegWrite> all = r.block({ on }, 480);
+    for (int k = 0; k < 8; ++k) { auto more = r.block({}, 480); all.insert(all.end(), more.begin(), more.end()); }
+    // The flat frame marks the end; every period write after it repeats the last.
+    size_t flatAt = 0;
+    for (size_t k = 0; k + 15 < all.size(); ++k)
+        if (all[k].addr == 0xFF30 && all[k].value == 0x77 && all[k + 15].addr == 0xFF3F && all[k + 15].value == 0x77) { flatAt = k; break; }
+    REQUIRE(flatAt > 0);
+    int lo = -1, per = -1, moved = 0, after = 0, strayed = 0;
+    for (size_t k = 0; k < all.size(); ++k) {
+        const auto& x = all[k];
+        if (x.addr == 0xFF1D) lo = x.value;
+        else if (x.addr == 0xFF1E && !(x.value & 0x80) && lo >= 0) {
+            const int q = ((x.value & 7) << 8) | lo;
+            if (k < flatAt) { if (per >= 0 && q != per) ++moved; per = q; }
+            else { ++after; if (q != per) ++strayed; }
+        }
+    }
+    CHECK(moved >= 3);                      // the bend ran while the run played
+    CHECK(after >= 1);                      // the flat frame carries the period it stopped at
+    CHECK(strayed == 0);                    // and nothing moves it afterwards
 }
 
 TEST_CASE("RESYNC writes each frame at its tick, and a run starts at the instrument's start frame", "[driver][wave]")
@@ -4890,3 +4975,4 @@ TEST_CASE("a bare cell takes its own chain row's transpose, and its L slides the
     CHECK(writes > 60);                                        // a step an instant, 97 of them
     CHECK(per == to);                                          // and it lands on the transposed note
 }
+

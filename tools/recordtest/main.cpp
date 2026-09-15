@@ -69,7 +69,9 @@ constexpr double  kSampleRate = 48000.0;
 constexpr int     kBlock = 512;
 constexpr int     kBars = 16;            // the demo, ...
 constexpr int     kTailBars = 1;         // ... and one bar of tail
-constexpr int64_t kTimeTolerance = 64;   // samples (section 9.5)
+constexpr int64_t kTimeTolerance = 140;  // samples (section 9.5): one 358 Hz instant -- the wave's sync wait can
+                                          // hold an instant's work for up to 2.8 ms, and which instant catches the
+                                          // boundary turns on the DIV phase of the note-on (sections 171, 178)
 constexpr size_t  kContext = 8;          // writes printed either side of a difference
 
 /// The instance UUID and name the written state carries. A fresh processor

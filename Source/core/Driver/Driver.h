@@ -393,6 +393,10 @@ private:
         /// so the run does not advance on it -- the note-on happens inside that
         /// tick and the counter would otherwise spend it twice.
         bool     frameFresh = false;
+        /// Section 180: the ROM's frame-dirty flag (`$C8F1`): set by the instrument
+        /// load, cleared by the frame writer; a wave retrigger writes the frame only
+        /// when it is set, else NR30, NR32 and NR34 alone.
+        bool     frameDirty = false;
         std::array<uint8_t, 16> ram{};
         bool     ramValid = false;
         /// Section 171: a frame the tick has stepped to, waiting for the wave's
@@ -504,6 +508,7 @@ private:
     void beginRelease(int ch);                ///< the Release note-off mode
     void stepRelease(int ch);                 ///< WAV/KIT: 100 -> 50 -> 25 -> mute, a tick apart
     void latch(int ch);
+    uint8_t noiseNr43(int ch);                                   ///< section 180: the NR43 the noise voice sounds at now
     void writePeriod(int ch, bool trigger, bool preTriggered = false);
     /// NRx2 (or NR32 on the wave channel) from the running state, with the
     /// trigger a note-on, R or an E that moves the envelope needs. Every
@@ -618,7 +623,7 @@ private:
     /// The slots again at every note-on. `live` writes the registers as it
     /// goes, for the command octave, which fires them without a note
     /// (section 13); inside a note-on the note's own writes carry them.
-    void fireSlots(int ch, bool live = false);
+    void fireSlots(int ch, bool live = false, int phase = -1);   ///< section 180: 0 = the letters a note-on folds, 1 = a pulse's W and S after the trigger, -1 = all
     bank::Command slotForNoteOn(int ch, int i);        ///< with Z's randomised argument
     int16_t randomArg(int ch, int max);
     void applyLevelParam(int ch);

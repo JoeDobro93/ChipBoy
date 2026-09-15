@@ -464,7 +464,8 @@ processor twice under a fake play head at 120 BPM, 48 kHz, 512-sample blocks. Pa
 the MIDI file and the automation JSON, all channels Trk, record armed; the song is
 saved through the JSON writer. Pass 2: a fresh processor, the saved song loaded, no MIDI,
 every automated lane held at its bar-1 value, transport from 0. It compares, per channel,
-the sequence of APU register writes (order and values exact, time within 64 samples) and
+the sequence of APU register writes (order and values exact, time within 140 samples -- one
+358 Hz instant, since §171's sync wait can hold an instant's work by up to 2.8 ms) and
 fails on the first difference, printing bar, step, channel and both writes. Model and
 De-click are not automated in either pass.
 
@@ -5552,3 +5553,67 @@ one of them changes only what the channel runs until the next note-on reloads th
 table (§124). ChipBoy: the note-on takes the parked position whether or not the run in force was
 an `A`'s (the position written through when the `A` fired, §166, is the row after it). `H` in a
 STEP table was already right: its target row plays on the same note.
+
+## 180. The fold undone: what the ROM's note-on writes before the trigger, and what after it
+
+§147 named the fold and left it: ChipBoy applied a cell's commands and the table's row 0 inside
+the note-on, so the trigger carried their result, where the ROM triggers on the instrument's own
+values and lets them land as their own writes. Read in the phrase reader (`2:$4A04`-`$4AA4`),
+watched with the pc of every write (`watch.py SAV C8C4-C8C4 --apu` on the `W01_ph_ch0`,
+`E38_ph_ch0`, `E38_tbl_c1`, `R01_ph_ch0`, `S21_ph_ch0`, `STEP_noA` probes):
+
+```
+before the trigger   L  skips the period lookup (§173)         D  the delay
+                     E  2:$7D15 rewrites the envelope copy, so the trigger's NRx2 carries it
+                     F on WAV  $C694 += byte, so the trigger's frame carries it (and the
+                               command byte is cleared: it is not dispatched again)
+                     S on NOI  the reader's noise path (2:$4973) moves the map index and
+                               restarts (NR43, NR42 at the machine's level, NR44 |= $80)
+                               before the trigger, and clears the command byte (2:$499B)
+the trigger          2:$6014: NR10 NR11 NR12 NR13 NR14 from the instrument (the wave writer)
+0.3 ms in            O  2:$61B6 writes the pan; every other command goes through the
+                     dispatcher 2:$46C7 now -- W writes NR11 (80 then 40 in `W01_ph_ch0`),
+                     S writes NR10 and triggers again, E walks (and finds its level)
+1.0 ms in            R  the retrigger phase: the second full burst of `R01_ph_ch0`
+1.2 ms in            the table's row 0 (2:$5300, the command byte stored at 2:$5311 and
+                     dispatched): `E38_tbl_c1` triggers on F8 and walks twelve triplets,
+                     `STEP_noA` triggers on the duty and writes the row's W after
+2 ms in              a TICK instrument's period, with the row's transpose (`Ltbl_tick`)
+```
+
+The one-channel probes give those costs; in a four-channel song the same phases run later
+(the note-on tick reaches a wave's row 0 some 3.5 ms in, §171's measurement), which stays
+unmodelled. ChipBoy's plain note-on now runs the cell's `E`, `F` (wave), `S` (noise), `L` and `D`
+before the burst as before, the burst on the instrument's values, then the rest of the cell's commands live
+at 0.3 ms (`kCellDispatchCycles`), a cell `R`'s retrigger at 1.0 ms (`kRetrigPhaseCycles`),
+the table's row 0 live at 1.2 ms (`kTableRowCycles`) with its own writes -- the volume lane's
+walk, a `W`'s NR11, an `F`'s frame -- and a TICK instrument's period at 2 ms
+(`kTickPitchCycles`) when the row moved the note; a pitch-clock instrument takes it at the
+next instant, as the ROM's pitch work does. The bare note's path is unchanged. Two things
+the un-fold uncovered: a cell `P` wrote the (unchanged) period at its dispatch where the
+ROM's handler stores the step and writes nothing, and a tick-side retrigger restarted the
+machine at the level it had walked to where the ROM re-runs the note-on's init on the copy
+(`ENV_R`: every `R 03` trigger carries F8); both fixed. The noise restart's NR44 is what the
+ROM reads back with `$80` set -- `BF`, or `FF` with the length bit. The matrix went from 71
+differing cases of 323 to the timing, random and unmodelled ones.
+
+## 181. A ONCE run's end stops the pitch effects, and a note-on's noise `S` is judged against the note
+
+Two more from the un-fold's probes. `CASTSHDW`'s kick (a DRUM wave instrument, PLAY = ONCE,
+table `00`: `P A9` on row 0, `L 20` with a transpose of `80` on row 1) slides down at 47 units
+an instant on the ROM and halts at `$3A6`, holding it until the flat frame; ChipBoy slid on to
+the table's floor. Watched (`$C33B`/`$C33C`, the wave's offset word; `$C2D4`/`$C2D5`, its step):
+the step word is zeroed at 0.537 s by `2:$5FBE`, inside the wave stop `2:$5FB1` that the ONCE
+end (`2:$5FCB`) calls before it queues the `$77` frame -- the same stop a `K` runs (§176). It
+zeroes the P/L step word, the vibrato increment (`$C319`), the fast retrigger (`$C14E`) and the
+kit flags. ChipBoy: the ONCE end clears the slide, the bend, the queued offset, the vibrato and
+the roll along with queueing the flat frame.
+
+A cell `S` on a noise note (§180: the reader applies it before the trigger) restarts the channel
+when the map index crosses 60 upward (`2:$4660`: `old < $3C` and `new >= $3C`, the ROM's table
+splitting exactly there by NR43's width bit, so §86's rule stands) or always under PITCH = SAFE
+(`$C692`). The reader stores the note's own index (`2:$4985`) before the `S` moves it, so at a
+note-on the crossing is judged from the note, not from whatever the channel last wrote:
+`S21_ph_ch3` restarts (NR43, NR42 at the machine's level 0 → `08`, NR44 `BF`) before the
+trigger. ChipBoy set `lastPeriod` to the note's own NR43 (`noiseNr43()`) before the pre-trigger
+`S`; the restart's NR44 is the register read back with `$80` set.
