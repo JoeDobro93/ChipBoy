@@ -171,6 +171,9 @@ bool decodeInstrumentBytes(const uint8_t* b, int t, const LsdjModel& m, const ba
         if (!m.waveFrameRun) {
             o.frameLength = 1; o.frameLoopStep = 0; o.frameAdvance = 0;
             o.frameLoop = bank::FrameLoop::Loop;
+            // Section 200: the low two bits of byte 9 are PLAY here too, and 0 is
+            // ONCE -- the one frame plays a tick and the channel goes quiet.
+            if ((b[9] & 3) == 0) { o.frameLoop = bank::FrameLoop::Once; o.frameAdvance = 1; }
         } else {
             // The run: LENGTH is 16 - the low nibble of byte 10, SPEED is
             // byte 11 and costs four ticks on top, PLAY is byte 9's low two

@@ -6029,3 +6029,14 @@ nibble in either byte (`WvPlay*`, `WvP*` in `vs_sweep.py`):
 four-step run whose loop is its last two steps plays `0 1 2 3 2 3 2 3 …` -- the first pass walks
 every step and the bounce is inside the loop afterwards. ChipBoy turned at the loop step on the
 way up as well and played `0 3 2 3 …`: the turn now happens only on the way down.
+
+## 200. Before the frame run, a wave instrument's PLAY 0 is a one-tick note
+
+The 6.0.1 sweep turned the DAC off one tick after every wave note (`NR30 = 00` at +17 ms) where
+ChipBoy held it, and `WVb9_03` alone kept sounding. Probed with byte 9 at 01, 02, 03, 04, 08, 10,
+20, 40 and FF on 3.6.8, 5.0.3, 6.0.1 and 6.4.5: the low two bits are the PLAY mode on these
+formats as well, and **0 is ONCE** -- the one frame plays a tick and the channel goes quiet (the
+6.x ROMs after 17 ms, 3.6.8 and 5.0.3 within 2 ms); 1, 2 and 3 hold it. §89's "frame 0 held"
+was measured with a nonzero byte. The decoder gives such an instrument a ONCE run of one frame
+at one tick (`frameAdvance = 1`), which ends the way §171's ONCE does; the two milliseconds of
+the older ROMs are a tick here (the gap list).

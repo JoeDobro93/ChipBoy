@@ -1545,3 +1545,25 @@ TEST_CASE("a 7.0.2 wave instrument's PLAY and REPEAT read by the old laws", "[ls
     REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
     CHECK(bank->instruments[0].frameLoop == bank::FrameLoop::PingPong); CHECK(int(bank->instruments[0].frameLoopStep) == 0);
 }
+
+TEST_CASE("before the frame run, a wave instrument's PLAY 0 is a one-tick ONCE note", "[lsdj][versions]")
+{
+    // Section 200, probed on 3.6.8, 5.0.3, 6.0.1 and 6.4.5: byte 9's low two bits
+    // are PLAY on these formats as well, and 0 turns the DAC off after one tick.
+    auto song = blankSong(5);
+    song[kInstAlloc + 0] = 1;
+    uint8_t* i0 = song.data() + kInst; i0[0] = 1; i0[1] = 0x20; i0[7] = 3; i0[9] = 0;
+    song[kPhraseAlloc] |= 1; song[kNotes] = uint8_t(60 - 35); song[kPhraseInst] = 0;
+    song[kChainPhrases] = 0;
+    song[kRows + 0] = 0; song[kRows + 1] = 0xFF; song[kRows + 2] = 0xFF; song[kRows + 3] = 0xFF;
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    const auto* m = lsdjModelForRomVersion("6.0.1");
+    REQUIRE(m != nullptr);
+    REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
+    const auto& w = bank->instruments[0];
+    CHECK(w.frameLoop == bank::FrameLoop::Once); CHECK(int(w.frameAdvance) == 1); CHECK(int(w.frameLength) == 1);
+    i0[9] = 1;                                                              // any nonzero PLAY holds frame 0
+    REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
+    CHECK(bank->instruments[0].frameLoop == bank::FrameLoop::Loop); CHECK(int(bank->instruments[0].frameAdvance) == 0);
+}
