@@ -5741,3 +5741,30 @@ carries it as `distVram`), `kitMixRawLcd()` beside `kitMixRaw()`, and `kitFrame(
 each read of a video RAM page against the virtual LCD (`lcdMode3At()`, the constants above). A
 page in work RAM (`$D0`-`$D3`, or a raw one elsewhere) is unchanged. The test builds a kit on a
 flat page and counts the `FE`s a frame, their runs, and that a work RAM page has none.
+
+## 185. 9.4.0's `R` resets a DRUM pitch; 9.4.2 is the base the other versions map to
+
+`docs/LSDJ_VERSIONS.md` §11 has the 9.2.J-against-9.4.2 probe. One of its three differences is
+the driver's: from 9.4.0 a retrigger on a DRUM instrument zeroes the pitch offset word, so the
+pitch goes back to the note's entry **without** its fraction (§169's `$7E9` for note `55`, never
+the refresh's `$7F0`) and a bend or slide runs on from there -- `X92_Wv_drumR` (`CASTSHDW`'s
+kick under `R 03` with its table's `P A9`): `E9`, the R's trigger, then `9F 55 0C C1 …` on 9.4.2
+where 9.2.J's `A6 5C 13 C8 …` kept the fraction and the offset. ChipBoy followed 9.2.J.
+`retrigger()` now, for a DRUM wave: `fineOffset` becomes minus the fraction (the ROM's word is
+relative to the entry), the queued fine, the drum offset and any slide are cleared, and the
+fraction's refresh is cancelled. A 9.2 song that rolls a DRUM kick and wants it to keep falling
+has no value to import to; that needs an instrument switch (`LsdjModel::retrigResetsDrumPitch`
+carries the version's answer for when one exists).
+
+Two more the same probe uncovered on 9.4.2 itself. **A ONCE run's end does not stop a tick
+roll**: `X92_Wv_onceR8` (`CASTSHDW`'s kick under `R 08`) writes its flat frame at the run's end
+and rolls on, each roll starting the run again; §181's wave stop zeroes the *fast* retrigger
+(`$C14E`), and ChipBoy had cleared the tick roll with it. And **a roll's tick skips the frame
+step**: under `R 03` the three-tick run's end would fall on every roll's tick and the ROM never
+writes the flat frame (`X92_Wv_onceR`), the retrigger starting the run over first; the tick now
+skips the frame advance when a roll is due. Left: the roll's own frame write carries one more bend
+step than the ROM's (`1DA` against `223` for one instant, batch 21 of `X92_Wv_drumR`) -- the
+ROM's writer runs before that interrupt's pitch work and ChipBoy's deferred write after it.
+
+The other two map by value at import (§11 of the versions doc): a wave or kit `R x y` from before
+9.3.4 drops its nibble, and a kit `V x y` from before 9.4.0 doubles its depth.

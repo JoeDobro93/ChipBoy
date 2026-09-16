@@ -196,6 +196,23 @@ class Probe:
         for k, v in (extra or {}).items(): self.s[b + k] = v
         return i
 
+    def kit(self, i, env=0xA8, pan=3, table=None, kitA=0, kitB=0, lenA=0, lenB=0, offA=0, offB=0, dist=0xD0, b5=0, extra=None):
+        """A kit instrument (section 172): byte 2 kit A (bit 7 ATK), 9 kit B, 3/11 LEN, 12/13 OFFSET, 10 DIST page."""
+        b = IP + i * 16
+        for k in range(16): self.s[b + k] = 0
+        self.allocInst(i)
+        self.s[b + 0] = 2
+        self.s[b + 1] = env
+        self.s[b + 2] = kitA; self.s[b + 9] = kitB
+        self.s[b + 3] = lenA; self.s[b + 11] = lenB
+        self.s[b + 12] = offA; self.s[b + 13] = offB
+        self.s[b + 5] = b5
+        self.s[b + 6] = (0x20 | (table & 0x1F)) if table is not None else 0
+        self.s[b + 7] = pan & 3
+        self.s[b + 10] = dist
+        for k, v in (extra or {}).items(): self.s[b + k] = v
+        return i
+
     def write(self, path):
         self.sav[0:0x8000] = self.s
         self.sav[0x8140] = 0xFF          # boot the working song

@@ -681,6 +681,13 @@ struct Reader {
                     notes.add("V" + hex2(v) + " at " + where + ": this format's vibrato swings below the note in register units; ChipBoy's is centred (speed " + std::to_string(speed) + ", depth " + std::to_string(depth) + ")");
                     out = { Cmd::V, int16_t(speed), int16_t(depth), 0 }; return true;
                 }
+                if (instKind == 2 && !m.kitVibratoHalved && y > 0) {
+                    // docs/LSDJ_VERSIONS.md section 11: 9.4.0 halved the kit
+                    // vibrato depths, so this version's depth is twice 9.4.2's.
+                    int yy = y * 2;
+                    if (yy > 15) { notes.add("V" + hex2(v) + " at " + where + ": this version's kit vibrato is twice 9.4.2's, past a depth of F; F is used"); yy = 15; }
+                    out = { Cmd::V, int16_t(x), int16_t(yy), 0 }; return true;
+                }
                 out = { Cmd::V, int16_t(x), int16_t(y), 0 }; return true;
             case 'Z': out = { Cmd::Z, int16_t(x), int16_t(y), 0 }; return true;
             case 'M': out = { Cmd::M, int16_t(x), int16_t(y), 0 }; return true;
@@ -694,7 +701,12 @@ struct Reader {
                 if (y == 0 && !m.retrigZeroOnce) yy = 1;                 // every tick
                 else if (y != 0 || m.retrigPlus == 0) yy = y + m.retrigPlus;
                 if (yy > 15) { notes.add("R" + hex2(v) + " at " + where + ": this version retriggers every " + std::to_string(y + m.retrigPlus) + " ticks, past ChipBoy's fifteen; fifteen is used"); yy = 15; }
-                out = { Cmd::R, int16_t(x), int16_t(yy), 0 }; return true;
+                // docs/LSDJ_VERSIONS.md section 11: before 9.3.4 the volume
+                // nibble does nothing on the wave channel (kits included), so
+                // it is dropped there; 8, the resync, is not a volume.
+                int xx = x;
+                if (channel == 2 && !m.waveRetrigNibble && x != 0 && x != 8) xx = 0;
+                out = { Cmd::R, int16_t(xx), int16_t(yy), 0 }; return true;
             }
             case 'H': out = { Cmd::H, int16_t(x), int16_t(y), 0 }; return true;            // times, row: 0-based in both
             case 'E':

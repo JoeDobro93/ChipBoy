@@ -316,3 +316,48 @@ and `waveRepeatByte` (§93), `pitchLaw` (§88), `noiseS`, and the `NoiseRule` th
 | `GOAL ACH`, `STARWAY` | 8.4.4 | never | -- |
 | the other 22 *Computer Savvy* songs | 3.6.5 | never | -- |
 
+
+## 11. 9.4.2 is the base; 9.2.J against it, probed
+
+From this round 9.4.2 is the reference every other version maps **to** (the driver is 9.4.2's
+code, §147-§185 of `docs/COMMANDS_AND_TEMPO.md`). A 9.2.J ROM (the user's, the one the eight
+songs were written in; 9.2.L differs from it only by a kit-and-wave noise tweak and two fixes the
+changelog lists) was run against 9.4.2 on the whole probe matrix, ROM against ROM
+(`/root/lsdj/probe/vs_versions.py A B [filter]`, `vv_all.py` to recompare the traces ignoring
+the length registers), 349 cases plus the changelog's candidates (`X92_*` in `vs_matrix.py`: kits
+with `V`, `F`, `E`, `R`, a DRUM wave under `R`, the noise table transpose across notes). Both write
+format 22, so only the ROM beside the save tells them apart (`lsdjModelForRomVersion`); a save
+alone reads as 9.4.2.
+
+**What is the same** (276 cases identical, the rest below): every command's law on every
+channel, the tables, STEP and TICK, the hops, the tempo words (the 256-word table is byte for byte
+the same, at `7:$5E0B` instead of `7:$5E49`), the kit mixer and its pages, the wave frame runs,
+the noise map. The changelog's 9.3.9 "inaccurate sequencer tempo" fix does not show in the tick
+period (15.333 ms at 163 BPM on 9.2.J, 15.313 on 9.4.2, 15.337 ideal -- both inside the interrupt
+jitter §160 leaves unmodelled); the 9.4.2 "noise table transpose not reset" fix did not show on
+a looping transpose table with a second note or a bare one (`X92_NOI_tsp2`-`tsp4`); 9.2.K's "kit
+`F` reset the amplitude" did not show on 9.2.J (`X92_KIT_F01`, `_half`).
+
+**What differs, and how it maps** (the three models inside format 22: `LSDj 9.2.J - 9.3.3`,
+`LSDj 9.3.4 - 9.3.9`, `LSDj 9.4.0 - 9.4.2`, chosen by the ROM's version):
+
+| change | release | 9.2.J | 9.4.2 | mapping |
+|---|---|---|---|---|
+| `R`'s volume nibble on the wave channel, kits included | 9.3.4 | ignored (`RF4_ph_ch2`, `X92_KIT_RF4`: the rolls keep `NR32`) | walks `NR32` a notch a retrigger (§182) | `R x y` on WAV/KIT with `x` not 0 or 8 imports as `R 0 y` (`waveRetrigNibble`) |
+| kit vibrato depth | 9.4.0 ("halving kit vibrato depths") | `V 42` moves `NR33` by `1E` an instant | by `0F` | a kit note's `V x y` imports as `V x 2y`; `y` above 7 saturates at F with a note (`kitVibratoHalved`) |
+| `R` on a DRUM instrument | 9.4.0 ("R now also resets pitch if PITCH is DRUM") | the pitch word runs on through the retrigger: a rolled kick keeps falling (`X92_Wv_drumR`: `A6 5C 13 …`) | the retrigger zeroes the offset word: the entry without the note's fraction, the bend from there (`9F 55 0C …`, §185) | **not a value**: the driver follows 9.4.2; a 9.2 song's rolled DRUM kick needs an instrument switch to keep the pitch (`retrigResetsDrumPitch` is on the model, unused until one exists) |
+| the cell `R`'s immediate retrigger | between | folded into the note-on's own burst: the nibble is on the note's trigger, no second burst (`RF4_ph_ch0`: `E8` at the note) | a second burst 1.06 ms in | none needed: the same levels within a millisecond |
+| the wave note-on's `NR31` write | between | none | `NR31 = 00` in the burst | none: the length bit is off |
+| the pitch refresh's `NR11` | between | none | `NR11` rewritten with the period (`EGO_*`) | none: the same duty |
+
+Where 9.2.J keeps the routines 9.4.2 was read at (§11 of `LSDJ_COMMAND_MATRIX.md`), the same code
+sits at another address; found by pattern: the `A` handler `2:$4679` (same), the `R` handler
+`2:$6446` (9.4.2 `2:$64AA`), the note-on `2:$4A04` (`2:$4A07`), the `H` handler `2:$55B9`
+(`2:$55F9`), the pan routine `2:$6171` (`2:$61B6`), the interpolation `0:$1AC9` (`0:$1B28`), the
+refresh `0:$1B48` (`0:$1BA7`), `Z`'s roll `1:$73D3` (`0:$73CA`), the DRUM table `0:$0992`
+(`0:$09B9`), the tempo words `7:$5E0B` (`7:$5E49`), the font page `30:$442A` (same). The
+dispatcher, the STEP store, the wave stop and note-on, the interrupt and tick entry, the play start
+and the noise `S` did not match by their first bytes and were not traced.
+
+The older models (§3) stay in the code as the record of what each format did; none of them was
+re-probed this round, and a song from one of those versions still maps through them.

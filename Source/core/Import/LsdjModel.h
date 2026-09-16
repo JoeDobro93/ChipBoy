@@ -16,7 +16,7 @@
 //   format 11  8.4.0 - 8.5.1   the same noise, the letter table with B, and three
 //                              envelope stages the chip ramps between (section 58)
 //   format 15  8.8.6           raw noise (FF - n), three-stage envelope
-//   format 22  9.2.J - 9.4.2   the musical noise map, S in semitones
+//   format 22  9.2.J - 9.4.2   the musical noise map, S in semitones (three models inside it, section 11 of the versions doc)
 // Formats 1, 6, 8-10, 12-14 and 16-21 were never written by a stable release
 // and take the nearest model below.
 //
@@ -79,7 +79,7 @@ enum class VibratoLaw : uint8_t {
 };
 
 struct LsdjModel {
-    const char*    name;             ///< "LSDj 9.2.J - 9.4.2 (format 22)"
+    const char*    name;             ///< "LSDj 9.4.0 - 9.4.2 (format 22)"
     int            formatVersion;    ///< the song format this version writes
     int            formatMin, formatMax;   ///< the formats this model reads, inclusive
     const char*    commandLetters;   ///< command byte -> letter; index 0 is none; '\0' ends it
@@ -127,6 +127,13 @@ struct LsdjModel {
     /// the mirror -- so a save is read with the list of the version that wrote
     /// it. [4], indexed by byte 10 minus `D0`.
     const KitDist* kitDist;
+    /// What changed inside format 22 (docs/LSDJ_VERSIONS.md section 11, probed
+    /// 9.2.J against 9.4.2): from 9.3.4 `R`'s volume nibble reaches the wave
+    /// channel, kits included; from 9.4.0 a kit's vibrato depth is half of
+    /// what the same `V` gave before, and `R` resets a DRUM instrument's pitch.
+    bool           waveRetrigNibble;
+    bool           kitVibratoHalved;
+    bool           retrigResetsDrumPitch;
 };
 
 /// Every model, newest first. `count` receives how many.

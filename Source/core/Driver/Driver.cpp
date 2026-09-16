@@ -3034,8 +3034,11 @@ void Driver::tick(int ch)
         const int whole = v.noiseBend9 / 256;
         if (whole != 0) { v.noiseBend9 -= whole * 256; v.noiseTsp = int16_t(std::clamp(int(v.noiseTsp) + whole, -30000, 30000)); writePeriod(ch, false); }   // section 156
     }
-    // wave frames
-    if (v.inst.type == InstrumentType::Wave && v.inst.frameAdvance) {
+    // wave frames. Section 185: not on a roll's tick -- the retrigger below
+    // starts the run over, and a ONCE run whose end falls on that tick never
+    // writes its flat frame (X92_Wv_onceR: rolls every three ticks, the
+    // three-tick run never ends).
+    if (v.inst.type == InstrumentType::Wave && v.inst.frameAdvance && !retrig) {
         // Section 94: the note's own tick belongs to the first frame.
         if (v.frameFresh) { v.frameFresh = false; }
         else if (++v.frameCount >= v.inst.frameAdvance) {
@@ -3064,7 +3067,10 @@ void Driver::tick(int ch)
                                     // under the run halts where the run ends (CASTSHDW's kick).
                                     v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0; v.slideStep256 = 0;
                                     v.drumSlideLeft = 0; v.drumSlideStep = 0.0; v.bendSpeed = 0; v.fineQueued = 0;
-                                    v.vibOn = false; v.retrigFast = false; v.retrigOn = false;
+                                    // Section 185: the tick roll (`R x y`) is not stopped -- its countdown
+                                    // is not the wave stop's ($C14E is the fast one): X92_Wv_onceR8 rolls on
+                                    // past the flat frame, restarting the run each time.
+                                    v.vibOn = false; v.retrigFast = false;
                                 }
                                 next = len - 1;
                             }
@@ -3149,6 +3155,20 @@ void Driver::retrigger(int ch, bool full, bool restartEnv)
     // as a note-on and an instrument load do -- so the level it sounds at is
     // the envelope's own start and not wherever a fade had got to.
     if (v.retrigCount < 0xFFFF) ++v.retrigCount;
+    // Section 185: from 9.4.0 a retrigger resets a DRUM instrument's pitch --
+    // the offset word goes to 0, the entry without the note's fraction, and a
+    // bend or slide runs on from there (X92_Wv_drumR: `9F` after the R where
+    // 9.2.J's `A6` kept the fraction; the fraction's refresh never comes).
+    // The reset comes after the retrigger's own writes: the roll's trigger
+    // carries the period the bend had reached (`TRIG NR33=23`), the next
+    // instant's pitch work the entry minus the step.
+    const auto drumReset = [&] {
+        if (!drumRom(v) || v.inst.type != InstrumentType::Wave) return;
+        const double base = noteOfVoice(ch) - double(v.fineOffset + slideResidual(v)) / 256.0;
+        v.fineOffset = -int32_t(std::lround((base - std::floor(base)) * 256.0));
+        v.fineQueued = 0; v.drumOffset = 0.0; v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0; v.slideStep256 = 0;
+        v.drumSlideLeft = 0; v.drumSlideStep = 0.0; v.fineTunePending = false;
+    };
     // Section 175: an R's nibble rewrites the three envelope levels in the
     // channel's copy (2:$4000) before the machine restarts -- a zero byte left
     // alone, an underflow clamped to 0, an overflow to F, the rates kept.
@@ -3217,6 +3237,7 @@ void Driver::retrigger(int ch, bool full, bool restartEnv)
             emit(regAddr(2, 4), uint8_t((f >> 8) | 0x80), true);
             markTrigger(ch);
         }
+        drumReset();
         v.pitchWrite = true;
         return;
     }

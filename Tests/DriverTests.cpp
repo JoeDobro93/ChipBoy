@@ -3654,6 +3654,84 @@ TEST_CASE("a raw kit page in video RAM reads back FF in the LCD's mode 3: FE byt
     for (const auto& f : frames(20)) for (int j = 0; j < 16; ++j) CHECK(f[size_t(j)] == 0x66);
 }
 
+TEST_CASE("a retrigger resets a DRUM wave's pitch to the entry, fraction and bend gone", "[driver][commands][rom942]")
+{
+    // Section 185 (X92_Wv_drumR): a DRUM note-on writes its entry's period and
+    // the refresh writes the exact one, a few units on (section 169); under
+    // `R 03` the R's own retrigger resets the offset word, so the exact period
+    // never comes and every roll starts from the entry again.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[2] = tracker::NoteSource::Tracker;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Kick");
+    i.used = true; i.pitchSpeed = bank::PitchSpeed::Drum; i.waveLevel = 3;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(2, p);
+    const auto lowsOf = [](const std::vector<RegWrite>& w) {
+        std::vector<int> out; int lo = -1;
+        for (const auto& x : w) { if (x.addr == 0xFF1D) lo = x.value; else if (x.addr == 0xFF1E && lo >= 0) { out.push_back(((x.value & 7) << 8) | lo); lo = -1; } }
+        out.erase(std::remove(out.begin(), out.end(), 0x7E0), out.end());   // the frame writer's pre-trigger period (section 171), not the note's
+        return out;
+    };
+    // The plain note: the entry (1700 for note 55, index 89), then the exact
+    // period at the refresh (1714).
+    auto w = r.block({ cellOn(2, 55, 2) }, 480);
+    for (int k = 0; k < 3; ++k) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+    const auto plain = lowsOf(w);
+    REQUIRE(plain.size() >= 2);
+    const int entry = plain[0], exact = plain[1];
+    REQUIRE(entry != exact);
+    r.block({ Rig::off(2, 55) }, 64);
+    // The same note under R 03: the entry, never the exact one, and the rolls.
+    NoteEvent on = cellOn(2, 55, 2); on.cmd1 = { Cmd::R, 0, 3, 0 };
+    w = r.block({ on }, 480);
+    for (int k = 0; k < 9; ++k) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+    int trig = 0;
+    for (const auto& x : w) if (x.addr == 0xFF1E && (x.value & 0x80)) ++trig;
+    CHECK(trig >= 4);
+    const auto rolled = lowsOf(w);
+    REQUIRE_FALSE(rolled.empty());
+    CHECK(rolled.front() == entry);
+    CHECK(std::find(rolled.begin(), rolled.end(), exact) == rolled.end());
+}
+
+TEST_CASE("a roll keeps rolling while the table it replays bends a DRUM pitch", "[driver][commands][rom942]")
+{
+    // X92_Wv_drumR: CASTSHDW's kick -- a DRUM wave with `P A9` on its table's
+    // row 0 -- under `R 03` rolls every three ticks on the ROM for as long as
+    // the note lasts, each roll replaying the P from the entry.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[2] = tracker::NoteSource::Tracker;
+    // Section 185: and a ONCE run's end -- here a one-frame run three ticks
+    // long, so it would end on every roll's tick -- neither stops the roll
+    // nor writes its flat frame, the roll starting the run over first.
+    Table t0; t0.used = true; t0.steps[0].cmd1 = { Cmd::P, 0xA9, 0, 0 };
+    r.bank.tables[0] = t0;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Kick");
+    i.used = true; i.pitchSpeed = bank::PitchSpeed::Drum; i.waveLevel = 3; i.table = 1;
+    i.frameLoop = bank::FrameLoop::Once; i.frameAdvance = 3; i.frameStart = 15;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(2, p);
+    NoteEvent on = cellOn(2, 55, 2); on.cmd1 = { Cmd::R, 0, 3, 0 };
+    auto w = r.block({ on }, 480);
+    for (int k = 0; k < 12; ++k) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+    int trig = 0; bool flat = false;
+    for (const auto& x : w) { if (x.addr == 0xFF1E && (x.value & 0x80)) ++trig; if (x.addr == 0xFF30 && x.value == 0x77) flat = true; }
+    CHECK(trig >= 5);                                    // the note, its own R, and the rolls at ticks 3, 6, 9, 12
+    CHECK_FALSE(flat);
+    // With the roll every eight ticks the run ends at tick 3, and the roll
+    // still comes at 8 and 16 and starts it again (X92_Wv_onceR8); the
+    // ONCE end used to clear the roll with the fast retrigger.
+    r.block({ Rig::off(2, 55) }, 64);
+    on.cmd1 = { Cmd::R, 0, 8, 0 };
+    w = r.block({ on }, 480);
+    for (int k = 0; k < 18; ++k) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+    trig = 0;
+    for (const auto& x : w) if (x.addr == 0xFF1E && (x.value & 0x80)) ++trig;
+    CHECK(trig >= 4);
+}
+
 TEST_CASE("P on a kit moves the period register, not the note", "[driver][kit]")
 {
     // Section 97: the byte is period-register units -- three of them once under

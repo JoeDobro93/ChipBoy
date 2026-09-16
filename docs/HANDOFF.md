@@ -85,8 +85,13 @@ design-log section the change touches. Update this file at the end of every chan
   NR32 (`RF4_ph_ch2`); §184: a kit's raw page in video RAM reads `$FF` in the LCD's
   mode 3 -- the mixer's 140 cycles a byte and two reads against a virtual LCD reproduce the
   ROM's `FE` pattern (348 of 352 bytes of `UNMASKED`'s first frames; `Kit::distVram`,
-  `kitMixRawLcd`, `lcdMode3At`), the phase the emulator run's. `CHANGES.md` has the round.
-  301 core tests. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
+  `kitMixRawLcd`, `lcdMode3At`), the phase the emulator run's; §185 with `LSDJ_VERSIONS.md`
+  §11: 9.4.2 is the base and the user's 9.2.J was probed against it ROM to ROM
+  (`vs_versions.py`, `vv_all.py`, the `X92_*` cases): three models inside format 22
+  (`waveRetrigNibble`, `kitVibratoHalved`, `retrigResetsDrumPitch`), the wave/kit `R` nibble and
+  the kit `V` depth translated at import, the DRUM pitch reset added to the driver, a ONCE
+  run's end no longer stopping a tick roll and a roll's tick skipping the frame step. `CHANGES.md`
+  has the round. 304 core tests. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
   `probe/raw.py TAG [ch] [n]` prints the first raw writes of both sides. 11 plugin checks.
 - The probe rig for this campaign lives in the container at `/root/lsdj/probe/`: `vs_matrix.py`
   (the interaction cases, two-sided, `--show` for the first differing batch), `songdiff.py NAME`
@@ -933,6 +938,20 @@ design-log section the change touches. Update this file at the end of every chan
 
 ## Open issues
 
+- **Kits and the noise table against 9.4.2, found by the `X92_*` probes and left**: the old
+  matrix had no kit case. On the ROM an `R` on a kit note restarts the sample every roll
+  (`X92_KIT_R04`, `_RF4`, `_P04_R`: 263 batches against ChipBoy's 45 -- ChipBoy's kit does not
+  retrigger), a kit `F 01` writes 86 batches against 44 (`X92_KIT_F01`), a kit `E 02` one more
+  batch, and a noise table's transpose column differs from ChipBoy's over a second note
+  (`X92_NOI_tsp2`-`tsp4`, ROM 2-4 batches against 3-6). A plain kit note differs only by ChipBoy's
+  `NR31 = 00`. The 9.2 mapping does not depend on these; they are the next 9.4.2 round.
+- **A 9.2 song's rolled DRUM kick** keeps falling through the retriggers on 9.2.J and restarts
+  on 9.4.2 (§185); the importer has no value to carry that, so such a song plays 9.4.2's way. An
+  instrument switch ("R keeps the pitch") would carry it; `retrigResetsDrumPitch` on the model
+  is ready for one.
+- **The 9.2.J save the user uploaded holds only its working song** (the file area at `$8000` is
+  empty), so the eight songs were not re-run under 9.2.J; the probe matrix stood in.
+
 - **From the third campaign (9.4.2), measured and left** (`docs/COMMANDS_AND_TEMPO.md` §147,
   §180): the fold is modelled since §180 with one-channel handler costs; what stays is the
   four-channel latency below. A TICK-mode vibrato is a unit deeper in ChipBoy than the ROM's
@@ -1089,6 +1108,11 @@ design-log section the change touches. Update this file at the end of every chan
 
 ## Next steps
 
+- **9.4.2 is the base now** (`LSDJ_VERSIONS.md` §11). A version to map next goes through the
+  same steps: put its ROM in `/root/lsdj/roms/`, `vs_versions.py lsdjX_Y_Z lsdj9_4_2`, then
+  `vv_all.py` for the list without the length-register noise, then the changelog's candidates as
+  `X92_*`-style cases, then a model inside the format with a value translation at import where
+  one exists. Bug reports start on 9.4.2.
 - **The user's four `UNMASKED` reports**: chain `05` (§183), chain `30` (§182), phrase `10`
   (§182) and phrase `6E`'s kits (§184, the mode-3 reads) are modelled; the first three
   reproduce on the ROM in `UN_c05_full`, `Rtick_tbl` and `ZF_wave_*`, the kits' `FE` pattern

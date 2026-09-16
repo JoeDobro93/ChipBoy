@@ -195,7 +195,7 @@ TEST_CASE("the default codes expand to the default wave and instrument", "[lsdj]
 TEST_CASE("a model is chosen by format, by ROM title, by name, or the newest", "[lsdj]")
 {
     int n = 0; const auto* const* models = lsdjModels(n);
-    REQUIRE(n == 11);
+    REQUIRE(n == 13);                                              // three inside format 22 (docs/LSDJ_VERSIONS.md section 11)
     CHECK(std::string(lsdjLatestModel().name).find("9.4.2") != std::string::npos);
     CHECK(lsdjModelForFormat(22) == models[0]);
     CHECK(lsdjModelForFormat(15)->formatVersion == 15);          // 8.8.6, measured
@@ -215,7 +215,7 @@ TEST_CASE("a model is chosen by format, by ROM title, by name, or the newest", "
     CHECK(lsdjFormatForVersion("3.6.5") == 2);                   // the version the Computer Savvy songs were written in
     CHECK(lsdjFormatForVersion("3.5.1") == 0); CHECK(lsdjFormatForVersion("3.1.5") == 0); CHECK(lsdjFormatForVersion("2.0.0") == 0);
     CHECK(lsdjFormatForVersion("nonsense") == -1);
-    CHECK(lsdjModelForRomVersion("9.3.9") == models[0]);
+    CHECK(lsdjModelForRomVersion("9.4.2") == models[0]); CHECK(lsdjModelForRomVersion("9.3.9") == models[1]); CHECK(lsdjModelForRomVersion("9.2.L") == models[2]);
     CHECK(lsdjModelForRomVersion("8.8.6")->formatVersion == 15);
     CHECK(lsdjModelForRomVersion("8.4.0")->formatVersion == 11);
     // docs/LSDJ_VERSIONS.md: two releases can write the same format byte and
@@ -1086,6 +1086,50 @@ TEST_CASE("a kit instrument takes its samples from the ROM beside the save", "[l
     bool noted = false;
     for (const auto& l : notes2.lines) if (l.find("kit") != std::string::npos) noted = true;
     CHECK(noted);
+}
+
+TEST_CASE("inside format 22 a 9.2 song's wave R nibble and kit vibrato depth are translated to 9.4.2's", "[lsdj][versions]")
+{
+    // docs/LSDJ_VERSIONS.md section 11, probed 9.2.J against 9.4.2: before
+    // 9.3.4 R's volume nibble does nothing on the wave channel (kits too), and
+    // before 9.4.0 a kit's V is twice as deep. A wave R F4 becomes R 04, a
+    // kit V 42 becomes V 44, a kit V 4A saturates at V 4F with a note; the
+    // 9.4.x model keeps every byte.
+    auto song = blankSong(22);
+    song[kInstAlloc + 0] = 1; song[kInstAlloc + 1] = 1;
+    uint8_t* i0 = song.data() + kInst; i0[0] = 1; i0[1] = 0xA8; i0[3] = 0x00; i0[7] = 3; i0[10] = 0xD0;           // a wave
+    uint8_t* i1 = song.data() + kInst + 16; i1[0] = 2; i1[1] = 0xA8; i1[2] = 0x00; i1[7] = 3; i1[8] = 0xD0; i1[9] = 0x00; i1[10] = 0xD0;   // a kit
+    std::memcpy(song.data() + kNames, "WAVE", 4); std::memcpy(song.data() + kNames + 5, "DRUMS", 5);
+    song[kPhraseAlloc] |= 1;
+    const uint8_t R = 14, V = 17;                            // "-ABCDEFGHKLMOPRSTVWZ"
+    song[kNotes + 0] = 0x34; song[kPhraseInst + 0] = 0; song[kCmd + 0] = R; song[kCmdV + 0] = 0xF4;
+    song[kNotes + 4] = 0x10; song[kPhraseInst + 4] = 1; song[kCmd + 4] = V; song[kCmdV + 4] = 0x42;
+    song[kNotes + 8] = 0x10; song[kPhraseInst + 8] = 1; song[kCmd + 8] = V; song[kCmdV + 8] = 0x4A;
+    song[kNotes + 12] = 0x34; song[kPhraseInst + 12] = 0; song[kCmd + 12] = R; song[kCmdV + 12] = 0x84;
+    song[kChainPhrases + 0] = 0;
+    song[kRows + 0] = 0xFF; song[kRows + 1] = 0xFF; song[kRows + 2] = 0; song[kRows + 3] = 0xFF;
+    const LsdjModel* old = lsdjModelNamed("LSDj 9.2.J - 9.3.3 (format 22)");
+    REQUIRE(old != nullptr);
+    CHECK_FALSE(old->waveRetrigNibble); CHECK_FALSE(old->kitVibratoHalved); CHECK_FALSE(old->retrigResetsDrumPitch);
+    CHECK(lsdjModelForRomVersion("9.2.J") == old); CHECK(lsdjModelForRomVersion("9.2.L") == old); CHECK(lsdjModelForRomVersion("9.3.3") == old);
+    CHECK(lsdjModelForRomVersion("9.3.4")->waveRetrigNibble); CHECK_FALSE(lsdjModelForRomVersion("9.3.9")->kitVibratoHalved);
+    CHECK(lsdjModelForRomVersion("9.4.0")->kitVibratoHalved); CHECK(&lsdjLatestModel() == lsdjModelForRomVersion("9.4.2"));
+    CHECK(lsdjModelForFormat(22) == &lsdjLatestModel());
+    for (const LsdjModel* m : { old, &lsdjLatestModel() }) {
+        auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+        ImportSummary sum; ImportNotes notes;
+        REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
+        const auto* ph = out->phrase(1);
+        REQUIRE(ph != nullptr);
+        const bool o = m == old;
+        CHECK(ph->cells[0].cmd1.cmd == bank::Cmd::R); CHECK(ph->cells[0].cmd1.a == (o ? 0 : 15)); CHECK(ph->cells[0].cmd1.b == 4);
+        CHECK(ph->cells[4].cmd1.cmd == bank::Cmd::V); CHECK(ph->cells[4].cmd1.a == 4); CHECK(ph->cells[4].cmd1.b == (o ? 4 : 2));
+        CHECK(ph->cells[8].cmd1.cmd == bank::Cmd::V); CHECK(ph->cells[8].cmd1.b == (o ? 15 : 10));
+        CHECK(ph->cells[12].cmd1.cmd == bank::Cmd::R); CHECK(ph->cells[12].cmd1.a == 8);            // the resync is not a volume
+        bool noted = false;
+        for (const auto& n : notes.lines) if (n.find("V4A") != std::string::npos) noted = true;
+        CHECK(noted == o);
+    }
 }
 
 TEST_CASE("a table's second command column keeps its own hop", "[lsdj]")

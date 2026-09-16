@@ -28,7 +28,7 @@ intended product rather than a progress report.
 
 ### 2026-09-15 -- the third parity campaign: 9.4.2's code, and what it corrected
 
-`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§184. The audit target is
+`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§185. The audit target is
 LSDj 9.4.2 now, read as code: the dispatcher, every handler's address, the work RAM the commands
 share, the order a phrase step and a table tick run their columns, and a two-sided probe rig that
 builds a song, traces the ROM and ChipBoy and reports the first register batch that differs (200
@@ -245,6 +245,15 @@ differ for a reason not found (VRAM bank 1 is the suspect).
   lines of 154, mode 3 176 cycles from cycle 80) reproduce the ROM's `FE` pattern at 348 of 352
   bytes of `UNMASKED`'s first kit frames; the LCD's phase is the console's own and the
   emulator run's is used (`Kit::distVram`, `kitMixRawLcd`, `lcdMode3At`).
+
+- **9.4.2 is the base; 9.2.J mapped onto it** (§185, `docs/LSDJ_VERSIONS.md` §11): the whole
+  matrix run ROM against ROM found three differences inside format 22, now three models chosen
+  by the ROM's version -- a wave or kit `R x y` from before 9.3.4 drops its volume nibble, a kit
+  `V x y` from before 9.4.0 doubles its depth (saturating at F with a note), and 9.4.0's `R`
+  resetting a DRUM pitch is modelled in the driver (ChipBoy followed 9.2.J) with no value to
+  import a 9.2 kick roll to. The older models stay as the record of what each format did. On
+  9.4.2 itself the probes showed a ONCE run's end does not stop a tick roll (ChipBoy's did) and
+  a roll's tick starts the run over before the frame step (no flat frame on that tick).
 
 Left as measured: the ROM's tick-handler latency in a four-channel song. §180 models the fold with
 the one-channel costs (a cell command 0.3 ms in, a row 0 1.2 ms in); a note-on tick that loads
