@@ -338,6 +338,22 @@ struct ScopeView::Impl : juce::Timer {
             len = w.len;
         }
 
+        // D-UI-32: the digital trace is centred on its own swing -- a pulse or
+        // a noise at volume 11 walks 0 .. 11 and would hug the top of the grid,
+        // so its midpoint is put at the DAC's zero, 7.5; a full-range wave
+        // moves nothing. Only the picture shifts: the levels are the levels.
+        int lowest = 16, highest = -1;
+        {
+            const double stop = start + len;
+            for (int q = std::max(0, lastAtOrBefore(s, n, start)); q < int(n) && double(s[q].cycle) < stop; ++q) {
+                const int lv = s[q].level;
+                if (lv < 0) continue;
+                lowest = std::min(lowest, lv); highest = std::max(highest, lv);
+            }
+        }
+        const double centre = highest >= lowest ? 7.5 - double(lowest + highest) / 2.0 : 0.0;
+        auto toYc = [&](double level) { return toY(level + centre); };
+
         // --- digital: per pixel column, the level at its start and the span of levels inside it
         digital.clear();
         offSpans.clear();
@@ -360,10 +376,10 @@ struct ScopeView::Impl : juce::Timer {
             const float px = x0 + float(x);
             if (level0 < 0 && k < 0) { if (open) open = false; continue; }   // before the oldest sample: nothing known
             if (level0 >= 0) {
-                if (!open) { digital.startNewSubPath(px, toY(level0)); open = true; }
-                else digital.lineTo(px, toY(level0));
-                if (hi > lo) { digital.lineTo(px, toY(hi)); digital.lineTo(px, toY(lo)); }
-                if (last >= 0 && last != lo) digital.lineTo(px, toY(last));
+                if (!open) { digital.startNewSubPath(px, toYc(level0)); open = true; }
+                else digital.lineTo(px, toYc(level0));
+                if (hi > lo) { digital.lineTo(px, toYc(hi)); digital.lineTo(px, toYc(lo)); }
+                if (last >= 0 && last != lo) digital.lineTo(px, toYc(last));
             }
             if (last < 0) open = false;
             if (sawOff) { if (offStart < 0) offStart = x; }

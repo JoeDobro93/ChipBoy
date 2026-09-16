@@ -26,6 +26,13 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-16 -- the digital trace sits on its own swing
+
+`docs/UI_DESIGN.md` D-UI-32. A pulse or a noise at volume 11 walks levels 0 to 11 and, with
+level 0 at the top (D-UI-25), hugged the top of its scope. The digital trace is now drawn
+with the midpoint of its swing at the DAC's zero, 7.5, where a full-range wave and the
+analog trace already sit. The grid, the levels and the off baseline are unchanged.
+
 ### 2026-09-16 -- a channel strip's scope is a left and a right monitor
 
 `docs/UI_DESIGN.md` section 3, D-UI-31. Each strip's scope is two monitors side by side

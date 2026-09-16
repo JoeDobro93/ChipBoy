@@ -23,6 +23,16 @@ design-log section the change touches. Update this file at the end of every chan
 - **D-UI-31**: a channel strip's scope is two monitors, `L` and `R`, one period each by
   default (`ui_periods` defaults to 1; a stored 2 is kept), gated by NR51's two bits, so
   the picture takes the same width and an `O` shows on it. `ScopeView::setStereo()`.
+- **D-UI-32**: the digital trace is centred on its own swing (a pulse at volume 11 sat at
+  the top); the levels and the grid are as they were.
+- **A report of kit instruments not loading from a 4.1.0 save** (`Computer_Savvy`, CLUCK's
+  chain 18 and WATER2's wave channel) did not reproduce: with the ROM beside the save the
+  CLI import carries the kits (TR-909, DR-55, TR-727), and the wave RAM frames the driver
+  streams for WATER2's first kit note equal the 4.1.0 ROM's byte for byte (`lsdjref_trace`
+  on the save's working song; `/root/lsdj/cs/`). Without the ROM beside the save the kit
+  instruments are skipped with a note, which is the likely case; the dialog's ROM line says
+  so. The ROM-version reader for pre-4.3 ROMs is from 2026-09-11 (ca19b04): a build before
+  it found no version and no kits.
 - **Open**: `chipboy_uishot --scope-check` reports PU1 moving between two frames (237
   pixels at one period, 1155 at two, split or not): the factory Square lead has a vibrato
   of its own, so the "steady tone" breathes. The check wants an instrument without one,

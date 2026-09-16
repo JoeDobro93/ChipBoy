@@ -226,6 +226,10 @@ breathing rather than as the trace sliding.
   ways reads as one picture with a seam; a half whose NR51 gate is off draws the off
   baseline instead, so an `O` shows where the sound went. The visualizer and the Voice
   editor keep the single picture.
+- **The digital trace sits on its own swing** (D-UI-32). A pulse or a noise at volume 11
+  walks levels 0 to 11 and hugged the top of the grid; its midpoint is drawn at the DAC's
+  zero, 7.5, as a full-range wave already is. The grid and the levels are unchanged; only
+  where the picture sits.
 - **The master scope** shows the actual output, with the clicks and the droop.
 - **Visualizer window.** A separate, resizable, clean window — the four scopes stacked
   or tiled, plus the master, no chrome, adjustable line weight, black or LCD ground,
@@ -772,3 +776,4 @@ recorded in `CHANGES.md`.
 | D-UI-29 | Can a kit sample be heard without playing the song? | **Yes: *Audition* → *Play* on the Kits tab**, beside the waveform. The audio thread reads the sample out of the live bank at the kit's own rate, through the DAC's curve, and mixes it in after the render — it never touches the driver, so the song plays on and nothing in the state changes. Pressing it again starts over; it stops at the end of the sample |
 | D-UI-30 | How does the Instrument tab show a stage shorter than a tick? | **The stage steppers stay whole ticks and the readout carries the fraction** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §121): an imported envelope's stages can be 1.7 or 0.6 of a tick, so the envelope preview is drawn in 1/256 of a tick and its total prints to one decimal (`6.6 t`). Setting a stage's stepper clears that stage's fraction — the number shown becomes the truth — and the tooltip says so, because an invisible 0.7 of a tick surviving an edit is worse than losing it |
 | D-UI-31 | How does a channel strip's scope show where the sound goes? | **Two monitors side by side, `L` and `R`, a bar between them**, each the channel's trace over the chosen periods (one by default): a channel is mono at its DAC, so a note panned both ways reads as one picture with a seam, and a half whose NR51 gate is off draws the off baseline, so an `O` shows at a glance. The visualizer and the Voice editor keep one picture across the width |
+| D-UI-32 | Why did a pulse or noise trace sit at the top of its scope? | **Level 0 is the top (D-UI-25) and a pulse at volume 11 walks 0 to 11.** The digital trace is now drawn with its own swing's midpoint at the DAC's zero, 7.5, which is where a full-range wave and the analog trace already sit; the grid, the levels and the off baseline are unchanged |
