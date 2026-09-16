@@ -280,6 +280,22 @@ struct InstrumentCore {
     uint8_t  noiseShift = 5;
     uint8_t  noiseDivisor = 1;
     int8_t   noiseSweep = 0;         ///< shift steps per tick
+    /// Section 188: the noise channel of every LSDj before 9.1 (3.1.5 - 8.8.6).
+    /// The note's octave and `noiseShape` make NR43 -- `lo = 15 - SHAPE.lo`,
+    /// `hi = clamp(15 - SHAPE.hi + 3 - octave, 0, 15)`, LSDj note 1 (C-3) in
+    /// octave 0 -- and `S`, `P` and `C` work on the byte nibble by nibble
+    /// (the Register domain), the table's transpose column as a byte.
+    /// `noiseStable` is LSDj's S MODE = STABLE: those three keep the note's
+    /// LFSR width bit. The importer sets the three for those versions.
+    bool     noiseShapeMode = false;
+    uint8_t  noiseShape = 0xFF;
+    bool     noiseStable = false;
+    /// Section 189: LSDj 8.1.0 - 8.5.1's hardware envelope stages, for a Chip
+    /// envelope: NRx2 bytes the driver writes with a retrigger once the stage
+    /// before has stepped `|volume - next volume|` levels and half a step more
+    /// at its own rate; 0 is none, and stage 3 needs stage 2.
+    uint8_t  envStage2 = 0;
+    uint8_t  envStage3 = 0;
 };
 
 struct Instrument : InstrumentCore {
@@ -420,6 +436,9 @@ struct Kit {
     /// Section 184: the page is video RAM (`$80`-`$9F`), which the LCD's mode 3
     /// reads back as `$FF` -- the mix carries the scanline's `FE` bytes.
     bool        distVram = false;
+    /// Section 192: the page number LSDj's DIST byte named (`8E` for the font
+    /// block), for the Kits tab; -1 when the table came from nowhere named.
+    int16_t     distPage = -1;
     bool        perSampleLoop = false;   ///< the samples' own `loop` fields apply, not `loop`
     bool        halfSpeed = false;       ///< a frame every other instant (LSDj's SPEED half)
 };

@@ -18,6 +18,28 @@ design-log section the change touches. Update this file at the end of every chan
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
 
+## Done (2026-09-16) -- the version sweep begins (8.5.1) and two 9.2.L reports
+
+- **8.5.1 (format 11) against ChipBoy's import** (`vs_cb.py lsdj8_5_1 --sweep`, 190 cases with
+  the round's new ones): §188 the pre-9.1 noise channel as an instrument mode (LSDj shape:
+  the SHAPE rule per nibble, `S`/`P`/`C` on the byte, the table column as a byte, S MODE =
+  STABLE keeping the width bit; probed note by note and bit by bit); §189 the hardware envelope
+  stages (`envStage2`/`envStage3`, written with a retrigger after `(2·|Δvol|+1)·rate/128` s);
+  §190 a kit's `P` steps on the tick too (9.4.2 as well); §191 the FINETUNE nibble in byte 7
+  (`8·v`). 72 cases still differ, all in the cosmetic classes (the Chip envelope's hold byte
+  against the chip's running one, the vibrato's half-instant phase, 1 ms batch splits, `B`) or
+  in the gap list of `docs/LSDJ_VERSION_MAP.md`. The 9.4.2 sweep shows the same classes only.
+- **The two reports on 9.2.L imports**: `UNMASKED`'s `?8E00` kit (§192: the DIST page reader
+  is version-keyed now, VRAM dumped on every ROM with the trace tool's new `--dump`; the Kits
+  tab's *Page* choice) and `READROOM`'s chain `1C` (§193: kit numbers count kit banks, not
+  banks -- §172 had it wrong; the chain now matches the 9.2.L ROM hit for hit, the whole wave
+  channel within 14 ms of the ROM through 72 s). Also found on the way: the song file dropped
+  the noise sweep domain (`noiseSweep` written twice; now `noiseDomain`).
+- The probe rig grew `vs_sweep.py`'s round-2/3 cases (`NOI_all*`, `NOI_S03_b*`, `PU_adsr_*`,
+  `FTb7_*`, `Wv_W*`, `KIT_P04_t*`, `KIT_L05`, `NOI_*_tbl*`), `vramdump.py` (VRAM pages per
+  ROM, `scratchpad/vram_pages.txt`), and `lsdjref-trace --dump F:ADDR:LEN:FILE`. 310 core
+  tests, 11 plugin checks.
+
 ## Done (2026-09-15) -- the third parity campaign, on 9.4.2's code
 
 - The harness rig on a fresh container: RGBDS prebuilt, SameBoy boot ROMs assembled, the
@@ -941,6 +963,16 @@ design-log section the change touches. Update this file at the end of every chan
 
 ## Open issues
 
+- **The version sweep's gap list** is `docs/LSDJ_VERSION_MAP.md`'s last table: the DRUM `R`,
+  the editor's `typeFits`, the pre-5.7.8 FINETUNE in period units, a kit `L`'s runaway (9.4.2
+  too, `KIT_L05`), the page-`8E` LCD phase on 9.2.L (551 of 640), `E` over running stages. Each
+  waits on the user's decision.
+- **Formats below 11 are not swept yet**: 7.0.2 (no stages), 6.x, 5.x (the register laws), 4.x,
+  3.x. `vs_cb.py lsdjX_Y_Z --sweep` per ROM; `NoiseRule::Raw` (8.8.6, format 15) should become
+  the shape mode's sibling when that ROM is available. Versions not in the archive that the
+  changelog makes worth having: 7.2.3, 7.5.4, 7.9.9, 8.0.0, 8.2.0, 8.4.4, 8.6.x - 8.9.x, 9.0.x,
+  9.1.x, 9.3.x.
+
 - **Kits against 9.4.2 after §186**: the roll and the kit `F` are in; a plain kit note differs
   only by ChipBoy's `NR31 = 00`; the noise table transpose cases (`X92_NOI_tsp2`-`tsp4`) are
   identical write for write (the batch compare split them differently); a kit `E` after the
@@ -1108,6 +1140,14 @@ design-log section the change touches. Update this file at the end of every chan
   show no scrollbar there.
 
 ## Next steps
+
+- **Continue the sweep downwards** from 7.0.2: `python3 vs_sweep.py trace lsdjX_Y_Z` (the ROM
+  side, cached), `python3 vs_cb.py lsdjX_Y_Z --sweep` (ChipBoy's import with that ROM beside the
+  save), `--show` on a case, then a model field and a translation at import, a design-log
+  section before the code, a row in `docs/LSDJ_VERSION_MAP.md`. The env, vibrato and 1 ms
+  classes are known; look at everything else.
+- **The gap list** (`docs/LSDJ_VERSION_MAP.md`) goes to the user for decisions before any of
+  it is built.
 
 - **9.4.2 is the base now** (`LSDJ_VERSIONS.md` §11). A version to map next goes through the
   same steps: put its ROM in `/root/lsdj/roms/`, `vs_versions.py lsdjX_Y_Z lsdj9_4_2`, then

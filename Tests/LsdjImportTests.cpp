@@ -414,17 +414,22 @@ TEST_CASE("the same bytes under the older models take their own envelope, letter
         auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
         ImportSummary sum; ImportNotes notes;
         REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(11), *bank, *out, sum, notes));
-        // Section 58: byte 1 = A5 is amplitude 10 falling at period 5 and byte 9 = 00
-        // is amplitude 0, so the chip's ramp decays it to silence over ten levels.
-        const auto& env11 = bank->instruments[0].env;
-        CHECK(env11.mode == bank::EnvMode::Shaped);
-        CHECK(int(env11.start) == 10); CHECK(int(env11.peak) == 0); CHECK(int(env11.sustain) == 0);
-        // Section 132: ticks plus a fine 1/256, within a 256th of the exact length.
-        const double want11 = 10 * 5 * 1000.0 / 64.0 / (60000.0 / (165.0 * 24.0));
-        CHECK(std::abs(int(env11.attackTicks) + int(env11.attackFine) / 256.0 - want11) < 1.0 / 256.0);
+        // Section 189: byte 1 = A5 is NRx2 and the chip runs it; byte 9 = 00 is
+        // no second stage, so the instrument is a plain Chip envelope.
+        const auto& lead11 = bank->instruments[0];
+        CHECK(lead11.env.mode == bank::EnvMode::Chip);
+        CHECK(int(lead11.envVol) == 10); CHECK(int(lead11.envRate) == 5); CHECK(int(lead11.envStage2) == 0); CHECK(int(lead11.envStage3) == 0);
         CHECK(out->phrase(1)->cells[4].cmd1.cmd == bank::Cmd::P);
+        // Section 188: the noise instrument takes the shape mode (SHAPE 00) and the
+        // cell keeps LSDj's note -- the driver writes EF for A-6 as 8.4.0 does.
         bool found = false;
-        for (uint8_t slot : out->chain[3]) if (const auto* p = out->phrase(slot)) { found = true; CHECK(noiseClockMatches(*bank, *p, 0, 0xEF)); }   // A-6 writes EF on 8.4.0: a 2.3 Hz click, the deepest the Shift reaches
+        for (uint8_t slot : out->chain[3]) if (const auto* p = out->phrase(slot)) {
+            found = true;
+            REQUIRE(p->cells[0].inst >= 1);
+            CHECK(bank->instruments[size_t(p->cells[0].inst - 1)].noiseShapeMode);
+            CHECK(int(bank->instruments[size_t(p->cells[0].inst - 1)].noiseShape) == 0);
+            CHECK(int(p->cells[0].note) == int(song[kNotes + 16]) + 35);
+        }
         CHECK(found);
     }
     SECTION("8.8.6, format 15: the three stages and the raw noise column") {
@@ -491,20 +496,18 @@ TEST_CASE("format 11's envelope is three stages the chip ramps between", "[lsdj]
     auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
     ImportSummary sum; ImportNotes notes;
     REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(11), *bank, *out, sum, notes));
-    const auto& e = bank->instruments[0].env;
-    REQUIRE(e.mode == bank::EnvMode::Shaped);
-    const double tickMs = 60000.0 / (120.0 * 24.0);
-    CHECK(int(e.start) == 1); CHECK(int(e.peak) == 4); CHECK(int(e.sustain) == 2);
-    // Section 132: ticks plus a fine 1/256 of a tick, not a rounded tick count.
-    const auto stage = [](int t, int f) { return double(t) + double(f) / 256.0; };
-    CHECK(std::abs(stage(e.attackTicks, e.attackFine) - 3 * 7 * 1000.0 / 64.0 / tickMs) < 1.0 / 256.0);   // 1 -> 4 at period 7
-    CHECK(std::abs(stage(e.decayTicks, e.decayFine) - 2 * 7 * 1000.0 / 64.0 / tickMs) < 1.0 / 256.0);     // 4 -> 2 at period 7
-    CHECK(int(e.fadeTicks) == 0);
-    // A direction that cannot reach the next amplitude never hands over.
-    i0[1] = 0x1F; i0[9] = 0x00;                                                       // rising from 1, target 0
+    // Section 189: the three bytes stay the chip's -- byte 1 as the Chip
+    // envelope, bytes 9 and 10 as the stages the driver writes with a retrigger.
+    const auto& in11 = bank->instruments[0];
+    REQUIRE(in11.env.mode == bank::EnvMode::Chip);
+    CHECK(int(in11.envVol) == 1); CHECK(in11.envDir == bank::EnvDir::Up); CHECK(int(in11.envRate) == 7);
+    CHECK(int(in11.envStage2) == 0x47); CHECK(int(in11.envStage3) == 0x20);
+    // No byte 9, no stages at all -- byte 10 alone is ignored.
+    i0[1] = 0x1F; i0[9] = 0x00;
     REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(11), *bank, *out, sum, notes));
     CHECK(bank->instruments[0].env.mode == bank::EnvMode::Chip);
     CHECK(bank->instruments[0].envRate == 7);
+    CHECK(int(bank->instruments[0].envStage2) == 0); CHECK(int(bank->instruments[0].envStage3) == 0);
     // Section 59: E re-attacks on every format through 11, and not from 15 up.
     CHECK(bank->instruments[0].envRetrig);
     // Formats 0 to 7 ignore bytes 9 and 10 altogether.
@@ -531,31 +534,25 @@ TEST_CASE("the formats before 9 read the noise SHAPE and resolve S to the note i
     REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(11), *bank, *out, sum, notes));
     const auto* noi = out->phrase(out->chain[3].at(0));
     REQUIRE(noi != nullptr);
-    // ~E3 = 1C, octave 4: 1C + 16 = 2C (16 kHz, 7-bit); the drum's Shift puts it on the keyboard.
+    // Section 188: the instrument takes the shape mode with SHAPE E3 and the cell
+    // keeps LSDj's note (C-4 is MIDI 60): the driver makes ~E3 = 1C, octave 1: 2C.
     const int slot = noi->cells[0].inst;
     REQUIRE(slot >= 1);
-    const int off = int(bank->instruments[size_t(slot - 1)].noiseShift) - 5;
-    const auto noteOf = [off](uint8_t nr43, int prefer) { return chipboyNoteForClock(noiseClockOf(nr43) * std::pow(2.0, off), prefer); };
-    const int n2C = noteOf(0x2C, 60), n3B = noteOf(0x3B, n2C), n4A = noteOf(0x4A, n3B);
-    CHECK(noi->cells[0].note == n2C);
-    CHECK(bank->instruments[size_t(slot - 1)].lfsr7);
+    const auto& drum = bank->instruments[size_t(slot - 1)];
+    CHECK(drum.noiseShapeMode); CHECK(int(drum.noiseShape) == 0xE3); CHECK_FALSE(drum.noiseStable);
+    CHECK(int(noi->cells[0].note) == 60);
     // Section 66: the byte goes through as it stands and the instrument's Sweep
     // reads it -- before 9 that is the nibble subtraction on NR43.
-    CHECK(bank->instruments[size_t(slot - 1)].noiseDomain == bank::NoiseSweepDomain::Register);
+    CHECK(drum.noiseDomain == bank::NoiseSweepDomain::Register);
     REQUIRE(noi->cells[0].cmd1.cmd == bank::Cmd::S);
     CHECK(int(noi->cells[0].cmd1.a) == 0xF); CHECK(int(noi->cells[0].cmd1.b) == 0x1);   // SF1, as written
     REQUIRE(noi->cells[1].cmd1.cmd == bank::Cmd::S);
     CHECK(int(noi->cells[1].cmd1.a) == 0xF); CHECK(int(noi->cells[1].cmd1.b) == 0x1);
-    CHECK(noiseClockMatches(*bank, *noi, 8, 0x1C));                          // C-5: 1C + 0
-    // The table's S rows are folded into its transpose column for the note it is used with (C-5, 1C).
+    CHECK(int(noi->cells[8].note) == 72);                                    // C-5, the tabled drum
     const auto& t = bank->tables[0];
     REQUIRE(t.used);
-    const int slot2 = noi->cells[8].inst; REQUIRE(slot2 >= 1);
-    const int off2 = int(bank->instruments[size_t(slot2 - 1)].noiseShift) - 5;
-    const auto noteOf2 = [off2](uint8_t nr43, int prefer) { return chipboyNoteForClock(noiseClockOf(nr43) * std::pow(2.0, off2), prefer); };
     // The table's S rows keep their bytes too (section 66).
     CHECK_FALSE(t.steps[0].hasTranspose); CHECK_FALSE(t.steps[1].hasTranspose); CHECK_FALSE(t.steps[2].hasTranspose);
-    (void) noteOf2; (void) off2; (void) slot2;
     REQUIRE(t.steps[1].cmd1.cmd == bank::Cmd::S); CHECK(int(t.steps[1].cmd1.a) == 0); CHECK(int(t.steps[1].cmd1.b) == 7);
     REQUIRE(t.steps[2].cmd1.cmd == bank::Cmd::S); CHECK(int(t.steps[2].cmd1.a) == 1); CHECK(int(t.steps[2].cmd1.b) == 0);
     // On 9.x the same byte is the transpose itself.
@@ -1011,6 +1008,14 @@ TEST_CASE("a kit instrument takes its samples from the ROM beside the save", "[l
     CHECK(kits[0].samples.size() == 2); CHECK(kits[0].samples[0].nibbles == ramp); CHECK(kits[0].samples[1].nibbles == flat);
     CHECK(kits[1].samples.size() == 1); CHECK(kits[1].samples[0].nibbles == tri);
     CHECK(lsdjKitByNumber(kits, 1) == &kits[1]); CHECK(lsdjKitByNumber(kits, 2) == nullptr);
+    // Section 193: a kit number counts kit banks, not banks -- a gap bank is skipped.
+    std::vector<uint8_t> gapped(12 * 0x4000, 0);
+    std::memcpy(gapped.data() + 8 * 0x4000, rom.data() + 8 * 0x4000, 0x4000);      // bank 8: kit 00
+    std::memcpy(gapped.data() + 10 * 0x4000, rom.data() + 9 * 0x4000, 0x4000);     // bank 10: kit 01, bank 9 empty
+    const auto kits2 = readKits(gapped.data(), gapped.size());
+    REQUIRE(kits2.size() == 2);
+    CHECK(kits2[1].bank == 10);
+    CHECK(lsdjKitByNumber(kits2, 1) == &kits2[1]); CHECK(lsdjKitByNumber(kits2, 1)->name == "SECOND"); CHECK(lsdjKitByNumber(kits2, 2) == nullptr);
     CHECK(kitPeriodOfSpeed(0x00) == 1865); CHECK(kitPeriodOfSpeed(0xD0) == 1817); CHECK(kitPeriodOfSpeed(0x40) == 1929);
     CHECK(kitPeriodOfSpeed(0x00, true) == 1682);
 
@@ -1424,4 +1429,43 @@ TEST_CASE("a 9.x instrument's envelope bytes come through for the ROM's machine"
     REQUIRE(importSong(h.data(), h.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes));
     CHECK_FALSE(bank->instruments[0].env.lsdj);
     CHECK(bank->instruments[0].env.mode == bank::EnvMode::Chip);
+}
+
+TEST_CASE("a format-11 song's noise, finetune and envelope stages come in as the 8.5.1 ROM plays them", "[lsdj][versions]")
+{
+    // Sections 188, 189 and 191: the noise instrument takes the shape mode
+    // (SHAPE from byte 4, S MODE from byte 2), the pulse its FINETUNE nibble
+    // from byte 7 bits 2-5 as eight times the 9.x unit, and the three envelope
+    // bytes stay Chip-mode bytes with two stages instead of a shaped walk.
+    auto song = blankSong(11);
+    song[kInstAlloc + 0] = 1;
+    uint8_t* i0 = song.data() + kInst; i0[0] = 0; i0[1] = 0xA3; i0[4] = 0xFF; i0[7] = uint8_t(0x80 | (0x0F << 2) | 3); i0[9] = 0x54; i0[10] = 0x20;
+    song[kInstAlloc + 1] = 1;
+    uint8_t* i1 = song.data() + kInst + 16; i1[0] = 3; i1[1] = 0xF0; i1[2] = 0x01; i1[4] = 0x0F; i1[7] = 3;
+    song[kPhraseAlloc] |= 3;
+    song[kNotes] = uint8_t(60 - 35); song[kPhraseInst] = 0;                                   // phrase 0: the pulse
+    song[kNotes + 16] = 0x20; song[kPhraseInst + 16] = 1; song[kCmd + 16] = 0x0F; song[kCmdV + 16] = 0x03;   // phrase 1: the noise note G-5 with S 03 (S is 0F in the 8.4 letter table)
+    song[kChainPhrases] = 0; song[kChainPhrases + 16] = 1;
+    song[kRows + 0] = 0; song[kRows + 1] = 0xFF; song[kRows + 2] = 0xFF; song[kRows + 3] = 1;
+    song[kRows + 4] = 0xFF; song[kRows + 5] = 0xFF; song[kRows + 6] = 0xFF; song[kRows + 7] = 0xFF;
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    const auto* m = lsdjModelForFormat(11);
+    REQUIRE(m != nullptr); CHECK(m->fineTuneNibble);
+    REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
+    const auto& pu = bank->instruments[0];
+    CHECK(pu.env.mode == bank::EnvMode::Chip);
+    CHECK(int(pu.envVol) == 0xA); CHECK(int(pu.envRate) == 3); CHECK(pu.envDir == bank::EnvDir::Down);
+    CHECK(int(pu.envStage2) == 0x54); CHECK(int(pu.envStage3) == 0x20);
+    CHECK(int(pu.fineTune) == 0x0F * 8);
+    const auto& noi = bank->instruments[1];
+    CHECK(noi.noiseShapeMode); CHECK(int(noi.noiseShape) == 0x0F); CHECK(noi.noiseStable);
+    CHECK_FALSE(noi.noiseLsdjMap);
+    CHECK(noi.noiseDomain == bank::NoiseSweepDomain::Register);
+    // The cell keeps the LSDj note (0x20 is MIDI 67) and the S its byte.
+    const auto& c = out->phrases[1].cells[0];
+    CHECK(int(c.note) == 0x20 + 35);
+    CHECK(c.cmd1.cmd == bank::Cmd::S); CHECK(int(c.cmd1.a) == 0); CHECK(int(c.cmd1.b) == 3);
+    // 9.x keeps byte 11: the same bytes under the 9.4.2 model read 0 there.
+    CHECK_FALSE(lsdjModelForFormat(22)->fineTuneNibble);
 }

@@ -134,6 +134,11 @@ struct LsdjModel {
     bool           waveRetrigNibble;
     bool           kitVibratoHalved;
     bool           retrigResetsDrumPitch;
+    /// Section 191: a pulse instrument's FINETUNE is a nibble in byte 7 bits
+    /// 2-5, `v / 32` of a semitone down (5.7.8 - 8.5.1); the 9.x byte 11 is
+    /// unread. False where byte 11 holds it (9.x) or the nibble means period
+    /// units or nothing (before 5.7.8, docs/LSDJ_VERSION_MAP.md).
+    bool           fineTuneNibble;
 };
 
 /// Every model, newest first. `count` receives how many.

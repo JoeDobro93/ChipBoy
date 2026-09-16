@@ -4148,3 +4148,37 @@ as the point. It carries the L3 rule that lets behaviour be derived from the ROM
 PC-tracer invocations with the addresses the last campaign recorded, the reading order for the
 documents and how far to trust each, the ten things already known to be wrong, the traps this year
 cost to learn, and what done looks like per finding.
+
+## 2026-09-16 -- the version sweep starts at 8.5.1; two 9.2.L reports (§188 - §193)
+
+- **The pre-9.1 noise channel is an instrument mode** (§188). Every LSDj before 9.1.0 makes
+  NR43 from the note's octave and the SHAPE byte, and `S`, `P` and `C` work on that byte nibble
+  by nibble; the importer used to hunt the nearest-clock note and lost the commands. The noise
+  instrument gains **LSDj shape** (`noiseShapeMode`, `noiseShape`, `noiseStable` -- the third
+  *Pitch* choice, a *Shape* byte and *S mode* on the Instrument tab), the driver applies the
+  rule, and a format 0-14 import sets it with LSDj's note in the cell. Probed on 8.5.1: every
+  note, the saturation, `S`/`P`/`C`, the table column, S MODE bit by bit.
+- **The hardware envelope stages of 8.1.0 - 8.5.1** (§189): a Chip envelope carries
+  `envStage2` and `envStage3`, bytes the driver writes with a retrigger once the stage before
+  has stepped its levels and a half at its rate -- the ROM's timing on seventeen probed triples.
+  The importer's `HardwareStages` law maps to it instead of a shaped walk.
+- **A kit's `P` steps once more on every tick** (§190), on 9.4.2 as on 8.5.1; ChipBoy fell a
+  step behind a tick.
+- **The pulse FINETUNE nibble** of 5.7.8 - 8.5.1 (§191): byte 7 bits 2-5, eight times the 9.x
+  unit (`fineTuneNibble` on the model). The period-unit law of 3.6.8 - 5.0.3 is not mapped
+  (`docs/LSDJ_VERSION_MAP.md`'s gap list).
+- **`DIST` pages by version, and selectable** (§192): the raw-page reader took the font block
+  from the 9.4.2 ROM only; video RAM dumped on every archive ROM (the trace tool's `--dump`)
+  gives a version table of its offset and the zero pages, so the 9.2.L import of `UNMASKED`'s
+  `?8E00` kit mixes through the page again. The Kits tab shows the page as *Page* instead of
+  *Wrap* and keeps it through the other choices (`Kit::distPage`). `W` on a MANUAL wave
+  instrument is dropped at import, as the ROM starts no run there.
+- **Kit numbers count the ROM's kit banks** (§193), empty banks skipped, on 9.2.L and 9.4.2
+  alike -- probed with a kit byte over five empty banks. §172's "bank `k + 8`" was wrong and
+  made `READROOM`'s `AMEN2` play `AMEN1` and its `LCAMN` nothing; the trace of chain `1C` now
+  matches the 9.2.L ROM hit for hit.
+- **A song file lost the noise sweep domain**: `noiseSweep` was written twice (the domain, then
+  the sweep steps), so Register never survived a save; it is `noiseDomain` now.
+- `docs/LSDJ_VERSION_MAP.md` has the new rows and a **gap list for decisions**; the 8.5.1 sweep
+  is down to the cosmetic classes (the envelope's hold-versus-run bytes, the vibrato's half-instant
+  phase, one-millisecond batch splits, `B`'s randomness) and the listed gaps.

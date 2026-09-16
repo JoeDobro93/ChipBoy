@@ -292,6 +292,7 @@ private:
         /// Section 66's Register domain: the nibble-wise delta S and P have
         /// taken off NR43 so far, and the P that keeps taking it every tick.
         uint8_t  noiseReg = 0, noiseRegStep = 0;
+        int8_t   noiseTableTsp = 0;   ///< section 188: the table's transpose column last applied (shape mode); a change drops the delta
         bool     noiseStepFresh = false;  ///< section 150: a noise `P`'s first step is the next tick's
         int16_t  noiseBend256 = 0;    ///< Notes domain: P's map entries a tick, in 1/256
         int32_t  noiseBend9 = 0;      ///< and what it has accumulated between whole entries
@@ -352,6 +353,11 @@ private:
         // instrument from before 8.8.0 just steps at the chip's own rate
         // instead of that table's (section 70).
         uint32_t envCount = 0;             ///< 256ths of a pitch clock since the level last stepped (section 70)
+        /// Section 189: the hardware stages of a Chip envelope -- which stage
+        /// is running (0 the note's byte, 1 stage 2) and the countdown to the
+        /// next byte's write, in `envCount`'s units; 0 is no stage pending.
+        uint8_t  envStage = 0;
+        uint32_t envStageLeft = 0;
         /// Section 164: the ROM's three-stage envelope machine, for an
         /// `Envelope::lsdj` instrument: the stage (0 off, 1-3), the countdown
         /// in pitch-clock instants and its reload, and the level it walks to.
@@ -515,6 +521,10 @@ private:
     /// trigger a note-on, R or an E that moves the envelope needs. Every
     /// other level change goes through setLevel() instead (section 26).
     void writeEnvelope(int ch, bool trigger, bool fast = false);
+    /// Section 189: arm the Chip envelope's hardware stages from the byte the
+    /// note has; called by every envelope write that is not a stage's own.
+    void armEnvStages(int ch);
+    bool envStageWrite_ = false;         ///< the write in progress is a stage's own (no re-arm)
     /// A level change on a running channel, without a trigger (section 26):
     /// the shortest zombie-mode NRx2 sequence that leaves the chip's volume at
     /// `v.envVol` with the envelope the driver wants (`v.envRate`, `v.envDir`)

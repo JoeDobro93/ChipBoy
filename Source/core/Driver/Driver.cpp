@@ -845,6 +845,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     v.noteTsp = core.transpose ? v.cellTranspose : int8_t(0);
     v.instTranspose = (ch == 1 && core.type == InstrumentType::Pulse) ? core.pu2Transpose : int8_t(0);
     v.noiseTsp = 0; v.noiseReg = 0; v.noiseRegStep = 0; v.noiseBend256 = 0; v.noiseBend9 = 0;   // S and P on NOI start over (sections 55 and 66)
+    v.noiseTableTsp = 0;                                                                          // section 188
     v.instKey = instrumentKey(ch, vel);
     v.ticks = 0; v.vibPhase = vibStartPhase(v.inst.vib.dir, v.inst.vib.shape); v.pitchCount = 0;
     // Section 112: a note starts on the instrument's own finetune, not on zero
@@ -1460,6 +1461,29 @@ void Driver::restartPitchClock(int ch)
 uint8_t Driver::noiseNr43(int ch)
 {
     Voice& v = v_[size_t(ch)];
+    if (v.inst.noiseShapeMode) {
+        // Section 188: the pre-9.1 rule. The note with its transposes gives the
+        // octave (LSDj note 1, MIDI 36, is octave 0); each nibble of SHAPE is
+        // complemented and the high one raised by 3 - octave, saturating on
+        // its own. The table's transpose column is a byte off that; S, P and
+        // the chord's byte come off nibble by nibble; STABLE keeps the width.
+        const int raw = int(v.note) + v.noteTsp + v.p.transpose;
+        const int octave = raw >= 36 ? (raw - 36) / 12 : -((36 - raw + 11) / 12);
+        const int hi = std::clamp(15 - (int(v.inst.noiseShape) >> 4) + 3 - octave, 0, 15);
+        const uint8_t base = uint8_t((hi << 4) | (15 - (v.inst.noiseShape & 15)));
+        const int tsp = tableTransposeOf(v);
+        // A change of the column rewrites the byte from the note and drops the
+        // S/P delta with it (NOI_S03_tsp); a P already stepped this tick keeps
+        // its step, as the ROM's P runs on from the rewritten byte (NOI_P02_tbl).
+        if (tsp != int(v.noiseTableTsp)) { v.noiseTableTsp = int8_t(std::clamp(tsp, -128, 127)); v.noiseReg = (v.noiseRegStep && !v.noiseStepFresh) ? v.noiseRegStep : uint8_t(0); }
+        const uint8_t withTsp = uint8_t((int(base) - tsp) & 0xFF);
+        uint8_t delta = v.noiseReg;
+        if (v.chordN && (v.chordIdx % 2) == 1) delta = bank::noiseNibbleAdd(delta, uint8_t((v.chord[1] << 4) | (v.chord[2] & 15)));
+        uint8_t nr = bank::noiseNibbleSub(withTsp, delta);
+        if (v.inst.noiseStable) nr = uint8_t((nr & ~8) | (withTsp & 8));
+        v.noiseShift = uint8_t(nr >> 4); v.noiseDiv = uint8_t(nr & 7); v.lfsr7 = (nr & 8) != 0;
+        return nr;
+    }
     {
         uint8_t s, d;
         if (v.inst.noiseManual) { s = v.noiseShift; d = v.noiseDiv; }
@@ -1644,6 +1668,25 @@ void Driver::writeEnvelope(int ch, bool trigger, bool fast)
         else emit(regAddr(ch, 4), uint8_t((f >> 8) | 0x80 | len), true);
         markTrigger(ch);
     }
+    if (!envStageWrite_) armEnvStages(ch);   // section 189: a note-on or a retrigger starts at stage 1
+}
+
+/// Section 189: how long a stage lasts before the next byte -- the chip has
+/// stepped `|vol - next|` levels and half a step more at the stage's rate.
+/// In `envCount` units; 0 when the rate is 0 (the stage holds for ever).
+static uint32_t envStageLength(int vol, int rate, int nextVol)
+{
+    if ((rate & 7) == 0) return 0;
+    return uint32_t((2 * std::abs(vol - nextVol) + 1) * kEnvStepPeriods[rate & 7] / 2);
+}
+
+void Driver::armEnvStages(int ch)
+{
+    Voice& v = v_[size_t(ch)];
+    v.envStage = 0; v.envStageLeft = 0;
+    if (v.inst.env.mode != EnvMode::Chip || v.inst.envStage2 == 0) return;
+    if (v.inst.type != InstrumentType::Pulse && v.inst.type != InstrumentType::Noise) return;
+    v.envStageLeft = envStageLength(int(v.envVol), int(v.envRate), int(v.inst.envStage2 >> 4));
 }
 
 void Driver::setLevel(int ch)
@@ -1694,6 +1737,20 @@ void Driver::stepSoftEnvelope(int ch)
     if (v.shapedOn && !v.shapedTaken) return;
     const int rate = v.envRate & 7;
     if (rate == 0 || !v.dacOn || !v.hwOn) return;
+    // Section 189: the hardware stages -- at the end of the countdown the next
+    // byte is the level, direction and rate, written with a retrigger.
+    if (v.envStageLeft) {
+        if (v.envStageLeft > uint32_t(kEnvClock)) v.envStageLeft -= uint32_t(kEnvClock);
+        else {
+            const uint8_t next = v.envStage == 0 ? v.inst.envStage2 : v.inst.envStage3;
+            v.envStageLeft = 0;
+            v.envVol = uint8_t(next >> 4); v.envDir = (next & 8) ? EnvDir::Up : EnvDir::Down; v.envRate = uint8_t(next & 7);
+            envStageWrite_ = true; writeEnvelope(ch, true, false); envStageWrite_ = false;
+            if (v.envStage == 0 && v.inst.envStage3) v.envStageLeft = envStageLength(int(v.envVol), int(v.envRate), int(v.inst.envStage3 >> 4));
+            v.envStage = uint8_t(v.envStage + 1);
+            return;
+        }
+    }
     // Subtracting the period rather than clearing keeps the average exact
     // where it is not a whole number of pitch clocks (section 70).
     const int period = kEnvStepPeriods[rate];
@@ -2098,6 +2155,9 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
                 // the phase is; one starting a chord plays the root on its tick.
                 const bool running = v.chordN != 0;
                 v.chordN = c.b ? 3 : (c.a ? 2 : 0);
+                // Section 188: under the shape rule the chord has two states, the
+                // note and the note less the whole byte, a tick each.
+                if (v.inst.noiseShapeMode && v.chordN) v.chordN = 2;
                 if (!running) { v.chordIdx = 0; v.chordCount = 0; v.chordFresh = v.ticks > 1; }
                 else if (v.chordN) v.chordIdx = uint8_t(v.chordIdx % v.chordN);
             }
@@ -2121,7 +2181,7 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             // E takes a shaped envelope over, as a table's volume column does
             // (section 27); section 164: and stops the ROM's machine (2:$6A0D
             // sets its mode to zero before its own rate takes over).
-            v.shapedTaken = true; v.lsdjStage = 0;
+            v.shapedTaken = true; v.lsdjStage = 0; v.envStageLeft = 0;   // section 189: an E ends the hardware stages
             // Section 79: on WAV/KIT the level is NR32's two bits and LSDj takes
             // them from the **low** nibble -- E01 is 25%, E03 100%, and x does
             // nothing. ChipBoy took x.
@@ -2968,6 +3028,9 @@ void Driver::tick(int ch)
     if (v.releasing) stepRelease(ch);
     if (!v.active) return;
     ++v.ticks;
+    // Section 190: a kit's bend takes the tick's step on top of the instant's
+    // -- the ROM's tick handler runs the pitch routine for a kit too.
+    if (v.inst.type == InstrumentType::Kit && v.bendSpeed && v.pitchClockOn) { v.drumOffset += double(v.bendSpeed); v.pitchWrite = true; }
     // What the *tick* does to the pitch -- a chord step, a table's transpose
     // column -- has to reach the registers; what the pitch clock does is its
     // own business. Comparing the note before and after the tick's work
@@ -2975,6 +3038,9 @@ void Driver::tick(int ch)
     // ... so the comparison leaves the pitch effects' own offsets out of it.
     const auto tickNote = [&] { return noteOfVoice(ch) - double(v.fineOffset + slideResidual(v)) / 256.0; };
     const double noteBeforeTick = tickNote();
+    // Section 188: under the shape rule the chord and the column change the
+    // byte, not the note, so the byte is what says whether to write.
+    const int nrBeforeTick = v.inst.noiseShapeMode ? int(noiseNr43(ch)) : -1;
     bool tspReleased = false;                     // section 157: the noise note took the held column
     // A K comes due **before** the table's rows are read (section 128), so a
     // looping table whose own row re-arms the K cannot keep it from ever
@@ -3153,7 +3219,7 @@ void Driver::tick(int ch)
             }
         }
     }
-    else if (v.inst.type == InstrumentType::Noise) { if (v.noiseSweep || tspReleased || tickNote() != noteBeforeTick) writePeriod(ch, false); }   // a table's transpose reaches NR43 (section 45)
+    else if (v.inst.type == InstrumentType::Noise) { if (v.noiseSweep || tspReleased || tickNote() != noteBeforeTick || (nrBeforeTick >= 0 && int(noiseNr43(ch)) != nrBeforeTick)) writePeriod(ch, false); }   // a table's transpose reaches NR43 (section 45)
     else if (tickNote() != noteBeforeTick) writePeriod(ch, false);
 }
 

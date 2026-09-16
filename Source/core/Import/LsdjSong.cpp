@@ -151,7 +151,7 @@ struct Reader {
     {
         std::array<int, 4> cur{ 0, 0, 0, 0 };
         int runNr = -1;                                       // the noise channel's NR43, for the S rows' clocks
-        const bool fold = m.noiseRule != NoiseRule::Map;
+        const bool fold = m.noiseRule != NoiseRule::Map && !shapeNoise();
         const auto use = [this](int ins, int ch) {
             if (ins < 0 || ins >= kLsdjInstruments) return;
             instUsed.insert(ins);
@@ -190,7 +190,7 @@ struct Reader {
                         if (letter == 'A' && v != 0x20) tbl = v;
                         else if (ci >= 0 && ci < kLsdjInstruments && (inst(ci)[6] & 0x20)) tbl = inst(ci)[6] & 0x1F;
                         if (tbl >= 0 && tbl < kLsdjTables) tableUse[tbl].insert({ ci, ch, int(n) + 35 });
-                        if (ch == 3) {
+                        if (ch == 3 && !shapeNoise()) {
                             // The clocks this slot asks for: the note, the S rows after it, the table's rows.
                             const int slot = slotFor(ci, 3);
                             runNr = lsdjNr43(int(n) + 35 + (fold && transposeOn(ci) ? tsp : 0), ci);
@@ -221,7 +221,9 @@ struct Reader {
         if (m.noiseRule == NoiseRule::Shape) {
             const int shape = instSlot >= 0 && instSlot < kLsdjInstruments ? int(inst(instSlot)[4]) : 0xFF;
             const int octave = (std::clamp(midi, 36, 36 + 12 * 12) - 36) / 12 + 2;   // C-2 to B-2 is octave 2
-            return uint8_t(std::clamp(((~shape) & 0xFF) + 16 * (5 - octave), 0, 255));
+            // Section 188: the high nibble saturates on its own -- SHAPE 0F at C-4 is F0, not FF.
+            const int hi = std::clamp(15 - (shape >> 4) + (5 - octave), 0, 15);
+            return uint8_t((hi << 4) | (15 - (shape & 15)));
         }
         if (m.noiseRule == NoiseRule::Raw) return uint8_t(std::clamp(0xFF - (midi - 35), 0, 255));
         // Section 83: the table starts at `noiseLo` and its index **wraps**, which
@@ -239,6 +241,9 @@ struct Reader {
     /// ChipBoy's own map.
     static constexpr int kNoiseMapNote0 = 1;
     bool mappedNoise() const { return m.noiseRule == NoiseRule::Map && m.noiseMap != nullptr; }
+    /// Section 188: the pre-9.1 noise channel is an instrument mode of its own,
+    /// so the cell keeps the LSDj note and the commands their bytes.
+    bool shapeNoise() const { return m.noiseRule == NoiseRule::Shape; }
     int noiseMapLen() const { return std::max(1, m.noiseHi - m.noiseLo + 1); }
     int noiseNoteInMap(int midi)
     {
@@ -320,6 +325,14 @@ struct Reader {
             return;
         }
         const bool hw = m.envelopeLaw == EnvelopeLaw::HardwareStages;
+        if (hw) {
+            // Section 189: byte 1 is NRx2 and the chip runs it; bytes 9 and 10
+            // are the stages the ROM writes with a retrigger, byte for byte.
+            o.env.mode = bank::EnvMode::Chip;
+            o.envVol = uint8_t(b[1] >> 4); o.envDir = (b[1] & 8) ? bank::EnvDir::Up : bank::EnvDir::Down; o.envRate = uint8_t(b[1] & 7);
+            o.envStage2 = b[9]; o.envStage3 = b[9] ? b[10] : uint8_t(0);
+            return;
+        }
         const int mask = hw ? 7 : 15;                                     // NRx2 keeps the period in three bits
         const int a1 = b[1] >> 4, s1 = b[1] & mask, a2 = b[9] >> 4, s2 = b[9] & mask, a3 = b[10] >> 4, s3 = b[10] & mask;
         // On the chip a stage hands over only when its ramp can reach the next
@@ -460,7 +473,9 @@ struct Reader {
                 // own pu2Transpose is too -- carried exactly, so no note unless
                 // it takes a note off the keyboard (pu2TransposeRange()).
                 if (m.pu2Transpose && b[2]) o.pu2Transpose = int8_t(signedByte(b[2]));
-                o.fineTune = b[11];          // section 112
+                // Section 191: before 9.x the nibble in byte 7 bits 2-5, v/32 of a
+                // semitone down -- 9.4.2's `F 0v`, so eight times it in byte 11's units.
+                o.fineTune = m.fineTuneNibble ? uint8_t(((b[7] >> 2) & 15) * 8) : b[11];          // section 112
             } else if (t == 1) {
                 static const uint8_t kLevel[4] = { 0, 3, 2, 1 };       // the stored bits are the NR32 code, 1 = 100 %
                 o.waveLevel = kLevel[(b[1] >> 5) & 3];
@@ -526,7 +541,10 @@ struct Reader {
                 // during an S command and has no ChipBoy equivalent.
                 if (m.noisePitchByte < 0) {
                     o.noisePitch = bank::NoisePitch::Never;
-                    if (b[2]) notes.add("noise instrument " + name + " has S MODE = STABLE (byte 2 = " + hex2(b[2]) + "), which holds the LFSR width through an S command; ChipBoy has no equivalent and lets S cross it");
+                    // Section 188: the note picks NR43 from SHAPE (byte 4), S MODE
+                    // (byte 2, nonzero = STABLE) keeps the width bit through S, P and C.
+                    if (shapeNoise()) { o.noiseShapeMode = true; o.noiseShape = b[4]; o.noiseStable = b[2] != 0; o.noiseLsdjMap = false; }
+                    else if (b[2]) notes.add("noise instrument " + name + " has S MODE = STABLE (byte 2 = " + hex2(b[2]) + "), which holds the LFSR width through an S command; ChipBoy has no equivalent and lets S cross it");
                 } else {
                     o.noisePitch = b[size_t(m.noisePitchByte)] ? bank::NoisePitch::Safe : bank::NoisePitch::Free;
                 }
@@ -585,7 +603,7 @@ struct Reader {
         // as it stands; the pages read from the ROM come with the kits.
         const int distPage = int(b[10]) - int(kKitDistFirstPage);
         if (distPage >= 0 && distPage < kKitDistPages && m.kitDist != nullptr) use.dist = m.kitDist[distPage];
-        else if (rawPages != nullptr && rawPages->count(int(b[10]))) { use.dist = KitDist::Raw; k.distTable = rawPages->at(int(b[10])); k.distVram = b[10] >= 0x80 && b[10] <= 0x9F; }   // section 184
+        else if (rawPages != nullptr && rawPages->count(int(b[10]))) { use.dist = KitDist::Raw; k.distTable = rawPages->at(int(b[10])); k.distVram = b[10] >= 0x80 && b[10] <= 0x9F; k.distPage = int16_t(b[10]); }   // sections 184 and 192
         else use.distByte = int(b[10]);
         k.dist = use.dist;
         kitUse[i] = use;
@@ -717,7 +735,7 @@ struct Reader {
                     // instrument reads it as semitones, before that as the nibble
                     // subtraction on NR43. Either way it is the same two digits.
                     if (m.noiseS == NoiseS::Semitones && st) st->chipNote += signedByte(v);
-                    else if (st && st->nr43 >= 0) { const uint8_t nr = nibbleS(uint8_t(st->nr43), v); st->chipNote = noteForNr43(nr, st->chipNote, st->noiseSlot); st->nr43 = nr; }
+                    else if (st && st->nr43 >= 0 && !shapeNoise()) { const uint8_t nr = nibbleS(uint8_t(st->nr43), v); st->chipNote = noteForNr43(nr, st->chipNote, st->noiseSlot); st->nr43 = nr; }
                     out = { Cmd::S, int16_t(x), int16_t(y), 0 }; return true;
                 }
                 // Section 72: the driver keeps the running sweep byte and adds
@@ -762,7 +780,15 @@ struct Reader {
                 // Section 115: on a wave instrument LSDj's `W` is the run --
                 // x ticks a frame, y + 1 frames. ChipBoy's `W` is the wave slot,
                 // so the run comes in as `U`.
-                if (instKind == 1) { out = { Cmd::U, int16_t(x), int16_t(y), 0 }; return true; }
+                if (instKind == 1) {
+                    // Section 192: on a MANUAL instrument (PLAY byte 9 = 0) the ROM's W
+                    // starts no run -- probed on 9.4.2 and 8.5.1 (`Wv_W12`) -- where
+                    // ChipBoy's U would; so it is dropped there.
+                    if (st && m.waveFrameRun && st->inst >= 0 && st->inst < kLsdjInstruments && inst(st->inst)[0] == 1 && inst(st->inst)[9] == 0) {
+                        notes.add("W" + hex2(v) + " at " + where + ": the wave instrument's PLAY is MANUAL, where the ROM's W starts no frame run; dropped"); return false;
+                    }
+                    out = { Cmd::U, int16_t(x), int16_t(y), 0 }; return true;
+                }
                 // Section 6.18: the ROM masks the byte to its low **two bits**,
                 // so W04 is W00 and W07 is W03; the rest of the byte is ignored.
                 // Measured on 9.2.L across the byte, so ChipBoy's duty is the
@@ -879,7 +905,7 @@ struct Reader {
                     // -- semitones on the note -- so it goes through untouched and
                     // every note the table serves lands where the ROM puts it, not
                     // only the lowest.
-                    if (noiseBase >= 0 && mappedNoise()) st.transpose = int8_t(signedByte(tsp));
+                    if (noiseBase >= 0 && (mappedNoise() || shapeNoise())) st.transpose = int8_t(signedByte(tsp));   // section 188: a byte off NR43, the driver's
                     else if (noiseBase >= 0) {
                         // Before 9 the column is subtracted from NR43 itself, byte-wise
                         // (a -2 is +2 on the register; measured on the format-3
@@ -971,6 +997,7 @@ struct Reader {
                     // writes. Without one -- an older format whose rule is a shape or
                     // a raw byte -- it still has to cross into ChipBoy's map.
                     if (mappedNoise()) midi = noiseNoteInMap(tspMidi);
+                    else if (shapeNoise()) midi = lsdjMidi;               // section 188: the driver applies the transposes and the rule
                     else {
                         midi = noteForNr43(nr43, tspMidi, state.noiseSlot);
                         if (midi < 12) { notes.add("noise NR43 " + hex2(nr43) + " clocks below ChipBoy's lowest noise note (a click rather than a pitch); the lowest, note 12, is used"); midi = 12; }
@@ -980,7 +1007,7 @@ struct Reader {
                 // A mapped noise note is a table index and its lowest entry is
                 // note 1; an unmapped one is a pitch on ChipBoy's own keyboard,
                 // whose lowest noise note is 12.
-                c.note = uint8_t(std::clamp(midi, kind == 3 && !mappedNoise() ? 12 : 1, 127));
+                c.note = uint8_t(std::clamp(midi, kind == 3 && !mappedNoise() && !shapeNoise() ? 12 : 1, 127));
             }
             const char letter = letterOf(at(kPhraseCmd + i));
             if (letter == 'H') {
@@ -1047,7 +1074,7 @@ struct Reader {
                     const uint8_t p = at(kChainPhrases + size_t(c) * 16 + size_t(st));
                     if (p == 0xFF || p >= kLsdjPhrases) break;
                     const int tsp = signedByte(at(kChainTsp + size_t(c) * 16 + size_t(st)));
-                    const bool fold = ch == 3 && m.noiseRule != NoiseRule::Map;   // section 56: the octave is all that counts, resolved here
+                    const bool fold = ch == 3 && m.noiseRule != NoiseRule::Map && !shapeNoise();   // section 56: the octave is all that counts, resolved here; section 188: the driver's rule takes the row's transpose
                     bool stops = false;
                     const int slot = phraseFor(p, ch, state[size_t(ch)], fold ? tsp : 0, &stops);
                     auto& chain = song.chain[size_t(ch)];

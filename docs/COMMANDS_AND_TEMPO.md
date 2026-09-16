@@ -5374,9 +5374,9 @@ sets `Voice::framePending` and the instant loop runs the ROM's check (`waveSyncP
 §11.8, `0:$0391`-`$0590`, `0:$15A0`-`$1700`, the loader `2:$5C77`-`$5DB9`) says why on every
 count. What the ROM does, and what ChipBoy did:
 
-- **Kit number `k` is ROM bank `k + 8`** (`0:$1478`), so a ROM with gaps in its kit banks
-  numbers past them; ChipBoy numbered the kits it found in order (`EGOFLEX`'s `18`-`1A`,
-  `READROOM`'s `1C`-`1F` and `UNMASKED`'s `0C`/`0E` named the wrong kits or none).
+- ~~**Kit number `k` is ROM bank `k + 8`** (`0:$1478`)~~ -- **wrong, see §193**: the number
+  counts the ROM's kit banks in order and skips the empty ones, which is what ChipBoy did
+  before this section changed it.
 - **Each side has its own bytes.** Kit A: number `byte 2 & $3F`, `ATK` bit 7 of byte 2, half
   speed bit 6 of byte 2 (both sides), `LEN` byte 3, `OFFSET` byte 12, `LOOP` bit 6 of byte 5. Kit
   B: number `byte 9 & $3F`, `ATK` bit 7 of byte 9, `LEN` byte 11, `OFFSET` byte 13, `LOOP` bit 5
@@ -5815,3 +5815,132 @@ the user asked for (the Instrument tab's *Kit vibrato 1x / 2x*, `vibDouble` in t
 keeping the pre-9.4.0 depth; the importer sets it on every kit instrument of a version before
 9.4.0 and leaves the `V` bytes alone (§185's doubling of `y` is gone). A kit whose samples have
 ended writes no period.
+
+## 188. The pre-9.1 noise channel as an instrument mode: SHAPE, the nibble commands, S MODE
+
+The version sweep's first stop below format 22 is 8.5.1 (format 11), whose noise channel is the
+one every release from 3.1.5 to 8.8.6 had before 9.1.0 "rearranged noise notes by frequency".
+ChipBoy imported it by finding the ChipBoy note with the nearest LFSR clock for each byte the
+ROM would write, which loses the byte itself, and then `S`, `P`, `C` and the table's transpose
+column -- all of which work on that byte -- landed elsewhere or nowhere (`NOI_S03`: the ROM's
+`10 -> 1D`, ChipBoy `01 -> 01`; `NOI_P02`: the ROM walks `1E 1C 1A …`, ChipBoy holds). Probed on
+the 8.5.1 ROM, every noise note and the commands around them:
+
+- **The note.** `NR43 = hi << 4 | lo` with `lo = 15 - SHAPE.lo` and
+  `hi = clamp(15 - SHAPE.hi + 3 - octave, 0, 15)`, `octave = (note - 1) / 12` (LSDj note 1 is
+  C-3, so every note of C-3..B-3 is octave 0). Each nibble saturates on its own -- SHAPE `0F` at
+  C-4 is `F0`, not `FF`; SHAPE `FF` from C-6 up is `00`. The chain row's, the channel's and the
+  instrument's transposes move the note before the rule (`chain_tsp_noi`).
+- **`S xy`** subtracts each nibble from the running byte's, modulo 16, no borrow (`10 - 03 = 1D`,
+  `10 - F3 = 2D`), written at once; **`P xy`** does the same every tick (`P 02`: `1E 1C 1A 18 …`;
+  `P FE`: `22 34 46 …`, the high nibble up one and the low up two each tick); **`C xy`** alternates
+  the note and the note less the **whole byte**, nibble-wise, a tick each (`C 37`: `10 E9 10 E9`;
+  `C 30`: `10 E0`). Two states, not 9.x's three.
+- **The table's transpose column** is a **byte** subtraction from the note's NR43 (`tsp 03` on `00`
+  is `FD`, `F4` is `0C`), written when the column's value changes from the row before -- and it
+  drops the `S`/`P` delta with it (`NOI_S03_tsp`: `1D` then `0D` on row 0's `03`, `10` on row 1's
+  `00`; `NOI_P02_tbl`: `P` carries on from the rewritten byte, `10 1E 1C …`). A table without a
+  transpose leaves the delta alone (`NOI_S03_tblEmpty`).
+- **S MODE** is the noise instrument's byte 2: nonzero is STABLE (every bit tested alone gives it),
+  and under it the width bit (bit 3) of every `S`, `P` and `C` result is the note's own
+  (`S 03` on `10` gives `15`, on `18` gives `1D`; `P 02` on `10` walks `16 14 12 10`). The table's
+  transpose column is not masked (`FD` keeps its bit). 9.1.0 removed the setting.
+- No restart on any change (9.2's PITCH does not exist), no `V` (9.0's), the envelope byte is
+  NRx2 (§189).
+
+ChipBoy gets a third noise pitch mode, **LSDj shape** (`Instrument::noiseShapeMode`, with
+`noiseShape` and `noiseStable`), beside *Note map* and *Manual*: `noiseNr43()` applies the rule
+above to the note with its transposes, the table's column as a byte, then the running
+`noiseReg` delta (the Register domain's nibble sum of every `S` and `P`) and the chord's byte,
+and forces the width bit under STABLE; the tick clears the delta when the table's transpose
+column changes. The importer sets the mode on every noise instrument of a `NoiseRule::Shape`
+format (3.1.5 - 8.5.1), keeps the LSDj note in the cell (MIDI = note + 35) and the transposes
+and `S`/`P`/`C` bytes as they are, and no longer folds chain transposes into phrase copies or
+hunts a Shift offset for those instruments. The ROM's own upgrade converts notes and not
+transposes or commands (9.1.0's changelog), so a song imported this way plays as its own version
+played it, which is closer than 9.4.2 itself gets.
+
+## 189. The hardware envelope stages of 8.1.0 - 8.5.1: the byte, then the next byte with a retrigger
+
+Before 8.8.0 the pulse and noise envelope is the chip's: the instrument's byte 1 is NRx2 and the
+chip runs it (`PU_env62`: the ROM writes `62` once; ChipBoy wrote `60` and stepped the level
+itself -- the same levels at the same rate, so nothing to map). 8.1.0 added two more bytes (9 and
+10) as stages the ROM hands over between, and 8.4.0 - 8.5.1 (format 11) still do it on the
+chip. Probed on 8.5.1 with seventeen byte triples:
+
+- Stage 1 is written as it stands with the note. When byte 9 is not `00`, it is written -- with a
+  **retrigger** (`NR14 = 87`) -- after `(2 · |vol1 - vol2| + 1) · rate1 / 128` s: the chip has
+  stepped `|vol1 - vol2|` levels in its own direction and half a step more (`A3 -> 54` at 0.259 s,
+  `83 -> F2` at 0.354, `63 -> 90` at 0.167, `F1 -> 08` at 0.245, `2B -> 81` at 0.306). The
+  direction bits play no part in the wait; a stage whose rate is 0 holds for ever (`A0 -> 50`,
+  `F8 -> 80`, `28 -> 81`: nothing). Byte 10 follows byte 9 by the same rule (`54 -> 20` at 0.220 s
+  after), and a byte 10 without a byte 9 is ignored.
+- The noise channel is the same (`NOI_adsr`).
+- 7.0.2 and before write byte 1 and nothing else (bytes 9 and 10 mean nothing).
+
+ChipBoy had converted the three bytes to a shaped envelope, which reached each stage's level
+half a step early and dropped byte 10's own rate. Now a Chip-mode instrument carries
+`envStage2` and `envStage3` (NRx2 bytes, 0 = none): the note writes byte 1 as before, and the
+software step (`stepSoftEnvelope()`, which already walks the level at the chip's rate) counts
+the stage down in the same units and, at its end, loads the next byte into the level, direction
+and rate and writes it with a retrigger through `writeEnvelope(ch, true)`; a note-on or a
+retrigger arms stage 1 again, an `E` disarms the stages. The importer's `HardwareStages` law
+now maps to this, byte for byte; the software-stage formats (8.8.0 and up) keep §164's machine.
+
+## 190. A kit's `P` steps once more on every tick (9.4.2)
+
+`KIT_P04` on 9.4.2: the ROM's kit period rises 4 units a frame (2.79 ms) -- and every tick by 8
+(`59 5D 65 69` at 163 BPM, the double step every 5.5 frames; every 9 frames at 100 BPM, every
+3.5 at 255). The tick handler runs the pitch routine for a kit as the instant does, so a kit's
+bend gets the tick's step on top of the instant's. ChipBoy stepped it on the instant alone and
+fell behind by a step a tick (`5D 61 65`, `BD` where the ROM had `D1` at 0.1 s). `tick()` now
+adds one bend step to a kit's `drumOffset` (the FAST/DRUM modes; TICK already steps there and
+nowhere else). 8.5.1 does the same, so nothing to map.
+
+## 191. The pulse FINETUNE nibble before 9.x: byte 7 bits 2-5, `8 ×` the 9.x byte
+
+Before 9.x a pulse instrument's FINETUNE (the "PU TUNE" of the older screens) is a nibble in
+**byte 7 bits 2-5** (pan below it, duty above); byte 11 is unread (`FTb11_pu1`: the ROM ignores
+`40`). Probed on 8.5.1 at three notes: the period drops by `v / 32` of a semitone -- `F` is 3
+units at note 34 (6.1 units a semitone), 23 at note 10 (48.7), 0 at note 50 (1.2) -- which is
+exactly 9.4.2's `F 0v` on PU1 (`C696 = v · 8` in 1/256 semitone, §78). The importer reads the
+nibble for formats 4 - 14 (5.7.8 - 8.5.1; `fineTuneNibble`) and stores `8 · v` in `fineTune`,
+so the 9.x driver plays it. 3.6.8 - 5.0.3 read the nibble as period units (`F` is 15 units at
+note 34), which is another law (docs/LSDJ_VERSION_MAP.md's list); 3.1.5 - 3.5.1 have none.
+
+## 192. `DIST` pages by version, selectable in the Kits tab; `W` on a MANUAL wave instrument
+
+Two reports against the 9.2.L import of `UNMASKED`:
+
+- **The `?8E00` kit.** Its `DIST` byte names page `$8E`, video RAM during playback, which §184
+  models (`FF`s in LCD mode 3, the font block otherwise). The page reader only knew the 9.4.2
+  ROM: `lsdjRawPages()` returned the block for the version string `"9.4.2"` and nothing else, so
+  the 9.2.L import clipped instead. Video RAM was dumped on every ROM of the archive
+  (`tools/lsdjref`'s new `--dump F:ADDR:LEN:FILE`, `/root/lsdj/probe/vramdump.py`, at two frames of
+  playback): pages `$82`-`$87` and `$9B`-`$9F` are zero everywhere; `$89`-`$8C`, `$8E`-`$8F`,
+  `$91`-`$93` and `$95`-`$97` are tile blocks copied from the ROM at fixed distances from the
+  font block, whose offset moves with the version (`$784A9` on 3.1.5, `$7845C` from 3.4.4,
+  `$7845B` from 3.6.8, `$78446` from 3.8.7, `$7843C` from 4.5.4, `$78457` from 5.0.3, `$7843C`
+  again on 8.5.1, `$7842A` on 9.2.J - 9.4.2); `$80`, `$81`, `$88`, `$8D`, `$90`, `$94` and
+  `$98`-`$9A` are drawn at run time and stay unread. The reader now takes a version-keyed table
+  of the font block's offset (the newest entry at or below the ROM's version) and the zero
+  pages, for every version.
+- **The Kits tab showed the page as *Wrap*** (the sixth `KitDist`, `Raw`, had no button, and the
+  segmented control clamped) and choosing anything lost it. The tab has a *Page* choice now,
+  enabled while the kit carries a page and named by it (`Kit::distPage`, `8E`); the table stays
+  with the kit through the other choices, so the harsh tone is a click away again.
+- **`W xy` on a wave instrument whose PLAY is MANUAL** starts no frame run on the ROM (`Wv_W12`
+  on 9.4.2 and 8.5.1: one batch), where ChipBoy's `U` started one; the importer drops it there
+  with a note. `Wv_W12_run` (PLAY set) is the same on both ROMs and on ChipBoy.
+
+## 193. Kit numbers count the ROM's kit banks (a correction to §172)
+
+`READROOM` from 9.2.L: chain `1C`'s hits landed on the wrong kits or on none. §172 had "kit
+number `k` is ROM bank `k + 8`", read off `0:$1478`, and the importer followed it. Probed on
+both ROMs with a kit instrument naming kit `13` where banks `1B`-`1F` are empty: the ROM
+streams the first sample of `KK3-TH`, the **twentieth kit bank** (`20`), not bank `1B`; kit
+`1F` on 9.2.L streams `AMEN2` (the thirty-second kit, bank `2C`), and kit `18` on 9.4.2 --
+past its twenty-one kits -- streams nothing. So the number is the kit's **position in the
+ROM's list of kit banks**, empty banks skipped, on 9.2.L and 9.4.2 alike; `lsdjKitByNumber()`
+is that again. It is why the user's song plays different kits on their 9.4.2 ROM, whose list
+is shorter: `AMEN2`'s `1F` is off its end.

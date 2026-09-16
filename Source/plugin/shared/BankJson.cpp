@@ -71,7 +71,10 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     o->setProperty("transpose", i.transpose); o->setProperty("noteOff", int(i.noteOff)); o->setProperty("overlap", int(i.overlap));
     if (i.envRetrig) o->setProperty("envRetrig", true);        // section 59; absent reads as false, so old files are unchanged
     // Section 65; both absent read as every frame, looping from the first.
-    if (i.noiseDomain != bank::NoiseSweepDomain::Notes) o->setProperty("noiseSweep", int(i.noiseDomain));   // section 66; absent reads as Notes
+    // Section 66; absent reads as Notes. Section 188: the key was "noiseSweep",
+    // which the sweep steps below overwrote, so the Register domain never
+    // survived a file -- every imported pre-9 noise instrument lost its S and P.
+    if (i.noiseDomain != bank::NoiseSweepDomain::Notes) o->setProperty("noiseDomain", int(i.noiseDomain));
     if (i.fineTune) o->setProperty("fineTune", int(i.fineTune));   // section 112
     if (i.frameLength) o->setProperty("frameLength", int(i.frameLength));
     if (i.frameLoopStep) o->setProperty("frameLoopStep", int(i.frameLoopStep));
@@ -108,6 +111,8 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     }
     o->setProperty("sweepRate", int(i.sweepRate)); o->setProperty("sweepDown", i.sweepDown); o->setProperty("sweepShift", int(i.sweepShift));
     if (i.noiseLsdjMap) o->setProperty("noiseLsdjMap", true);          // section 81
+    if (i.noiseShapeMode) { o->setProperty("noiseShapeMode", true); o->setProperty("noiseShape", int(i.noiseShape)); o->setProperty("noiseStable", i.noiseStable); }   // section 188
+    if (i.envStage2) { o->setProperty("envStage2", int(i.envStage2)); o->setProperty("envStage3", int(i.envStage3)); }   // section 189
     if (i.noisePitch != NoisePitch::Free) o->setProperty("noisePitch", int(i.noisePitch));   // section 86
     o->setProperty("wave", int(i.wave)); o->setProperty("frameAdvance", int(i.frameAdvance)); o->setProperty("frameLoop", int(i.frameLoop)); o->setProperty("waveLevel", int(i.waveLevel));
     if (i.frameStart) o->setProperty("frameStart", int(i.frameStart));   // section 171
@@ -125,7 +130,7 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.lengthLatent = bool(o->getProperty("lengthLatent"));              // section 87
     i.transpose = bool(o->getProperty("transpose")); i.noteOff = NoteOff(std::clamp(getOr(o, "noteOff", 0), 0, 2));
     i.envRetrig = bool(o->getProperty("envRetrig"));
-    i.noiseDomain = bank::NoiseSweepDomain(std::clamp(getOr(o, "noiseSweep", 0), 0, 1));
+    i.noiseDomain = bank::NoiseSweepDomain(std::clamp(getOr(o, "noiseDomain", 0), 0, 1));
     i.fineTune = uint8_t(std::clamp(getOr(o, "fineTune", 0), 0, 255));   // section 112
     i.frameLength = uint8_t(std::clamp(getOr(o, "frameLength", 0), 0, 16));
     i.frameLoopStep = uint8_t(std::clamp(getOr(o, "frameLoopStep", 0), 0, 15));
@@ -184,6 +189,11 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.env.releaseFine = uint8_t(std::clamp(getOr(o, "envReleaseFine", 0), 0, 255));
     i.sweepRate = uint8_t(std::clamp(getOr(o, "sweepRate", 0), 0, 7)); i.sweepDown = bool(o->getProperty("sweepDown")); i.sweepShift = uint8_t(std::clamp(getOr(o, "sweepShift", 0), 0, 7));
     i.noiseLsdjMap = bool(o->getProperty("noiseLsdjMap"));             // section 81
+    i.noiseShapeMode = bool(o->getProperty("noiseShapeMode"));         // section 188
+    i.noiseShape = uint8_t(std::clamp(getOr(o, "noiseShape", 255), 0, 255));
+    i.noiseStable = bool(o->getProperty("noiseStable"));
+    i.envStage2 = uint8_t(std::clamp(getOr(o, "envStage2", 0), 0, 255));   // section 189
+    i.envStage3 = uint8_t(std::clamp(getOr(o, "envStage3", 0), 0, 255));
     i.noisePitch = NoisePitch(std::clamp(getOr(o, "noisePitch", 0), 0, 2));                 // section 86
     i.wave = uint8_t(std::clamp(getOr(o, "wave", 1), 1, kWaveSlots));   /* section 103 */ i.frameAdvance = uint8_t(std::clamp(getOr(o, "frameAdvance", 0), 0, 15)); i.frameLoop = FrameLoop(std::clamp(getOr(o, "frameLoop", 0), 0, 3)); i.waveLevel = uint8_t(std::clamp(getOr(o, "waveLevel", 3), 0, 3));
     i.frameStart = uint8_t(std::clamp(getOr(o, "frameStart", 0), 0, 15));   // section 171
@@ -324,6 +334,7 @@ var kitToVarImpl(const Kit& k, int slot)
     // Section 172: the raw page, the half-speed flag and the samples' own loops.
     if (k.dist == KitDist::Raw && k.distTable.size() == 256) o->setProperty("distTable", Base64::toBase64(k.distTable.data(), k.distTable.size()));
     if (k.dist == KitDist::Raw && k.distVram) o->setProperty("distVram", true);   /* section 184 */
+    if (k.distTable.size() == 256 && k.distPage >= 0) o->setProperty("distPage", int(k.distPage));   /* section 192 */
     if (k.halfSpeed) o->setProperty("halfSpeed", true);
     if (k.perSampleLoop) o->setProperty("perSampleLoop", true);
     Array<var> samples;
@@ -356,6 +367,7 @@ void kitFromVarImpl(const var& v, Kit& k)
         else k.dist = KitDist::Clip;
     }
     k.distVram = k.dist == KitDist::Raw && bool(o->getProperty("distVram"));
+    k.distPage = int16_t(std::clamp(getOr(o, "distPage", -1), -1, 255));
     k.halfSpeed = bool(o->getProperty("halfSpeed"));
     k.perSampleLoop = bool(o->getProperty("perSampleLoop"));
     k.samples.clear();

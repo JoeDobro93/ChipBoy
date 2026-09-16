@@ -26,7 +26,8 @@ struct LsdjKit {
 /// kit 00 first. A bank is a kit when it opens with the bytes 60 40.
 std::vector<LsdjKit> readKits(const uint8_t* rom, size_t size);
 
-/// Kit number `k` of the ROM: the bank `k + 8`, gaps or not (section 172).
+/// Kit number `k` of the ROM: the k-th kit bank in ROM order, empty banks
+/// skipped (section 193; section 172 had it as bank `k + 8`, which was wrong).
 const LsdjKit* lsdjKitByNumber(const std::vector<LsdjKit>& kits, int k);
 
 /// The wave period a kit instrument plays at: `$749` (1865, 11468 Hz) plus the

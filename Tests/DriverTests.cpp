@@ -5295,3 +5295,129 @@ TEST_CASE("Z on a wave F adds to the frame, and F 00 writes no frame", "[driver]
     }
     CHECK(moved >= 6);                                   // 0-15 at random: most notes move
 }
+
+// --- section 188: the pre-9.1 noise channel as an instrument mode -----------
+
+TEST_CASE("the shape mode makes NR43 from SHAPE and the octave, and S, P, C and the column work on the byte", "[driver][noise][versions]")
+{
+    // Measured on the 8.5.1 ROM (section 188): SHAPE FF at G-5 (LSDj note 20,
+    // MIDI 67) is 10; S 03 takes the nibbles to 1D; P 02 walks 1E 1C 1A; C 37
+    // alternates the note and the byte's complement E9; a table's transpose
+    // column comes off as a byte and drops the S delta.
+    Rig r;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    auto& i = r.bank.instruments[20]; i = Instrument::defaults(InstrumentType::Noise, "old"); i.used = true;
+    i.noiseShapeMode = true; i.noiseShape = 0xFF; i.noiseDomain = bank::NoiseSweepDomain::Register; i.noisePitch = bank::NoisePitch::Never;
+    ChannelParams p; p.instrument = 21; r.drv.setParams(3, p);
+    auto nr43s = [](const std::vector<RegWrite>& w) { std::vector<int> v; for (const auto& x : w) if (x.addr == 0xFF22) v.push_back(x.value); return v; };
+    SECTION("the note and the octave") {
+        auto w = r.block({ cellOn(3, 67, 21) }, 200);
+        REQUIRE_FALSE(nr43s(w).empty()); CHECK(nr43s(w).front() == 0x10);
+        w = r.block({ cellOn(3, 67 - 12, 21) }, 200);                 // G-4: an octave down raises the shift
+        CHECK(nr43s(w).front() == 0x20);
+        w = r.block({ cellOn(3, 67 + 24, 21) }, 200);                 // G-7: saturates at 0
+        CHECK(nr43s(w).front() == 0x00);
+    }
+    SECTION("SHAPE's nibbles saturate on their own") {
+        r.bank.instruments[20].noiseShape = 0x0F;
+        auto w = r.block({ cellOn(3, 55, 21) }, 200);                 // G-4 with SHAPE 0F: F0, not FF
+        CHECK(nr43s(w).front() == 0xF0);
+    }
+    SECTION("S subtracts nibble by nibble, P every tick, C alternates the byte") {
+        auto e = cellOn(3, 67, 21); e.cmd1 = { Cmd::S, 0, 3, 0 };
+        auto w = r.block({ e }, 200);
+        REQUIRE(last(w, 0xFF22) != nullptr); CHECK(last(w, 0xFF22)->value == 0x1D);
+        e = cellOn(3, 67, 21); e.cmd1 = { Cmd::P, 2, 0, 0 };
+        w = r.block({ e }, 200);
+        w = r.block({}, 200); REQUIRE(last(w, 0xFF22) != nullptr); CHECK(last(w, 0xFF22)->value == 0x1E);
+        w = r.block({}, 200); REQUIRE(last(w, 0xFF22) != nullptr); CHECK(last(w, 0xFF22)->value == 0x1C);
+        e = cellOn(3, 67, 21); e.cmd1 = { Cmd::C, 3, 7, 0 };
+        w = r.block({ e }, 200);
+        w = r.block({}, 200); REQUIRE(last(w, 0xFF22) != nullptr); CHECK(last(w, 0xFF22)->value == 0xE9);
+        w = r.block({}, 200); REQUIRE(last(w, 0xFF22) != nullptr); CHECK(last(w, 0xFF22)->value == 0x10);
+    }
+    SECTION("STABLE keeps the note's width bit") {
+        r.bank.instruments[20].noiseShape = 0xF7; r.bank.instruments[20].noiseStable = true;   // the note is 18: bit 3 set
+        auto e = cellOn(3, 67, 21); e.cmd1 = { Cmd::S, 0, 3, 0 };
+        auto w = r.block({ e }, 200);
+        REQUIRE(last(w, 0xFF22) != nullptr); CHECK(last(w, 0xFF22)->value == 0x1D);           // 15 with the width bit kept
+    }
+    SECTION("the table's transpose column is a byte off NR43 and drops the S delta") {
+        auto& t = r.bank.tables[9]; t = Table{}; t.used = true;
+        t.steps[0].hasTranspose = true; t.steps[0].transpose = 3;
+        r.bank.instruments[20].table = 10;
+        auto e = cellOn(3, 67, 21); e.cmd1 = { Cmd::S, 0, 3, 0 };
+        auto w = r.block({ e }, 200);                                                          // the S (1D), then row 0's column on the update after
+        REQUIRE(last(w, 0xFF22) != nullptr); CHECK(last(w, 0xFF22)->value == 0x0D);           // 10 - 03, the S gone
+        w = r.block({}, 200);                                                                   // row 1, no column: the note again
+        REQUIRE(last(w, 0xFF22) != nullptr); CHECK(last(w, 0xFF22)->value == 0x10);
+        w = r.block({}, 200);                                                                   // row 2: nothing changes, nothing written
+        CHECK_FALSE(has(w, 0xFF22));
+    }
+}
+
+// --- section 189: the hardware envelope stages ----------------------------
+
+TEST_CASE("a Chip envelope's stages write the next byte with a retrigger after the levels and a half", "[driver][envelope][versions]")
+{
+    // 8.5.1's A3 / 54 / 20: stage 2 at (2 x 5 + 1) x 3 / 128 s = 0.258 s, stage 3
+    // (2 x 3 + 1) x 4 / 128 s = 0.219 s later, each a retrigger (section 189).
+    Rig r;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    auto& i = r.bank.instruments[0]; i = Instrument::defaults(InstrumentType::Pulse, "adsr"); i.used = true;
+    i.env.mode = bank::EnvMode::Chip; i.envVol = 0xA; i.envDir = bank::EnvDir::Down; i.envRate = 3; i.envStage2 = 0x54; i.envStage3 = 0x20;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    std::vector<std::pair<uint64_t, int>> trig;     // (cycle, NR12 just before)
+    int nr12 = -1;
+    auto scan = [&](const std::vector<RegWrite>& w) {
+        for (const auto& x : w) {
+            if (x.addr == 0xFF12) nr12 = x.value;
+            if (x.addr == 0xFF14 && (x.value & 0x80)) trig.push_back({ x.cycle, nr12 });
+        }
+    };
+    scan(r.block({ cellOn(0, 60, 1, 80) }, 200));            // velocity 80 is level A
+    for (int k = 0; k < 140; ++k) scan(r.block({}, 200));
+    // Three triggers: the note's, stage 2's and stage 3's, with the bytes A8, 58, 28 (ChipBoy holds the nibble and steps the level itself).
+    REQUIRE(trig.size() == 3);
+    CHECK(trig[0].second == 0xA8); CHECK(trig[1].second == 0x58); CHECK(trig[2].second == 0x28);
+    CHECK(r.drv.view(0).envVol == 2);
+}
+
+TEST_CASE("the stages keep the ROM's timing", "[driver][envelope][versions]")
+{
+    Rig r;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    auto& i = r.bank.instruments[0]; i = Instrument::defaults(InstrumentType::Pulse, "adsr"); i.used = true;
+    i.env.mode = bank::EnvMode::Chip; i.envVol = 0xA; i.envDir = bank::EnvDir::Down; i.envRate = 3; i.envStage2 = 0x54; i.envStage3 = 0x20;
+    ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+    std::vector<uint64_t> trigCycles;
+    auto scan = [&](const std::vector<RegWrite>& w) { for (const auto& x : w) if (x.addr == 0xFF14 && (x.value & 0x80)) trigCycles.push_back(x.cycle); };
+    scan(r.block({ cellOn(0, 60, 1, 80) }, 200));
+    for (int k = 0; k < 140; ++k) scan(r.block({}, 200));
+    REQUIRE(trigCycles.size() == 3);
+    const double s2 = double(trigCycles[1] - trigCycles[0]) / 4194304.0, s3 = double(trigCycles[2] - trigCycles[1]) / 4194304.0;
+    CHECK(s2 > 0.250); CHECK(s2 < 0.266);            // 0.258 s, within a pitch clock
+    CHECK(s3 > 0.211); CHECK(s3 < 0.227);            // 0.219 s
+}
+
+// --- section 190: a kit's bend steps on the tick too ----------------------
+
+TEST_CASE("a kit's P moves the period once more on every tick", "[driver][kit][versions]")
+{
+    Rig r;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    auto& k = r.bank.kits[0]; k = bank::Kit{}; k.used = true; k.name = "K"; k.period = 1000;   // low enough not to wrap past 2047
+    bank::KitSample a; a.note = 60; a.data.assign(8192, uint8_t(8));
+    k.samples.push_back(a);
+    auto& i0 = r.bank.instruments[1]; i0 = Instrument::defaults(InstrumentType::Kit, "K"); i0.used = true; i0.kit = 1;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(2, p);
+    auto e = cellOn(2, 60, 2); e.cmd1 = { Cmd::P, 4, 0, 0 };
+    int lo = -1, hi = -1;
+    auto scan = [&](const std::vector<RegWrite>& w) { for (const auto& x : w) { if (x.addr == 0xFF1D) lo = x.value; if (x.addr == 0xFF1E) hi = x.value & 7; } };   // NR33, NR34
+    scan(r.block({ e }, 200));
+    for (int t = 0; t < 47; ++t) scan(r.block({}, 200));            // 48 ticks, 0.2 s: 71-72 instants
+    REQUIRE(lo >= 0); REQUIRE(hi >= 0);
+    const int period = (hi << 8) | lo;
+    // 4 an instant (287) plus 4 a tick (192): about 479, where the instant alone gave 287.
+    CHECK(period - 1000 > 440); CHECK(period - 1000 < 500);
+}

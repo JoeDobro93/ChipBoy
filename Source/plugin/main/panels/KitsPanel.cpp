@@ -244,10 +244,11 @@ void KitsPanel::rebuildContent()
     {
         // Section 117: a cell that names a second sample in its VEL column is
         // summed through this curve, which is what LSDj's DIST table does.
-        auto s = std::make_unique<Segmented>(StringArray{ "Clip", "Soft", "Fold", "Fold2", "Wrap" });
+        auto s = std::make_unique<Segmented>(StringArray{ "Clip", "Soft", "Fold", "Fold2", "Wrap", "Page" });
         s->setMini(true);
-        s->setTooltip("How a cell that names two samples sums them: Clip clamps, Soft halves the slope past a knee, Fold mirrors at the limits, Fold2 mirrors twice as steeply, Wrap wraps round");
-        s->onChange = [this](int v) { editKit("dist", [v](bank::Kit& k) { k.dist = bank::KitDist(std::clamp(v, 0, bank::kKitDistCount - 1)); }); };
+        s->setTooltip("How a cell that names two samples sums them: Clip clamps, Soft halves the slope past a knee, Fold mirrors at the limits, Fold2 mirrors twice as steeply, Wrap wraps round. Page is the raw memory page an LSDj DIST outside D0-D3 named, as the import read it (section 192); the kit keeps it through the other choices.");
+        // Section 192: Page stays selectable only while the kit carries a page.
+        s->onChange = [this](int v) { editKit("dist", [v](bank::Kit& k) { if (v == int(bank::KitDist::Raw) && k.distTable.size() != 256) return; k.dist = bank::KitDist(std::clamp(v, 0, bank::kKitDistCount - 1)); }); };
         const int h = s->preferredHeight(), w = s->preferredWidth();
         dist_ = grid->addField("Dist", "two samples at once", std::move(s), h, w);
     }
@@ -292,7 +293,13 @@ void KitsPanel::syncValues()
     }
     if (rate_) rate_->setValue(std::clamp(int(kit.used ? kit.period : uint16_t(1865)), kMinPeriod, kMaxPeriod), dontSendNotification);
     if (loop_) loop_->setSelected(int(kit.loop), dontSendNotification);
-    if (dist_) dist_->setSelected(int(kit.dist), dontSendNotification);
+    if (dist_) {
+        dist_->setSelected(int(kit.dist), dontSendNotification);
+        const bool page = kit.distTable.size() == 256;
+        dist_->setOptionEnabled(int(bank::KitDist::Raw), page);
+        dist_->setOptionTooltip(int(bank::KitDist::Raw), page ? (kit.distPage >= 0 ? "LSDj's memory page " + ValueFormat::byte(kit.distPage) + "00 as the import read it" + String(kit.distVram ? ", video RAM with the LCD's mode-3 reads" : "") : String("the raw page the import read"))
+                                                              : String("No raw page: only an LSDj import with the ROM beside the save brings one"));
+    }
     if (info_) info_->setText(s ? withThousands(int(s->data.size())) + " smp" + middot() + seconds(s->data.size(), rate) : String(CharPointer_UTF8("\xe2\x80\x94")));
     if (preview_) preview_->set(b, slot_, sample_);
     scroll_.relayout();

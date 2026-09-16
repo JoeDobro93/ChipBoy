@@ -268,6 +268,8 @@ struct InstrumentPanel::Widgets {
     Stepper* wave = nullptr; Stepper* frameLength = nullptr; Stepper* frameLoopStep = nullptr; Stepper* frameAdv = nullptr; Segmented* frameLoop = nullptr; Segmented* waveLevel = nullptr;
     Stepper* kit = nullptr; Segmented* kitLoop = nullptr; TextLine* kitRate = nullptr;
     Segmented* noiseDomain = nullptr; Segmented* lfsr = nullptr; Segmented* pitchMode = nullptr; Stepper* shift = nullptr; Stepper* divisor = nullptr; Stepper* noiseSweep = nullptr;
+    Stepper* noiseShape = nullptr; Segmented* noiseStable = nullptr;   // section 188
+    Stepper* envStage2 = nullptr; Stepper* envStage3 = nullptr;        // section 189
     Segmented* pan = nullptr;
     // envelope (section 27)
     EnvPreview* graph = nullptr;
@@ -723,9 +725,14 @@ void InstrumentPanel::rebuildEditor()
         w_->kitRate = sound->add("Rate", std::move(rate), 190, Stepper::kHeight, "NR33/34: one register does the pitch and the rate.");
     } else {
         w_->lfsr = seg(*sound, "LFSR width", "NR43 bit 3.", { "15-bit", "7-bit" }, [](bank::Instrument& i, int v) { i.lfsr7 = v == 1; });
-        w_->pitchMode = seg(*sound, "Pitch", "The noise grid is coarse; the map picks the nearest pair per note.", { "Note map", "Manual" }, [](bank::Instrument& i, int v) { i.noiseManual = v == 1; });
+        w_->pitchMode = seg(*sound, "Pitch", "The noise grid is coarse; the map picks the nearest pair per note. LSDj shape is the noise channel of every LSDj before 9.1 (section 188): the note's octave and the SHAPE byte make NR43, and S, P and C work on its nibbles.",
+                            { "Note map", "Manual", "LSDj shape" }, [](bank::Instrument& i, int v) { i.noiseManual = v == 1; i.noiseShapeMode = v == 2; });
         w_->shift = stepper(*sound, "Clock shift", "NR43 bits 7-4, in Manual.", 0, 13, 5, {}, [](bank::Instrument& i, int v) { i.noiseShift = uint8_t(v); });
         w_->divisor = stepper(*sound, "Divisor", "NR43 bits 2-0, in Manual.", 0, 7, 1, {}, [](bank::Instrument& i, int v) { i.noiseDivisor = uint8_t(v); });
+        w_->noiseShape = stepper(*sound, "Shape", "LSDj's SHAPE byte, in LSDj shape: NR43's low nibble is 15 minus its low nibble, the high one 15 minus its high nibble plus 3 minus the note's octave (C-3 is octave 0), each saturating.",
+                                 0, 255, 255, [](int v) { return ValueFormat::byte(v); }, [](bank::Instrument& i, int v) { i.noiseShape = uint8_t(v); });
+        w_->noiseStable = seg(*sound, "S mode", "LSDj's S MODE, in LSDj shape: Stable keeps the note's LFSR width bit through S, P and C; Free lets them flip it.",
+                              { "Free", "Stable" }, [](bank::Instrument& i, int v) { i.noiseStable = v == 1; });
         w_->noiseSweep = stepper(*sound, "Noise sweep", "Shift steps per tick: repeated NR43 writes.", -7, 7, 0,
                                  [](int v) { return ValueFormat::signedNumber(v); }, [](bank::Instrument& i, int v) { i.noiseSweep = int8_t(v); });
         w_->noiseDomain = seg(*sound, "Sweep", "What S and P do here (section 66). Notes moves the note through the map; Register takes the command's byte off NR43 nibble by nibble, which can flip the LFSR width mid-note.",
@@ -775,6 +782,10 @@ void InstrumentPanel::rebuildEditor()
         w_->envDir = seg(*env, "Direction", nr + " bit 3.", { utf8("\xe2\x86\x93"), utf8("\xe2\x86\x91") }, [](bank::Instrument& i, int v) { i.envDir = v == 1 ? bank::EnvDir::Up : bank::EnvDir::Down; });
         w_->envRate = stepper(*env, "Rate", nr + " bits 2-0: 0 holds, 1-7 step every n x 15.6 ms.", 0, 7, 0,
                               [](int v) { return envMsText(v); }, [](bank::Instrument& i, int v) { i.envRate = uint8_t(v); }, 110);
+        w_->envStage2 = stepper(*env, "Stage 2", "LSDj 8.1 - 8.5's second envelope byte (section 189), an " + nr + " value written with a retrigger once the first has stepped the levels between their volumes and half a step more at its rate; 00 is none.",
+                                0, 255, 0, [](int v) { return ValueFormat::byte(v); }, [](bank::Instrument& i, int v) { i.envStage2 = uint8_t(v); });
+        w_->envStage3 = stepper(*env, "Stage 3", "The third byte, after stage 2 by the same rule; 00 is none.",
+                                0, 255, 0, [](int v) { return ValueFormat::byte(v); }, [](bank::Instrument& i, int v) { i.envStage3 = uint8_t(v); });
     } else {
         auto note = std::make_unique<TextLine>("the Level in Sound", Fonts::sans(12.0f), colours::textDim);
         env->add("Level", std::move(note), 190, Stepper::kHeight, "This channel has no envelope unit: Chip holds the NR32 level in Sound, and Shaped renders one instead.");
@@ -963,8 +974,10 @@ void InstrumentPanel::syncValues()
         const uint16_t period = k ? k->period : uint16_t(1865);
         w.kitRate->setText(withThousands(int(std::lround(bank::sampleRateForPeriod(period)))) + " Hz");
     }
-    S(w.lfsr, i.lfsr7 ? 1 : 0); S(w.pitchMode, i.noiseManual ? 1 : 0);
+    S(w.lfsr, i.lfsr7 ? 1 : 0); S(w.pitchMode, i.noiseShapeMode ? 2 : i.noiseManual ? 1 : 0);
     T(w.shift, i.noiseShift); T(w.divisor, i.noiseDivisor); T(w.noiseSweep, i.noiseSweep); S(w.noiseDomain, int(i.noiseDomain));
+    T(w.noiseShape, i.noiseShape); S(w.noiseStable, i.noiseStable ? 1 : 0);
+    T(w.envStage2, i.envStage2); T(w.envStage3, i.envStage3);
     S(w.envMode, int(i.env.mode));
     T(w.envVol, i.envVol); S(w.envDir, int(i.envDir)); T(w.envRate, i.envRate);
     T(w.attack, i.env.attackTicks); T(w.peak, i.env.peak); T(w.decay, i.env.decayTicks); T(w.sustain, i.env.sustain); T(w.release, i.env.releaseTicks);
@@ -991,8 +1004,11 @@ void InstrumentPanel::refreshDerived()
     auto& w = *w_;
     const bool fourLevels = i.type == bank::InstrumentType::Wave || i.type == bank::InstrumentType::Kit;
     if (w.graph) w.graph->set(i, colours::channel(channel), fourLevels);
-    if (w.shift) w.shift->setEnabled(i.noiseManual);
-    if (w.divisor) w.divisor->setEnabled(i.noiseManual);
+    if (w.shift) w.shift->setEnabled(i.noiseManual && !i.noiseShapeMode);
+    if (w.divisor) w.divisor->setEnabled(i.noiseManual && !i.noiseShapeMode);
+    if (w.noiseShape) w.noiseShape->setEnabled(i.noiseShapeMode);
+    if (w.noiseStable) w.noiseStable->setEnabled(i.noiseShapeMode);
+    if (w.envStage3) w.envStage3->setEnabled(i.envStage2 != 0);
     // The vibrato speed reads in Hz or in cycles a bar, with the pitch speed.
     if (w.vibSpeed) {
         const auto ps = i.pitchSpeed;

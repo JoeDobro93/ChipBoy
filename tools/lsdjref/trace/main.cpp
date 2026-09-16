@@ -227,6 +227,7 @@ int main(int argc, char** argv)
     int waveRate = 131072;   // 4194304 / 32: thirty-two rows per wave sample at the lowest note
     std::string model = "dmg";
     int64_t frames = 600;
+    std::vector<std::string> dumps;
     int64_t bootFrames = -1;      // -1: press nothing extra, use --keys
     bool probe = false;
 
@@ -249,6 +250,7 @@ int main(int argc, char** argv)
         else if (a == "--wave-probe")  waveOut = next("--wave-probe");
         else if (a == "--wave-rate")   waveRate = int(std::strtol(next("--wave-rate").c_str(), nullptr, 10));
         else if (a == "--probe")       probe = true;
+        else if (a == "--dump")        dumps.push_back(next("--dump"));   // F:ADDR:LEN:FILE -- memory after frame F
         else if (a == "-h" || a == "--help") { usage(); return 0; }
         else { std::fprintf(stderr, "lsdjref-trace: unknown option %s\n", a.c_str()); usage(); return 2; }
     }
@@ -338,6 +340,16 @@ int main(int argc, char** argv)
             GB_run_frame(&gb);
         }
         settle();
+        // --dump F:ADDR:LEN:FILE: the memory as the CPU reads it after frame F
+        // (a DIST page in video RAM, a variable) -- what a raw kit page holds.
+        for (const std::string& d : dumps) {
+            unsigned long long df = 0, addr = 0, len = 0; char file[512] = { 0 };
+            if (std::sscanf(d.c_str(), "%llu:%llx:%llx:%511s", &df, &addr, &len, file) != 4 || int64_t(df) != f) continue;
+            std::vector<uint8_t> bytes;
+            for (unsigned long long k = 0; k < len && addr + k <= 0xFFFF; ++k) bytes.push_back(GB_safe_read_memory(&gb, uint16_t(addr + k)));
+            if (FILE* df_ = std::fopen(file, "wb")) { std::fwrite(bytes.data(), 1, bytes.size(), df_); std::fclose(df_); }
+            else std::fprintf(stderr, "lsdjref-trace: cannot write '%s'\n", file);
+        }
     }
 
     if (!screen.empty() && !writePgm(screen, pixels))
