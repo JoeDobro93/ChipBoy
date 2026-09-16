@@ -5944,3 +5944,37 @@ past its twenty-one kits -- streams nothing. So the number is the kit's **positi
 ROM's list of kit banks**, empty banks skipped, on 9.2.L and 9.4.2 alike; `lsdjKitByNumber()`
 is that again. It is why the user's song plays different kits on their 9.4.2 ROM, whose list
 is shorter: `AMEN2`'s `1F` is off its end.
+
+## 194. Custom DIST: LSDj's raw page as a kit's own table
+
+§192 made an import's raw page a *Page* choice that existed only when a page had been read.
+The user's design: a **Custom** DIST that any kit can have, so the "bad" DIST values work for
+every import and can be made from scratch. `KitDist::Raw` is that choice now (named *Custom* on
+the Kits tab, `"raw"` in a file as before): picking it on a kit without a table fills the table
+with the curve the kit had (`kitDistEntry` row by column), so nothing changes until the bytes
+do; the table stays with the kit through the other choices and in the file whatever the choice.
+The tab shows the 256 bytes as sixteen lines of hex (`HexPage`, every edit that parses to 256
+bytes applied), with *Randomize*, *Zero* (LSDj's blank video RAM pages) and *Load…* (the first
+256 bytes of any file), and the **LCD holes** switch, which is §184's mode-3 read (`distVram`)
+made a property of the table rather than of the page's address. An import sets the table and
+the switch for a page in video RAM, as before.
+
+## 195. A roll leaves a DRUM pitch running: the instrument says which
+
+§185 measured 9.4.0's reset and left the older behaviour unmapped by decision; the decision has
+changed. `Instrument::retrigKeepsPitch` (the Instrument tab's *R on DRUM pitch*: Resets / Keeps)
+makes `retrigger()` skip the offset reset, so the refresh's exact period arrives and the rolls
+keep sliding, as 9.2.J - 9.3.9 and every earlier version played it. The importer sets it from
+the model (`retrigResetsDrumPitch` false).
+
+## 196. The pulse FINETUNE nibble before 5.7.8: period units, capped
+
+§191 read the nibble as `v/32` of a semitone (5.7.8 - 8.5.1). On 3.6.8 - 5.0.3 the same nibble
+takes `v` **period units** off the register whatever the note (`F` is 15 units at note 34), which
+is a different amount of pitch per note; 3.1.5 - 3.5.1 have no finetune. The user's decision: map
+as closely as possible and cap. One unit is about 42/256 of a semitone at the middle of the
+keyboard, so the importer stores `min(255, round(42.2 · v))` (`fineTuneUnits` on the model): a
+nibble of 6 or more is capped at a semitone.
+
+§189 addendum: an `E` over running hardware stages ends them (`PU_adsr_E`, `_E2` on 8.5.1: the
+`E`'s byte with a retrigger, then no stage byte follows), which is what ChipBoy does.

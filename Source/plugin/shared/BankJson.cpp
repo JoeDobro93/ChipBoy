@@ -113,6 +113,7 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     if (i.noiseLsdjMap) o->setProperty("noiseLsdjMap", true);          // section 81
     if (i.noiseShapeMode) { o->setProperty("noiseShapeMode", true); o->setProperty("noiseShape", int(i.noiseShape)); o->setProperty("noiseStable", i.noiseStable); }   // section 188
     if (i.envStage2) { o->setProperty("envStage2", int(i.envStage2)); o->setProperty("envStage3", int(i.envStage3)); }   // section 189
+    if (i.retrigKeepsPitch) o->setProperty("retrigKeepsPitch", true);    // section 195
     if (i.noisePitch != NoisePitch::Free) o->setProperty("noisePitch", int(i.noisePitch));   // section 86
     o->setProperty("wave", int(i.wave)); o->setProperty("frameAdvance", int(i.frameAdvance)); o->setProperty("frameLoop", int(i.frameLoop)); o->setProperty("waveLevel", int(i.waveLevel));
     if (i.frameStart) o->setProperty("frameStart", int(i.frameStart));   // section 171
@@ -194,6 +195,7 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.noiseStable = bool(o->getProperty("noiseStable"));
     i.envStage2 = uint8_t(std::clamp(getOr(o, "envStage2", 0), 0, 255));   // section 189
     i.envStage3 = uint8_t(std::clamp(getOr(o, "envStage3", 0), 0, 255));
+    i.retrigKeepsPitch = bool(o->getProperty("retrigKeepsPitch"));       // section 195
     i.noisePitch = NoisePitch(std::clamp(getOr(o, "noisePitch", 0), 0, 2));                 // section 86
     i.wave = uint8_t(std::clamp(getOr(o, "wave", 1), 1, kWaveSlots));   /* section 103 */ i.frameAdvance = uint8_t(std::clamp(getOr(o, "frameAdvance", 0), 0, 15)); i.frameLoop = FrameLoop(std::clamp(getOr(o, "frameLoop", 0), 0, 3)); i.waveLevel = uint8_t(std::clamp(getOr(o, "waveLevel", 3), 0, 3));
     i.frameStart = uint8_t(std::clamp(getOr(o, "frameStart", 0), 0, 15));   // section 171
@@ -332,8 +334,9 @@ var kitToVarImpl(const Kit& k, int slot)
     o->setProperty("slot", slot); o->setProperty("name", String(k.name)); o->setProperty("period", int(k.period)); o->setProperty("loop", int(k.loop));
     o->setProperty("dist", String(kitDistName(k.dist)));   /* section 117 */
     // Section 172: the raw page, the half-speed flag and the samples' own loops.
-    if (k.dist == KitDist::Raw && k.distTable.size() == 256) o->setProperty("distTable", Base64::toBase64(k.distTable.data(), k.distTable.size()));
-    if (k.dist == KitDist::Raw && k.distVram) o->setProperty("distVram", true);   /* section 184 */
+    // Section 194: the custom table stays with the kit whatever the choice.
+    if (k.distTable.size() == 256) o->setProperty("distTable", Base64::toBase64(k.distTable.data(), k.distTable.size()));
+    if (k.distVram) o->setProperty("distVram", true);   /* section 184 */
     if (k.distTable.size() == 256 && k.distPage >= 0) o->setProperty("distPage", int(k.distPage));   /* section 192 */
     if (k.halfSpeed) o->setProperty("halfSpeed", true);
     if (k.perSampleLoop) o->setProperty("perSampleLoop", true);
@@ -361,12 +364,12 @@ void kitFromVarImpl(const var& v, Kit& k)
         for (int m = 0; m < kKitDistCount; ++m) if (d == kitDistName(KitDist(m))) { k.dist = KitDist(m); break; }
     }
     k.distTable.clear();
-    if (k.dist == KitDist::Raw) {
+    {
         MemoryOutputStream mo; Base64::convertFromBase64(mo, o->getProperty("distTable").toString());
         if (mo.getDataSize() == 256) k.distTable.assign(static_cast<const uint8_t*>(mo.getData()), static_cast<const uint8_t*>(mo.getData()) + 256);
-        else k.dist = KitDist::Clip;
     }
-    k.distVram = k.dist == KitDist::Raw && bool(o->getProperty("distVram"));
+    if (k.dist == KitDist::Raw && k.distTable.size() != 256) k.dist = KitDist::Clip;
+    k.distVram = bool(o->getProperty("distVram"));
     k.distPage = int16_t(std::clamp(getOr(o, "distPage", -1), -1, 255));
     k.halfSpeed = bool(o->getProperty("halfSpeed"));
     k.perSampleLoop = bool(o->getProperty("perSampleLoop"));

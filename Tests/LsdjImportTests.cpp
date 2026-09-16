@@ -1458,6 +1458,21 @@ TEST_CASE("a format-11 song's noise, finetune and envelope stages come in as the
     CHECK(int(pu.envVol) == 0xA); CHECK(int(pu.envRate) == 3); CHECK(pu.envDir == bank::EnvDir::Down);
     CHECK(int(pu.envStage2) == 0x54); CHECK(int(pu.envStage3) == 0x20);
     CHECK(int(pu.fineTune) == 0x0F * 8);
+    CHECK(pu.retrigKeepsPitch);                                            // section 195: before 9.4.0
+    // Section 196: 3.6.8 - 5.0.3 read the same nibble as period units, capped at a semitone.
+    const auto* m3 = lsdjModelForRomVersion("4.7.3");
+    REQUIRE(m3 != nullptr); CHECK(m3->fineTuneNibble); CHECK(m3->fineTuneUnits);
+    {
+        auto s3 = song; s3[kFormatVersionAt] = 3;
+        auto bank3 = std::make_unique<bank::Bank>(); auto out3 = std::make_unique<tracker::Song>();
+        ImportSummary sum3; ImportNotes notes3;
+        REQUIRE(importSong(s3.data(), s3.size(), *m3, *bank3, *out3, sum3, notes3));
+        CHECK(int(bank3->instruments[0].fineTune) == 255);                   // F units is past a semitone: the cap
+        s3[kInst + 7] = uint8_t(0x80 | (2 << 2) | 3);
+        REQUIRE(importSong(s3.data(), s3.size(), *m3, *bank3, *out3, sum3, notes3));
+        CHECK(int(bank3->instruments[0].fineTune) == 84);                    // two units, about 42/256 each
+    }
+    CHECK_FALSE(lsdjModelForFormat(22)->fineTuneUnits);
     const auto& noi = bank->instruments[1];
     CHECK(noi.noiseShapeMode); CHECK(int(noi.noiseShape) == 0x0F); CHECK(noi.noiseStable);
     CHECK_FALSE(noi.noiseLsdjMap);

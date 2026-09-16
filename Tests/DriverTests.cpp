@@ -3695,6 +3695,39 @@ TEST_CASE("a retrigger resets a DRUM wave's pitch to the entry, fraction and ben
     CHECK(std::find(rolled.begin(), rolled.end(), exact) == rolled.end());
 }
 
+TEST_CASE("a roll leaves a DRUM wave's pitch running when the instrument keeps it", "[driver][commands][versions]")
+{
+    // Section 195: every LSDj before 9.4.0 -- the retrigger does not touch the
+    // offset word, so the refresh's exact period still comes under `R 03`.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[2] = tracker::NoteSource::Tracker;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Kick");
+    i.used = true; i.pitchSpeed = bank::PitchSpeed::Drum; i.waveLevel = 3; i.retrigKeepsPitch = true;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(2, p);
+    const auto lowsOf = [](const std::vector<RegWrite>& w) {
+        std::vector<int> out; int lo = -1;
+        for (const auto& x : w) { if (x.addr == 0xFF1D) lo = x.value; else if (x.addr == 0xFF1E && lo >= 0) { out.push_back(((x.value & 7) << 8) | lo); lo = -1; } }
+        out.erase(std::remove(out.begin(), out.end(), 0x7E0), out.end());
+        return out;
+    };
+    auto w = r.block({ cellOn(2, 55, 2) }, 480);
+    for (int k = 0; k < 3; ++k) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+    const auto plain = lowsOf(w);
+    REQUIRE(plain.size() >= 2);
+    const int entry = plain[0], exact = plain[1];
+    REQUIRE(entry != exact);
+    r.block({ Rig::off(2, 55) }, 64);
+    NoteEvent on = cellOn(2, 55, 2); on.cmd1 = { Cmd::R, 0, 3, 0 };
+    w = r.block({ on }, 480);
+    for (int k = 0; k < 9; ++k) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+    const auto rolled = lowsOf(w);
+    REQUIRE_FALSE(rolled.empty());
+    CHECK(rolled.front() == entry);
+    CHECK(std::find(rolled.begin(), rolled.end(), exact) != rolled.end());   // the exact period arrives and the rolls keep it
+}
+
 TEST_CASE("a roll keeps rolling while the table it replays bends a DRUM pitch", "[driver][commands][rom942]")
 {
     // X92_Wv_drumR: CASTSHDW's kick -- a DRUM wave with `P A9` on its table's

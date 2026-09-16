@@ -3256,7 +3256,7 @@ void Driver::retrigger(int ch, bool full, bool restartEnv)
     // carries the period the bend had reached (`TRIG NR33=23`), the next
     // instant's pitch work the entry minus the step.
     const auto drumReset = [&] {
-        if (!drumRom(v) || v.inst.type != InstrumentType::Wave) return;
+        if (!drumRom(v) || v.inst.type != InstrumentType::Wave || v.inst.retrigKeepsPitch) return;   // section 195
         const double base = noteOfVoice(ch) - double(v.fineOffset + slideResidual(v)) / 256.0;
         v.fineOffset = -int32_t(std::lround((base - std::floor(base)) * 256.0));
         v.fineQueued = 0; v.drumOffset = 0.0; v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0; v.slideStep256 = 0;

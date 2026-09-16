@@ -9,6 +9,48 @@ namespace chipboy::plugin {
 using namespace juce;
 using namespace chipboy::ui;
 
+// --- section 194: the custom table's editor -------------------------------
+HexPage::HexPage()
+{
+    ed_.setMultiLine(true, false); ed_.setReturnKeyStartsNewLine(true); ed_.setScrollbarsShown(false);
+    ed_.setFont(Fonts::mono(12.0f));
+    ed_.setColour(TextEditor::backgroundColourId, colours::well); ed_.setColour(TextEditor::textColourId, colours::text);
+    ed_.setColour(TextEditor::outlineColourId, colours::line); ed_.setColour(TextEditor::focusedOutlineColourId, colours::accent);
+    ed_.setColour(TextEditor::highlightColourId, colours::raisedHi);
+    ed_.onTextChange = [this] { if (!setting_) parse(); };
+    addAndMakeVisible(ed_);
+}
+void HexPage::resized() { ed_.setBounds(getLocalBounds()); }
+void HexPage::setBytes(const std::vector<uint8_t>& t)
+{
+    String s;
+    for (int r = 0; r < 16; ++r) {
+        for (int c = 0; c < 16; ++c) {
+            const size_t i = size_t(r * 16 + c);
+            s += String::toHexString(i < t.size() ? int(t[i]) : 0).paddedLeft('0', 2).toUpperCase();
+            if (c < 15) s += ' ';
+        }
+        if (r < 15) s += '\n';
+    }
+    if (ed_.getText() == s) return;
+    setting_ = true; ed_.setText(s, false); setting_ = false;
+}
+void HexPage::parse()
+{
+    std::vector<uint8_t> t; t.reserve(256);
+    int cur = -1;
+    const auto flush = [&] { if (cur >= 0) t.push_back(uint8_t(cur)); cur = -1; };
+    for (const char ch : ed_.getText().toStdString()) {
+        int d = -1;
+        if (ch >= '0' && ch <= '9') d = ch - '0'; else if (ch >= 'a' && ch <= 'f') d = ch - 'a' + 10; else if (ch >= 'A' && ch <= 'F') d = ch - 'A' + 10;
+        if (d < 0) { flush(); continue; }
+        if (cur < 0) cur = d;
+        else { t.push_back(uint8_t(cur * 16 + d)); cur = -1; }
+    }
+    flush();
+    if (t.size() == 256 && onChange) onChange(std::move(t));
+}
+
 namespace {
 constexpr int kListWidth = 220, kGap = 14, kListHeader = 28, kRow = 24;
 constexpr int kMinPeriod = 1500, kMaxPeriod = 1990;   // 3.8 kHz .. 36 kHz
@@ -244,13 +286,56 @@ void KitsPanel::rebuildContent()
     {
         // Section 117: a cell that names a second sample in its VEL column is
         // summed through this curve, which is what LSDj's DIST table does.
-        auto s = std::make_unique<Segmented>(StringArray{ "Clip", "Soft", "Fold", "Fold2", "Wrap", "Page" });
+        auto s = std::make_unique<Segmented>(StringArray{ "Clip", "Soft", "Fold", "Fold2", "Wrap", "Custom" });
         s->setMini(true);
-        s->setTooltip("How a cell that names two samples sums them: Clip clamps, Soft halves the slope past a knee, Fold mirrors at the limits, Fold2 mirrors twice as steeply, Wrap wraps round. Page is the raw memory page an LSDj DIST outside D0-D3 named, as the import read it (section 192); the kit keeps it through the other choices.");
-        // Section 192: Page stays selectable only while the kit carries a page.
-        s->onChange = [this](int v) { editKit("dist", [v](bank::Kit& k) { if (v == int(bank::KitDist::Raw) && k.distTable.size() != 256) return; k.dist = bank::KitDist(std::clamp(v, 0, bank::kKitDistCount - 1)); }); };
+        s->setTooltip("How a cell that names two samples sums them: Clip clamps, Soft halves the slope past a knee, Fold mirrors at the limits, Fold2 mirrors twice as steeply, Wrap wraps round. Custom mixes through the 256-byte table below, the way LSDj's DIST reads a page of memory outside D0-D3 (section 194): an import brings the page it found, or fill one here.");
+        // Section 194: Custom is always selectable; a kit without a table gets the
+        // curve it had, byte for byte, so nothing changes until the table is edited.
+        s->onChange = [this](int v) { editKit("dist", [v](bank::Kit& k) {
+            const auto next = bank::KitDist(std::clamp(v, 0, bank::kKitDistCount - 1));
+            if (next == bank::KitDist::Raw && k.distTable.size() != 256) {
+                const auto from = k.dist == bank::KitDist::Raw ? bank::KitDist::Clip : k.dist;
+                k.distTable.assign(256, 0);
+                for (int row = 0; row < 16; ++row) for (int col = 0; col < 16; ++col) k.distTable[size_t(row * 16 + col)] = uint8_t(bank::kitDistEntry(from, row, col));
+                k.distVram = false; k.distPage = -1;
+            }
+            k.dist = next;
+        }); };
         const int h = s->preferredHeight(), w = s->preferredWidth();
         dist_ = grid->addField("Dist", "two samples at once", std::move(s), h, w);
+    }
+    {
+        // Section 194: the custom table -- LSDj's raw page, editable -- and its LCD quirk.
+        auto hex = std::make_unique<HexPage>();
+        hex->onChange = [this](std::vector<uint8_t> t) { editKit("dist table", [t](bank::Kit& k) { k.distTable = t; }); };
+        hex_ = grid->addField("Table", "row = one sample's nibble, column = the other's", std::move(hex), HexPage::kHeight, HexPage::kWidth, 2);
+        auto lcd = std::make_unique<Toggle>("LCD holes");
+        lcd->setTooltip("Read the table as LSDj reads a page of video RAM: a byte mixed while the LCD draws a line comes back FF, which puts FE bytes through each frame in the scanline's rhythm (section 184). An import sets it for a page in video RAM.");
+        lcd->onChange = [this](bool on) { editKit("LCD holes", [on](bank::Kit& k) { k.distVram = on; }); };
+        lcd_ = grid->addField("Quirk", "video RAM's", std::move(lcd), Toggle::kHeight, 0);
+        auto rnd = std::make_unique<TextButton>("Randomize");
+        rnd->setTooltip("Fill the table with random bytes.");
+        rnd->onClick = [this] { editKit("dist table randomized", [](bank::Kit& k) { Random r; k.distTable.assign(256, 0); for (auto& byte : k.distTable) byte = uint8_t(r.nextInt(256)); }); };
+        randBtn_ = grid->addField("Fill", "a new table", std::move(rnd), Stepper::kHeight, 96);
+        auto zero = std::make_unique<TextButton>("Zero");
+        zero->setTooltip("Fill the table with zeros: silence, as LSDj's blank video RAM pages mix.");
+        zero->onClick = [this] { editKit("dist table zeroed", [](bank::Kit& k) { k.distTable.assign(256, 0); }); };
+        zeroBtn_ = grid->addField(String(), String(), std::move(zero), Stepper::kHeight, 96);
+        auto load = std::make_unique<TextButton>("Load" + String(CharPointer_UTF8("\xe2\x80\xa6")));
+        load->setTooltip("Read the first 256 bytes of any file into the table.");
+        load->onClick = [this] {
+            auto chooser = std::make_shared<FileChooser>("Load a 256-byte table", File(), "*");
+            Component::SafePointer<KitsPanel> safe(this);
+            chooser->launchAsync(FileBrowserComponent::openMode | FileBrowserComponent::canSelectFiles, [safe, chooser](const FileChooser& fc) {
+                if (safe == nullptr) return;
+                const File f = fc.getResult(); if (f == File()) return;
+                MemoryBlock mb; if (!f.loadFileAsData(mb)) return;
+                std::vector<uint8_t> t(256, 0);
+                std::memcpy(t.data(), mb.getData(), std::min<size_t>(256, mb.getSize()));
+                safe->editKit("dist table from " + f.getFileName(), [t](bank::Kit& k) { k.distTable = t; });
+            });
+        };
+        loadBtn_ = grid->addField(String(), String(), std::move(load), Stepper::kHeight, 96);
     }
     {
         auto t = std::make_unique<TextLine>(String(), Fonts::mono(12.0f), colours::text);
@@ -295,11 +380,15 @@ void KitsPanel::syncValues()
     if (loop_) loop_->setSelected(int(kit.loop), dontSendNotification);
     if (dist_) {
         dist_->setSelected(int(kit.dist), dontSendNotification);
-        const bool page = kit.distTable.size() == 256;
-        dist_->setOptionEnabled(int(bank::KitDist::Raw), page);
-        dist_->setOptionTooltip(int(bank::KitDist::Raw), page ? (kit.distPage >= 0 ? "LSDj's memory page " + ValueFormat::byte(kit.distPage) + "00 as the import read it" + String(kit.distVram ? ", video RAM with the LCD's mode-3 reads" : "") : String("the raw page the import read"))
-                                                              : String("No raw page: only an LSDj import with the ROM beside the save brings one"));
+        dist_->setOptionTooltip(int(bank::KitDist::Raw), kit.distPage >= 0 ? "The table LSDj's DIST " + ValueFormat::byte(kit.distPage) + "00 named, as the import read it" + String(kit.distVram ? " (video RAM, with the LCD's mode-3 reads)" : "")
+                                                                            : String("Mix through the 256-byte table below"));
     }
+    const bool custom = kit.dist == bank::KitDist::Raw;
+    if (hex_) { hex_->setBytes(kit.distTable); hex_->setEnabled(custom); }
+    if (lcd_) { lcd_->setToggled(kit.distVram, dontSendNotification); lcd_->setEnabled(custom); }
+    if (randBtn_) randBtn_->setEnabled(custom);
+    if (zeroBtn_) zeroBtn_->setEnabled(custom);
+    if (loadBtn_) loadBtn_->setEnabled(custom);
     if (info_) info_->setText(s ? withThousands(int(s->data.size())) + " smp" + middot() + seconds(s->data.size(), rate) : String(CharPointer_UTF8("\xe2\x80\x94")));
     if (preview_) preview_->set(b, slot_, sample_);
     scroll_.relayout();

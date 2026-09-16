@@ -7,6 +7,21 @@
 
 namespace chipboy::plugin {
 
+/// Section 194: a kit's custom mixing table, 256 bytes as sixteen lines of
+/// hex. Every edit that parses to exactly 256 bytes is applied.
+class HexPage : public juce::Component {
+public:
+    HexPage();
+    void setBytes(const std::vector<uint8_t>& t);
+    std::function<void(std::vector<uint8_t>)> onChange;
+    void resized() override;
+    static constexpr int kHeight = 16 * 15 + 10, kWidth = 392;
+private:
+    void parse();
+    juce::TextEditor ed_;
+    bool setting_ = false;
+};
+
 class KitsPanel : public EditorPanel {
 public:
     explicit KitsPanel(ChipBoyProcessor& p);
@@ -44,6 +59,11 @@ private:
     ui::Stepper* rate_ = nullptr;
     ui::Segmented* loop_ = nullptr;
     ui::Segmented* dist_ = nullptr;
+    HexPage* hex_ = nullptr;                 // section 194
+    ui::Toggle* lcd_ = nullptr;
+    juce::TextButton* randBtn_ = nullptr;
+    juce::TextButton* zeroBtn_ = nullptr;
+    juce::TextButton* loadBtn_ = nullptr;
     juce::TextButton* playBtn_ = nullptr;
     TextLine* info_ = nullptr;
     int slot_ = 1, sample_ = 0;

@@ -217,6 +217,10 @@ struct InstrumentCore {
     /// Section 187: a kit's vibrato at twice 9.4.2's depth -- what every LSDj
     /// before 9.4.0 gave a kit's `V`; the importer sets it for those versions.
     bool     vibDouble = false;
+    /// Section 195: a roll leaves a DRUM instrument's pitch word where it is,
+    /// as every LSDj before 9.4.0 did; off, each hit starts from the note's
+    /// entry (section 185, 9.4.0 and later). The importer sets it by version.
+    bool     retrigKeepsPitch = false;
     // pulse
     uint8_t  duty = 2;               ///< 0 12.5%, 1 25%, 2 50%, 3 75%
     std::array<uint8_t, 16> dutySeq{};

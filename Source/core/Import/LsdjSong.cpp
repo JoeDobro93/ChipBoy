@@ -443,6 +443,8 @@ struct Reader {
             // levels come at the same interval either way -- 9.3.9 steps them
             // itself at the chip's own rate (section 70).
             o.envRetrig = m.envelopeLaw != EnvelopeLaw::SoftwareStages;
+            // Section 195: before 9.4.0 a roll leaves a DRUM pitch running.
+            o.retrigKeepsPitch = !m.retrigResetsDrumPitch;
             instTranspose[size_t(i)] = o.transpose;
             // Section 81: a noise instrument reads LSDj's own table straight off
             // the bank, so the cell's note is LSDj's note and the byte the driver
@@ -475,7 +477,11 @@ struct Reader {
                 if (m.pu2Transpose && b[2]) o.pu2Transpose = int8_t(signedByte(b[2]));
                 // Section 191: before 9.x the nibble in byte 7 bits 2-5, v/32 of a
                 // semitone down -- 9.4.2's `F 0v`, so eight times it in byte 11's units.
-                o.fineTune = m.fineTuneNibble ? uint8_t(((b[7] >> 2) & 15) * 8) : b[11];          // section 112
+                // Section 196: 3.6.8 - 5.0.3 read the nibble as period units -- about
+                // 42/256 of a semitone each at the middle of the keyboard, capped at a
+                // semitone (the closest the 9.x byte comes; a whole nibble is far past it).
+                if (m.fineTuneNibble) { const int v = (b[7] >> 2) & 15; o.fineTune = uint8_t(m.fineTuneUnits ? std::min(255, int(std::lround(v * 42.2))) : v * 8); }
+                else o.fineTune = b[11];          // section 112
             } else if (t == 1) {
                 static const uint8_t kLevel[4] = { 0, 3, 2, 1 };       // the stored bits are the NR32 code, 1 = 100 %
                 o.waveLevel = kLevel[(b[1] >> 5) & 3];

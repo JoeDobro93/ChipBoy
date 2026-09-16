@@ -139,6 +139,9 @@ struct LsdjModel {
     /// unread. False where byte 11 holds it (9.x) or the nibble means period
     /// units or nothing (before 5.7.8, docs/LSDJ_VERSION_MAP.md).
     bool           fineTuneNibble;
+    /// Section 196: the nibble is **period units** (3.6.8 - 5.0.3), one unit
+    /// about 42/256 of a semitone at the middle of the keyboard.
+    bool           fineTuneUnits;
 };
 
 /// Every model, newest first. `count` receives how many.

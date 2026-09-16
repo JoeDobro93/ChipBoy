@@ -269,6 +269,7 @@ struct InstrumentPanel::Widgets {
     Stepper* kit = nullptr; Segmented* kitLoop = nullptr; TextLine* kitRate = nullptr;
     Segmented* noiseDomain = nullptr; Segmented* lfsr = nullptr; Segmented* pitchMode = nullptr; Stepper* shift = nullptr; Stepper* divisor = nullptr; Stepper* noiseSweep = nullptr;
     Stepper* noiseShape = nullptr; Segmented* noiseStable = nullptr;   // section 188
+    Segmented* retrigPitch = nullptr;                                     // section 195
     Stepper* envStage2 = nullptr; Stepper* envStage3 = nullptr;        // section 189
     Segmented* pan = nullptr;
     // envelope (section 27)
@@ -811,6 +812,8 @@ void InstrumentPanel::rebuildEditor()
     }
     w_->vibDouble = seg(*mod, "Kit vibrato", "A kit's V at 9.4.2's depth (1x) or at twice it, as every LSDj before 9.4.0 played it (2x). Kits only; imported songs from those versions set it.",
                         { "1x", "2x" }, [](bank::Instrument& i, int v) { i.vibDouble = v == 1; });
+    w_->retrigPitch = seg(*mod, "R on DRUM pitch", "What a roll does to a DRUM instrument's pitch: Resets starts every hit from the note's entry (9.4.0 and later, section 185); Keeps lets the pitch run on through the roll, as every LSDj before 9.4.0 did (section 195). Imported songs from those versions set Keeps.",
+                          { "Resets", "Keeps" }, [](bank::Instrument& i, int v) { i.retrigKeepsPitch = v == 1; });
     w_->vibSpeed = stepper(*mod, "Speed", "V's x, 1-15: one cycle every 720/x pitch updates -- x/2 Hz in Fast, Step and Drum -- or every 96/x ticks in Tick.",
                            1, 15, 8, [ps = inst.pitchSpeed](int v) { return vibSpeedText(v, ps); }, [](bank::Instrument& i, int v) { i.vib.speed = uint8_t(v); }, 106);
     w_->vibDepth = stepper(*mod, "Depth", "V's y: LSDj's semitone table, an eighth of a semitone at 0 up to eight at 15. 0 leaves the instrument without a vibrato of its own.",
@@ -983,7 +986,7 @@ void InstrumentPanel::syncValues()
     T(w.attack, i.env.attackTicks); T(w.peak, i.env.peak); T(w.decay, i.env.decayTicks); T(w.sustain, i.env.sustain); T(w.release, i.env.releaseTicks);
     T(w.start, i.env.start); T(w.fade, i.env.fadeTicks); T(w.fadeTo, i.env.fadeTo);
     S(w.attackCurve, int(i.env.attackCurve)); S(w.decayCurve, int(i.env.decayCurve)); S(w.releaseCurve, int(i.env.releaseCurve)); S(w.fadeCurve, int(i.env.fadeCurve));
-    S(w.vibShape, int(i.vib.shape)); S(w.vibDir, int(i.vib.dir)); T(w.vibSpeed, i.vib.speed); T(w.vibDepth, i.vib.depth); T(w.vibDelay, i.vib.delay); S(w.vibDouble, i.vibDouble ? 1 : 0);
+    S(w.vibShape, int(i.vib.shape)); S(w.vibDir, int(i.vib.dir)); T(w.vibSpeed, i.vib.speed); T(w.vibDepth, i.vib.depth); T(w.vibDelay, i.vib.delay); S(w.vibDouble, i.vibDouble ? 1 : 0); S(w.retrigPitch, i.retrigKeepsPitch ? 1 : 0);
     S(w.pitchSpeed, int(i.pitchSpeed)); T(w.cmdRate, i.cmdRate); T(w.chordRate, i.chordRate); S(w.tableMode, int(i.tableMode));
     T(w.table, i.table); S(w.transpose, i.transpose ? 0 : 1); S(w.noteOff, int(i.noteOff)); S(w.overlap, i.overlap == bank::Overlap::Retrig ? 1 : 0);
     S(w.envRetrig, i.envRetrig ? 1 : 0);
