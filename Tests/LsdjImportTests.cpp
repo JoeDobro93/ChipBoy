@@ -1552,8 +1552,8 @@ TEST_CASE("the models carry the vibrato ladder, F's law, P on noise and the loop
     // Sections 203 - 205.
     using bank::VibLadder;
     CHECK(lsdjModelForRomVersion("9.4.2")->vibLadder == VibLadder::Lsdj9);
-    CHECK(lsdjModelForRomVersion("8.5.1")->vibLadder == VibLadder::Lsdj78);
-    CHECK(lsdjModelForRomVersion("7.0.2")->vibLadder == VibLadder::Lsdj68);
+    CHECK(lsdjModelForRomVersion("8.5.1")->vibLadder == VibLadder::Lsdj9);
+    CHECK(lsdjModelForRomVersion("7.0.2")->vibLadder == VibLadder::Lsdj58);
     CHECK(lsdjModelForRomVersion("6.0.1")->vibLadder == VibLadder::Lsdj58); CHECK(lsdjModelForRomVersion("5.8.8")->vibLadder == VibLadder::Lsdj58);
     CHECK(lsdjModelForRomVersion("5.7.8")->vibLadder == VibLadder::Lsdj57);
     CHECK(lsdjModelForRomVersion("5.0.3")->vibLadder == VibLadder::Units39); CHECK(lsdjModelForRomVersion("3.9.2")->vibLadder == VibLadder::Units39);

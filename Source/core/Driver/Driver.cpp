@@ -59,18 +59,16 @@ constexpr int kVibDepth256[16] = {
     32, 64, 96, 128, 192, 256, 384, 512, 640, 768, 896, 1024, 1280, 1536, 1792, 2048
 };
 /// Section 203: the ladders the older versions read the depth through, measured
-/// at C3 and D#6 on every archive ROM. 6.8.2 - 7.7.5 (5.8.8 - 6.4.5 with depth
-/// 0 on) and 5.7.8; the latter's sixteen integers are also the unit laws' (3.6.5
-/// - 5.0.3), times the note's divider.
-constexpr int kVibLadder68[16] = { 0, 2, 3, 4, 6, 8, 11, 15, 19, 24, 29, 35, 42, 49, 56, 64 };
+/// at C3 and D#6 on every archive ROM. 5.8.8 - 7.7.5 and 5.7.8; the latter's
+/// sixteen integers are also the unit laws' (3.6.5 - 5.0.3), times the note's
+/// divider.
+constexpr int kVibLadder58[16] = { 1, 2, 3, 4, 6, 8, 11, 15, 19, 24, 29, 35, 42, 49, 56, 64 };
 constexpr int kVibLadder57[16] = { 0, 1, 2, 3, 4, 5, 7, 9, 11, 13, 16, 19, 22, 25, 28, 31 };
 inline int vibMultiplier(bank::VibLadder ladder, int depth)
 {
     const int d = depth & 15;
     switch (ladder) {
-        case bank::VibLadder::Lsdj78: return d == 0 ? 0 : kVibDepth256[d] / 32;
-        case bank::VibLadder::Lsdj68: return kVibLadder68[d];
-        case bank::VibLadder::Lsdj58: return d == 0 ? 1 : kVibLadder68[d];
+        case bank::VibLadder::Lsdj58: return kVibLadder58[d];
         case bank::VibLadder::Lsdj57:
         case bank::VibLadder::Units39:
         case bank::VibLadder::Units36: return kVibLadder57[d];
@@ -1256,7 +1254,7 @@ int Driver::vibratoFine(const Voice& v) const
     // complements, one short -- -1, -3, ... -31 for 9.x's -2, -4, ... -32 (5.7.8
     // - 7.0.2 measured: `-3 -8 -13 -18` a step at C3 for a multiplier of 11
     // where 9.x's entries give `-5 -10 -15 -20`, and a peak of `-81` for `-84`).
-    if (value < 0 && (ladder == bank::VibLadder::Lsdj68 || ladder == bank::VibLadder::Lsdj58 || ladder == bank::VibLadder::Lsdj57)) value += 1;
+    if (value < 0 && (ladder == bank::VibLadder::Lsdj58 || ladder == bank::VibLadder::Lsdj57)) value += 1;
     return value * m;
 }
 

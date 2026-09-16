@@ -36,13 +36,13 @@ enum class VibShape : uint8_t { Triangle = 0, Saw = 1, Square = 2, Off = 3 };
 enum class VibDir : uint8_t { Down = 0, Up = 1 };
 /// Section 203: which depth ladder a `V` reads -- LSDj's own by version. Lsdj9 is
 /// section 174's (1 2 3 4 6 8 12 16 20 24 28 32 40 48 56 64 times the waveform's 32,
-/// in 1/256 semitone); Lsdj78 the same with depth 0 off (7.7.6 - 8.8.6); Lsdj68
-/// 0 2 3 4 6 8 11 15 19 24 29 35 42 49 56 64 (6.8.2 - 7.7.5); Lsdj58 that with
-/// depth 0 on (5.8.8 - 6.4.5); Lsdj57 0 1 2 3 4 5 7 9 11 13 16 19 22 25 28 31
-/// (5.7.8); Units39 those sixteen in **period units** times the note's divider
-/// `(2048 - period) >> 6`, the downward half short by a thirty-second (3.7.5 -
-/// 5.0.3); Units36 the same, symmetric (3.6.5 - 3.7.4).
-enum class VibLadder : uint8_t { Lsdj9 = 0, Lsdj78 = 1, Lsdj68 = 2, Lsdj58 = 3, Lsdj57 = 4, Units39 = 5, Units36 = 6 };
+/// in 1/256 semitone; 7.7.6 and later); Lsdj58 1 2 3 4 6 8 11 15 19 24 29 35 42
+/// 49 56 64 with the downward entries one's complements (5.8.8 - 7.7.5); Lsdj57
+/// 0 1 2 3 4 5 7 9 11 13 16 19 22 25 28 31, the same entries (5.7.8); Units39
+/// those sixteen in **period units** times the note's divider `(2048 - period)
+/// >> 6`, the downward half short by a thirty-second (3.7.5 - 5.0.3); Units36
+/// the same, symmetric (3.6.5 - 3.7.4).
+enum class VibLadder : uint8_t { Lsdj9 = 0, Lsdj58 = 1, Lsdj57 = 2, Units39 = 3, Units36 = 4 };
 /// How fast P, L and V move (docs/COMMANDS_AND_TEMPO.md section 7). Fast is
 /// 360 updates a second, tempo-independent; Tick is one per tracker tick, so
 /// the effect follows the tempo; Step is Fast with P as an immediate offset

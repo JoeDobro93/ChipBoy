@@ -6091,14 +6091,15 @@ peak entry is hit) on every archive ROM (`VLo_0*`), and `V 4d` at D#6 (`$797`, `
 swing's peaks, up and down, give the multiplier of §174's ±32 waveform (1/256 semitone) or,
 before 5.7.8, the period units:
 
-- **9.2.J - 9.4.2**: §174's ladder, `1 2 3 4 6 8 12 16 20 24 28 32 40 48 56 64` for depths
-  0-F; `V x0` is a vibrato of an eighth of a semitone.
-- **7.7.6 - 8.5.1** (8.5.1 measured; the changelog's 7.8.1 "new vibrato depth table"): the
-  same ladder with depth 0 **off**. 8.8.6 is taken with it.
-- **6.8.2 - 7.7.5** (6.8.2, 7.0.2; 7.6.5 "adjusted Vx7" is unmeasured): `0 2 3 4 6 8 11 15
-  19 24 29 35 42 49 56 64` -- depth 0 off, and 6-D between §174's and 5.7.8's.
-- **5.8.8 - 6.4.5** (5.8.8, 5.9.9, 6.0.1, 6.4.5): that ladder with depth 0 on, `1 2 3 4 6 8
-  11 15 19 24 29 35 42 49 56 64`.
+- **7.7.6 - 9.4.2** (8.5.1, 9.2.J, 9.4.2; the changelog's 7.8.1 "new vibrato depth table"):
+  §174's ladder, `1 2 3 4 6 8 12 16 20 24 28 32 40 48 56 64` for depths 0-F; `V x0` is a
+  vibrato of an eighth of a semitone. 8.5.1's fine steps round toward zero where 9.x's round
+  to the nearest unit (`11` for 9.x's `10` at one step of `VLo_02`); a unit, left.
+- **5.8.8 - 7.7.5** (5.8.8, 5.9.9, 6.0.1, 6.4.5, 6.8.2, 7.0.2; 7.6.5 "adjusted Vx7" is
+  unmeasured): `1 2 3 4 6 8 11 15 19 24 29 35 42 49 56 64` -- 6-D between §174's and 5.7.8's.
+  (`VLo_00` is `V00`, which starts a vibrato on 5.8.8 - 6.4.5 and from 9.1.0 (§151) and does
+  nothing on 6.8.2 - 8.5.1 and before 5.8.8; it says nothing about depth 0, which `V40` shows
+  on: ±1 at D#6 on 7.0.2.)
 - **5.7.8**: `0 1 2 3 4 5 7 9 11 13 16 19 22 25 28 31` -- half the swing of everything after.
 - **3.7.5 - 5.0.3** (3.7.5, 3.8.7, 3.8.9, 3.9.2, 4.3.0, 4.7.3, 4.8.0, 4.9.4, 5.0.3): **period
   units**, the same sixteen integers as 5.7.8's times the note's frequency divider `(2048 -
@@ -6112,8 +6113,8 @@ Before 7.7.6 the waveform's downward half peaks at 31 where the upward peaks at 
 6.0.1, 7.0.2: `-81 / +76` at C3 for a multiplier of 11, `-58` for 8 where 8.5.1 and 9.x give
 `-60`); the unit laws' thirty-second is the same entry.
 
-ChipBoy: a `vibLadder` on the instrument (`Lsdj9`, `Lsdj78`, `Lsdj68`, `Lsdj58`, `Lsdj57`,
-`Units39`, `Units36`), set by the model; `vibratoFine()` reads the depth through the ladder,
+ChipBoy: a `vibLadder` on the instrument (`Lsdj9`, `Lsdj58`, `Lsdj57`, `Units39`, `Units36`),
+set by the model; `vibratoFine()` reads the depth through the ladder,
 and the unit laws run in `vibratoDrumUnits()`, where every pre-5.7.8 instrument's pitch lives
 (the register law's DRUM speed). The models split for it: 5.7.8 alone, 5.8.8 - 5.9.9 and 6.0.1
 - 6.4.5 (§205), 3.6.5 - 3.7.4 and 3.7.5 - 3.9.2.

@@ -4533,10 +4533,10 @@ std::pair<int, int> periodSwing(const std::vector<RegWrite>& w, int lo13, int lo
 TEST_CASE("the vibrato's depth follows the instrument's ladder", "[driver][vibrato]")
 {
     // Section 203, at C3 (56 units a semitone): the 9.x ladder's depth 2 is a
-    // multiplier of 3 and its depth 6 of 12; 5.7.8's are 2 and 7; the unit laws
-    // swing the register by the ladder times the divider in sixty-fourths (15
-    // at C3), the downward half a thirty-second short from 3.7.5; and depth 0
-    // is off on 6.8.2 - 8.8.6, an eighth of a semitone before and after.
+    // multiplier of 3 and its depth 6 of 12; 5.7.8's are 2 and 7 and its depth
+    // 0 is off; the unit laws swing the register by the ladder times the
+    // divider in sixty-fourths (15 at C3), the downward half a thirty-second
+    // short from 3.7.5.
     const auto swing = [](bank::VibLadder ladder, int depth, bool registerLaw) {
         auto r = std::make_unique<Rig>();
         r->tickHz = 100.0;
@@ -4556,11 +4556,9 @@ TEST_CASE("the vibrato's depth follows the instrument's ladder", "[driver][vibra
     CHECK(near(swing(bank::VibLadder::Lsdj9, 6, false), -91, 83));
     CHECK(near(swing(bank::VibLadder::Lsdj57, 2, false), -15, 14));
     CHECK(near(swing(bank::VibLadder::Lsdj57, 6, false), -51, 49));
-    CHECK(near(swing(bank::VibLadder::Lsdj68, 6, false), -81, 76));            // the downward half peaks at 31/32
-    CHECK(swing(bank::VibLadder::Lsdj68, 0, false) == std::pair<int, int>{ 0, 0 });
+    CHECK(near(swing(bank::VibLadder::Lsdj58, 6, false), -81, 76));            // the downward entries are one's complements
     CHECK(near(swing(bank::VibLadder::Lsdj58, 0, false), -7, 7));
-    CHECK(swing(bank::VibLadder::Lsdj78, 0, false) == std::pair<int, int>{ 0, 0 });
-    CHECK(near(swing(bank::VibLadder::Lsdj78, 6, false), -91, 83));
+    CHECK(swing(bank::VibLadder::Lsdj57, 0, false) == std::pair<int, int>{ 0, 0 });
     CHECK(swing(bank::VibLadder::Units39, 6, true) == std::pair<int, int>{ -102, 105 });
     CHECK(swing(bank::VibLadder::Units36, 6, true) == std::pair<int, int>{ -105, 105 });
     CHECK(swing(bank::VibLadder::Units39, 15, true) == std::pair<int, int>{ -451, 465 });
