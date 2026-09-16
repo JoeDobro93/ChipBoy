@@ -1085,16 +1085,20 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         // for the next channel to take. When the row's own `A` has replaced
         // the table, the position is still this note's row plus one: the ROM
         // counts the instrument's steps, not the table the `A` moved to.
-        // Section 183: "this note's row" is the row the `A` was read on -- an
-        // `H` before it moved the position first (the ROM's H handler stores
-        // the target through the same routine), so a STEP table whose last row
-        // is `H00` cycles its rows for ever, as UNMASKED's chain 05 does.
+        // Section 183: "this note's row" is, lane by lane, the row the lane
+        // read -- an `H` before the `A` moved its lane's position first (the
+        // ROM's H handler stores the target through the same routine), so a
+        // STEP table whose last row is `H00` cycles its rows for ever, as
+        // UNMASKED's chain 05 does, and a hop in CMD 2 alone leaves CMD 1's
+        // position walking on (STEP_hopA).
         if (v.stepKey != kNoStepKey) {
             if (v.tableSlot == tbl) parkStep(ch);
             else {
                 StepPark& p = stepState_[size_t(v.stepKey)];
-                p.step = p.step2 = p.stepE = uint8_t((v.tableRowA + 1) % kTableSteps);
-                p.row = p.row2 = p.rowE = p.step; p.table = tbl; p.used = true;
+                p.stepE = uint8_t((v.tableRowRead[0] + 1) % kTableSteps);
+                p.step  = uint8_t((v.tableRowRead[1] + 1) % kTableSteps);
+                p.step2 = uint8_t((v.tableRowRead[2] + 1) % kTableSteps);
+                p.rowE = p.stepE; p.row = p.step; p.row2 = p.step2; p.table = tbl; p.used = true;
             }
             v.stepDirty = false;
         }
@@ -2374,7 +2378,7 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             v.retrigFast = (c.a & 15) == 8;
             v.retrigStep = retrigVolStep(c.a);
             v.retrigCount = 0; v.retrigFastCount = 0;
-            v.retrigBase = v.inst.env.lsdj ? v.lsdjLevel : v.envVol;   // section 136: where the step counts from; 167: the machine's level
+            v.retrigBase = wave ? v.waveLevel : v.inst.env.lsdj ? v.lsdjLevel : v.envVol;   // section 136: where the step counts from; 167: the machine's level; 182: the wave's NR32 level
             // Section 134: the retrigger fires on the command's **own** tick and
             // then every `y` ticks -- `y = 0` is that one alone. ChipBoy counted
             // from the command instead, so the first landed a tick early and the
@@ -2770,8 +2774,13 @@ void Driver::setFrameStep(int ch, int step, bool live)
 
 void Driver::stepTable(int ch)
 {
-    // Kept for the note-on, which fires every lane's row 0 together.
-    stepTableLane(ch, 0); stepTableLane(ch, 1); stepTableLane(ch, 2);
+    // Kept for the note-on, which fires every lane's row 0 together. Section
+    // 157: an `A` in a lane replaces the table and the new one's row 0 is the
+    // next tick's, so the lanes after it are not read on this note.
+    const uint16_t run = v_[size_t(ch)].tableRun;
+    stepTableLane(ch, 0); if (v_[size_t(ch)].tableRun != run) return;
+    stepTableLane(ch, 1); if (v_[size_t(ch)].tableRun != run) return;
+    stepTableLane(ch, 2);
 }
 
 /// One lane of the table (section 64): 1 is the transpose column and CMD 1,
@@ -2796,6 +2805,7 @@ void Driver::stepTableLane(int ch, int lane)
         // stops a ring of hops with no row to play spinning the tick.
         for (int guard = 0; guard <= kTableSteps; ++guard) {
             row = step;
+            v.tableRowRead[0] = row;
             const TableStep& s = t->steps[row];
             if (s.vol < 0 && s.volHop < 0 && s.volTicks == 0) { volOn = false; return; }
             if (s.volHop >= 0) {
@@ -2842,6 +2852,7 @@ void Driver::stepTableLane(int ch, int lane)
     for (int guard = 0; guard <= kTableSteps; ++guard) {
         row = step;
         const uint8_t was = step;
+        v.tableRowRead[lane] = row;
         const TableStep& s = t->steps[row];
         const Command raw = lane == 2 ? s.cmd2 : s.cmd1;
         const bool z = raw.cmd == Cmd::Z;
@@ -2854,7 +2865,7 @@ void Driver::stepTableLane(int ch, int lane)
         // ROM has already read this row's CMD 2 and dispatches it after the
         // `A` in CMD 1, so that one command is applied here before leaving.
         if (v.tableRun != runWas) {
-            v.tableRowA = was;                            // section 183: the row the `A` sat on, hop or no hop
+            if (lane == 1) v.tableRowRead[2] = was;       // section 183: CMD 2 of this row is read with it
             if (lane == 1 && s.cmd2.cmd != Cmd::None && s.cmd2.cmd != Cmd::A) {
                 const bool z2 = s.cmd2.cmd == Cmd::Z;
                 applyCommand(ch, z2 ? resolveRandom(ch, s.cmd2, 2) : s.cmd2, true, 2, z2);
@@ -3169,7 +3180,13 @@ void Driver::retrigger(int ch, bool full, bool restartEnv)
     // nothing measured behind it, and it is what silenced `READROOM`'s rolls.
     // It accumulates over the retriggers from that start (section 136): R F4 is
     // 9, 8, 7, 6 from a volume of nine, not 9, 8, 8, 8.
-    if (v.retrigStep && !lsdjMachine) {
+    if (v.retrigStep && !lsdjMachine && v.inst.type == InstrumentType::Wave) {
+        // Section 182: on the wave channel the nibble walks NR32's level a
+        // notch a retrigger, 100 % -> 50 % -> 25 % -> mute, and stays at the
+        // ends (RF4_ph_ch2: NR32 20, 40, 60, 00, then 00).
+        v.waveLevel = uint8_t(std::clamp<int>(int(v.retrigBase) + int(v.retrigStep) * int(v.retrigCount), 0, 3));
+    }
+    else if (v.retrigStep && !lsdjMachine) {
         v.envVol = uint8_t(std::clamp<int>(int(v.retrigBase) + int(v.retrigStep) * int(v.retrigCount), 0, 15));
         // Section 158: the shaped envelope runs on from this level, not back
         // from its own start -- measured, `R F0` on an ADSR note falls 5 -> 1

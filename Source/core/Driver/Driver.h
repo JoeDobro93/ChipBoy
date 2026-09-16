@@ -261,7 +261,7 @@ private:
         /// TSP and CMD 1, lane 2 is CMD 2, lane E is VOL and LEN.
         uint8_t  tableSlot = 0, tableStep = 0, tableRow = 0; bool tableOn = false;
         uint8_t  tableStep2 = 0, tableRow2 = 0, tableStepE = 0, tableRowE = 0;
-        uint8_t  tableRowA = 0;       ///< section 183: the row a table's `A` was read on (after any hop), for the STEP position
+        uint8_t  tableRowRead[3] = { 0, 0, 0 };   ///< section 183: the row each lane read last (after any hop), for the STEP position
         /// Section 157: an `A` inside a table **replaces** the table -- one run
         /// per channel, as the ROM keeps one table number per channel. The
         /// column the `A`'s own row had in force stays until the new table's

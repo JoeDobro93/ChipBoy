@@ -5638,6 +5638,17 @@ runs first), the table's row 0 then 1.2 ms after the retrigger it ran (2.52 ms i
 `+C` on row 0 -- the octave blip -- and stops; the phrase's `R C0` and the `Z` rolls of it
 retrigger the note, and the ROM blips on every roll where ChipBoy played the blip once.
 
+**On the wave channel `R`'s nibble walks NR32.** The wave has no envelope machine (§164), so
+the nibble the retrigger adds to the envelope bytes lands on the level code: `R F4` on a 100 %
+note writes `NR32 = 40` at its immediate retrigger, `60` four ticks on, `00` after that, and the
+rolls after stay at `00` (`RF4_ph_ch2`) -- a notch a retrigger, 100 % → 50 % → 25 % → mute, held
+at the ends. ChipBoy stepped `envVol`, which the wave never writes; `waveLevel` walks now.
+
+The cell `R`'s retrigger after the trigger, measured on the ROM: 1.06 ms on a pulse, 1.07 on the
+wave, 1.10 on noise (0.89 with a nibble of `F`), 1.34 with a table on the instrument; ChipBoy's
+constant is 1.06 and the table's extra, so the compare's 1 ms batches split the pair on noise
+and wave as they do on the ROM's pulse -- a boundary, not a difference.
+
 ChipBoy: the tick decides the periodic retrigger **before** the table's row (`retrigReplays`),
 skips the row for that tick, runs the retrigger, then starts the instrument's own table over
 (`tableOverride` or the instrument's, the lanes at row 0 with their hop counters clear, the STEP
@@ -5679,8 +5690,14 @@ the ROM's `H` handler (`2:$55F9`) stores the hop's target through the same routi
 the third note goes 2 → `H00` → 0 → `A11`, position 1, and the cycle is three rows long for ever
 where ChipBoy's went to 3 and walked the twelve empty rows behind it (`UN_c05_full`: pans
 L R L R L on both sides now; the earlier `UN_c05*` replicas had collapsed table `10` to its first row,
-which is why none of them reproduced the song). ChipBoy: `stepTableLane()` records the row an `A`
-was read on (`tableRowA`, after any hop) and the note-on parks that row plus one.
+which is why none of them reproduced the song). The position is per lane (`$C250 + inst` for
+CMD 1, `$C290 + inst` for CMD 2): a hop in CMD 2 alone moves CMD 2's position, and CMD 1's walks
+on from the row it read (`STEP_hopA`: table `W03+A01 / W01 / Z00+H00 / W02`, notes play W03,
+W01, W01 then the hop's A, W02, then the hop again). ChipBoy: `stepTableLane()` records the row
+each lane read (`tableRowRead[]`, after any hop; an `A` in CMD 1 marks CMD 2 as having read the
+same row), the note-on parks each lane at its row plus one, and a note-on's `stepTable()` stops
+at the lane whose `A` replaced the table, as the tick does (§157: the new table's row 0 is the
+next tick's).
 
 Still different in those replicas, and left: a slide's step lands one period unit off at one of
 its updates (`NR13 = 68` against `67` on the second of three steps from `783` to `758`: the

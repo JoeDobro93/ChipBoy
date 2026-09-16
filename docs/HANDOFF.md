@@ -72,17 +72,21 @@ design-log section the change touches. Update this file at the end of every chan
   restarts the machine at byte 1, the wave retrigger's two forms (`Voice::frameDirty`); §181:
   a ONCE run's end stops the pitch effects, a note-on's noise `S` restart is judged against the
   note (`noiseNr43()`). The matrix: 53 of 323 cases differ, all timing, random or unmodelled;
-  `REPTCOMP`'s wave channel is identical whole. §182 (the user's `UNMASKED` reports): a tick's
+  `REPTCOMP`'s wave channel is identical whole (after §182-§184: 64 of 349, 52 of the
+  original 323 -- the rolls, `AtblW_L` and `STEP_hopA` closed; the new `UN_c05*` and
+  `ZF_wave_cellA*` cases differ on the slide unit, the bare refresh batch and NR32's bit 7
+  noted under Open issues). §182 (the user's `UNMASKED` reports): a tick's
   `R` retrigger reloads the instrument and starts its table over at row 0 as that tick's row
   (`retrigReplays`, `kRollRowCycles`; chain `30` blips on every roll), `Z` on a wave `F` rolls
   the whole byte (phrase `10`'s "quiet" note), `F 00` writes no frame, a bare slide takes no
   finetune refresh, the retrigger phase is 1.06 ms and 1.34 with a table; §183: a STEP table's
-  position after a hop's row `A` is that row plus one (`Voice::tableRowA`; chain `05` cycles
-  `A11 / A12 / H00` for ever); §184: a kit's raw page in video RAM reads `$FF` in the LCD's
+  position after a hop's row `A` is that row plus one, lane by lane (`Voice::tableRowRead`;
+  chain `05` cycles `A11 / A12 / H00` for ever; `STEP_hopA`), and a wave `R`'s nibble walks
+  NR32 (`RF4_ph_ch2`); §184: a kit's raw page in video RAM reads `$FF` in the LCD's
   mode 3 -- the mixer's 140 cycles a byte and two reads against a virtual LCD reproduce the
   ROM's `FE` pattern (348 of 352 bytes of `UNMASKED`'s first frames; `Kit::distVram`,
   `kitMixRawLcd`, `lcdMode3At`), the phase the emulator run's. `CHANGES.md` has the round.
-  299 core tests. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
+  301 core tests. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
   `probe/raw.py TAG [ch] [n]` prints the first raw writes of both sides. 11 plugin checks.
 - The probe rig for this campaign lives in the container at `/root/lsdj/probe/`: `vs_matrix.py`
   (the interaction cases, two-sided, `--show` for the first differing batch), `songdiff.py NAME`

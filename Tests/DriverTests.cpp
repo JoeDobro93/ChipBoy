@@ -702,6 +702,61 @@ TEST_CASE("a STEP table ending in H00 cycles its rows: the position is the A's o
     CHECK(seen == std::vector<int>{ 1, 3, 1, 3, 1, 3 });
 }
 
+TEST_CASE("a STEP table's lanes keep their own positions across a hop in one column", "[driver][commands][table][rom942]")
+{
+    // Section 183 (STEP_hopA): table 0 = W03 + A02 / W01 / (Z00, H00) / W02,
+    // table 2 = W03 on row 0, A20 on row 1. CMD 2's H00 on the third note hops
+    // its own lane to row 0, whose A02 replaces the table; CMD 1's position
+    // walks on to row 3, so the fourth note plays W02 -- not row 1's W01 again.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    Table t0; t0.used = true;
+    t0.steps[0].cmd1 = { Cmd::W, 3, 0, 0 }; t0.steps[0].cmd2 = { Cmd::A, 2, 0, 0 };
+    t0.steps[1].cmd1 = { Cmd::W, 1, 0, 0 };
+    t0.steps[2].cmd1 = { Cmd::Z, 0, 0, 0 }; t0.steps[2].cmd2 = { Cmd::H, 0, 0, 0 };
+    t0.steps[3].cmd1 = { Cmd::W, 2, 0, 0 };
+    Table t1; t1.used = true; t1.steps[0].cmd1 = { Cmd::W, 3, 0, 0 }; t1.steps[1].cmd1 = { Cmd::A, 0x20, 0, 0 };
+    r.bank.tables[0] = t0; r.bank.tables[1] = t1;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Lanes");
+    i.used = true; i.table = 1; i.tableMode = bank::TableMode::Step; i.duty = 0;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(0, p);
+    const auto lastDuty = [](const std::vector<RegWrite>& w) { int d = -1; for (const auto& x : w) if (x.addr == 0xFF11) d = x.value >> 6; return d; };
+    std::vector<int> seen;
+    for (int n = 0; n < 5; ++n) {
+        std::vector<RegWrite> w = r.block({ cellOn(0, 60, 2) }, 480);
+        for (int k = 0; k < 3; ++k) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+        seen.push_back(lastDuty(w));
+    }
+    // Note 1: row 0's W03 then A02 (table 2's W03 on the tick after). Note 2:
+    // W01. Note 3: Z00 re-runs W01, the hop's row 0 A02 -> W03. Note 4: CMD 1
+    // at row 3, W02; CMD 2 at row 1, nothing. Note 5: CMD 1 past the rows,
+    // CMD 2's H00 again -> W03.
+    CHECK(seen == std::vector<int>{ 3, 1, 3, 2, 3 });
+}
+
+TEST_CASE("R's nibble walks a wave note's NR32 level a notch a retrigger and stays at mute", "[driver][commands][rom942]")
+{
+    // Section 182 (RF4_ph_ch2): `R F4` on a 100 % wave note: the immediate
+    // retrigger writes 50 %, the next 25 %, the next mute, and the rolls after
+    // that stay muted.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[2] = tracker::NoteSource::Tracker;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Roll");
+    i.used = true; i.waveLevel = 3;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(2, p);
+    NoteEvent on = cellOn(2, 60, 2); on.cmd1 = { Cmd::R, 15, 4, 0 };
+    std::vector<int> levels;
+    auto w = r.block({ on }, 480);
+    for (int k = 0; k < 14; ++k) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+    int last = -1;
+    for (const auto& x : w) if (x.addr == 0xFF1C && (x.value >> 5) != last) { last = x.value >> 5; levels.push_back(last); }
+    CHECK(levels == std::vector<int>{ 1, 2, 3, 0 });      // 100 %, 50 %, 25 %, mute -- and no wrap back
+}
+
 TEST_CASE("a K cell kills its own note and no other", "[driver][commands]")
 {
     // K is a per-note letter (section 12): it shapes the cell it is on.

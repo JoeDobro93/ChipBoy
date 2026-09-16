@@ -233,10 +233,12 @@ differ for a reason not found (VRAM bank 1 is the suspect).
   instrument and starts its table at row 0 -- that tick's row, the row after it the next tick's
   -- so `UNMASKED`'s chain `30` blips on every roll; `Z 0F` on `F 00` rolls frames 0-15 of the
   synth instead of whole slots (the "quiet" note of phrase `10`); a step of 0 writes no frame;
-  the retrigger phase is 1.06 ms, 1.34 with a table, and the table's row 0 follows it.
-- **A STEP table's position after a hop is the `A`'s own row plus one** (§183): `H00` on the
-  last row of a three-row STEP table cycles it for ever, as `UNMASKED`'s chain `05` needs;
-  ChipBoy counted from the row the note started on and walked the empty rows behind.
+  the retrigger phase is 1.06 ms, 1.34 with a table, and the table's row 0 follows it; on the
+  wave channel `R`'s nibble walks NR32's level a notch a retrigger.
+- **A STEP table's position after a hop is the `A`'s own row plus one, lane by lane** (§183):
+  `H00` on the last row of a three-row STEP table cycles it for ever, as `UNMASKED`'s chain
+  `05` needs; ChipBoy counted from the row the note started on and walked the empty rows
+  behind. A hop in one column moves that column's position alone.
 
 - **A kit's raw page in video RAM reads `$FF` in the LCD's mode 3** (§184): the mixer's two
   page reads a byte, 140 cycles a byte, against a virtual LCD (456 cycles a line, 144 drawn
