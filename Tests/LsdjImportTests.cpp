@@ -1092,9 +1092,9 @@ TEST_CASE("inside format 22 a 9.2 song's wave R nibble and kit vibrato depth are
 {
     // docs/LSDJ_VERSIONS.md section 11, probed 9.2.J against 9.4.2: before
     // 9.3.4 R's volume nibble does nothing on the wave channel (kits too), and
-    // before 9.4.0 a kit's V is twice as deep. A wave R F4 becomes R 04, a
-    // kit V 42 becomes V 44, a kit V 4A saturates at V 4F with a note; the
-    // 9.4.x model keeps every byte.
+    // before 9.4.0 a kit's V is twice as deep. A wave R F4 becomes R 04; the
+    // kit's V bytes stay and the kit instrument takes `vibDouble` (section
+    // 187); the 9.4.x model keeps every byte.
     auto song = blankSong(22);
     song[kInstAlloc + 0] = 1; song[kInstAlloc + 1] = 1;
     uint8_t* i0 = song.data() + kInst; i0[0] = 1; i0[1] = 0xA8; i0[3] = 0x00; i0[7] = 3; i0[10] = 0xD0;           // a wave
@@ -1109,6 +1109,17 @@ TEST_CASE("inside format 22 a 9.2 song's wave R nibble and kit vibrato depth are
     song[kCmd + 6] = 6; song[kCmdV + 6] = 0x01;              // a bare F 01 on the kit: the frame to start over from (section 186)
     song[kChainPhrases + 0] = 0;
     song[kRows + 0] = 0xFF; song[kRows + 1] = 0xFF; song[kRows + 2] = 0; song[kRows + 3] = 0xFF;
+    // A kit for the kit instrument to take its samples from (as the kit test builds one).
+    std::vector<uint8_t> rom(9 * 0x4000, 0);
+    {
+        uint8_t* b = rom.data() + 8 * 0x4000;
+        b[0] = 0x60; b[1] = 0x40; std::memcpy(b + 0x52, "TESTKT", 6); std::memcpy(b + 0x22, "S01", 3);
+        std::vector<uint8_t> ramp(64); for (size_t k = 0; k < ramp.size(); ++k) ramp[k] = uint8_t(k % 16);
+        for (size_t k = 0; k < ramp.size(); k += 2) b[0x60 + k / 2] = uint8_t((ramp[k] << 4) | ramp[k + 1]);
+        b[2] = uint8_t((0x4060 + 32) & 0xFF); b[3] = uint8_t((0x4060 + 32) >> 8);
+    }
+    const auto kits = readKits(rom.data(), rom.size());
+    REQUIRE(kits.size() == 1);
     const LsdjModel* old = lsdjModelNamed("LSDj 9.2.J - 9.3.3 (format 22)");
     REQUIRE(old != nullptr);
     CHECK_FALSE(old->waveRetrigNibble); CHECK_FALSE(old->kitVibratoHalved); CHECK_FALSE(old->retrigResetsDrumPitch);
@@ -1119,18 +1130,17 @@ TEST_CASE("inside format 22 a 9.2 song's wave R nibble and kit vibrato depth are
     for (const LsdjModel* m : { old, &lsdjLatestModel() }) {
         auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
         ImportSummary sum; ImportNotes notes;
-        REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
+        REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes, &kits));
         const auto* ph = out->phrase(1);
         REQUIRE(ph != nullptr);
         const bool o = m == old;
         CHECK(ph->cells[0].cmd1.cmd == bank::Cmd::R); CHECK(ph->cells[0].cmd1.a == (o ? 0 : 15)); CHECK(ph->cells[0].cmd1.b == 4);
-        CHECK(ph->cells[4].cmd1.cmd == bank::Cmd::V); CHECK(ph->cells[4].cmd1.a == 4); CHECK(ph->cells[4].cmd1.b == (o ? 4 : 2));
-        CHECK(ph->cells[8].cmd1.cmd == bank::Cmd::V); CHECK(ph->cells[8].cmd1.b == (o ? 15 : 10));
+        CHECK(ph->cells[4].cmd1.cmd == bank::Cmd::V); CHECK(ph->cells[4].cmd1.a == 4); CHECK(ph->cells[4].cmd1.b == 2);
+        CHECK(ph->cells[8].cmd1.cmd == bank::Cmd::V); CHECK(ph->cells[8].cmd1.b == 10);
+        CHECK(bank->instruments[1].type == bank::InstrumentType::Kit); CHECK(bank->instruments[1].vibDouble == o);   // section 187: the depth lives on the kit
         CHECK(ph->cells[12].cmd1.cmd == bank::Cmd::R); CHECK(ph->cells[12].cmd1.a == 8);            // the resync is not a volume
         CHECK(ph->cells[6].cmd1.cmd == bank::Cmd::F); CHECK(ph->cells[6].cmd1.a == 0); CHECK(ph->cells[6].cmd1.b == 1);
-        bool noted = false;
-        for (const auto& n : notes.lines) if (n.find("V4A") != std::string::npos) noted = true;
-        CHECK(noted == o);
+        for (const auto& n : notes.lines) CHECK(n.find("V4A") == std::string::npos);
     }
 }
 

@@ -1211,6 +1211,19 @@ int Driver::vibratoFine(const Voice& v) const
     return value * (kVibDepth256[v.vibDepth & 15] / 32);
 }
 
+/// Section 187: a kit's vibrato swings the period register by the depth
+/// table's entry itself, in units -- `V 42` on 9.4.2 walks NR33 by 15 an
+/// instant to 45 either side of the kit's period (X92_KIT_V42), 9.2.L by 30
+/// to 90, the entry 96 halved since 9.4.0 ("halving kit vibrato depths"); the
+/// instrument's `vibDouble` keeps the older depth.
+int Driver::kitVibratoUnits(const Voice& v) const
+{
+    if (!v.vibOn || v.ticks < v.vibDelay) return 0;
+    const int value = vibWave(v.vibShape, int(v.vibPhase >> 10) & 63);
+    const int units = value * (kVibDepth256[v.vibDepth & 15] / 32);
+    return v.inst.vibDouble ? units : units / 2;
+}
+
 /// The vibrato in Drum mode, in period units: the same triangle and the same
 /// depth table, but the swing is the period's, not the note's -- LSDj works in
 /// the register there and one semitone is worth kDrumUnitsPerSemitone units.
@@ -1288,7 +1301,7 @@ int Driver::computePeriod(int ch)
         const double semis = p.transpose + v.bend;
         const double r = rate * std::pow(2.0, semis / 12.0);
         const double per = 2048.0 - 2097152.0 / std::max(1024.0, r);
-        return std::clamp(int(std::lround(per)) + int(std::lround(v.drumOffset)), 0, 2047);
+        return std::clamp(int(std::lround(per)) + int(std::lround(v.drumOffset)) + kitVibratoUnits(v), 0, 2047);   // the swing goes below the period first, as the wave's below the note
     }
     const bool wave = v.inst.type == InstrumentType::Wave;
     if (drumRom(v)) {
@@ -1412,7 +1425,8 @@ void Driver::pitchStep(int ch, bool onTick)
         } else { v.sliding = false; v.slideOff256 = 0; }
         moving = true;
     }
-    if (moving || v.pitchWrite) writePeriod(ch, false);
+    // Section 187: a kit whose samples have ended writes nothing more.
+    if ((moving || v.pitchWrite) && !(v.inst.type == InstrumentType::Kit && !v.kitOn)) writePeriod(ch, false);
     v.pitchWrite = false;
     // The phase steps **after** the write: the first update of a note writes
     // the note itself, at phase zero, and the swing starts from the one after
@@ -2449,8 +2463,8 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
                 // the direction says; on a running one only the increment moves.
                 if (v.vibOn && !wasOn) v.vibPhase = vibStartPhase(v.vibDir, v.vibShape);
             }
-            if (noise && v.vibDepth && pitchSpeed(v) != PitchSpeed::Tick) v.pitchClockOn = true;
-            if (live) writePeriod(ch, false);
+            if ((noise || v.inst.type == InstrumentType::Kit) && v.vibDepth && pitchSpeed(v) != PitchSpeed::Tick) v.pitchClockOn = true;   // section 187: the kit's too
+            if (live && v.inst.type != InstrumentType::Kit) writePeriod(ch, false);   // section 187: a kit's period goes out with its frames
             break;
         case Cmd::U:
             // LSDj's `W` on a wave instrument is the **run**: x ticks a frame,
@@ -3091,6 +3105,11 @@ void Driver::tick(int ch)
             }
         }
     }
+    // Section 187: a kit's vibrato phase moves on the tick as well as on the
+    // instant -- the ROM's period steps double once a tick (X92_KIT_V42: -15
+    // -15 -15 +9 +30 +15 …, a cycle of eleven instants where the instant's
+    // increment alone would make 12.8).
+    if (v.inst.type == InstrumentType::Kit && v.vibOn && v.ticks > 1 && v.ticks >= v.vibDelay) v.vibPhase = uint16_t(v.vibPhase + vibIncFor(v.vibSpeed, false));   // not on the note's own tick
     // With the pitch speed at Tick this tick is the pitch update: the vibrato
     // phase, a slide and a P bend move here rather than on the pitch clock.
     if (v.inst.type == InstrumentType::Noise && v.vibOn) pitchStep(ch, true);   // section 119

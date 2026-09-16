@@ -79,6 +79,7 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     if (i.pu2Transpose != 0) o->setProperty("pu2Transpose", int(i.pu2Transpose));   // section 49; absent reads as 0
     if (i.pitchRegisterUnits) o->setProperty("pitchRegisterUnits", true);          // section 88
     o->setProperty("vibShape", int(i.vib.shape)); o->setProperty("vibDir", int(i.vib.dir)); o->setProperty("vibSpeed", int(i.vib.speed)); o->setProperty("vibDepth", int(i.vib.depth)); o->setProperty("vibDelay", int(i.vib.delay));
+    if (i.vibDouble) o->setProperty("vibDouble", true);   /* section 187 */
     o->setProperty("duty", int(i.duty));
     { Array<var> seq; for (int k = 0; k < i.dutySeqLen; ++k) seq.add(int(i.dutySeq[size_t(k)])); o->setProperty("dutySeq", seq); }
     o->setProperty("envVol", int(i.envVol)); o->setProperty("envDir", int(i.envDir)); o->setProperty("envRate", int(i.envRate));
@@ -143,6 +144,7 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.pitchRegisterUnits = bool(o->getProperty("pitchRegisterUnits"));             // section 88
     // The vibrato's shape used to carry its direction (Triangle, Square,
     // SawUp, SawDown); it is a shape and a direction now.
+    i.vibDouble = bool(o->getProperty("vibDouble"));
     if (o->hasProperty("vibDir")) {
         i.vib.shape = VibShape(std::clamp(getOr(o, "vibShape", 0), 0, 3));   // section 114: 3 is off
         i.vib.dir = VibDir(std::clamp(getOr(o, "vibDir", 0), 0, 1));

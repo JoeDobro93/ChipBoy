@@ -277,7 +277,7 @@ struct InstrumentPanel::Widgets {
     Stepper* start = nullptr; Stepper* fade = nullptr; Stepper* fadeTo = nullptr;   // section 51
     Segmented* attackCurve = nullptr; Segmented* decayCurve = nullptr; Segmented* releaseCurve = nullptr; Segmented* fadeCurve = nullptr;
     // pitch and modulation
-    Segmented* vibShape = nullptr; Segmented* vibDir = nullptr; Stepper* vibSpeed = nullptr; Stepper* vibDepth = nullptr; Stepper* vibDelay = nullptr;
+    Segmented* vibShape = nullptr; Segmented* vibDir = nullptr; Stepper* vibSpeed = nullptr; Stepper* vibDepth = nullptr; Stepper* vibDelay = nullptr; Segmented* vibDouble = nullptr;
     Segmented* pitchSpeed = nullptr; Stepper* cmdRate = nullptr; Stepper* chordRate = nullptr; Segmented* tableMode = nullptr;
     // table and note behaviour
     Stepper* table = nullptr; Segmented* transpose = nullptr; Segmented* noteOff = nullptr; Segmented* overlap = nullptr; Segmented* envRetrig = nullptr; Stepper* length = nullptr;
@@ -798,6 +798,8 @@ void InstrumentPanel::rebuildEditor()
         const int pw = pair->width();
         mod->add("Vibrato", std::move(pair), pw, h, "The shape the vibrato swings in, and which way it goes.");
     }
+    w_->vibDouble = seg(*mod, "Kit vibrato", "A kit's V at 9.4.2's depth (1x) or at twice it, as every LSDj before 9.4.0 played it (2x). Kits only; imported songs from those versions set it.",
+                        { "1x", "2x" }, [](bank::Instrument& i, int v) { i.vibDouble = v == 1; });
     w_->vibSpeed = stepper(*mod, "Speed", "V's x, 1-15: one cycle every 720/x pitch updates -- x/2 Hz in Fast, Step and Drum -- or every 96/x ticks in Tick.",
                            1, 15, 8, [ps = inst.pitchSpeed](int v) { return vibSpeedText(v, ps); }, [](bank::Instrument& i, int v) { i.vib.speed = uint8_t(v); }, 106);
     w_->vibDepth = stepper(*mod, "Depth", "V's y: LSDj's semitone table, an eighth of a semitone at 0 up to eight at 15. 0 leaves the instrument without a vibrato of its own.",
@@ -968,7 +970,7 @@ void InstrumentPanel::syncValues()
     T(w.attack, i.env.attackTicks); T(w.peak, i.env.peak); T(w.decay, i.env.decayTicks); T(w.sustain, i.env.sustain); T(w.release, i.env.releaseTicks);
     T(w.start, i.env.start); T(w.fade, i.env.fadeTicks); T(w.fadeTo, i.env.fadeTo);
     S(w.attackCurve, int(i.env.attackCurve)); S(w.decayCurve, int(i.env.decayCurve)); S(w.releaseCurve, int(i.env.releaseCurve)); S(w.fadeCurve, int(i.env.fadeCurve));
-    S(w.vibShape, int(i.vib.shape)); S(w.vibDir, int(i.vib.dir)); T(w.vibSpeed, i.vib.speed); T(w.vibDepth, i.vib.depth); T(w.vibDelay, i.vib.delay);
+    S(w.vibShape, int(i.vib.shape)); S(w.vibDir, int(i.vib.dir)); T(w.vibSpeed, i.vib.speed); T(w.vibDepth, i.vib.depth); T(w.vibDelay, i.vib.delay); S(w.vibDouble, i.vibDouble ? 1 : 0);
     S(w.pitchSpeed, int(i.pitchSpeed)); T(w.cmdRate, i.cmdRate); T(w.chordRate, i.chordRate); S(w.tableMode, int(i.tableMode));
     T(w.table, i.table); S(w.transpose, i.transpose ? 0 : 1); S(w.noteOff, int(i.noteOff)); S(w.overlap, i.overlap == bank::Overlap::Retrig ? 1 : 0);
     S(w.envRetrig, i.envRetrig ? 1 : 0);

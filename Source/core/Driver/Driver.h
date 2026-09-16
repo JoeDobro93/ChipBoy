@@ -664,7 +664,8 @@ private:
     uint64_t waveSyncStep(int ch, uint64_t at);               ///< section 178: the phase word fed for this instant; the cycle a pending frame is written at, 0 if not from this one
     const bank::Frame* frameAt(int ch, int idx) const;        ///< frame `idx` of the voice's slot, past its end the next slot's
     void kitFrame(int ch, uint64_t at);
-    void restartKit(int ch, int frame);                      ///< section 186: both samples from a frame; a roll's or a kit F's                       ///< section 172: one kit frame from the instant loop; `at` its instant (section 184)
+    void restartKit(int ch, int frame);
+    int  kitVibratoUnits(const Voice& v) const;              ///< section 187: the kit's vibrato in period units                      ///< section 186: both samples from a frame; a roll's or a kit F's                       ///< section 172: one kit frame from the instant loop; `at` its instant (section 184)
     int  computePeriod(int ch);
     uint8_t levelFromVelocity(uint8_t vel) const;
     void refreshView(int ch);

@@ -5791,3 +5791,27 @@ ChipBoy: `restartKit(ch, frame)` (both positions to `frame · 32` nibbles, the s
 inside their samples, `kitOn`, the voice active), called by `retrigger()` for a kit with
 `writeEnvelope()` after it and by the `F` handler on a kit; `kitFrame()` no longer clears
 `active` when both sides end. `R`'s nibble walks the kit's level as the wave's (§182).
+
+## 187. A kit's vibrato: the depth table in period units, stepped on the instant and the tick
+
+ChipBoy had no kit vibrato at all (`X92_KIT_V42`: the ROM's NR33 moves every frame, ChipBoy's
+never). Read off the trace on 9.4.2 and 9.2.L (the halving of 9.4.0 gives the two together):
+
+- **The swing is the depth table's entry, in period units.** `V 42` on a kit at period `$749`:
+  9.4.2 walks NR33 by 15 an instant to 45 either side (`73A 72B 71C 725 743 …`), 9.2.L by 30 to
+  90. §174's table gives depth 2 = 96 in 1/256 semitones; the kit adds the entry itself to the
+  period register -- 96 × the triangle's 30/32 = 90 -- halved from 9.4.0 ("halving kit vibrato
+  depths"). The swing goes below the period first, as the wave's goes below the note.
+- **The phase moves on the tick as well as the instant.** The ROM's steps double once a tick
+  (`-15 -15 -15 +9 +30 +15 …`: eleven instants a cycle where the instant's increment alone makes
+  12.8), and not on the note's own tick.
+- `V FF` is the changelog's "kit VFF went out of range": 9.4.2 alternates `749`/`349`, 9.2.L
+  stays put. Not modelled.
+
+ChipBoy: `kitVibratoUnits()` on the kit's period, the `V` handler starting the pitch clock for
+a kit as for noise (and writing no period at dispatch: a kit's goes out with its frames), the
+tick advancing the phase once more, and **`Instrument::vibDouble`** -- the instrument setting
+the user asked for (the Instrument tab's *Kit vibrato 1x / 2x*, `vibDouble` in the bank JSON) --
+keeping the pre-9.4.0 depth; the importer sets it on every kit instrument of a version before
+9.4.0 and leaves the `V` bytes alone (§185's doubling of `y` is gone). A kit whose samples have
+ended writes no period.

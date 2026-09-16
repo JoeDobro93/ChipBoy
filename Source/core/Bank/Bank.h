@@ -214,6 +214,9 @@ struct InstrumentCore {
     uint8_t  chordRate = 0;          ///< 0-15: C steps every chordRate + 1 ticks (section 37)
     TableMode tableMode = TableMode::Tick;
     Vibrato  vib;
+    /// Section 187: a kit's vibrato at twice 9.4.2's depth -- what every LSDj
+    /// before 9.4.0 gave a kit's `V`; the importer sets it for those versions.
+    bool     vibDouble = false;
     // pulse
     uint8_t  duty = 2;               ///< 0 12.5%, 1 25%, 2 50%, 3 75%
     std::array<uint8_t, 16> dutySeq{};

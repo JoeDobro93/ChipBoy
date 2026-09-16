@@ -24,7 +24,7 @@ save and the 9.4.2 save but for the editor's bookkeeping (`$3FB3`, `$3FB6`-`$3FB
 | what | older (9.2.J - 9.3.3) | 9.4.2 | mapped at import | model field |
 |---|---|---|---|---|
 | `R x y`'s volume nibble on the wave channel, kits included (9.3.4) | ignored: the rolls keep NR32 | walks NR32 a notch a roll, held at the ends (§182) | a WAV/KIT `R x y` with `x` not 0 or 8 imports as `R 0 y`; `8` (the resync) is kept | `waveRetrigNibble` |
-| kit vibrato depth (9.4.0 halved it) | `V 42` moves NR33 by `1E` an instant | by `0F` | a kit note's `V x y` imports as `V x 2y`; `y` above 7 does not fit and imports as `F` with an import note | `kitVibratoHalved` |
+| kit vibrato depth (9.4.0 halved it) | `V 42` moves NR33 by `1E` an instant | by `0F` (§187) | the kit instrument takes **`vibDouble`** (the Instrument tab's *Kit vibrato 2x*); the `V` bytes stay | `kitVibratoHalved` → `Instrument::vibDouble` |
 | `R` on a DRUM instrument (9.4.0) | the pitch word runs on through the roll: a rolled kick keeps falling | the roll zeroes the offset word, each roll's sweep starts from the entry (§185) | **not mapped**: ChipBoy plays 9.4.2's way. Left as is by decision; a per-instrument "R keeps the pitch" switch would carry it if wanted | `retrigResetsDrumPitch` (carried, unused) |
 | the cell `R`'s immediate retrigger | folded into the note-on's burst: the nibble on the note's trigger, no second burst | a second burst 1.06 ms after the trigger | nothing to map: the same levels within a millisecond | -- |
 | the wave note-on's `NR31` write, the refresh's `NR11` rewrite | none | written, the length bit off / the same duty | nothing to map: no effect on the sound | -- |

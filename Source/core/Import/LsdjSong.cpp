@@ -569,6 +569,7 @@ struct Reader {
         k.perSampleLoop = true;
         k.loop = use.loopA ? bank::KitLoop::Loop : bank::KitLoop::Once;
         o.kit = uint8_t(use.kitSlot); o.kitLoop = k.loop;
+        o.vibDouble = !m.kitVibratoHalved;                    // section 187: before 9.4.0 a kit's V was twice as deep
         // Section 172: VOLUME is byte 1's NR32 code, as a wave instrument's.
         static const uint8_t kLevel[4] = { 0, 3, 2, 1 };
         o.waveLevel = kLevel[(b[1] >> 5) & 3];
@@ -681,13 +682,8 @@ struct Reader {
                     notes.add("V" + hex2(v) + " at " + where + ": this format's vibrato swings below the note in register units; ChipBoy's is centred (speed " + std::to_string(speed) + ", depth " + std::to_string(depth) + ")");
                     out = { Cmd::V, int16_t(speed), int16_t(depth), 0 }; return true;
                 }
-                if (instKind == 2 && !m.kitVibratoHalved && y > 0) {
-                    // docs/LSDJ_VERSIONS.md section 11: 9.4.0 halved the kit
-                    // vibrato depths, so this version's depth is twice 9.4.2's.
-                    int yy = y * 2;
-                    if (yy > 15) { notes.add("V" + hex2(v) + " at " + where + ": this version's kit vibrato is twice 9.4.2's, past a depth of F; F is used"); yy = 15; }
-                    out = { Cmd::V, int16_t(x), int16_t(yy), 0 }; return true;
-                }
+                // A kit's V before 9.4.0 is twice as deep: the kit instrument
+                // carries `vibDouble` (section 187), the byte stays.
                 out = { Cmd::V, int16_t(x), int16_t(y), 0 }; return true;
             case 'Z': out = { Cmd::Z, int16_t(x), int16_t(y), 0 }; return true;
             case 'M': out = { Cmd::M, int16_t(x), int16_t(y), 0 }; return true;
