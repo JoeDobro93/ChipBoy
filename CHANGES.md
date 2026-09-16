@@ -37,8 +37,9 @@ the bottom octave on its own pitch class. `Driver::transposeIntoRange()` does th
 chain row's transpose in force at the note-on, on both note-on paths. What C4 still says: a
 note whose own number is under the floor (a MIDI key, a tracker cell under C2) stays silent.
 Considered: raising the note itself (the note-off matches by number) and clamping to the floor
-(the ROM does not). Left open: the table's transpose column on 8.8.6 adds up row by row and
-reads past its table when it leaves it (`D0` on `C-3` writes `7E1`); not touched.
+(the ROM does not). Left open: a table's transpose column that takes the note off the table
+writes periods that are no note's on the ROM (`D0` on `C-3` writes `7E1`); ChipBoy clamps it
+at the floor; not touched.
 
 `chipboy_recordtest` gains `--rate N`, `--block N` and `--console dmg|cgb|raw` for
 `--play-song`, used to rule out the sample rate, the block size and the console model as the

@@ -6370,9 +6370,11 @@ Every index at or under 0 comes up by twelve until it is 1..12: the note plays i
 octave, on its own pitch class, never silent and never clamped to `C-2`. The rule is the
 ROM's on the note index at the note-on, before the instrument is looked at, so a bare note
 (no instrument column) gets it too, and the table's transpose column, a slide and a bend
-work from the raised note afterwards. (The table's column is another matter: on 8.8.6 its
-transposes add up row by row and one that leaves the table reads past it -- `D0` on `C-3`
-writes `7E1`, not a wrapped note. Not changed here; open.)
+work from the raised note afterwards. (The table's transpose column is another matter: a
+value that takes the note off the table writes periods that are no note's -- `D0` on `C-3`
+writes `7E1`, then `7F4` for `E0`, and a second pass of the same rows writes other values --
+where ChipBoy clamps the column at the floor. Not changed here; open. Cold Grenade's table `03`
+has such a row, `D0` with `L 4E`, which is the ±7-unit wobble the ROM shows on those notes.)
 
 ChipBoy: at a note-on on a pulse or wave voice, when the cell's note is itself in range, the
 chain row's transpose in force (`noteTsp`) grows by twelves until the note with its

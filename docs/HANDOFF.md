@@ -29,11 +29,14 @@ design-log section the change touches. Update this file at the end of every chan
   (`wave_ons.py` on 240 s traces, `cg_rom3.csv` / `cg_cb3.csv` in the scratchpad), the pulses
   too. The 8.8.6 and 9.1.C ROMs are under `/root/lsdj/roms/` now (`lsdj8_8_6.gb`,
   `lsdj9_1_C.gb`), so the sweep's probes run on them.
-- **Seen on the way, left**: on 8.8.6 the table's transpose column adds up row by row (ChipBoy's
-  *Adds up* mode; check what the 8.x models set) and a value that leaves the table reads past
-  it (`D0` on `C-3` writes `7E1`, a second pass of the same rows writes other garbage) -- not a
-  note. ChipBoy clamps such a column to the floor. A note above the table's top (`0x70` under
-  `+0C`) is garbage on the ROM too; not modelled.
+- **Seen on the way, left**: a table's transpose column that takes the note off the table
+  writes periods that are no note's on the ROM, every version (`D0` on `C-3` writes `7E1`, a
+  second pass of the same rows writes other values -- there is state in it); ChipBoy clamps
+  such a column at the floor. Cold Grenade's table `03` (`D0` + `L 4E` on row 0) is one: the
+  ROM's ±7-unit wobble on those wave notes (`483 47C 475 47C 481` against ChipBoy's steady
+  `483`) comes from there. The column itself is plain per row on every version (C-5, C-7,
+  C-6 for `F4 F4 0C 0C 00`), as ChipBoy has it. A note above the table's top is garbage on
+  the ROM too; not modelled.
 - **`chipboy_recordtest`**: `--rate`, `--block`, `--console dmg|cgb|raw` for `--play-song`.
   Sample rate and block size do not change the WATER2 kit render (correlation >= 0.97 across
   44.1/96 kHz and 64/2048); the CGB model halves the kit's RMS and gives a crest of 8.6
