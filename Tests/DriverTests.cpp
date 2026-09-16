@@ -4523,6 +4523,43 @@ TEST_CASE("a wave RAM frame goes out plain, muted or pre-triggered by the instru
     CHECK(pre[0] == "NR51=BB"); CHECK(pre[4] == "NR33=E0"); CHECK(pre[5] == "NR34=87"); CHECK(pre[6] == "NR51=FF"); CHECK(pre[7].rfind("NR33=", 0) == 0);
 }
 
+TEST_CASE("an instrument column without a note ends the bend the old instrument left running", "[driver][commands]")
+{
+    // Section 216 (SUNSET's phrase 2F on 9.1.C): a kick whose cell bends the
+    // pitch down, a cell naming the arp instrument with no note, then a bare
+    // note. The bare note plays at its own pitch and stays there.
+    auto r = std::make_unique<Rig>();
+    r->tickHz = 100.0;
+    r->song.noteSource[0] = tracker::NoteSource::Tracker;
+    auto& kick = r->bank.instruments[1];
+    kick = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Kick"); kick.used = true;
+    auto& arp = r->bank.instruments[2];
+    arp = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Arp"); arp.used = true;
+    ChannelParams p; p.instrument = 2; r->drv.setParams(0, p);
+    const auto periods = [](const std::vector<RegWrite>& w) {
+        std::vector<int> out; int lo = 0, hi = 0; bool seen = false;
+        for (const auto& x : w) { if (x.addr == 0xFF13) lo = x.value; else if (x.addr == 0xFF14) { hi = x.value & 7; seen = true; } else continue; if (seen) out.push_back((hi << 8) | lo); }
+        return out;
+    };
+    NoteEvent on = cellOn(0, 60, 2); on.cmd1 = { Cmd::P, int16_t(-40), 0, 0 };   // the kick: a bend down
+    r->block({ on }, 480);
+    for (int k = 0; k < 3; ++k) r->block({}, 480);
+    NoteEvent load; load.channel = 0; load.source = NoteEvent::Tracker; load.kind = NoteEvent::Command; load.inst = 3;   // the arp, no note
+    r->block({ load }, 480);
+    for (int k = 0; k < 2; ++k) r->block({}, 480);
+    NoteEvent bare = cellOn(0, 72, 0);                     // a bare note: no instrument column
+    auto w = r->block({ bare }, 480);
+    for (int k = 0; k < 6; ++k) { auto more = r->block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+    const auto per = periods(w);
+    REQUIRE(!per.empty());
+    // The bare note lands on its own pitch and holds it: no descent (a bend
+    // still running would write a lower period every update).
+    const int first = per.front();
+    for (int v : per) CHECK(std::abs(v - first) <= 1);
+    // And it is the note's pitch, not the bent one: C5 on a pulse is period 1798 (2048 - 131072 / 523.25).
+    CHECK(std::abs(first - 1798) <= 2);
+}
+
 TEST_CASE("a run longer than the wave's frames walks on into the next slot", "[driver][wave]")
 {
     // Section 211: sixteen tagged frames in slot 1 and sixteen more in slot 2;

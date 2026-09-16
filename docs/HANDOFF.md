@@ -29,6 +29,22 @@ design-log section the change touches. Update this file at the end of every chan
   8.5.1, PreTrigger 9.x; 8.8.6 assumed muted; twenty models). The user's 4.1.0 kits were
   "lo-fi and distorted": every frame carried 9.x's `NR51` mute and `$7E0` pre-trigger. The
   control is *RAM writes* on wave and kit instruments. Left: the old note-on's double trigger.
+- **§216, an instrument column without a note ends the pitch effects** (SUNSET's phrase 2F
+  on 9.1.C): `reloadInstrument()` resets the bend, slides and offsets; the phrase traces as
+  the ROM's now. Left there: the ROM steps the chord on the dead kick's floor pitch for the
+  two ticks before the bare note (`EC`, `26`), ChipBoy does not -- inaudible under the kill.
+- **Cold Grenade (8.8.6)**: the reported wrong notes are the save's working copy (project
+  transpose -2) against its saved file (0); with the working copy imported the wave and pulse
+  note-ons trace as the ROM's. No silent note was found on chain 28's steps in either import.
+  Left: a wave note under table 03's `L 4E` on a `-48` transpose row wobbles ±2 units on
+  both, ChipBoy half a period out of phase and triggering on the plain period (`76B`) where
+  the ROM triggers on the table's (`76D`); worth a probe on the 8.8.6 ROM, which the user has
+  now supplied (`/root/lsdj/cg/cold_grenade.gb`; `Live_Set_Main.gb` is 9.1.C). Both ROMs are
+  new to the archive: the 8.8.6 laws marked assumed (§215's write law, the finetune, the
+  vibrato) can be measured.
+- **The standalone's kits**: the standalone keeps its whole state (tabs, songs, banks) between
+  runs, so a song imported before §215 plays with the old write law until it is re-imported;
+  the VST instance the user compared was a fresh import. Not a settings issue.
 - **The "lo-fi, distorted" kit, second report after §215**: not reproduced by measurement.
   With §215 in, `WATER2`'s kit frames trace write for write as the 4.1.0 ROM's; the data is
   the ROM's own self-mix of the DR-55 hi-hat through its clip (note bytes `11`, `22`, ...

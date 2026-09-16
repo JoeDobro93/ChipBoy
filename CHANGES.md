@@ -26,6 +26,20 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-16 -- an instrument column without a note ends the old instrument's bend
+
+`docs/COMMANDS_AND_TEMPO.md` §216. `SUNSET`'s PU2 phrase `2F` (a kick bending to the floor,
+then the arp instrument named with no note, then a bare note under a chord) kept the kick's
+bend running under the arpeggio; on the 9.1.C ROM the instrument load ends it. `reloadInstrument()`
+now clears the pitch effects a plain note-on clears -- the `P` bend and offsets, a slide,
+`F`'s units, the noise bends -- and writes no period. The phrase now traces as the ROM's.
+
+Found on the way, not bugs in the import: a save's **working copy** is what the ROM plays, and
+it can differ from the saved file of the same name -- `Cold_Grenade`'s working copy carries a
+project transpose of -2 the file does not, which is the "wrong notes" on its pulse rows; and
+`Live_Set_Main`'s SUNSET was re-saved by 9.1.C in format 21 where the file is format 15. The
+import dialog lists the working copy first for that reason.
+
 ### 2026-09-16 -- `--play-song` can write what it hears
 
 `chipboy_recordtest --play-song FILE BARS --wav DIR` writes the mix and each soloed channel

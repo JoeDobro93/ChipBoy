@@ -6320,3 +6320,21 @@ the trigger, then `NR33`) under `Plain` and `Muted`, §171's pre-trigger then th
 control is "RAM writes" on wave and kit instruments. Left: 4.x's note-on writes the trigger
 twice (the burst's and the note-on's own, `NR33=83 NR34=87` after `NR32`), a write ChipBoy
 does not make.
+
+## 216. An instrument column without a note ends the pitch effects in force
+
+`SUNSET` (the user's `Live_Set_Main.sav`, played on 9.1.C), PU2 phrase `2F`: step 0 a kick --
+instrument `05`, whose table bends the pitch to the floor with a `P BB` and kills the note at
+row 5 -- step 1 instrument `0B` (an arp, no table, `C 47`) with **no note**, step 2 a bare
+`A-5` with `E 2E`, then the chord runs. On the ROM step 1 writes `0B`'s volume in zombie
+mode (`NR22 = 09 11 18 ...`, no trigger) and from then on the channel is `0B`'s: step 2 sets
+the period of the plain note without a trigger and the chord cycles `76B 78A 79D` on it,
+clean. ChipBoy reloaded the instrument at step 1 (the same zombie writes) but left the kick's
+bend running on the voice, so the bare note and every chord step after it fell to the floor
+again -- the kick sound continuing under the arpeggio. The ROM's instrument load resets the
+channel's pitch effects as a note-on does; only the pitch register stays where it is until
+the next update.
+
+ChipBoy: `reloadInstrument()` -- the cell's instrument column and Live follow -- clears what
+a plain note-on clears of the pitch state: the `P` bend and offsets in every mode, a slide in
+progress, `F`'s units, the noise bends. It writes no period; the next note or update does.

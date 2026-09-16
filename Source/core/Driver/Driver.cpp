@@ -568,6 +568,13 @@ void Driver::reloadInstrument(int ch)
     InstrumentCore core = inst ? *inst : Instrument::defaults(defaultType(ch));
     if (!typeFits(ch, core.type)) core = crossKind(ch, core);
     v.inst = core; v.haveInst = true;
+    // Section 216: the load ends the pitch effects the old instrument left
+    // running -- a P bend, a slide, the offsets -- as a note-on does; the
+    // period stays where it is until the next note or update writes it.
+    v.bendSpeed = 0; v.sliding = false; v.slideLeft = 0; v.slideOff256 = 0; v.slideStep256 = 0;
+    v.drumSlideLeft = 0; v.drumSlideStep = 0.0;
+    v.fineOffset = 0; v.fineQueued = 0; v.drumOffset = 0.0; v.fineUnits = 0;
+    v.noiseRegStep = 0; v.noiseBend256 = 0; v.noiseBend9 = 0;
     latch(ch);
     applyLevelParam(ch);
     // A shaped instrument brings its envelope with it: the load triggers the
