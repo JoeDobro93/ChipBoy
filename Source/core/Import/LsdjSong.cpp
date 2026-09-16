@@ -370,7 +370,7 @@ struct Reader {
         k.perSampleLoop = true;
         k.loop = use.loopA ? bank::KitLoop::Loop : bank::KitLoop::Once;
         o.kit = uint8_t(use.kitSlot); o.kitLoop = k.loop;
-        o.vibDouble = !m.kitVibratoHalved;                    // section 187: before 9.4.0 a kit's V was twice as deep
+        o.vibScale = m.kitVibratoHalved ? bank::VibScale::One : bank::VibScale::Double;   // sections 187 and 210: before 9.4.0 a kit's V was twice as deep
         // Section 172: VOLUME is byte 1's NR32 code, as a wave instrument's.
         static const uint8_t kLevel[4] = { 0, 3, 2, 1 };
         o.waveLevel = kLevel[(b[1] >> 5) & 3];
@@ -484,7 +484,7 @@ struct Reader {
                     out = { Cmd::V, int16_t(speed), int16_t(depth), 0 }; return true;
                 }
                 // A kit's V before 9.4.0 is twice as deep: the kit instrument
-                // carries `vibDouble` (section 187), the byte stays.
+                // carries the double scale (sections 187 and 210), the byte stays.
                 out = { Cmd::V, int16_t(x), int16_t(y), 0 }; return true;
             case 'Z': out = { Cmd::Z, int16_t(x), int16_t(y), 0 }; return true;
             case 'M': out = { Cmd::M, int16_t(x), int16_t(y), 0 }; return true;
@@ -827,7 +827,7 @@ struct Reader {
                     // step 15. ChipBoy ends the phrase and the chain runs on.
                     if (hopStep < 0) hopStep = st;
                     stopsHere = true;
-                    notes.add("HFF" + where + " stops the channel: ChipBoy ends the channel's chain there, as the ROM does, so a playhead past it finds silence. A song that loops brings the rows before it back, where the ROM's channel stays off until playback stops (section 120)");
+                    notes.add("HFF" + where + " stops the channel: ChipBoy ends the channel's chain there and the channel stops at its end, as the ROM does (sections 120 and 212)");
                     continue;
                 }
                 if (hopStep < 0) {
@@ -863,7 +863,7 @@ struct Reader {
             for (int ch = 0; ch < 4; ++ch) {
                 if (stopped[size_t(ch)]) continue;
                 const uint8_t c = row[ch];
-                if (c == 0xFF || c >= kLsdjChains) { notes.add(std::string("song row ") + hex2(r) + " has an empty " + kNames[ch] + " step: LSDj stops that channel there"); continue; }
+                if (c == 0xFF || c >= kLsdjChains) { notes.add(std::string("song row ") + hex2(r) + " has an empty " + kNames[ch] + " step: LSDj plays that channel round again from its row 0 there, and so does ChipBoy (section 212)"); continue; }
                 for (int st = 0; st < 16; ++st) {
                     const uint8_t p = at(kChainPhrases + size_t(c) * 16 + size_t(st));
                     if (p == 0xFF || p >= kLsdjPhrases) break;
@@ -879,8 +879,10 @@ struct Reader {
                         else { song.setTranspose(ch, int(chain.size()) - 1, int8_t(tsp)); if (ch == 3) noiseTsp = true; }
                     }
                     // Section 120: the channel's timeline ends at the phrase
-                    // whose H F F the ROM stops on; nothing after it is laid out.
-                    if (stops) { stopped[size_t(ch)] = true; break; }
+                    // whose H F F the ROM stops on; nothing after it is laid out,
+                    // and the channel stops there rather than going round
+                    // (section 212).
+                    if (stops) { stopped[size_t(ch)] = true; song.chainEnd[size_t(ch)] = tracker::ChainEnd::Stop; break; }
                 }
             }
         }

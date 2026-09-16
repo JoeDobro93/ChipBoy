@@ -368,6 +368,7 @@ TEST_CASE("a row with no phrase is ninety-six ticks with a note off", "[tracker]
     s.noteSource[0] = NoteSource::Tracker;
     auto& ph = s.phrases[0]; ph.used = true; ph.steps = 8; ph.cells[0].note = 60;
     s.chain[0] = { 1, 0, 1 };
+    s.chainEnd[0] = ChainEnd::Stop;              // section 212: the rows past the chain are the point here
     buildRowTables(s);
     CHECK(rowStartTick(s, 0, 1) == 48);
     CHECK(rowStartTick(s, 0, 2) == 48 + 96);
@@ -385,6 +386,51 @@ TEST_CASE("a row with no phrase is ninety-six ticks with a note off", "[tracker]
     CHECK(offs[1] == 192);
     REQUIRE(ons.size() == 2);
     CHECK(ons[1] == 144);
+}
+
+TEST_CASE("a channel whose chain runs out plays it round again on its own clock", "[tracker][rows]")
+{
+    // Section 212, as the ROM does (songend.py): PU1 has two rows of eight
+    // steps, PU2 one row of sixteen; PU1 comes round every 96 ticks and PU2
+    // every 96 too, but PU1's second row is its own. A one-row chain fires its
+    // row again on every pass; a channel told to stop falls silent instead;
+    // trailing empty rows are not part of the loop.
+    const auto owned = std::make_unique<Song>(); Song& s = *owned;
+    s.noteSource[0] = NoteSource::Tracker; s.noteSource[1] = NoteSource::Tracker; s.noteSource[2] = NoteSource::Tracker;
+    auto& eight = s.phrases[0]; eight.used = true; eight.steps = 8; eight.cells[0].note = 60;
+    auto& eight2 = s.phrases[1]; eight2.used = true; eight2.steps = 8; eight2.cells[0].note = 62;
+    auto& sixteen = s.phrases[2]; sixteen.used = true; sixteen.steps = 16; sixteen.cells[0].note = 72;
+    s.chain[0] = { 1, 2 };
+    s.chain[1] = { 3, 0, 0 };                    // two trailing empty rows: the loop is the one row
+    s.chain[2] = { 1 };
+    s.chainEnd[2] = ChainEnd::Stop;
+    buildRowTables(s);
+    CHECK(chainLoopTicks(s, 0) == 96);
+    CHECK(chainLoopTicks(s, 1) == 96);
+    CHECK(chainLoopTicks(s, 2) == 0);
+    CHECK(s.loopRows(1) == 1);
+    int row = 0, inRow = 0, pass = 0;
+    rowAtTick(s, 0, 100, row, inRow, &pass);
+    CHECK(row == 0); CHECK(inRow == 4); CHECK(pass == 1);
+    rowAtTick(s, 0, 150, row, inRow, &pass);
+    CHECK(row == 1); CHECK(inRow == 6); CHECK(pass == 1);
+    rowAtTick(s, 2, 100, row, inRow, &pass);
+    CHECK(row == 1); CHECK(pass == 0);           // stopped: the empty rows past the chain (section 25), 96 ticks each
+    Player p; p.prepare(48000.0); p.setSong(&s);
+    std::vector<int64_t> pu1, pu2, wav; std::vector<int> pu1Notes;
+    for (int64_t tick = 0; tick < 288; ++tick)
+        for (const auto& e : ticks(p, tick, 1)) {
+            if (e.kind != NoteEvent::NoteOn) continue;
+            if (e.channel == 0) { pu1.push_back(tick); pu1Notes.push_back(int(e.a)); }
+            if (e.channel == 1) pu2.push_back(tick);
+            if (e.channel == 2) wav.push_back(tick);
+        }
+    CHECK(pu1 == std::vector<int64_t>{ 0, 48, 96, 144, 192, 240 });
+    CHECK(pu1Notes == std::vector<int>{ 60, 62, 60, 62, 60, 62 });
+    CHECK(pu2 == std::vector<int64_t>{ 0, 96, 192 });
+    CHECK(wav == std::vector<int64_t>{ 0 });
+    // The longest chain is still the song: PU2's three rows, 96 + 2 * 96.
+    CHECK(songTicks(s) == 288);
 }
 
 TEST_CASE("the groove in force is the slot, then the last cell, then the phrase", "[tracker][groove]")
@@ -469,6 +515,7 @@ TEST_CASE("a blank phrase sustains, a bar with no phrase ends the note", "[track
     s.phrases[0].used = true; s.phrases[0].cells[0].note = 67;
     s.phrases[1].used = true;                     // sixteen empty cells
     s.chain[0] = { 1, 2, 0 };
+    s.chainEnd[0] = ChainEnd::Stop;               // section 212: looping, bar 3 would be bar 1 again
     Player p; p.prepare(48000.0); p.setSong(&s); ticks(p, 0, 96);                              // bar 1 plays
     const auto blank = ticks(p, 96, 96);
     CHECK(blank.empty());                         // bar 2 is blank: the note holds

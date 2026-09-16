@@ -25,6 +25,9 @@ constexpr int kMaxKitSamples = 32;
 /// kMaxFrames frames laid end to end -- and a frame jump walks it straight
 /// through, out of one slot and into the next, wrapping at the end.
 constexpr int kWaveFrames = kWaveSlots * kMaxFrames;
+/// Section 211: the most steps a wave instrument's run has -- four slots of
+/// frames walked in a row.
+constexpr int kMaxRunSteps = 64;
 
 enum class InstrumentType : uint8_t { Pulse = 0, Wave = 1, Kit = 2, Noise = 3 };
 enum class Pan : uint8_t { Off = 0, Left = 1, Right = 2, Both = 3 };
@@ -34,15 +37,9 @@ enum class NoteOff : uint8_t { Kill = 0, Release = 1, Ignore = 2 };
 /// the note; bit 0 picks which half it starts on, and shape 3 is no vibrato.
 enum class VibShape : uint8_t { Triangle = 0, Saw = 1, Square = 2, Off = 3 };
 enum class VibDir : uint8_t { Down = 0, Up = 1 };
-/// Section 203: which depth ladder a `V` reads -- LSDj's own by version. Lsdj9 is
-/// section 174's (1 2 3 4 6 8 12 16 20 24 28 32 40 48 56 64 times the waveform's 32,
-/// in 1/256 semitone; 7.7.6 and later); Lsdj58 1 2 3 4 6 8 11 15 19 24 29 35 42
-/// 49 56 64 with the downward entries one's complements (5.8.8 - 7.7.5); Lsdj57
-/// 0 1 2 3 4 5 7 9 11 13 16 19 22 25 28 31, the same entries (5.7.8); Units39
-/// those sixteen in **period units** times the note's divider `(2048 - period)
-/// >> 6`, the downward half short by a thirty-second (3.7.5 - 5.0.3); Units36
-/// the same, symmetric (3.6.5 - 3.7.4).
-enum class VibLadder : uint8_t { Lsdj9 = 0, Lsdj58 = 1, Lsdj57 = 2, Units39 = 3, Units36 = 4 };
+/// Section 210: the vibrato's depth against 9.x's ladder -- as it is, halved
+/// (5.7.8's ladder), or doubled (a kit's V before 9.4.0, section 187).
+enum class VibScale : uint8_t { One = 0, Half = 1, Double = 2 };
 /// How fast P, L and V move (docs/COMMANDS_AND_TEMPO.md section 7). Fast is
 /// 360 updates a second, tempo-independent; Tick is one per tracker tick, so
 /// the effect follows the tempo; Step is Fast with P as an immediate offset
@@ -223,18 +220,13 @@ struct InstrumentCore {
     uint8_t  chordRate = 0;          ///< 0-15: C steps every chordRate + 1 ticks (section 37)
     TableMode tableMode = TableMode::Tick;
     Vibrato  vib;
-    /// Section 187: a kit's vibrato at twice 9.4.2's depth -- what every LSDj
-    /// before 9.4.0 gave a kit's `V`; the importer sets it for those versions.
-    bool     vibDouble = false;
-    VibLadder vibLadder = VibLadder::Lsdj9;   ///< section 203: the version's depth ladder; the importer sets it
+    /// Section 210: the depth scale -- 9.x's ladder as it is, halved (5.7.8)
+    /// or doubled (a kit's V before 9.4.0, section 187); the importer sets it.
+    VibScale vibScale = VibScale::One;
     /// Section 195: a roll leaves a DRUM instrument's pitch word where it is,
     /// as every LSDj before 9.4.0 did; off, each hit starts from the note's
     /// entry (section 185, 9.4.0 and later). The importer sets it by version.
     bool     retrigKeepsPitch = false;
-    /// Section 202: a retrigger starts the instrument's table over on the tick
-    /// **after** its own, as every LSDj before 8.3.4 did; off, row 0 is the
-    /// retrigger's own tick (section 182). The importer sets it by version.
-    bool     retrigTableLate = false;
     /// Section 197: the instrument as its LSDj save held it -- the format the
     /// bytes were written in (-1: not imported) and the sixteen bytes -- so a
     /// channel of another kind can read them as the ROM would.
@@ -267,14 +259,18 @@ struct InstrumentCore {
     // wave
     uint8_t  wave = 1;               ///< wave slot 1-16 (section 103)
     /// The run a note walks (section 65): `frameLength` frames spread across the
-    /// wave's own, 0 meaning every one of them; Loop and PingPong turn at
-    /// `frameLoopStep`, which is a step of that run and not a frame number.
+    /// wave's own, 0 meaning every one of them, and past them (up to
+    /// kMaxRunSteps) consecutive frames on the flat table (section 211). Loop
+    /// and PingPong come back to `frameLoopStep`, a step of that run and not a
+    /// frame number, and turn at `frameLoopEnd` -- 0 the run's last step, else
+    /// the loop's last step one-based. With `frameLoopFromEnd` the loop step is
+    /// counted back from the run's last step (0 is the last step), whatever a
+    /// `U` makes the length -- LSDj's REPEAT nibble before 7.7.6 -- and the
+    /// loop's end is the run's.
     uint8_t  frameLength = 0;
     uint8_t  frameLoopStep = 0;
-    /// Section 201: 0 keeps the loop at `frameLoopStep`; n makes it the run's
-    /// **last n steps**, wherever a `U` puts the run's end (LSDj before 7.7.6
-    /// counted the loop from the end; the importer sets it from the REPEAT nibble).
-    uint8_t  frameLoopTail = 0;
+    uint8_t  frameLoopEnd = 0;
+    bool     frameLoopFromEnd = false;
     uint8_t  frameAdvance = 0;       ///< ticks per frame, 0 holds
     FrameLoop frameLoop = FrameLoop::Loop;
     /// Section 171: the frame the run starts at (LSDj's byte 3 low nibble; in
@@ -419,14 +415,19 @@ inline int waveSlotOfFlat(int flat)        { return flat / kMaxFrames + 1; }
 inline int waveFrameOfFlat(int flat)       { return flat % kMaxFrames; }
 
 /// The run a wave instrument walks (section 65): `frameLength` frames spread
-/// evenly across the wave's own, 0 (or a length past them) meaning every one.
-/// `n` is how many frames the wave has. Writes the frame indices into `out` and
-/// returns how many steps the run has, at least one.
+/// evenly across the wave's own, 0 meaning every one; a length past them is
+/// that many consecutive frames, on into the next slots (section 211). `n` is
+/// how many frames the wave has. Writes the frame indices into `out`, which
+/// holds kMaxRunSteps, and returns how many steps the run has, at least one.
 inline int waveRun(int n, int frameLength, uint8_t* out)
 {
-    const int frames = n < 1 ? 1 : (n > 16 ? 16 : n);
-    int len = frameLength <= 0 || frameLength > frames ? frames : frameLength;
+    const int own = n < 1 ? 1 : (n > kMaxFrames ? kMaxFrames : n);
+    const int want = frameLength > kMaxRunSteps ? kMaxRunSteps : frameLength;
+    int len = want <= 0 ? own : want;
     if (len < 1) len = 1;
+    // Past the wave's own frames the ladder is the identity: the run is `len`
+    // frames laid end to end.
+    const int frames = len > own ? len : own;
     for (int i = 0; i < len; ++i) {
         // Section 132, closing section 129's open half-step: the ladder is an
         // 8.8 accumulator. LSDj divides the frame count by the run's steps once

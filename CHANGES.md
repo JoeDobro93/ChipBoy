@@ -26,6 +26,39 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-16 -- the decisions on the sweep: the song's end, and the import fields as controls
+
+`docs/COMMANDS_AND_TEMPO.md` §209-§213. The user's decisions on the version map's gap list and
+on the four import fields that had no control:
+
+- **The song's end** (§212). Measured on 9.4.2 and 6.0.1 with multi-channel songs: a channel
+  that meets an empty song step plays its chain round again from its own row 0, on its own
+  clock, whatever the others do; nothing ever stops. ChipBoy laid rows past a chain's end as
+  empty rows (§25), so a short channel fell silent. Now each channel loops its chain by
+  default (`Song::chainEnd`, Loop / Stop, a toggle per channel in the chain view's head); an
+  imported `H F F` channel stops (§120). Considered: keeping Stop as the default and setting
+  Loop on import -- rejected, the ROM's rule is the better default for a tracker whose channels
+  keep their own time, and Stop is one click. A file without the key loops; a song written
+  before this that relied on a short channel going quiet wants Stop on that channel. The own
+  transport still loops the longest chain, which restarts every channel together.
+- **`retrigTableLate` removed** (§209): every project takes 8.3.4's timing. Considered: the
+  toggle (confusing, says only where a song came from); duplicating the instrument with its
+  table offset a step (fragile). The row after a roll comes a tick earlier than on ROMs before
+  8.3.4; the gap list has it.
+- **One vibrato depth scale** (§210): `vibScale` ½x / 1x / 2x replaces the five ladders and
+  the kit's `vibDouble`. 5.7.8's ladder is 9.x's halved; 5.8.8 - 7.7.5's is within a step of
+  9.x's; the 3.6.5 - 5.0.3 unit laws land between 0.8 and 1.3 of 9.x's semitones. Under the
+  register law the swing is now 9.x's semitones in the note's own units (56 at C3) rather than
+  the DRUM constant, which put it at a third of the ROM's. The one's-complement downward half
+  and the unit laws are gone from the driver; §203 keeps the measurements.
+- **Wave loop points** (§211): `frameLoopTail` becomes `frameLoopEnd` (the loop's last step,
+  0 the run's end) and `frameLoopFromEnd` (the loop step counted back from the run's last,
+  LSDj's REPEAT nibble before 7.7.6, which follows a `U` that changes the length with no rule
+  of its own). `frameLength` runs to 64: past the wave's own frames the run is consecutive
+  frames on the flat table, into the next slots. Old files: a `frameLoopTail` of n reads as
+  from-end with step n - 1.
+- **`noiseTspNibbles`** gets *Table TSP* (Resets / Adds up) in the LSDj-shape noise controls.
+
 ### 2026-09-16 -- the version sweep, 8.5.1 down to 3.1.5
 
 `docs/COMMANDS_AND_TEMPO.md` §188-§208 and `docs/LSDJ_VERSION_MAP.md`, rewritten as one row per

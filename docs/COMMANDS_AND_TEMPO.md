@@ -6180,3 +6180,94 @@ with a note.
 `FT_pu1` on 3.1.5 (byte 11 = `40`): the note plays at `97`, ChipBoy at `95` -- the decoder read
 byte 11 as 9.x's finetune on every model without the nibble or unit laws. It reads it from
 format 15 only (8.8.6, where §191's nibble is gone); 3.1.5 - 3.5.1 have no finetune.
+
+## 209. The late table restart is not kept: every project takes 8.3.4's timing
+
+§202 measured the tick-late restart and gave it a flag. The flag is gone: the user chose the
+one timing over a toggle that only says which ROM a song came from, and the 8.3.4 fix is what
+the command was always meant to do. A project from 8.0.0 or before plays its `R` tables one
+tick earlier than its ROM did -- the row after a retrigger comes a tick sooner -- and the
+difference is on the version map's gap list. Nothing in the file format carried it long
+enough to need a reader.
+
+## 210. One vibrato depth scale in place of the five ladders
+
+§203's ladders are close to one another once the eye is off the register: 5.8.8 - 7.7.5's
+integers sit within a step of 9.x's, 5.7.8's are 9.x's halved, and the 3.6.5 - 5.0.3 unit laws
+land between 0.8 and 1.3 times 9.x's semitones across the keyboard (1.25 at C3, 0.8 at D#6 for
+depth 6). What matters to a song is the rate, which every version shares, and the depth being
+near; the one's-complement downward half (a unit) and the unit laws' key-dependence are not
+worth a mechanism.
+
+ChipBoy: `vibScale` on the instrument -- `One`, `Half`, `Double` -- read by `vibratoFine()`
+(9.x's ladder, then the scale) and by the kit path, where 9.4.2's depth is `One` and §187's
+older, unhalved depth is `Double`; `vibDouble` folds into it. The importer sets `Half` on the
+5.7.8 model, `Double` on a kit from before 9.4.0, `One` everywhere else. The ladders, the
+complement and the unit laws are gone from the driver; the version map keeps the measurements.
+The control is "V depth" (½x / 1x / 2x) on every instrument type, in the vibrato group. A file
+that carries `vibDouble` reads as `Double`, one whose `vibLadder` is 5.7.8's as `Half`.
+
+## 211. Wave loop points anywhere: a loop's end, a loop counted from the run's end, runs past sixteen
+
+§201's `frameLoopTail` said "the loop is the run's last n steps" as a version rule. It is a
+loop point now, and the run has two of them:
+
+- `frameLoopStep` is where Loop and Ping-pong come back to, as before; `frameLoopEnd` is the
+  step they turn at -- 0 the run's last step, otherwise the loop's last step, one-based, so the
+  first pass plays the run up to it and the loop is `[frameLoopStep, frameLoopEnd - 1]`.
+  Steps past the loop's end play only in One-shot.
+- `frameLoopFromEnd` counts `frameLoopStep` back from the run's last step instead: 0 is the
+  last step, n the n steps before it, whatever the length is at the time. That is exactly
+  what every LSDj before 7.7.6 did with its REPEAT nibble, and it survives a `U` that changes
+  the length mid-note without a rule of its own: the loop is measured from the end when the
+  step is looked up. With it on, the loop's end is the run's end and `frameLoopEnd` is not
+  read.
+- `frameLength` runs to 64. Up to the wave's own frame count the run is spread across them
+  as §65 says; past it the run is consecutive frames from the instrument's start frame, so
+  a run of 40 walks two and a half slots of the flat table (§171's unwrapped steps).
+
+A `U` that changes the length keeps the loop's frame when the loop is counted from the start
+(§131, measured on 9.x) and needs no help when it is counted from the end. The importer sets
+`frameLoopFromEnd` with `frameLoopStep` = the REPEAT nibble on every model before 7.7.6 (0
+where the nibble is not read, §205), and the 7.7.6 rule -- `frameLoopStep = length - (16 -
+nibble)` from the start -- after. The controls: "Frames" 0-64, "Loop from" 0-63 (shown as
+"end", "end-1" ... when counted from the end), "Loop to" (end, 1-64), "Loop counts" (from the
+start / from the end). The run buffers grow to `kMaxRunSteps` = 64.
+
+## 212. The song's end: each channel plays its chain round again, or stops
+
+Probed on 9.4.2 and 6.0.1 (`songend.py`: `one_chain`, `two_vs_one`, `gap_row`, `two_rows`,
+`late_start`, `start_later`; note-on times and NR13 per channel over forty seconds): a channel
+that meets an empty song step goes back to **its own** song row 0 and plays its chains again,
+on its own clock and whatever the other channels are doing -- two chains against one gives the
+one twice as many passes -- a channel whose row 0 is empty never plays at all, and rows after
+an empty step are never reached. Playback never stops; the song is four independent loops
+that only line up when their lengths do.
+
+ChipBoy laid rows past a chain's end as empty rows, end to end (§25), so a short channel fell
+silent while the long one played on, and the own transport looped the longest chain. Now:
+
+- `Song::chainEnd[4]` -- `Loop` (the ROM's way, the default, and what a file without the key
+  reads as) or `Stop` (what ChipBoy did). `rowAtTick()` wraps a looping channel's tick by
+  its chain's length -- the rows up to its last phrase; trailing empty rows do not count --
+  and hands the pass number to the Player, which fires a row again on a new pass even when the
+  chain is one row long. The tempo map repeats a looping channel's `T` cells over the passes
+  the longest chain lasts. `rowStartTick()` and `songTicks()` are unchanged: the own transport
+  still loops the longest chain, so a wrap of the transport starts every channel over
+  together where the ROM lets them run apart.
+- The importer sets `Stop` on a channel an `H F F` switched off (§120: the rows before it
+  play once), and `Loop` on the rest -- a channel's chain ends at its first empty song step,
+  which is where the ROM goes round.
+- The chain view's head carries one toggle per channel, a loop or a stop glyph in the
+  channel's colour; a click switches it.
+
+An empty row *inside* a chain is still ChipBoy's rest of sixteen steps (§25) -- the ROM
+cannot express it -- and a channel with no phrase at all is silence either way.
+
+## 213. Every field the importer sets has a control
+
+`noiseTspNibbles` (§207) gets "Table TSP" in the LSDj-shape noise controls -- "Resets" (each
+row's transpose is taken from the note's byte) / "Adds up" (each row's is added to the running
+byte, 3.x) -- enabled in shape mode. With §210's "V depth", §211's loop points and §212's
+channel end, nothing an import sets is out of the user's reach any more; `retrigTableLate`
+is gone (§209) rather than exposed.

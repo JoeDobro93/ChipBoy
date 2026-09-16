@@ -164,7 +164,24 @@ int64_t rowStartTick(const Song& s, int ch, int row)
     return int64_t(t.back()) + int64_t(row - int(t.size()) + 1) * kEmptyRowTicks;
 }
 
-void rowAtTick(const Song& s, int ch, int64_t tick, int& row, int& inRow)
+int64_t chainLoopTicks(const Song& s, int ch)
+{
+    if (s.chainEnd[size_t(ch & 3)] != ChainEnd::Loop) return 0;
+    const int rows = s.loopRows(ch);
+    return rows > 0 ? rowStartTick(s, ch, rows) : 0;
+}
+
+void rowAtTick(const Song& s, int ch, int64_t tick, int& row, int& inRow, int* pass)
+{
+    int64_t at = std::max<int64_t>(0, tick);
+    // Section 212: a looping channel plays its chain round again from row 0.
+    const int64_t loop = chainLoopTicks(s, ch);
+    if (pass != nullptr) *pass = loop > 0 ? int(std::min<int64_t>(at / loop, 1 << 30)) : 0;
+    if (loop > 0) at %= loop;
+    rowAtTickLaid(s, ch, at, row, inRow);
+}
+
+void rowAtTickLaid(const Song& s, int ch, int64_t tick, int& row, int& inRow)
 {
     const int64_t at = std::max<int64_t>(0, tick);
     const auto& t = s.rowStartTicks[size_t(ch & 3)];
@@ -218,6 +235,7 @@ void buildTempoMap(Song& s, double baseBpm)
     std::vector<uint8_t> stepOf(size_t(kMaxPlaySteps) + 1, 0);
     for (int ch = 0; ch < 4; ++ch) {
         const int rows = s.rows(ch);
+        const size_t first = s.tempoMap.size();       // this channel's points start here
         for (int row = 0; row < rows; ++row) {
             const Phrase* p = s.phrase(s.phraseAt(ch, row));
             if (!p) continue;
@@ -238,6 +256,17 @@ void buildTempoMap(Song& s, double baseBpm)
                 s.tempoMap.push_back({ rowStartTick(s, ch, row) + starts[size_t(pos)] + (s.lsdjTempo ? 1 : 0),
                                        bank::isRevert(*t) ? base : double(bank::tempoBpmOfByte(t->a)) });
             }
+        }
+        // Section 212: a looping channel's T cells come round on every pass
+        // for as long as the longest chain lasts (a bound on the points keeps
+        // a one-step chain against a long song from filling the map).
+        const int64_t loop = chainLoopTicks(s, ch);
+        if (loop > 0 && s.tempoMap.size() > first) {
+            const int64_t total = songTicks(s);
+            const size_t last = s.tempoMap.size();
+            for (int64_t off = loop; off < total && s.tempoMap.size() < first + 4096; off += loop)
+                for (size_t k = first; k < last; ++k)
+                    if (s.tempoMap[k].tick < loop) s.tempoMap.push_back({ s.tempoMap[k].tick + off, s.tempoMap[k].bpm });
         }
     }
     // The channels are scanned one after another, so the points arrive out of

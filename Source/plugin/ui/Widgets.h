@@ -369,6 +369,7 @@ public:
     std::function<void(int ch, int bar, int phraseSlot)> onChainChange;   ///< 0 clears
     std::function<void(int ch, int bar, int semis)> onChainTransposeChange;   ///< the row's transpose on that channel (section 48)
     std::function<void(int row, int steps)> onRowLengthChange;            ///< the length of the phrases in that row (section 25)
+    std::function<void(int ch, bool loop)> onChainEndChange;              ///< the channel plays its chain round again, or stops at its end (section 212)
     juce::String getTooltip() override;
     /// 264 wide and the lane's rhythm: a 48 px head over 22 px rows.
     static constexpr int kRowHeight = 22, kHeaderHeight = 48, kWidth = 264;

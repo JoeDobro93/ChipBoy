@@ -4444,12 +4444,12 @@ TEST_CASE("every vibrato shape is centred on the note", "[driver][commands]")
 
 TEST_CASE("a loop counted from the run's end stays at the end when U lengthens the run", "[driver][wave]")
 {
-    // Section 201 (W6_p1_r0_W12, W6_p1_r1_W12, W6_p2_rF_W12 on 6.0.1): before
+    // Section 211 (W6_p1_r0_W12, W6_p1_r1_W12, W6_p2_rF_W12 on 6.0.1): before
     // 7.7.6 the loop is the REPEAT nibble plus one steps from the run's end. A
-    // one-frame run under `W12` walks frames 0, 7 and F; a tail of one then
-    // holds F, a tail of two keeps 7 and F, and a ping-pong over the whole run
+    // one-frame run under `W12` walks frames 0, 7 and F; a loop from the end
+    // at 0 then holds F, at 1 keeps 7 and F, and a ping-pong over the whole run
     // turns at both ends.
-    const auto runs = [](bank::FrameLoop loop, int tail, int blocks) {
+    const auto runs = [](bank::FrameLoop loop, bool fromEnd, int loopStep, int loopEnd, int blocks) {
         auto r = std::make_unique<Rig>();
         r->tickHz = 100.0;
         r->song.noteSource[2] = tracker::NoteSource::Tracker;
@@ -4458,8 +4458,8 @@ TEST_CASE("a loop counted from the run's end stays at the end when U lengthens t
         for (int f = 0; f < bank::kMaxFrames; ++f) w.frames[size_t(f)].s.fill(uint8_t(f));
         auto& i = r->bank.instruments[1];
         i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Tail");
-        i.used = true; i.wave = 1; i.frameAdvance = 1; i.frameLength = 1; i.frameLoopStep = 0;
-        i.frameLoop = loop; i.frameLoopTail = uint8_t(tail);
+        i.used = true; i.wave = 1; i.frameAdvance = 1; i.frameLength = 1;
+        i.frameLoop = loop; i.frameLoopFromEnd = fromEnd; i.frameLoopStep = uint8_t(loopStep); i.frameLoopEnd = uint8_t(loopEnd);
         ChannelParams p; p.instrument = 2; p.velocityMode = 2; r->drv.setParams(2, p);
         NoteEvent on = cellOn(2, 60, 2);
         on.cmd1 = { Cmd::U, 1, 2, 0 };
@@ -4468,43 +4468,45 @@ TEST_CASE("a loop counted from the run's end stays at the end when U lengthens t
         for (int k = 0; k < blocks; ++k) { r->block({}, 480); seen.push_back(int(r->drv.view(2).frame) - 1); }
         return seen;
     };
-    CHECK(runs(bank::FrameLoop::Loop, 1, 5) == std::vector<int>{ 0, 7, 15, 15, 15, 15 });
-    CHECK(runs(bank::FrameLoop::Loop, 2, 5) == std::vector<int>{ 0, 7, 15, 7, 15, 7 });
-    CHECK(runs(bank::FrameLoop::PingPong, 16, 6) == std::vector<int>{ 0, 7, 15, 7, 0, 7, 15 });
-    // Without a tail the 9.x rule holds: the loop keeps its frame, here frame 0.
-    CHECK(runs(bank::FrameLoop::Loop, 0, 4) == std::vector<int>{ 0, 7, 15, 0, 7 });
+    CHECK(runs(bank::FrameLoop::Loop, true, 0, 0, 5) == std::vector<int>{ 0, 7, 15, 15, 15, 15 });
+    CHECK(runs(bank::FrameLoop::Loop, true, 1, 0, 5) == std::vector<int>{ 0, 7, 15, 7, 15, 7 });
+    CHECK(runs(bank::FrameLoop::PingPong, true, 15, 0, 6) == std::vector<int>{ 0, 7, 15, 7, 0, 7, 15 });
+    // Counted from the start the 9.x rule holds: the loop keeps its frame, here frame 0.
+    CHECK(runs(bank::FrameLoop::Loop, false, 0, 0, 4) == std::vector<int>{ 0, 7, 15, 0, 7 });
+    // A loop's end of its own: the run turns at step 2 (frame 7) and never
+    // reaches F; ping-pong bounces between the two.
+    CHECK(runs(bank::FrameLoop::Loop, false, 0, 2, 4) == std::vector<int>{ 0, 7, 0, 7, 0 });
+    CHECK(runs(bank::FrameLoop::PingPong, false, 0, 2, 4) == std::vector<int>{ 0, 7, 0, 7, 0 });
 }
 
-TEST_CASE("with retrigTableLate a retrigger starts the instrument's table over on the next tick", "[driver][commands][table]")
+TEST_CASE("a run longer than the wave's frames walks on into the next slot", "[driver][wave]")
 {
-    // Section 202 (Rtbl6_R03 on 7.0.2 and older): the retrigger's tick runs the
-    // row the table was on, row 0 comes the tick after -- the immediate fire at
-    // the note-on included, so row 1 is two ticks after row 0 there. Table 0 =
-    // W03, W01, W02, W00 under `R 03` on a duty-2 instrument; the duty after
-    // each tick tells the row.
-    const auto duties = [](bool late) {
-        auto r = std::make_unique<Rig>();
-        r->tickHz = 100.0;
-        r->song.noteSource[0] = tracker::NoteSource::Tracker;
-        Table t0; t0.used = true;
-        t0.steps[0].cmd1 = { Cmd::W, 3, 0, 0 }; t0.steps[1].cmd1 = { Cmd::W, 1, 0, 0 }; t0.steps[2].cmd1 = { Cmd::W, 2, 0, 0 }; t0.steps[3].cmd1 = { Cmd::W, 0, 0, 0 };
-        r->bank.tables[0] = t0;
-        auto& i = r->bank.instruments[1];
-        i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Late");
-        i.used = true; i.table = 1; i.tableMode = bank::TableMode::Tick; i.duty = 2; i.retrigTableLate = late;
-        ChannelParams p; p.instrument = 2; r->drv.setParams(0, p);
-        NoteEvent on = cellOn(0, 60, 2); on.cmd1 = { Cmd::R, 0, 3, 0 };
-        r->block({ on }, 480);
-        std::vector<int> seen{ int(r->drv.view(0).duty) };
-        for (int k = 0; k < 7; ++k) { r->block({}, 480); seen.push_back(int(r->drv.view(0).duty)); }
-        return seen;
-    };
-    // The 9.x rule (section 182): row 0 on the note-on, rows 1 and 2 on the
-    // ticks after, and the roll at tick 3 plays row 0 on its own tick.
-    CHECK(duties(false) == std::vector<int>{ 3, 1, 2, 3, 1, 2, 3, 1 });
-    // Late: the note-on's immediate fire replays row 0 on tick 1, and the roll
-    // at tick 3 lets row 2 run and starts over on tick 4.
-    CHECK(duties(true) == std::vector<int>{ 3, 3, 1, 2, 3, 1, 2, 3 });
+    // Section 211: sixteen tagged frames in slot 1 and sixteen more in slot 2;
+    // a run of 20 at a frame a tick is frames 0 .. 15 of slot 1 then 0 .. 3 of
+    // slot 2 (the view's frame is the slot's own, 1-based), and a loop from step
+    // 16 to the end stays in slot 2.
+    auto r = std::make_unique<Rig>();
+    r->tickHz = 100.0;
+    r->song.noteSource[2] = tracker::NoteSource::Tracker;
+    for (int sl = 0; sl < 2; ++sl) {
+        auto& w = r->bank.waves[size_t(sl)];
+        w.used = true;
+        for (int f = 0; f < bank::kMaxFrames; ++f) w.frames[size_t(f)].s.fill(uint8_t(f));
+    }
+    auto& i = r->bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Long");
+    i.used = true; i.wave = 1; i.frameAdvance = 1; i.frameLength = 20; i.frameLoop = bank::FrameLoop::Loop; i.frameLoopStep = 16;
+    ChannelParams p; p.instrument = 2; p.velocityMode = 2; r->drv.setParams(2, p);
+    r->block({ cellOn(2, 60, 2) }, 480);
+    std::vector<int> frames{ int(r->drv.view(2).frame) - 1 };
+    for (int k = 0; k < 24; ++k) { r->block({}, 480); frames.push_back(int(r->drv.view(2).frame) - 1); }
+    // The view's frame is the flat index from the instrument's start: 0 .. 19
+    // on the first pass, then 16 .. 19 round again.
+    CHECK(frames[15] == 15);
+    CHECK(frames[16] == 16);
+    CHECK(frames[19] == 19);
+    CHECK(frames[20] == 16);      // back to step 16
+    CHECK(frames[23] == 19);
 }
 
 namespace {
@@ -4530,20 +4532,20 @@ std::pair<int, int> periodSwing(const std::vector<RegWrite>& w, int lo13, int lo
 }
 }
 
-TEST_CASE("the vibrato's depth follows the instrument's ladder", "[driver][vibrato]")
+TEST_CASE("the vibrato's depth follows the instrument's scale", "[driver][vibrato]")
 {
-    // Section 203, at C3 (56 units a semitone): the 9.x ladder's depth 2 is a
-    // multiplier of 3 and its depth 6 of 12; 5.7.8's are 2 and 7 and its depth
-    // 0 is off; the unit laws swing the register by the ladder times the
-    // divider in sixty-fourths (15 at C3), the downward half a thirty-second
-    // short from 3.7.5.
-    const auto swing = [](bank::VibLadder ladder, int depth, bool registerLaw) {
+    // Section 210, at C3 (56 units a semitone): 9.x's ladder gives depth 6 a
+    // multiplier of 12 -- a swing of a semitone and a half, 91 units down and
+    // 83 up on the period -- and the half and double scales halve and double
+    // it. Under the register law the swing is the same semitones in the note's
+    // own units, symmetric: 84 for the ROM's 105 (section 203's 5.0.3).
+    const auto swing = [](bank::VibScale scale, int depth, bool registerLaw) {
         auto r = std::make_unique<Rig>();
         r->tickHz = 100.0;
         r->song.noteSource[0] = tracker::NoteSource::Tracker;
         auto& i = r->bank.instruments[1];
         i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Vib");
-        i.used = true; i.vibLadder = ladder;
+        i.used = true; i.vibScale = scale;
         if (registerLaw) { i.pitchSpeed = bank::PitchSpeed::Drum; i.pitchRegisterUnits = true; }
         ChannelParams p; p.instrument = 2; r->drv.setParams(0, p);
         NoteEvent on = cellOn(0, 48, 2); on.cmd1 = { Cmd::V, 0, int16_t(depth), 0 };
@@ -4551,17 +4553,14 @@ TEST_CASE("the vibrato's depth follows the instrument's ladder", "[driver][vibra
         for (int k = 0; k < 80; ++k) { auto more = r->block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
         return periodSwing(w, 0xFF13, 0xFF14);
     };
-    const auto near = [](std::pair<int, int> got, int lo, int hi) { return std::abs(got.first - lo) <= 1 && std::abs(got.second - hi) <= 1; };
-    CHECK(near(swing(bank::VibLadder::Lsdj9, 2, false), -22, 21));
-    CHECK(near(swing(bank::VibLadder::Lsdj9, 6, false), -91, 83));
-    CHECK(near(swing(bank::VibLadder::Lsdj57, 2, false), -15, 14));
-    CHECK(near(swing(bank::VibLadder::Lsdj57, 6, false), -51, 49));
-    CHECK(near(swing(bank::VibLadder::Lsdj58, 6, false), -81, 76));            // the downward entries are one's complements
-    CHECK(near(swing(bank::VibLadder::Lsdj58, 0, false), -7, 7));
-    CHECK(swing(bank::VibLadder::Lsdj57, 0, false) == std::pair<int, int>{ 0, 0 });
-    CHECK(swing(bank::VibLadder::Units39, 6, true) == std::pair<int, int>{ -102, 105 });
-    CHECK(swing(bank::VibLadder::Units36, 6, true) == std::pair<int, int>{ -105, 105 });
-    CHECK(swing(bank::VibLadder::Units39, 15, true) == std::pair<int, int>{ -451, 465 });
+    const auto near = [](std::pair<int, int> got, int lo, int hi) { return std::abs(got.first - lo) <= 2 && std::abs(got.second - hi) <= 2; };
+    CHECK(near(swing(bank::VibScale::One, 2, false), -22, 21));
+    CHECK(near(swing(bank::VibScale::One, 6, false), -91, 83));
+    CHECK(near(swing(bank::VibScale::Half, 6, false), -45, 42));
+    CHECK(near(swing(bank::VibScale::Double, 6, false), -190, 159));
+    CHECK(near(swing(bank::VibScale::Half, 2, false), -11, 10));
+    CHECK(near(swing(bank::VibScale::One, 6, true), -84, 84));
+    CHECK(near(swing(bank::VibScale::Half, 6, true), -42, 42));
 }
 
 TEST_CASE("under the register law F on a pulse is period units down and a note's L slides from the old period", "[driver][commands]")

@@ -128,6 +128,9 @@ private:
     /// an `H` can play one step twice in a row and both times must sound
     /// (section 102).
     int     firedStep_[4] = { -1, -1, -1, -1 };
+    /// Section 212: the pass of the chain the fired row was on, so a looping
+    /// channel fires its rows again each time round.
+    int     firedPass_[4] = { 0, 0, 0, 0 };
     uint8_t grooveParam_[4] = { kGrooveNone, kGrooveNone, kGrooveNone, kGrooveNone };  ///< from a G slot
     uint8_t grooveCell_[4] = { kGrooveNone, kGrooveNone, kGrooveNone, kGrooveNone };   ///< from the last G cell
     // what the recorder last wrote on each channel: the slots in force, and

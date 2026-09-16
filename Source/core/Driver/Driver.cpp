@@ -58,23 +58,6 @@ inline int vibWave(bank::VibShape shape, int i)
 constexpr int kVibDepth256[16] = {
     32, 64, 96, 128, 192, 256, 384, 512, 640, 768, 896, 1024, 1280, 1536, 1792, 2048
 };
-/// Section 203: the ladders the older versions read the depth through, measured
-/// at C3 and D#6 on every archive ROM. 5.8.8 - 7.7.5 and 5.7.8; the latter's
-/// sixteen integers are also the unit laws' (3.6.5 - 5.0.3), times the note's
-/// divider.
-constexpr int kVibLadder58[16] = { 1, 2, 3, 4, 6, 8, 11, 15, 19, 24, 29, 35, 42, 49, 56, 64 };
-constexpr int kVibLadder57[16] = { 0, 1, 2, 3, 4, 5, 7, 9, 11, 13, 16, 19, 22, 25, 28, 31 };
-inline int vibMultiplier(bank::VibLadder ladder, int depth)
-{
-    const int d = depth & 15;
-    switch (ladder) {
-        case bank::VibLadder::Lsdj58: return kVibLadder58[d];
-        case bank::VibLadder::Lsdj57:
-        case bank::VibLadder::Units39:
-        case bank::VibLadder::Units36: return kVibLadder57[d];
-        default: return kVibDepth256[d] / 32;
-    }
-}
 /// Section 174: where a vibrato starts -- $0000 with the direction bit set,
 /// else $8000, or $FC00 for the saw (2:$7E64).
 inline uint16_t vibStartPhase(bank::VibDir dir, bank::VibShape shape)
@@ -859,7 +842,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         // with no trigger, then `E`'s trigger where the LENGTH counter asks for
         // one (section 138), then the level's own writes. `setLevel()` is right
         // to leave these to a plain note's burst; this note has no burst.
-        if (v.retrigPending) { const bool env = v.retrigPending == 1; v.retrigPending = 0; retrigger(ch, true, env); if (env) flagLateTableRestart(ch); }
+        if (v.retrigPending) { const bool env = v.retrigPending == 1; v.retrigPending = 0; retrigger(ch, true, env); }
         if ((levelIsNr32 ? v.waveLevel : v.envVol) != levelWas) setLevel(ch);
         writeNr51();
         return;
@@ -939,7 +922,6 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     v.tableJustStarted = v.tableOn;                       // section 84: the trigger is the plain note; row 0's column follows it (section 180)
     v.tableTicks = false;                                 // the instrument's own table again (section 122)
     v.tableWait = v.tableWait2 = v.tableWaitE = 0;        // every lane starts its row afresh (section 64)
-    v.tableRestartLate = false;
     v.tableTspHoldOn = false;                     // section 157: a note starts on its own column
     if (v.tableOn) ++v.tableRun;                  // a note-on starts a run of its own (section 32)
     // A Step-mode table advances one row per trigger instead of restarting,
@@ -1111,7 +1093,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         if (!v.active) return;
         rowStart = retrigAt;
     }
-    if (v.retrigPending) { burst_ = std::max(burst_, retrigAt); const bool env = v.retrigPending == 1; v.retrigPending = 0; retrigger(ch, true, env); if (env) flagLateTableRestart(ch); rowStart = retrigAt; }
+    if (v.retrigPending) { burst_ = std::max(burst_, retrigAt); const bool env = v.retrigPending == 1; v.retrigPending = 0; retrigger(ch, true, env); rowStart = retrigAt; }
     if (v.panQueued) { v.pan = Pan(v.panQueued - 1); v.panQueued = 0; writeNr51(); }
     // Section 180: the table's row 0, in the handler's table phase 1.2 ms in,
     // live: the volume lane walks, a `W` writes, an `F` writes its frame. The
@@ -1190,7 +1172,7 @@ void Driver::stopVoice(int ch, bool kill)
     Voice& v = v_[size_t(ch)];
     v.active = false; v.tableOn = false; v.tableTspHoldOn = false; v.sliding = false; v.chordN = 0; v.kitOn = false; v.kitPair = false; v.kitALive = false; v.kitBLive = false; v.pendingOn = false;
     v.pitchClockOn = false; v.releasing = false; v.pulseReleasing = false;
-    v.shapedOn = false; v.shapedRelease = false; v.tableJustStarted = false; v.tableRestartLate = false; v.lsdjStage = 0;
+    v.shapedOn = false; v.shapedRelease = false; v.tableJustStarted = false; v.lsdjStage = 0;
     // A kill or a stop ends the phrase: a key released afterwards must not
     // bring a note back that nobody is playing (section 8).
     v.heldCount = 0;
@@ -1247,54 +1229,47 @@ int Driver::vibratoFine(const Voice& v) const
     // Section 174: the waveform entry for the phase's top six bits times the
     // depth's multiplier; the direction chose the start phase, not the sign.
     if (!v.vibOn || v.ticks < v.vibDelay) return 0;
-    int value = vibWave(v.vibShape, int(v.vibPhase >> 10) & 63);
-    const auto ladder = v.inst.vibLadder;
-    const int m = vibMultiplier(ladder, v.vibDepth);                // section 203: the version's ladder
-    // Section 203: before 7.7.6 the waveform's downward entries are one's
-    // complements, one short -- -1, -3, ... -31 for 9.x's -2, -4, ... -32 (5.7.8
-    // - 7.0.2 measured: `-3 -8 -13 -18` a step at C3 for a multiplier of 11
-    // where 9.x's entries give `-5 -10 -15 -20`, and a peak of `-81` for `-84`).
-    if (value < 0 && (ladder == bank::VibLadder::Lsdj58 || ladder == bank::VibLadder::Lsdj57)) value += 1;
-    return value * m;
+    const int value = vibWave(v.vibShape, int(v.vibPhase >> 10) & 63);
+    const int fine = value * (kVibDepth256[v.vibDepth & 15] / 32);
+    // Section 210: the instrument's scale on 9.x's ladder -- half is 5.7.8's
+    // ladder to a unit, the versions between are within a step of 9.x's.
+    switch (v.inst.vibScale) {
+        case bank::VibScale::Half:   return fine / 2;
+        case bank::VibScale::Double: return fine * 2;
+        default:                     return fine;
+    }
 }
 
 /// Section 187: a kit's vibrato swings the period register by the depth
 /// table's entry itself, in units -- `V 42` on 9.4.2 walks NR33 by 15 an
 /// instant to 45 either side of the kit's period (X92_KIT_V42), 9.2.L by 30
 /// to 90, the entry 96 halved since 9.4.0 ("halving kit vibrato depths"); the
-/// instrument's `vibDouble` keeps the older depth.
+/// instrument's double scale (section 210) keeps the older depth.
 int Driver::kitVibratoUnits(const Voice& v) const
 {
     if (!v.vibOn || v.ticks < v.vibDelay) return 0;
     const int value = vibWave(v.vibShape, int(v.vibPhase >> 10) & 63);
     const int units = value * (kVibDepth256[v.vibDepth & 15] / 32);
-    return v.inst.vibDouble ? units : units / 2;
+    switch (v.inst.vibScale) {
+        case bank::VibScale::Double: return units;
+        case bank::VibScale::Half:   return units / 4;
+        default:                     return units / 2;
+    }
 }
 
 /// The vibrato in Drum mode, in period units: the same triangle and the same
 /// depth table, but the swing is the period's, not the note's -- LSDj works in
 /// the register there and one semitone is worth kDrumUnitsPerSemitone units.
+/// Under the register law (section 88, every LSDj before 5.7.8) the semitone
+/// is the note's own -- `(2048 - period)` times `1 - 2^(-1/12)` units, 56 at
+/// C3 -- so section 210's scale lands near the ROM's swing at every key rather
+/// than at one.
 double Driver::vibratoDrumUnits(const Voice& v, int basePeriod) const
 {
     if (!v.vibOn || v.ticks < v.vibDelay) return 0.0;
-    if (v.inst.vibLadder == bank::VibLadder::Units39 || v.inst.vibLadder == bank::VibLadder::Units36) {
-        // Section 203: before 5.7.8 the swing is the waveform entry times the
-        // ladder's integer times the note's frequency divider in sixty-fourths,
-        // over 32 and rounded up, in period units (5.0.3 at C3, depth 6: `-4
-        // -10 -17 -23 -30` a step, `-102 / +105` at the peaks). From 3.7.5 the
-        // downward entries are the one's complements, one short (`-451` for
-        // `+465` at depth F); 3.6.x's are symmetric. The first half of the swing
-        // lowers the period, so a downward entry comes back positive here: the
-        // caller subtracts.
-        int value = vibWave(v.vibShape, int(v.vibPhase >> 10) & 63);
-        if (value < 0 && v.inst.vibLadder == bank::VibLadder::Units39) value += 1;
-        const int scale = (2048 - std::clamp(basePeriod, 0, 2047)) >> 6;
-        const int prod = std::abs(value) * scale * kVibLadder57[v.vibDepth & 15];
-        // The ROM floors the signed offset: a downward step rounds away from
-        // the note (`-4` for -3.3), an upward one toward it (`+6` for 6.6).
-        return value < 0 ? double((prod + 31) / 32) : -double(prod / 32);
-    }
-    return double(vibratoFine(v)) / 256.0 * kDrumUnitsPerSemitone;
+    const double semis = double(vibratoFine(v)) / 256.0;
+    if (v.inst.pitchRegisterUnits) return semis * double(2048 - std::clamp(basePeriod, 0, 2047)) * 0.0561256;
+    return semis * kDrumUnitsPerSemitone;
 }
 
 /// The note the channel is at, in semitones and vibrato apart: the note, the
@@ -2314,7 +2289,7 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
                     // The run is the new slot's -- every slot is sixteen frames,
                     // so it has the same shape -- and the step goes to the one
                     // nearest the frame we landed on, as section 65 says.
-                    uint8_t run[16]; const int len = waveRunOf(ch, run);
+                    uint8_t run[kMaxRunSteps]; const int len = waveRunOf(ch, run);
                     int best = 0, bestD = 256;
                     for (int k = 0; k < len; ++k) { const int d = std::abs(int(run[size_t(k)]) - int(want)); if (d < bestD) { bestD = d; best = k; } }
                     v.frameStep = uint8_t(best); v.frameCount = 0;
@@ -2544,7 +2519,7 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             // Section 143: the fast roll (`x = 8`) starts on the pitch clock,
             // `y + 1` clocks after the command, with nothing at the command
             // itself -- measured, where every other `x` fires one as it is read.
-            if (!v.retrigFast) { if (live) { retrigger(ch, true); flagLateTableRestart(ch); } else v.retrigPending = 1; }
+            if (!v.retrigFast) { if (live) retrigger(ch, true); else v.retrigPending = 1; }
             break;
         case Cmd::S: {
             // PU1's sweep; on NOI a transpose through the map that adds up
@@ -2616,15 +2591,13 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
                     // step number: a run told to hold its last frame goes on
                     // holding it when the length changes under it, which is what
                     // every wave instrument in the user's save asks for.
-                    uint8_t was[16]; const int lenWas = waveRunOf(ch, was);
+                    // Section 211: a loop counted from the run's end follows
+                    // the end by itself and needs no moving.
+                    uint8_t was[kMaxRunSteps]; const int lenWas = waveRunOf(ch, was);
                     const uint8_t loopFrame = was[size_t(std::clamp<int>(v.inst.frameLoopStep, 0, lenWas - 1))];
                     v.inst.frameLength = uint8_t(int(c.b & 15) + 1);
-                    uint8_t now[16]; const int lenNow = waveRunOf(ch, now);
-                    if (v.inst.frameLoopTail) {
-                        // Section 201: before 7.7.6 the loop is the run's last
-                        // `tail` steps, so a new length moves it to the new end.
-                        v.inst.frameLoopStep = uint8_t(std::max(0, lenNow - int(v.inst.frameLoopTail)));
-                    } else {
+                    uint8_t now[kMaxRunSteps]; const int lenNow = waveRunOf(ch, now);
+                    if (!v.inst.frameLoopFromEnd) {
                         int best = 0, bestD = 256;
                         for (int k = 0; k < lenNow; ++k) {
                             const int d = std::abs(int(now[size_t(k)]) - int(loopFrame));
@@ -2902,7 +2875,7 @@ void Driver::beginTableRun(int ch, uint8_t slot, bool fromCommand)
 }
 
 /// Section 65: the frames a wave instrument's run visits, and the frame a run
-/// step lands on. `out` takes at most sixteen; the return is the run's length.
+/// step lands on. `out` takes kMaxRunSteps; the return is the run's length.
 int Driver::waveRunOf(int ch, uint8_t* out) const
 {
     const Voice& v = v_[size_t(ch)];
@@ -2918,7 +2891,7 @@ void Driver::setFrameStep(int ch, int step, bool live)
     Voice& v = v_[size_t(ch)];
     const Wave* w = bank_ ? bank_->waveAt(v.waveSlot) : nullptr;
     if (w == nullptr || w->frames.empty()) { v.frameStep = 0; v.frameIdx = 0; return; }
-    uint8_t run[16]; const int len = waveRunOf(ch, run);
+    uint8_t run[kMaxRunSteps]; const int len = waveRunOf(ch, run);
     const int st = step < 0 ? 0 : (step >= len ? len - 1 : step);
     v.frameStep = uint8_t(st); v.frameCount = 0;
     // Section 171: the run's step is added to the instrument's start frame,
@@ -3143,29 +3116,11 @@ void Driver::tick(int ch)
         retrig = true;
     }
     const uint8_t ownTable = v.tableOverride ? v.tableOverride : v.inst.table;
-    // Section 202: before 8.3.4 the restart is the next tick's (retrigger() flags
-    // it), and this tick's table phase runs its row as any other.
-    const bool retrigReplays = retrig && ownTable && bank_ && bank_->table(ownTable) && !v.inst.retrigTableLate;
+    const bool retrigReplays = retrig && ownTable && bank_ && bank_->table(ownTable);
     // The table: a row per tick, or per the row length a G inside it asked
     // for. A Step-mode table advances at notes instead (section 7).
     if (v.tableJustStarted) v.tableJustStarted = false;      // row 0 fired with the note-on (section 31)
     else if (retrigReplays) {}                                // section 182: the retrigger's row 0 is this tick's row
-    else if (v.tableRestartLate) {
-        // Section 202: the retrigger of the tick before starts the instrument's
-        // own table over now -- §182's replay, a tick late -- the table an `A`
-        // had moved the channel to gone with it.
-        v.tableRestartLate = false;
-        if (ownTable && bank_ && bank_->table(ownTable)) {
-            v.tableSlot = ownTable; v.tableOn = true; v.tableTicks = false; v.tableGroove = 0;
-            v.tableStep = v.tableStep2 = v.tableStepE = 0;
-            v.tableRow = v.tableRow2 = v.tableRowE = 0;
-            v.tableWait = v.tableWait2 = v.tableWaitE = 0;
-            v.hopLeft = v.hopLeft2 = 0; v.hopFrom = v.hopFrom2 = 0xFF; v.volLaneOn = true; v.tableTspHoldOn = false;
-            ++v.tableRun;
-            stepTable(ch);
-            if (!v.active) return;
-        }
-    }
     else if (v.inst.tableMode == TableMode::Tick || v.tableTicks) {   // section 122
         // Each lane counts down its own row (section 64).
         uint16_t* const waits[3] = { &v.tableWaitE, &v.tableWait, &v.tableWait2 };
@@ -3235,15 +3190,18 @@ void Driver::tick(int ch)
             v.frameCount = 0;
             const Wave* w = bank_ ? bank_->waveAt(v.waveSlot) : nullptr;
             if (w && !w->frames.empty()) {
-                uint8_t run[16]; const int len = waveRunOf(ch, run);
+                uint8_t run[kMaxRunSteps]; const int len = waveRunOf(ch, run);
                 // Section 171: a ONCE run of one frame still steps, to the silence.
                 if (len > 1 || v.inst.frameLoop == FrameLoop::Once) {
-                    // Loop and PingPong turn at the run's own loop step, not at
-                    // its first frame (section 65).
-                    const int loop = std::clamp<int>(v.inst.frameLoopStep, 0, len - 1);
+                    // Loop and PingPong turn at the run's own loop points, not at
+                    // its first frame (sections 65 and 211): `last` is the loop's
+                    // end, `loop` where it comes back to -- counted back from the
+                    // run's last step when the instrument says so.
+                    const int last = v.inst.frameLoopFromEnd || v.inst.frameLoopEnd == 0 ? len - 1 : std::clamp<int>(int(v.inst.frameLoopEnd) - 1, 0, len - 1);
+                    const int loop = v.inst.frameLoopFromEnd ? std::max(0, len - 1 - int(v.inst.frameLoopStep)) : std::clamp<int>(v.inst.frameLoopStep, 0, last);
                     int next = int(v.frameStep) + v.frameDir;
                     switch (v.inst.frameLoop) {
-                        case FrameLoop::Loop:     if (next >= len) next = loop; break;   // the run plays through once, then from its loop step
+                        case FrameLoop::Loop:     if (next > last) next = loop; break;   // the run plays to the loop's end, then from its loop step
                         case FrameLoop::Once:
                             // Section 132: a run that plays **once** does not hold
                             // its last frame -- one step past the end LSDj writes a
@@ -3268,7 +3226,7 @@ void Driver::tick(int ch)
                         case FrameLoop::PingPong:
                         // Section 199: the first pass walks every step; only the way
                         // down turns at the loop step (WvP3_b2_0E: 0 1 2 3 2 3 2 3).
-                        case FrameLoop::Resync:   if (next >= len) { next = len - 2 < loop ? loop : len - 2; v.frameDir = -1; } else if (next < loop && v.frameDir < 0) { next = loop + 1 < len ? loop + 1 : loop; v.frameDir = 1; } break;
+                        case FrameLoop::Resync:   if (next > last) { next = last - 1 < loop ? loop : last - 1; v.frameDir = -1; } else if (next < loop && v.frameDir < 0) { next = loop + 1 <= last ? loop + 1 : loop; v.frameDir = 1; } break;
                     }
                     if (next != int(v.frameStep)) setFrameStep(ch, next, true);
                 }
@@ -3300,7 +3258,6 @@ void Driver::tick(int ch)
         }
         const uint64_t retrigStart = burst_;
         retrigger(ch, true);
-        flagLateTableRestart(ch);
         // Section 182: and the instrument's table starts over from row 0 in
         // the handler's table phase, a TICK table and a STEP one alike -- a
         // table an `A` had moved the channel to is gone with the reload -- and
@@ -3326,15 +3283,6 @@ void Driver::tick(int ch)
     }
     else if (v.inst.type == InstrumentType::Noise) { if (v.noiseSweep || tspReleased || tickNote() != noteBeforeTick || (nrBeforeTick >= 0 && int(noiseNr43(ch)) != nrBeforeTick)) writePeriod(ch, false); }   // a table's transpose reaches NR43 (section 45)
     else if (tickNote() != noteBeforeTick) writePeriod(ch, false);
-}
-
-/// Section 202: an `R`'s retrigger -- the immediate fire and the roll alike,
-/// never an E's re-attack -- owes the instrument's table its row 0 on the next
-/// tick before 8.3.4; the tick's table phase pays it.
-void Driver::flagLateTableRestart(int ch)
-{
-    Voice& v = v_[size_t(ch)];
-    if (v.inst.retrigTableLate && (v.tableOverride ? v.tableOverride : v.inst.table)) v.tableRestartLate = true;
 }
 
 /// One retrigger. LSDj writes the whole note-on sequence again -- NR10, NR11,

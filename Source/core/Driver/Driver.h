@@ -345,7 +345,6 @@ private:
         uint32_t shapedPosMax = 0;
         uint8_t  shapedFrom = 0;           ///< the level the release started from
         bool     tableJustStarted = false; ///< row 0 fired with the note-on (section 31)
-        bool     tableRestartLate = false; ///< section 202: a retrigger owes the table its row 0 on the next tick
         uint8_t  noiseTspReg = 0;          ///< section 207: the table's transposes added up nibble by nibble (3.x noise)
         bool     tableHopped = false;      ///< a `B` in this lane took its hop (section 73)
         // The instrument's own envelope, run in software (section 26): from
@@ -495,7 +494,6 @@ private:
     /// and an `E`'s (§138) does not: that one must carry the level the `E` just
     /// set, which is what the ROM's burst writes.
     void retrigger(int ch, bool full, bool restartEnv = true);
-    void flagLateTableRestart(int ch);   // section 202
     void emitAt(uint64_t cycle, uint16_t addr, uint8_t v);
     void tick(int ch);
     void tickAll();
@@ -664,7 +662,7 @@ private:
     double  noteOfVoice(int ch) const;                ///< the note in semitones, vibrato apart
     int     tableTransposeOf(const Voice& v) const;   ///< the table row's transpose column in force, else 0 (sections 7, 45)
     int     vibratoFine(const Voice& v) const;        ///< 1/256 semitones, from the phase
-    double  vibratoDrumUnits(const Voice& v, int basePeriod) const;   ///< the same swing in period units (Drum); section 203's unit laws from the note's divider
+    double  vibratoDrumUnits(const Voice& v, int basePeriod) const;   ///< the same swing in period units (Drum)
     bool    drumRom(const Voice& v) const;             ///< section 169: the ROM's table machine applies
     /// One step of the instrument's own envelope, run in software off the
     /// pitch clock at the measured rate (docs/LSDJ_PARITY.md section 7).

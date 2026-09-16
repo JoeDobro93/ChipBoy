@@ -723,11 +723,11 @@ TEST_CASE("the wave instrument's synth comes from byte 2 before 9 and REPEAT fro
     CHECK(int(bank->waves[size_t(w22.wave - 1)].frames[0].s[0]) == 4);      // synth 4, from byte 3
     // Formats 7 and 8 take the synth from byte 2 and REPEAT from byte 2's low
     // nibble as well, counting the loop's steps less one (section 198): 5 makes
-    // the loop the last six of sixteen steps.
+    // the loop the last six of sixteen steps, counted from the end (section 211).
     song[kFormatVersionAt] = 7;
     REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(7), *bank, *out, sum, notes));
     const auto& w7 = bank->instruments[0];
-    CHECK(int(w7.frameLoopStep) == 10);
+    CHECK(w7.frameLoopFromEnd); CHECK(int(w7.frameLoopStep) == 5);
     CHECK(int(bank->waves[size_t(w7.wave - 1)].frames[0].s[0]) == 2);      // synth 2, from byte 2
 }
 
@@ -1106,8 +1106,8 @@ TEST_CASE("inside format 22 a 9.2 song's wave R nibble and kit vibrato depth are
     // docs/LSDJ_VERSIONS.md section 11, probed 9.2.J against 9.4.2: before
     // 9.3.4 R's volume nibble does nothing on the wave channel (kits too), and
     // before 9.4.0 a kit's V is twice as deep. A wave R F4 becomes R 04; the
-    // kit's V bytes stay and the kit instrument takes `vibDouble` (section
-    // 187); the 9.4.x model keeps every byte.
+    // kit's V bytes stay and the kit instrument takes the double scale (sections
+    // 187 and 210); the 9.4.x model keeps every byte.
     auto song = blankSong(22);
     song[kInstAlloc + 0] = 1; song[kInstAlloc + 1] = 1;
     uint8_t* i0 = song.data() + kInst; i0[0] = 1; i0[1] = 0xA8; i0[3] = 0x00; i0[7] = 3; i0[10] = 0xD0;           // a wave
@@ -1150,7 +1150,7 @@ TEST_CASE("inside format 22 a 9.2 song's wave R nibble and kit vibrato depth are
         CHECK(ph->cells[0].cmd1.cmd == bank::Cmd::R); CHECK(ph->cells[0].cmd1.a == (o ? 0 : 15)); CHECK(ph->cells[0].cmd1.b == 4);
         CHECK(ph->cells[4].cmd1.cmd == bank::Cmd::V); CHECK(ph->cells[4].cmd1.a == 4); CHECK(ph->cells[4].cmd1.b == 2);
         CHECK(ph->cells[8].cmd1.cmd == bank::Cmd::V); CHECK(ph->cells[8].cmd1.b == 10);
-        CHECK(bank->instruments[1].type == bank::InstrumentType::Kit); CHECK(bank->instruments[1].vibDouble == o);   // section 187: the depth lives on the kit
+        CHECK(bank->instruments[1].type == bank::InstrumentType::Kit); CHECK(bank->instruments[1].vibScale == (o ? bank::VibScale::Double : bank::VibScale::One));   // sections 187 and 210: the depth lives on the kit
         CHECK(ph->cells[12].cmd1.cmd == bank::Cmd::R); CHECK(ph->cells[12].cmd1.a == 8);            // the resync is not a volume
         CHECK(ph->cells[6].cmd1.cmd == bank::Cmd::F); CHECK(ph->cells[6].cmd1.a == 0); CHECK(ph->cells[6].cmd1.b == 1);
         for (const auto& n : notes.lines) CHECK(n.find("V4A") == std::string::npos);
@@ -1537,27 +1537,27 @@ TEST_CASE("a 7.0.2 wave instrument's PLAY and REPEAT read by the old laws", "[ls
     REQUIRE(m != nullptr);
     REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
     const auto& w = bank->instruments[0];
-    CHECK(w.frameLoop == bank::FrameLoop::Loop); CHECK(int(w.frameLength) == 4); CHECK(int(w.frameLoopStep) == 1); CHECK(int(w.frameAdvance) == 4);
-    CHECK(int(w.frameLoopTail) == 3);                                       // section 201: the loop stays at the run's end under a W
+    CHECK(w.frameLoop == bank::FrameLoop::Loop); CHECK(int(w.frameLength) == 4); CHECK(int(w.frameAdvance) == 4);
+    CHECK(w.frameLoopFromEnd); CHECK(int(w.frameLoopStep) == 2); CHECK(int(w.frameLoopEnd) == 0);   // section 211: the last three steps, counted from the end
     i0[9] = 3;                                                              // MANUAL on 7.x
     REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
     CHECK(int(bank->instruments[0].frameAdvance) == 0);
     i0[9] = 2; i0[2] = 0x0F;                                                // PINGPONG over the whole run
     REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
-    CHECK(bank->instruments[0].frameLoop == bank::FrameLoop::PingPong); CHECK(int(bank->instruments[0].frameLoopStep) == 0);
+    CHECK(bank->instruments[0].frameLoop == bank::FrameLoop::PingPong); CHECK(bank->instruments[0].frameLoopFromEnd); CHECK(int(bank->instruments[0].frameLoopStep) == 15);
 }
 
 TEST_CASE("the models carry the vibrato ladder, F's law, P on noise and the loop nibble by version", "[lsdj][versions]")
 {
-    // Sections 203 - 205.
-    using bank::VibLadder;
-    CHECK(lsdjModelForRomVersion("9.4.2")->vibLadder == VibLadder::Lsdj9);
-    CHECK(lsdjModelForRomVersion("8.5.1")->vibLadder == VibLadder::Lsdj9);
-    CHECK(lsdjModelForRomVersion("7.0.2")->vibLadder == VibLadder::Lsdj58);
-    CHECK(lsdjModelForRomVersion("6.0.1")->vibLadder == VibLadder::Lsdj58); CHECK(lsdjModelForRomVersion("5.8.8")->vibLadder == VibLadder::Lsdj58);
-    CHECK(lsdjModelForRomVersion("5.7.8")->vibLadder == VibLadder::Lsdj57);
-    CHECK(lsdjModelForRomVersion("5.0.3")->vibLadder == VibLadder::Units39); CHECK(lsdjModelForRomVersion("3.9.2")->vibLadder == VibLadder::Units39);
-    CHECK(lsdjModelForRomVersion("3.6.8")->vibLadder == VibLadder::Units36);
+    // Sections 203 - 205 and 210: 5.7.8's ladder is the half scale, the rest 9.x's.
+    using bank::VibScale;
+    CHECK(lsdjModelForRomVersion("9.4.2")->vibScale == VibScale::One);
+    CHECK(lsdjModelForRomVersion("8.5.1")->vibScale == VibScale::One);
+    CHECK(lsdjModelForRomVersion("7.0.2")->vibScale == VibScale::One);
+    CHECK(lsdjModelForRomVersion("6.0.1")->vibScale == VibScale::One); CHECK(lsdjModelForRomVersion("5.8.8")->vibScale == VibScale::One);
+    CHECK(lsdjModelForRomVersion("5.7.8")->vibScale == VibScale::Half);
+    CHECK(lsdjModelForRomVersion("5.0.3")->vibScale == VibScale::One); CHECK(lsdjModelForRomVersion("3.9.2")->vibScale == VibScale::One);
+    CHECK(lsdjModelForRomVersion("3.6.8")->vibScale == VibScale::One);
     CHECK(lsdjModelForRomVersion("5.7.8")->fineCmdLaw == FineCmdLaw::Semitone32);
     CHECK(lsdjModelForRomVersion("5.0.3")->fineCmdLaw == FineCmdLaw::Units);
     CHECK(lsdjModelForRomVersion("4.9.4")->fineCmdLaw == FineCmdLaw::None);
@@ -1591,7 +1591,7 @@ TEST_CASE("the models carry the vibrato ladder, F's law, P on noise and the loop
     p0 = out->phrase(out->chain[0].at(0)); p1 = out->phrase(out->chain[3].at(0));
     REQUIRE(p0 != nullptr); REQUIRE(p1 != nullptr);
     CHECK(p0->cells[0].cmd1.cmd == bank::Cmd::F); CHECK(p1->cells[0].cmd1.cmd == bank::Cmd::None);
-    CHECK(bank->instruments[0].vibLadder == VibLadder::Units39); CHECK(bank->instruments[0].pitchRegisterUnits);
+    CHECK(bank->instruments[0].vibScale == VibScale::One); CHECK(bank->instruments[0].pitchRegisterUnits);
     auto song4 = blankSong(4);
     std::copy(song.begin() + kInst, song.begin() + kInst + 32, song4.begin() + kInst);
     song4[kInstAlloc + 0] = 1; song4[kInstAlloc + 1] = 1; song4[kPhraseAlloc] |= 3;
@@ -1606,7 +1606,7 @@ TEST_CASE("the models carry the vibrato ladder, F's law, P on noise and the loop
     p0 = out->phrase(out->chain[0].at(0)); p1 = out->phrase(out->chain[3].at(0));
     REQUIRE(p0 != nullptr); REQUIRE(p1 != nullptr);
     CHECK(p0->cells[0].cmd1.cmd == bank::Cmd::F); CHECK(p1->cells[0].cmd1.cmd == bank::Cmd::P);
-    CHECK(bank->instruments[0].vibLadder == VibLadder::Lsdj57);
+    CHECK(bank->instruments[0].vibScale == VibScale::Half);
 }
 
 TEST_CASE("the 3.x noise laws and the width bit through S come from the model", "[lsdj][versions]")
@@ -1675,16 +1675,16 @@ TEST_CASE("before the frame run, PLAY and REPEAT read as 7.x's and a W on MANUAL
     REQUIRE(m != nullptr);
     REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
     const auto& w = bank->instruments[0];
-    CHECK(w.frameLoop == bank::FrameLoop::Loop); CHECK(int(w.frameLength) == 1); CHECK(int(w.frameAdvance) == 1); CHECK(int(w.frameLoopTail) == 2);
-    CHECK(w.retrigTableLate);                                               // section 202
+    CHECK(w.frameLoop == bank::FrameLoop::Loop); CHECK(int(w.frameLength) == 1); CHECK(int(w.frameAdvance) == 1);
+    CHECK(w.frameLoopFromEnd); CHECK(int(w.frameLoopStep) == 1);           // section 211: the nibble counts back from the run's end
     const auto* p = out->phrase(out->chain[2].at(0));
     REQUIRE(p != nullptr);
     CHECK(p->cells[0].cmd1.cmd == bank::Cmd::U); CHECK(int(p->cells[0].cmd1.a) == 1); CHECK(int(p->cells[0].cmd1.b) == 2);
     i0[9] = 2; i0[2] = 0x0F;                                                // PINGPONG over the whole run
     REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
-    CHECK(bank->instruments[0].frameLoop == bank::FrameLoop::PingPong); CHECK(int(bank->instruments[0].frameLoopTail) == 16);
+    CHECK(bank->instruments[0].frameLoop == bank::FrameLoop::PingPong); CHECK(int(bank->instruments[0].frameLoopStep) == 15);
     REQUIRE(importSong(song.data(), song.size(), *lsdjModelForRomVersion("5.9.9"), *bank, *out, sum, notes));
-    CHECK(int(bank->instruments[0].frameLoopTail) == 1);                    // section 205: the nibble is read from 6.0.1
+    CHECK(bank->instruments[0].frameLoopFromEnd); CHECK(int(bank->instruments[0].frameLoopStep) == 0);   // section 205: the nibble is read from 6.0.1
     i0[9] = 3;                                                              // MANUAL: no W moves it
     REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
     CHECK(int(bank->instruments[0].frameAdvance) == 0);

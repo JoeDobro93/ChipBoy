@@ -2167,6 +2167,7 @@ struct ChainColumn::Impl {
     int firstBar = 0;
     int cursorCol = 0;            ///< 0-7 a channel's phrase (even) or its transpose (odd), 8 the bar's step count
     int hoverCol = -1, hoverBar = -1;
+    int hoverEnd = -1;            ///< the channel whose end toggle the mouse is over (section 212)
     Entry entry;
     TypedEntry box;
     int dragStartFirst = 0;
@@ -2198,6 +2199,11 @@ struct ChainColumn::Impl {
     bool anyPlaying(int bar) const { for (int v : playingRow) if (v == bar) return true; return false; }
     int barCount() const { return juce::jmax(songBars(), juce::jmax(selectedBar, playingMax()) + 1) + 1; }
     int slotAt(int ch, int bar) const { return song != nullptr ? song->phraseAt(ch, bar) : 0; }
+    /// Section 212: the channel's end toggle, in the head's top row before the
+    /// row count -- four 18 px squares, one a channel.
+    bool loopsAt(int ch) const { return song == nullptr || song->chainEnd[size_t(ch & 3)] == tracker::ChainEnd::Loop; }
+    juce::Rectangle<int> endRect(int ch) const { return { owner.getWidth() - 70 - (4 - ch) * 20, 4, 18, 18 }; }
+    int endAt(juce::Point<int> p) const { for (int ch = 0; ch < 4; ++ch) if (endRect(ch).contains(p)) return ch; return -1; }
     int tspAt(int ch, int bar) const { return song != nullptr ? int(song->rowTranspose(ch, bar)) : 0; }   // the row's own; the song's sits in the head (section 61)
     /// The last column is the row's LEN: a phrase carries its own length now
     /// (section 25), so it reads the first phrase this row holds and typing
@@ -2345,6 +2351,17 @@ struct ChainColumn::Impl {
         g.setFont(Fonts::mono(10.0f));
         g.setColour(textDim);
         g.drawText(juce::String(bars) + (bars == 1 ? " row" : " rows"), juce::Rectangle<int>(w - 66, 0, 60, 26), juce::Justification::centredRight, false);
+        // Section 212: a ring for a channel that plays its chain round again,
+        // a square for one that stops at its end, in the channel's colour.
+        for (int ch = 0; ch < 4; ++ch) {
+            const auto r = endRect(ch);
+            const bool loop = loopsAt(ch), hover = ch == hoverEnd;
+            g.setColour(hover ? raised : panel2);
+            g.fillRoundedRectangle(r.toFloat(), 3.0f);
+            g.setColour(channel(ch).withAlpha(hover ? 1.0f : 0.85f));
+            const auto c = r.toFloat().reduced(5.0f);
+            if (loop) g.drawEllipse(c, 1.8f); else g.fillRect(c.reduced(0.5f));
+        }
         draw::caption(g, "Row", { kPad, 26, gutter(), kHeaderHeight - 26 }, juce::Justification::centredLeft, textDim, 8.0f);
         for (int col = 0; col < kCols; ++col) {
             const auto r = cellRect(col, firstBar).withY(26).withHeight(kHeaderHeight - 26);
@@ -2419,6 +2436,11 @@ void ChainColumn::resized() { impl_->clampScroll(); }
 juce::String ChainColumn::getTooltip()
 {
     auto& im = *impl_;
+    if (im.hoverEnd >= 0) {
+        const bool loop = im.loopsAt(im.hoverEnd);
+        return juce::String(colours::channelName(im.hoverEnd)) + (loop ? " plays its chain round again when it runs out, from its own row 0 on its own clock, as LSDj's channels do. Click to make it stop at its end instead (section 212)."
+                                                                       : " stops when its chain runs out: empty rows from there on. Click to make it play its chain round again instead (section 212).");
+    }
     if (im.hoverBar < 0) return "The chain: one row per row of the song, each channel's phrase with its transpose beside it, and the row's LEN at the end. "
                                 "Type a slot, Backspace blanks it, double-click for a box, right-click lists the phrases, Shift+arrows move it; the wheel scrolls.";
     const juce::String at = " Row " + ValueFormat::index(im.hoverBar) + ".";
@@ -2450,15 +2472,21 @@ void ChainColumn::mouseMove(const juce::MouseEvent& e)
     auto& im = *impl_;
     int col = -1, bar = -1;
     if (!im.cellAt(e.getPosition(), col, bar)) { col = -1; bar = -1; }
-    if (col != im.hoverCol || bar != im.hoverBar) { im.hoverCol = col; im.hoverBar = bar; repaint(); }
+    const int end = im.endAt(e.getPosition());
+    if (col != im.hoverCol || bar != im.hoverBar || end != im.hoverEnd) { im.hoverCol = col; im.hoverBar = bar; im.hoverEnd = end; repaint(); }
 }
-void ChainColumn::mouseExit(const juce::MouseEvent&) { impl_->hoverCol = impl_->hoverBar = -1; repaint(); }
+void ChainColumn::mouseExit(const juce::MouseEvent&) { impl_->hoverCol = impl_->hoverBar = impl_->hoverEnd = -1; repaint(); }
 void ChainColumn::mouseDown(const juce::MouseEvent& e)
 {
     auto& im = *impl_;
     grabKeyboardFocus();
     im.dragStartFirst = im.firstBar;
     im.dragged = false;
+    // Section 212: the head's end toggles.
+    if (const int end = im.endAt(e.getPosition()); end >= 0) {
+        if (onChainEndChange) onChainEndChange(end, !im.loopsAt(end));
+        return;
+    }
     int col = -1, bar = -1;
     if (!im.cellAt(e.getPosition(), col, bar)) return;
     if (col >= 0) {

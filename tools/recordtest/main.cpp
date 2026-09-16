@@ -252,7 +252,10 @@ double beatOfSample(int64_t sample, double bpm) { return double(sample) / kSampl
 void run(ChipBoyProcessor& p, const Automation& aut, const RunOptions& opt, Capture& cap, std::vector<driver::RegWrite>& log)
 {
     const double samplesPerBeat = 60.0 / aut.bpm * kSampleRate;
-    const int blocks = int((int64_t(std::llround(double(kBars + kTailBars) * 4.0 * samplesPerBeat)) + kBlock - 1) / kBlock);
+    // Whole blocks inside the bars, none past them: the tick that starts the
+    // bar after the tail is the song's end, where a channel plays its chain
+    // round again (section 212), and that pass is not the demo's.
+    const int blocks = int(int64_t(std::llround(double(kBars + kTailBars) * 4.0 * samplesPerBeat)) / kBlock);
 
     p.prepareToPlay(kSampleRate, kBlock);
     FakePlayHead head;

@@ -166,8 +166,11 @@ void Player::process(const TickPoint* ticks, size_t nTicks, bool playing, std::v
         // that channel alone (section 25).
         for (int ch = 0; ch < 4; ++ch) {
             if (!lane[ch]) continue;
-            int row = 0, inRow = 0;
-            rowAtTick(*song_, ch, tick, row, inRow);
+            int row = 0, inRow = 0, pass = 0;
+            rowAtTick(*song_, ch, tick, row, inRow, &pass);
+            // Section 212: a new pass of a looping chain is a new row, even
+            // when it is the same row number.
+            if (pass != firedPass_[ch]) { firedPass_[ch] = pass; firedRow_[ch] = -1; firedStep_[ch] = -1; }
             const uint8_t slot = song_->phraseAt(ch, row);
             const Phrase* ph = song_->phrase(slot);
             // The row's own length, off the table: with a `G` in force it is
@@ -220,7 +223,7 @@ bool Player::quantise(int ch, double tick, int& row, int& step, int64_t& stepTic
     // force (section 25) -- not channel 0's.
     if (!song_ || tick < 0.0) return false;
     int inRowInt = 0;
-    rowAtTick(*song_, ch, int64_t(std::floor(tick)), row, inRowInt);
+    rowAtTickLaid(*song_, ch, int64_t(std::floor(tick)), row, inRowInt);   // the recorder's grid: laid end to end, no loop (section 212)
     const Phrase* p = song_->phrase(song_->phraseAt(ch, row));
     const double rowStart = double(rowStartTick(*song_, ch, row));
     const int length = int(rowStartTick(*song_, ch, row + 1) - rowStartTick(*song_, ch, row));
@@ -253,7 +256,7 @@ bool Player::stepAt(int ch, int64_t tick, int& row, int& step) const
 {
     if (!song_ || tick < 0) return false;
     int inRow = 0;
-    rowAtTick(*song_, ch, tick, row, inRow);
+    rowAtTickLaid(*song_, ch, tick, row, inRow);                            // the recorder's grid (section 212)
     const Phrase* p = song_->phrase(song_->phraseAt(ch, row));
     const int length = int(rowStartTick(*song_, ch, row + 1) - rowStartTick(*song_, ch, row));
     int starts[kMaxPlaySteps + 1];

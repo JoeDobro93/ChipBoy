@@ -158,14 +158,10 @@ struct LsdjModel {
     /// LOOP POS is the steps *before* the loop: `16 - nibble` steps loop).
     bool           wavePlayOld;
     bool           waveRepeatCount;
-    /// Section 202: a retrigger starts the instrument's table over on the tick
-    /// after its own (every ROM through 7.0.2; the changelog's 8.3.4 fix ends
-    /// it, so 8.1.0 - 8.3.3 are taken as late with no ROM to ask).
-    bool           retrigTableLate;
     /// Section 205: the wave instrument's loop nibble (section 201) is read
     /// from 6.0.1; before, the loop is the run's last step whatever it holds.
     bool           waveRepeatNibble;
-    bank::VibLadder vibLadder;       ///< section 203: the version's vibrato depth ladder
+    bank::VibScale vibScale;         ///< section 210: 5.7.8's ladder is half of 9.x's; the rest are near it (section 203)
     FineCmdLaw     fineCmdLaw;       ///< section 204
     bool           noiseP;           ///< section 205: `P` reaches the noise channel (5.4.4 and later)
     NoiseStable    noiseStableRule;  ///< section 207

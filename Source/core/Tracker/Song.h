@@ -114,6 +114,8 @@ constexpr std::array<Groove, kGrooveSlots> factoryGrooves()
 /// from the cells. These are the data model's names; the window calls them
 /// MIDI, Trkr and Hybrid.
 enum class NoteSource : uint8_t { PianoRoll = 0, Tracker = 1, Hybrid = 2 };
+/// Section 212: what a channel does at its chain's end.
+enum class ChainEnd : uint8_t { Loop = 0, Stop = 1 };
 
 /// The channel's cells play at their steps: its notes, or only its columns.
 inline bool cellsPlay(NoteSource s) { return s == NoteSource::Tracker || s == NoteSource::Hybrid; }
@@ -149,6 +151,11 @@ struct Song {
     /// TRANSPOSE: added to every chain row's, under the instrument's flag.
     int8_t transpose = 0;
     std::array<NoteSource, 4> noteSource{ NoteSource::PianoRoll, NoteSource::PianoRoll, NoteSource::PianoRoll, NoteSource::PianoRoll };
+    /// Section 212: what a channel does when its chain runs out -- plays it
+    /// round again from its row 0 on its own clock, as LSDj's channels do, or
+    /// stops (empty rows from there on, section 25). Loop for a new song and
+    /// for a file without the key; the importer sets Stop for an `H F F`.
+    std::array<ChainEnd, 4> chainEnd{ ChainEnd::Loop, ChainEnd::Loop, ChainEnd::Loop, ChainEnd::Loop };
     /// The record arm per channel (section 14). On for a new song, so a song
     /// written before the arms existed records exactly as it used to.
     std::array<bool, 4> recordArm{ true, true, true, true };
@@ -205,6 +212,14 @@ struct Song {
     }
     /// How many rows a channel's chain describes.
     int rows(int ch) const { return int(chain[size_t(ch & 3)].size()); }
+    /// Section 212: the rows a looping channel plays round -- up to its last
+    /// phrase; trailing empty rows do not count. 0 when it has none.
+    int loopRows(int ch) const
+    {
+        const auto& c = chain[size_t(ch & 3)];
+        for (int r = int(c.size()); r > 0; --r) if (c[size_t(r - 1)] != 0) return r;
+        return 0;
+    }
     /// The longest chain: how many rows the song describes at all.
     int rows() const { int n = 0; for (const auto& c : chain) n = std::max(n, int(c.size())); return n; }
     /// The steps a channel's row plays: its phrase's length, or the sixteen an
@@ -267,8 +282,17 @@ void buildRowTables(Song& s);
 /// The tick a channel's row starts on. Rows past the chain's end are empty
 /// rows, end to end.
 int64_t rowStartTick(const Song& s, int ch, int row);
-/// Which row of a channel an absolute tick falls in, and how far into it.
-void rowAtTick(const Song& s, int ch, int64_t tick, int& row, int& inRow);
+/// Which row of a channel an absolute tick falls in, and how far into it. A
+/// looping channel (section 212) wraps the tick by its chain's length, and
+/// `pass` -- when asked for -- says which time round it is, so a row plays
+/// again on a new pass even when the chain is one row long.
+void rowAtTick(const Song& s, int ch, int64_t tick, int& row, int& inRow, int* pass = nullptr);
+/// The same with the rows laid end to end and no loop: the grid the recorder
+/// writes on, where a chain grows as cells land past its end (section 212).
+void rowAtTickLaid(const Song& s, int ch, int64_t tick, int& row, int& inRow);
+/// Section 212: the ticks a looping channel's chain lasts, 0 when it does
+/// not loop or has no phrase.
+int64_t chainLoopTicks(const Song& s, int ch);
 /// The whole song's length: the longest channel's chain (section 25). This is
 /// what the plugin's own transport loops.
 int64_t songTicks(const Song& s);

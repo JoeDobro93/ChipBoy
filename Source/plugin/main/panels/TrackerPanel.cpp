@@ -161,6 +161,12 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
             s.setTranspose(ch, bar, int8_t(std::clamp(semis, -128, 127)));
         });
     };
+    // Section 212: the channel plays its chain round again, or stops at its end.
+    chain_.onChainEndChange = [this](int ch, bool loop) {
+        editSong("Chain: " + String(colours::channelName(ch)) + (loop ? " loops" : " stops"), [ch, loop](tracker::Song& s) {
+            s.chainEnd[size_t(ch & 3)] = loop ? tracker::ChainEnd::Loop : tracker::ChainEnd::Stop;
+        });
+    };
     // The chain's last column is the row's LEN: it sets the length of every
     // phrase the row holds (section 25). The lane's head does one channel.
     chain_.onRowLengthChange = [this](int row, int steps) {

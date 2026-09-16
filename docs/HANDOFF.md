@@ -18,6 +18,21 @@ design-log section the change touches. Update this file at the end of every chan
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
 
+## Done (2026-09-16, later) -- the decisions on the sweep: the song's end, the import fields as controls
+
+- **The song's end** (§212): each channel plays its chain round again from its own row 0 when
+  it runs out, as the ROM does (`songend.py`, six probes on 9.4.2 and 6.0.1). `Song::chainEnd`
+  per channel (Loop / Stop), `rowAtTick()` wraps by the chain's length with a pass number the
+  Player fires rows on, the tempo map repeats a looping channel's `T`s, the chain view's head
+  has a toggle per channel, the importer sets Stop for an `H F F`. A file without the key loops.
+- **The four import-only fields** by the user's decisions: `retrigTableLate` removed (§209,
+  every project takes 8.3.4's timing); `vibLadder` and `vibDouble` folded into one `vibScale`
+  (§210: ½x / 1x / 2x, *V depth* on every type; the ladders, the one's complement and the unit
+  laws are gone from the driver; under the register law the swing is 9.x's semitones in the
+  note's own units); `frameLoopTail` replaced by loop points (§211: `frameLoopEnd`,
+  `frameLoopFromEnd`, runs to 64 steps across slots, *Loop to* / *Loop counts*); `noiseTspNibbles`
+  got *Table TSP* (§213). Old song files read into the new fields.
+
 ## Done (2026-09-16) -- the version sweep, 8.5.1 down to 3.1.5, and two 9.2.L reports
 
 - **Every archive ROM swept** (`vs_sweep.py trace`, `vs_cb.py lsdjX_Y_Z --sweep`, 326 cases):
@@ -977,9 +992,9 @@ design-log section the change touches. Update this file at the end of every chan
   and the table-restart fix are placed by the changelog), 8.6 - 9.1 (`V 00`, the ladder's
   depth 0, 8.8.6's finetune), 5.1 - 5.7.7, 4.9.5 - 5.0.2. `NoiseRule::Raw` (8.8.6) is still
   the second campaign's measurement.
-- **Not in the UI yet**: the instrument's `vibLadder`, `frameLoopTail`, `retrigTableLate` and
-  `noiseTspNibbles` are import fields with no control in the Instrument tab (the song file
-  carries them); `vibDouble` and `retrigKeepsPitch` have one.
+- **Every import field has a control now** (§213): *V depth*, *Loop to* / *Loop counts*,
+  *Table TSP*, the chain head's channel-end toggles; `retrigTableLate` was removed rather
+  than exposed (§209).
 
 - **Kits against 9.4.2 after §186**: the roll and the kit `F` are in; a plain kit note differs
   only by ChipBoy's `NR31 = 00`; the noise table transpose cases (`X92_NOI_tsp2`-`tsp4`) are
@@ -1153,9 +1168,13 @@ design-log section the change touches. Update this file at the end of every chan
   user for decisions before any of it is built. A new ROM goes through *Adding a version* there.
   The `vs_cb.py` result files of the last runs are in the session scratchpad (`cb_*_v9.txt`);
   a fresh container re-traces in minutes (`vs_sweep.py trace`, four at a time).
-- **After a decision**: DAC-off silence would be a per-instrument flag on the K and ONCE-end
-  paths (`killDac`); the wave ENV retrigger a flag in the table's volume lane; the song's end
-  a tracker rule. The UI fields above are a stepper or a segment each in `InstrumentPanel`.
+- **The gap list is decided** (2026-09-16, below): the song's end is built (§212), the rest
+  left. If a decision changes: DAC-off silence would be a per-instrument flag on the K and
+  ONCE-end paths (`killDac`); the wave ENV retrigger a flag in the table's volume lane.
+- **After §211**, a run past sixteen frames reads the next slots' frames; the wave editor does
+  not show a run that crosses slots. Worth a look if anyone uses it. §212's own-transport loop
+  restarts every channel together at the longest chain's end; an LCM-length loop would let the
+  channels run apart as the ROM does.
 
 - **9.4.2 is the base now** (`LSDJ_VERSIONS.md` §11). A version to map next goes through the
   same steps: put its ROM in `/root/lsdj/roms/`, `vs_versions.py lsdjX_Y_Z lsdj9_4_2`, then

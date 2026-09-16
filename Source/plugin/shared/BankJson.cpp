@@ -78,13 +78,13 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     if (i.fineTune) o->setProperty("fineTune", int(i.fineTune));   // section 112
     if (i.frameLength) o->setProperty("frameLength", int(i.frameLength));
     if (i.frameLoopStep) o->setProperty("frameLoopStep", int(i.frameLoopStep));
-    if (i.frameLoopTail) o->setProperty("frameLoopTail", int(i.frameLoopTail));   // section 201
+    if (i.frameLoopEnd) o->setProperty("frameLoopEnd", int(i.frameLoopEnd));      // section 211
+    if (i.frameLoopFromEnd) o->setProperty("frameLoopFromEnd", true);              // section 211
     o->setProperty("pitchSpeed", int(i.pitchSpeed)); o->setProperty("cmdRate", int(i.cmdRate)); o->setProperty("chordRate", int(i.chordRate)); o->setProperty("tableMode", int(i.tableMode));
     if (i.pu2Transpose != 0) o->setProperty("pu2Transpose", int(i.pu2Transpose));   // section 49; absent reads as 0
     if (i.pitchRegisterUnits) o->setProperty("pitchRegisterUnits", true);          // section 88
     o->setProperty("vibShape", int(i.vib.shape)); o->setProperty("vibDir", int(i.vib.dir)); o->setProperty("vibSpeed", int(i.vib.speed)); o->setProperty("vibDepth", int(i.vib.depth)); o->setProperty("vibDelay", int(i.vib.delay));
-    if (i.vibDouble) o->setProperty("vibDouble", true);   /* section 187 */
-    if (i.vibLadder != bank::VibLadder::Lsdj9) o->setProperty("vibLadder", int(i.vibLadder));   /* section 203 */
+    if (i.vibScale != bank::VibScale::One) o->setProperty("vibScale", int(i.vibScale));   /* section 210 */
     o->setProperty("duty", int(i.duty));
     { Array<var> seq; for (int k = 0; k < i.dutySeqLen; ++k) seq.add(int(i.dutySeq[size_t(k)])); o->setProperty("dutySeq", seq); }
     o->setProperty("envVol", int(i.envVol)); o->setProperty("envDir", int(i.envDir)); o->setProperty("envRate", int(i.envRate));
@@ -117,7 +117,6 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     if (i.noiseTspNibbles) o->setProperty("noiseTspNibbles", true);   // section 207
     if (i.envStage2) { o->setProperty("envStage2", int(i.envStage2)); o->setProperty("envStage3", int(i.envStage3)); }   // section 189
     if (i.retrigKeepsPitch) o->setProperty("retrigKeepsPitch", true);    // section 195
-    if (i.retrigTableLate) o->setProperty("retrigTableLate", true);      // section 202
     if (i.lsdjFormat >= 0) {                                              // section 197
         o->setProperty("lsdjFormat", int(i.lsdjFormat));
         String hex; for (uint8_t byte : i.lsdjBytes) hex += String::toHexString(int(byte)).paddedLeft('0', 2);
@@ -142,9 +141,13 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.envRetrig = bool(o->getProperty("envRetrig"));
     i.noiseDomain = bank::NoiseSweepDomain(std::clamp(getOr(o, "noiseDomain", 0), 0, 1));
     i.fineTune = uint8_t(std::clamp(getOr(o, "fineTune", 0), 0, 255));   // section 112
-    i.frameLength = uint8_t(std::clamp(getOr(o, "frameLength", 0), 0, 16));
-    i.frameLoopStep = uint8_t(std::clamp(getOr(o, "frameLoopStep", 0), 0, 15));
-    i.frameLoopTail = uint8_t(std::clamp(getOr(o, "frameLoopTail", 0), 0, 16));   // section 201
+    i.frameLength = uint8_t(std::clamp(getOr(o, "frameLength", 0), 0, kMaxRunSteps));         // section 211: to 64
+    i.frameLoopStep = uint8_t(std::clamp(getOr(o, "frameLoopStep", 0), 0, kMaxRunSteps - 1));
+    i.frameLoopEnd = uint8_t(std::clamp(getOr(o, "frameLoopEnd", 0), 0, kMaxRunSteps));       // section 211
+    i.frameLoopFromEnd = bool(o->getProperty("frameLoopFromEnd"));
+    // Section 201's tail, from a file before section 211: the last n steps is
+    // the loop counted from the end, n - 1 steps before the last.
+    if (const int tail = std::clamp(getOr(o, "frameLoopTail", 0), 0, 16); tail > 0) { i.frameLoopFromEnd = true; i.frameLoopStep = uint8_t(tail - 1); i.frameLoopEnd = 0; }
     // Overlap replaced the legato flag: a file written before it carries only
     // legato, and one with neither takes the type's own default.
     if (o->hasProperty("overlap")) i.overlap = Overlap(std::clamp(getOr(o, "overlap", 0), 0, 1));
@@ -160,8 +163,11 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.pitchRegisterUnits = bool(o->getProperty("pitchRegisterUnits"));             // section 88
     // The vibrato's shape used to carry its direction (Triangle, Square,
     // SawUp, SawDown); it is a shape and a direction now.
-    i.vibDouble = bool(o->getProperty("vibDouble"));
-    i.vibLadder = bank::VibLadder(std::clamp(getOr(o, "vibLadder", 0), 0, 4));   // section 203
+    // Section 210; a file before it carried `vibDouble` (a kit, section 187) or
+    // section 203's ladder, whose 5.7.8 entry (2) is the half scale.
+    i.vibScale = bank::VibScale(std::clamp(getOr(o, "vibScale", 0), 0, 2));
+    if (bool(o->getProperty("vibDouble"))) i.vibScale = bank::VibScale::Double;
+    if (getOr(o, "vibLadder", 0) == 2) i.vibScale = bank::VibScale::Half;
     if (o->hasProperty("vibDir")) {
         i.vib.shape = VibShape(std::clamp(getOr(o, "vibShape", 0), 0, 3));   // section 114: 3 is off
         i.vib.dir = VibDir(std::clamp(getOr(o, "vibDir", 0), 0, 1));
@@ -208,7 +214,6 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.envStage2 = uint8_t(std::clamp(getOr(o, "envStage2", 0), 0, 255));   // section 189
     i.envStage3 = uint8_t(std::clamp(getOr(o, "envStage3", 0), 0, 255));
     i.retrigKeepsPitch = bool(o->getProperty("retrigKeepsPitch"));       // section 195
-    i.retrigTableLate = bool(o->getProperty("retrigTableLate"));         // section 202
     i.lsdjFormat = int8_t(std::clamp(getOr(o, "lsdjFormat", -1), -1, 127));   // section 197
     i.lsdjBytes.fill(0);
     if (i.lsdjFormat >= 0) {
@@ -538,6 +543,8 @@ var songToVar(const tracker::Song& s)
     }
     Array<var> src; for (auto n : s.noteSource) src.add(int(n)); o->setProperty("noteSource", src);
     Array<var> arm; for (auto a : s.recordArm) arm.add(a); o->setProperty("recordArm", arm);
+    // Section 212: 0 loops the chain, 1 stops at its end.
+    Array<var> ends; for (auto e : s.chainEnd) ends.add(int(e)); o->setProperty("chainEnd", ends);
     // A groove is sixteen tick counts (section 9.2); trailing unused entries
     // are left out, so the common two-entry swing still reads as [a, b].
     Array<var> gr;
@@ -653,6 +660,8 @@ bool songFromVar(const var& v, tracker::Song& out)
     if (auto* src = o->getProperty("noteSource").getArray()) for (int ch = 0; ch < std::min(4, src->size()); ++ch) out.noteSource[size_t(ch)] = tracker::NoteSource(std::clamp(int((*src)[ch]), 0, 2));
     // The arms are on for a song written before they existed (section 14).
     if (auto* arm = o->getProperty("recordArm").getArray()) for (int ch = 0; ch < std::min(4, arm->size()); ++ch) out.recordArm[size_t(ch)] = bool((*arm)[ch]);
+    // Section 212: a file without the key loops, as LSDj's channels do.
+    if (auto* ends = o->getProperty("chainEnd").getArray()) for (int ch = 0; ch < std::min(4, ends->size()); ++ch) out.chainEnd[size_t(ch)] = tracker::ChainEnd(std::clamp(int((*ends)[ch]), 0, 1));
     // Sixteen tick counts; the old two-entry form reads as the first two.
     // Thirty-two slots (section 162); a file with sixteen leaves the rest straight.
     if (auto* gr = o->getProperty("grooves").getArray())

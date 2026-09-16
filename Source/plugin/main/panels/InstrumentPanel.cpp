@@ -265,10 +265,10 @@ struct InstrumentPanel::Widgets {
     Segmented* duty = nullptr; NameField* dutySeq = nullptr; Stepper* sweepRate = nullptr; Segmented* sweepDir = nullptr; Stepper* sweepShift = nullptr;
     Stepper* pu2Transpose = nullptr;
     Stepper* fineTune = nullptr;
-    Stepper* wave = nullptr; Stepper* frameLength = nullptr; Stepper* frameLoopStep = nullptr; Stepper* frameAdv = nullptr; Segmented* frameLoop = nullptr; Segmented* waveLevel = nullptr;
+    Stepper* wave = nullptr; Stepper* frameLength = nullptr; Stepper* frameLoopStep = nullptr; Stepper* frameLoopEnd = nullptr; Segmented* frameLoopFrom = nullptr; Stepper* frameAdv = nullptr; Segmented* frameLoop = nullptr; Segmented* waveLevel = nullptr;
     Stepper* kit = nullptr; Segmented* kitLoop = nullptr; TextLine* kitRate = nullptr;
     Segmented* noiseDomain = nullptr; Segmented* lfsr = nullptr; Segmented* pitchMode = nullptr; Stepper* shift = nullptr; Stepper* divisor = nullptr; Stepper* noiseSweep = nullptr;
-    Stepper* noiseShape = nullptr; Segmented* noiseStable = nullptr;   // section 188
+    Stepper* noiseShape = nullptr; Segmented* noiseStable = nullptr; Segmented* noiseTableTsp = nullptr;   // section 188
     Segmented* retrigPitch = nullptr;                                     // section 195
     Stepper* envStage2 = nullptr; Stepper* envStage3 = nullptr;        // section 189
     Segmented* pan = nullptr;
@@ -280,7 +280,7 @@ struct InstrumentPanel::Widgets {
     Stepper* start = nullptr; Stepper* fade = nullptr; Stepper* fadeTo = nullptr;   // section 51
     Segmented* attackCurve = nullptr; Segmented* decayCurve = nullptr; Segmented* releaseCurve = nullptr; Segmented* fadeCurve = nullptr;
     // pitch and modulation
-    Segmented* vibShape = nullptr; Segmented* vibDir = nullptr; Stepper* vibSpeed = nullptr; Stepper* vibDepth = nullptr; Stepper* vibDelay = nullptr; Segmented* vibDouble = nullptr;
+    Segmented* vibShape = nullptr; Segmented* vibDir = nullptr; Stepper* vibSpeed = nullptr; Stepper* vibDepth = nullptr; Stepper* vibDelay = nullptr; Segmented* vibScale = nullptr;
     Segmented* pitchSpeed = nullptr; Stepper* cmdRate = nullptr; Stepper* chordRate = nullptr; Segmented* tableMode = nullptr;
     // table and note behaviour
     Stepper* table = nullptr; Segmented* transpose = nullptr; Segmented* noteOff = nullptr; Segmented* overlap = nullptr; Segmented* envRetrig = nullptr; Stepper* length = nullptr;
@@ -706,11 +706,18 @@ void InstrumentPanel::rebuildEditor()
         w_->wave->setSlotNumbering(true);   // section 52
         w_->wave->onList = [this] { showWaveMenu(); };
         w_->wave->onOpen = [this] { if (w_ && w_->wave) { if (w_->wave->value() > 0) openSlot(ui::SlotKind::Wave, w_->wave->value()); else w_->wave->beginTypedEntry(); } };
-        w_->frameLength = stepper(*sound, "Frames", "How many of the wave's frames the run visits, spread evenly across them; 0 is every one (section 65).",
-                                  0, 16, 0, [](int v) { return v == 0 ? juce::String("all") : juce::String(v); },
+        w_->frameLength = stepper(*sound, "Frames", "How many frames the run visits: up to the wave's own they are spread evenly across it, 0 being every one (section 65); more than that is that many frames in a row, on into the next slots, up to 64 (section 211).",
+                                  0, bank::kMaxRunSteps, 0, [](int v) { return v == 0 ? juce::String("all") : juce::String(v); },
                                   [](bank::Instrument& i, int v) { i.frameLength = uint8_t(v); });
-        w_->frameLoopStep = stepper(*sound, "Loop from", "The step of that run Loop and Ping-pong come back to; the run always starts at its first (section 65).",
-                                    0, 15, 0, {}, [](bank::Instrument& i, int v) { i.frameLoopStep = uint8_t(v); });
+        w_->frameLoopStep = stepper(*sound, "Loop from", "The step of that run Loop and Ping-pong come back to; the run always starts at its first (section 65). Counted from the end it is the steps before the run's last, whatever a U makes the length (section 211).",
+                                    0, bank::kMaxRunSteps - 1, 0,
+                                    [this](int v) { const auto bk = processor.bank(); const bool fromEnd = bk && bk->instruments[size_t(slot_ - 1)].frameLoopFromEnd; return fromEnd ? (v == 0 ? juce::String("end") : "end-" + juce::String(v)) : juce::String(v); },
+                                    [](bank::Instrument& i, int v) { i.frameLoopStep = uint8_t(v); });
+        w_->frameLoopEnd = stepper(*sound, "Loop to", "The step Loop and Ping-pong turn at: the run's last, or a step of its own, so the frames after it play only in One-shot (section 211).",
+                                   0, bank::kMaxRunSteps, 0, [](int v) { return v == 0 ? juce::String("end") : juce::String(v); },
+                                   [](bank::Instrument& i, int v) { i.frameLoopEnd = uint8_t(v); });
+        w_->frameLoopFrom = seg(*sound, "Loop counts", "Which end Loop from is counted from. From the end, the loop stays the run's last steps when a U changes the length -- what every LSDj before 7.7.6 did; imported songs from those versions set it (section 211).",
+                                { "From start", "From end" }, [](bank::Instrument& i, int v) { i.frameLoopFromEnd = v == 1; });
         w_->frameAdv = stepper(*sound, "Frame advance", "Ticks per frame; 0 holds the frame.", 0, 15, 0, {}, [](bank::Instrument& i, int v) { i.frameAdvance = uint8_t(v); });
         w_->frameLoop = seg(*sound, "Frame loop", "How the frames run.", { "Loop", "One-shot", "Ping-pong", "Resync" }, [](bank::Instrument& i, int v) { i.frameLoop = bank::FrameLoop(std::clamp(v, 0, 3)); });
         w_->waveLevel = seg(*sound, "Level", "NR32 bits 6-5: four levels, and no envelope unit on this channel.", { "mute", "25", "50", "100" }, [](bank::Instrument& i, int v) { i.waveLevel = uint8_t(v); });
@@ -734,6 +741,8 @@ void InstrumentPanel::rebuildEditor()
                                  0, 255, 255, [](int v) { return ValueFormat::byte(v); }, [](bank::Instrument& i, int v) { i.noiseShape = uint8_t(v); });
         w_->noiseStable = seg(*sound, "S mode", "LSDj's S MODE, in LSDj shape: Stable keeps the note's LFSR width bit through S, P and C; Free lets them flip it.",
                               { "Free", "Stable" }, [](bank::Instrument& i, int v) { i.noiseStable = v == 1; });
+        w_->noiseTableTsp = seg(*sound, "Table TSP", "What a table's transpose column does to the noise byte, in LSDj shape: Resets takes each row's value off the note's own byte (LSDj 4.x - 8.x); Adds up subtracts each row from the byte as it stands, so they pile up over the table (LSDj 3.x). Imported songs set it (section 207).",
+                                { "Resets", "Adds up" }, [](bank::Instrument& i, int v) { i.noiseTspNibbles = v == 1; });
         w_->noiseSweep = stepper(*sound, "Noise sweep", "Shift steps per tick: repeated NR43 writes.", -7, 7, 0,
                                  [](int v) { return ValueFormat::signedNumber(v); }, [](bank::Instrument& i, int v) { i.noiseSweep = int8_t(v); });
         w_->noiseDomain = seg(*sound, "Sweep", "What S and P do here (section 66). Notes moves the note through the map; Register takes the command's byte off NR43 nibble by nibble, which can flip the LFSR width mid-note.",
@@ -810,8 +819,8 @@ void InstrumentPanel::rebuildEditor()
         const int pw = pair->width();
         mod->add("Vibrato", std::move(pair), pw, h, "The shape the vibrato swings in, and which way it goes.");
     }
-    w_->vibDouble = seg(*mod, "Kit vibrato", "A kit's V at 9.4.2's depth (1x) or at twice it, as every LSDj before 9.4.0 played it (2x). Kits only; imported songs from those versions set it.",
-                        { "1x", "2x" }, [](bank::Instrument& i, int v) { i.vibDouble = v == 1; });
+    w_->vibScale = seg(*mod, "V depth", "The vibrato's depth against LSDj 9's table: as it is, half of it (LSDj 5.7.8's table), or twice it (a kit's V before 9.4.0). Imported songs from those versions set it (section 210).",
+                       { utf8("\xc2\xbdx"), "1x", "2x" }, [](bank::Instrument& i, int v) { i.vibScale = bank::VibScale(std::clamp(v, 0, 2) == 0 ? 1 : std::clamp(v, 0, 2) == 1 ? 0 : 2); });
     w_->retrigPitch = seg(*mod, "R on DRUM pitch", "What a roll does to a DRUM instrument's pitch: Resets starts every hit from the note's entry (9.4.0 and later, section 185); Keeps lets the pitch run on through the roll, as every LSDj before 9.4.0 did (section 195). Imported songs from those versions set Keeps.",
                           { "Resets", "Keeps" }, [](bank::Instrument& i, int v) { i.retrigKeepsPitch = v == 1; });
     w_->vibSpeed = stepper(*mod, "Speed", "V's x, 1-15: one cycle every 720/x pitch updates -- x/2 Hz in Fast, Step and Drum -- or every 96/x ticks in Tick.",
@@ -970,7 +979,7 @@ void InstrumentPanel::syncValues()
     S(w.duty, i.duty);
     if (w.dutySeq && w.dutySeq->text() != dutySeqText(i)) w.dutySeq->setText(dutySeqText(i));
     T(w.sweepRate, i.sweepRate); S(w.sweepDir, i.sweepDown ? 1 : 0); T(w.sweepShift, i.sweepShift); T(w.pu2Transpose, i.pu2Transpose); T(w.fineTune, i.fineTune);
-    T(w.wave, i.wave); T(w.frameLength, i.frameLength); T(w.frameLoopStep, i.frameLoopStep); T(w.frameAdv, i.frameAdvance); S(w.frameLoop, int(i.frameLoop)); S(w.waveLevel, i.waveLevel);
+    T(w.wave, i.wave); T(w.frameLength, i.frameLength); T(w.frameLoopStep, i.frameLoopStep); T(w.frameLoopEnd, i.frameLoopEnd); S(w.frameLoopFrom, i.frameLoopFromEnd ? 1 : 0); T(w.frameAdv, i.frameAdvance); S(w.frameLoop, int(i.frameLoop)); S(w.waveLevel, i.waveLevel);
     T(w.kit, i.kit); S(w.kitLoop, int(i.kitLoop));
     if (w.kitRate) {
         const bank::Kit* k = b->kit(i.kit);
@@ -979,14 +988,14 @@ void InstrumentPanel::syncValues()
     }
     S(w.lfsr, i.lfsr7 ? 1 : 0); S(w.pitchMode, i.noiseShapeMode ? 2 : i.noiseManual ? 1 : 0);
     T(w.shift, i.noiseShift); T(w.divisor, i.noiseDivisor); T(w.noiseSweep, i.noiseSweep); S(w.noiseDomain, int(i.noiseDomain));
-    T(w.noiseShape, i.noiseShape); S(w.noiseStable, i.noiseStable ? 1 : 0);
+    T(w.noiseShape, i.noiseShape); S(w.noiseStable, i.noiseStable ? 1 : 0); S(w.noiseTableTsp, i.noiseTspNibbles ? 1 : 0);
     T(w.envStage2, i.envStage2); T(w.envStage3, i.envStage3);
     S(w.envMode, int(i.env.mode));
     T(w.envVol, i.envVol); S(w.envDir, int(i.envDir)); T(w.envRate, i.envRate);
     T(w.attack, i.env.attackTicks); T(w.peak, i.env.peak); T(w.decay, i.env.decayTicks); T(w.sustain, i.env.sustain); T(w.release, i.env.releaseTicks);
     T(w.start, i.env.start); T(w.fade, i.env.fadeTicks); T(w.fadeTo, i.env.fadeTo);
     S(w.attackCurve, int(i.env.attackCurve)); S(w.decayCurve, int(i.env.decayCurve)); S(w.releaseCurve, int(i.env.releaseCurve)); S(w.fadeCurve, int(i.env.fadeCurve));
-    S(w.vibShape, int(i.vib.shape)); S(w.vibDir, int(i.vib.dir)); T(w.vibSpeed, i.vib.speed); T(w.vibDepth, i.vib.depth); T(w.vibDelay, i.vib.delay); S(w.vibDouble, i.vibDouble ? 1 : 0); S(w.retrigPitch, i.retrigKeepsPitch ? 1 : 0);
+    S(w.vibShape, int(i.vib.shape)); S(w.vibDir, int(i.vib.dir)); T(w.vibSpeed, i.vib.speed); T(w.vibDepth, i.vib.depth); T(w.vibDelay, i.vib.delay); S(w.vibScale, i.vibScale == bank::VibScale::Half ? 0 : i.vibScale == bank::VibScale::Double ? 2 : 1); S(w.retrigPitch, i.retrigKeepsPitch ? 1 : 0);
     S(w.pitchSpeed, int(i.pitchSpeed)); T(w.cmdRate, i.cmdRate); T(w.chordRate, i.chordRate); S(w.tableMode, int(i.tableMode));
     T(w.table, i.table); S(w.transpose, i.transpose ? 0 : 1); S(w.noteOff, int(i.noteOff)); S(w.overlap, i.overlap == bank::Overlap::Retrig ? 1 : 0);
     S(w.envRetrig, i.envRetrig ? 1 : 0);
@@ -1011,6 +1020,11 @@ void InstrumentPanel::refreshDerived()
     if (w.divisor) w.divisor->setEnabled(i.noiseManual && !i.noiseShapeMode);
     if (w.noiseShape) w.noiseShape->setEnabled(i.noiseShapeMode);
     if (w.noiseStable) w.noiseStable->setEnabled(i.noiseShapeMode);
+    if (w.noiseTableTsp) w.noiseTableTsp->setEnabled(i.noiseShapeMode);
+    // Section 211: a loop counted from the end has the run's end for its end,
+    // and its step reads "end-n".
+    if (w.frameLoopEnd) w.frameLoopEnd->setEnabled(!i.frameLoopFromEnd);
+    if (w.frameLoopStep) w.frameLoopStep->repaint();
     if (w.envStage3) w.envStage3->setEnabled(i.envStage2 != 0);
     // The vibrato speed reads in Hz or in cycles a bar, with the pitch speed.
     if (w.vibSpeed) {

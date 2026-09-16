@@ -111,8 +111,7 @@ bool decodeInstrumentBytes(const uint8_t* b, int t, const LsdjModel& m, const ba
     o.envRetrig = m.envelopeLaw != EnvelopeLaw::SoftwareStages;
     // Section 195: before 9.4.0 a roll leaves a DRUM pitch running.
     o.retrigKeepsPitch = !m.retrigResetsDrumPitch;
-    o.retrigTableLate = m.retrigTableLate;                                // section 202
-    o.vibLadder = m.vibLadder;                                            // section 203
+    o.vibScale = m.vibScale;                                              // section 210
     // Section 81: a noise instrument reads LSDj's own table straight off
     // the bank, so the cell's note is LSDj's note and the byte the driver
     // writes is the byte the ROM writes.
@@ -176,8 +175,10 @@ bool decodeInstrumentBytes(const uint8_t* b, int t, const LsdjModel& m, const ba
             // nibble the loop, counted from the run's end. The run is the one
             // frame at a tick a step until a W lengthens it; ONCE plays that
             // frame a tick and the channel goes quiet.
-            o.frameLength = 1; o.frameLoopStep = 0; o.frameAdvance = 1;
-            o.frameLoopTail = uint8_t(m.waveRepeatNibble ? loopPos + 1 : 1);   // section 205: the nibble is read from 6.0.1
+            o.frameLength = 1; o.frameAdvance = 1;
+            // Section 211: the loop is counted from the run's end, the nibble
+            // the steps before the last (section 205: read from 6.0.1).
+            o.frameLoopFromEnd = true; o.frameLoopStep = uint8_t(m.waveRepeatNibble ? loopPos : 0); o.frameLoopEnd = 0;
             switch (b[9] & 3) {
                 case 0: o.frameLoop = bank::FrameLoop::Once; break;
                 case 1: o.frameLoop = bank::FrameLoop::Loop; break;
@@ -192,8 +193,12 @@ bool decodeInstrumentBytes(const uint8_t* b, int t, const LsdjModel& m, const ba
             o.frameLength = uint8_t(len);
             // Section 198: before 7.7.6 the nibble counts the loop's steps less
             // one from the run's end; from 7.7.6 it is the steps before the loop.
-            o.frameLoopStep = uint8_t(std::max(0, len - (m.waveRepeatCount ? loopPos + 1 : 16 - loopPos)));
-            if (m.waveRepeatCount) o.frameLoopTail = uint8_t(loopPos + 1);   // section 201: the loop stays at the run's end under a W
+            // Section 211: before 7.7.6 the loop is counted from the run's end
+            // (the nibble is the steps before the last), so a W that changes the
+            // length keeps it at the new end.
+            if (m.waveRepeatCount) { o.frameLoopFromEnd = true; o.frameLoopStep = uint8_t(loopPos); }
+            else o.frameLoopStep = uint8_t(std::max(0, len - (16 - loopPos)));
+            o.frameLoopEnd = 0;
             // Section 171: PLAY is the whole byte -- 4 is 9.2.E's RESYNC,
             // ping-pong with every frame written at its tick.
             // Section 198: before 7.7.6 the low two bits are ONCE 0, LOOP 1,
