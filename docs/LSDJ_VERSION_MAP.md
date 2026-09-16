@@ -1,94 +1,170 @@
-# The version map: what differs from LSDj 9.4.2, and what the importer does about it
+# The version map: what every LSDj version does differently, and what the importer does about it
 
-LSDj 9.4.2 is ChipBoy's reference: the driver is 9.4.2's code read and measured
-(`docs/COMMANDS_AND_TEMPO.md` §147-§186), and every other version maps **onto** it at import.
-This table is the record of that mapping. One row per difference; the columns say what the
-older version does, what 9.4.2 does, how a song's bytes are translated so 9.4.2's engine plays
-the older sound, and what happens when no translation exists. `docs/LSDJ_VERSIONS.md` has the
-measurements behind each row (its §11 for format 22, §3 for the formats before it), and the
-model fields named here live in `Source/core/Import/LsdjModel.h`.
+LSDj 9.4.2 is ChipBoy's reference: the driver plays 9.4.2's way, measured register by register
+(`docs/COMMANDS_AND_TEMPO.md` §147-§186). Every older version was probed on its own ROM against
+9.4.2 and against ChipBoy's import of the same song with that ROM beside the save (§188-§208),
+so a song saved by any version comes in playing the way that version played it, as far as the
+rows below reach. The numbered section after each row is the measurement.
 
-How a version is told apart: the save's format byte (`$7FFF` of the song) picks the model, and a
-ROM beside the save refines it by its version string (`lsdjModelForRomVersion`); with several
-ROMs beside a save the newest that reads the format wins. A save alone in format 22 reads as
-9.4.2. Bug reports start on 9.4.2 so a difference is not the default version's own.
+How the version is found: the save's format byte picks the model; a ROM beside the save refines
+it by its version string (`lsdjModelForRomVersion`); a save alone takes the newest model that
+reads its format. Where the sweep found two versions of one format reading a song differently,
+the ROM is the only thing that tells them apart -- keep the ROM beside the save.
 
-## Format 22: LSDj 9.2.J - 9.4.2
+## The models
 
-Three models: `LSDj 9.2.J - 9.3.3`, `LSDj 9.3.4 - 9.3.9`, `LSDj 9.4.0 - 9.4.2`. Probed ROM
-against ROM on the 349-case matrix plus the changelog's candidates, for 9.2.J and 9.2.L alike
-(the two differ in nothing the matrix sees). The eight songs' bytes are the same in the 9.2.L
-save and the 9.4.2 save but for the editor's bookkeeping (`$3FB3`, `$3FB6`-`$3FB8`, `$3FC1`,
-`$3FCB`: counters and cursor state the importer never reads).
+| model (versions) | format | measured on |
+|---|---|---|
+| 9.4.0 - 9.4.2 | 22 | 9.4.2 |
+| 9.3.4 - 9.3.9 | 22 | 9.3.9 |
+| 9.2.J - 9.3.3 | 22 | 9.2.J, 9.2.L |
+| 8.8.6 | 15 | 8.8.6 (the second campaign) |
+| 8.4.0 - 8.5.1 | 11 - 14 | 8.5.1 |
+| 7.7.6 - 8.0.0 | 10 | none in the archive: 8.5.1's laws with 7.x's letters |
+| 7.5.4 - 7.7.5 | 9 | none in the archive: 7.0.2's laws |
+| 6.8.2 - 7.2.3 | 7 - 8 | 6.8.2, 7.0.2 |
+| 6.0.1 - 6.4.5 | 4 - 6 | 6.0.1, 6.4.5 |
+| 5.8.8 - 5.9.9 | 4 | 5.8.8, 5.9.9 |
+| 5.7.8 | 4 | 5.7.8 |
+| 5.0.3 - 5.7.7 | 3 | 5.0.3 |
+| 4.8.0 - 4.9.4 | 3 | 4.8.0, 4.9.4 |
+| 4.4.0 - 4.7.3 | 3 | 4.4.0, 4.5.4, 4.7.3 |
+| 4.1.0 - 4.3.0 | 2 | 4.1.0, 4.3.0 |
+| 4.0.4 | 2 | 4.0.4 |
+| 3.7.5 - 3.9.2 | 2 | 3.7.5, 3.8.7, 3.8.9, 3.9.2 |
+| 3.6.5 - 3.7.4 | 2 | 3.6.8 |
+| 3.1.5 - 3.5.1 | 0 - 1 | 3.1.5, 3.1.9, 3.4.4, 3.5.1 |
 
-| what | older (9.2.J - 9.3.3) | 9.4.2 | mapped at import | model field |
+A save of format 4 without a ROM reads as 6.0.1 - 6.4.5, of format 3 as 5.0.3, of format 2 as
+4.1.0 - 4.3.0: the newest of each. The versions between the measured ones (5.1 - 5.7.7,
+4.9.5 - 5.0.2, 7.7.6 - 8.4.3, 8.6 - 9.1) take the nearest model below and are marked where
+that is a guess.
+
+## Commands
+
+| what | LSDj versions | what that LSDj does | what the import does | field, section |
 |---|---|---|---|---|
-| `R x y`'s volume nibble on the wave channel, kits included (9.3.4) | ignored: the rolls keep NR32 | walks NR32 a notch a roll, held at the ends (§182) | a WAV/KIT `R x y` with `x` not 0 or 8 imports as `R 0 y`; `8` (the resync) is kept | `waveRetrigNibble` |
-| kit vibrato depth (9.4.0 halved it) | `V 42` moves NR33 by `1E` an instant | by `0F` (§187) | the kit instrument takes **`vibDouble`** (the Instrument tab's *Kit vibrato 2x*); the `V` bytes stay | `kitVibratoHalved` → `Instrument::vibDouble` |
-| `R` on a DRUM instrument (9.4.0) | the pitch word runs on through the roll: a rolled kick keeps falling | the roll zeroes the offset word, each roll's sweep starts from the entry (§185) | **not mapped**: ChipBoy plays 9.4.2's way. Left as is by decision; a per-instrument "R keeps the pitch" switch would carry it if wanted | `retrigResetsDrumPitch` (carried, unused) |
-| the cell `R`'s immediate retrigger | folded into the note-on's burst: the nibble on the note's trigger, no second burst | a second burst 1.06 ms after the trigger | nothing to map: the same levels within a millisecond | -- |
-| the wave note-on's `NR31` write, the refresh's `NR11` rewrite | none | written, the length bit off / the same duty | nothing to map: no effect on the sound | -- |
-| tempo (the 9.3.9 "inaccurate sequencer tempo" fix) | 15.333 ms a tick at 163 BPM | 15.313 ms | nothing to map: both inside the interrupt jitter §160 leaves unmodelled, and the tempo words are byte for byte the same | -- |
-| 9.4.2's "noise table transpose not reset on a new note", 9.2.K's "kit F reset the amplitude" | not seen on the probes (`X92_NOI_tsp2`-`tsp4`, `X92_KIT_F01`, `_half`) | -- | nothing | -- |
-| a kit `DIST` page outside `D0`-`D3` (`UNMASKED`'s `8E`, video RAM) | the same page at the same ROM offset (`$7842A`) | the same | the page reader (`lsdjRawPages`) takes a version table of the font block's offset and the zero pages, so 9.2.J/L bring the page too; the Kits tab has a *Page* choice (§192) | -- |
-| kit numbers | the k-th kit bank in ROM order, empty banks skipped -- on 9.2.L and 9.4.2 alike (§193) | the same | ChipBoy had them as bank `k + 8` since §172 (wrong): `READROOM`'s `AMEN2` played `AMEN1` and `LCAMN` nothing. Fixed; not a version difference | -- |
+| the command letters | before 8.4.0; 3.1 | no `B` (every letter from `C` is one code lower); 3.1 has no `Z` either | reads the letters with the version's table | `commandLetters` |
+| `R x y`'s interval | before 9.2 | every `y + 1` ticks; `R x 0` retriggers every tick between 4.8.0 and 8.8.0 | `y + 1`; `R x 0` becomes `R x 1` where it ran every tick; sixteen cannot be carried and becomes fifteen with a note | `retrigPlus`, `retrigZeroOnce` |
+| a roll restarting the instrument's table | 3.1.5 - 8.3.3 | the table starts over on the tick **after** the retrigger; the immediate fire at the note-on the same | the instrument's `retrigTableLate`: the driver restarts a tick late (8.1.0 - 8.3.3 unmeasured, taken as late) | §202 |
+| `R` on a DRUM instrument | before 9.4.0 | the pitch word runs on through the roll: a rolled kick keeps falling | the instrument's `retrigKeepsPitch`, the Instrument tab's *R on DRUM pitch* (Keeps); the bytes stay | §185, §195 |
+| `E` | before 8.8 | re-attacks the note (a trigger with the new envelope) | the instrument's `envRetrig` | §59 |
+| `F` on the pulses | before 5.0.3 / 5.0.3 / from 5.7.8 | nothing / `y` period units down / `y`/32 of a semitone down | dropped with a note / `fineUnits` on the voice under the register law / ChipBoy's own F | `fineCmdLaw`, §204 |
+| `P` and `L` | 3.1.5 - 5.0.3 | period-register units an instant | the instrument's `pitchRegisterUnits`: the driver moves that many units; a note's `L` slides from the period the channel had, the trigger carrying it | `pitchLaw`, §88, §206 |
+| `P` on noise | before 5.4.4 | nothing | dropped with a note | `noiseP`, §205 |
+| `C` on noise, `V` on noise | before 5.4.3 / before 9.0 | nothing | dropped with a note | `noiseChord`, `noiseVibrato` |
+| `S` on noise | formats 0 - 15 | each nibble of NR43 less the command's, once | the byte as it stands; the driver's Register domain takes it off the byte | `noiseS`, §66 |
+| the LFSR width bit through `S` | before 4.1.0 / from 4.1.0 | crossed like any bit / kept from the note when byte 2 (S MODE) is nonzero | the instrument's `noiseStable`, from the rule and the byte | `noiseStableRule`, §188, §207 |
+| `T` bytes 0-39 | before format 11 | 40 BPM | the version's reading (256 - 295 after) | `tempoLowIsHigh` |
+| `W` on a wave instrument | all | the run: `x` ticks a frame, `y + 1` frames spread across the synth | ChipBoy's `U`; dropped with a note on a MANUAL instrument, MANUAL read by the version's PLAY encoding | §115, §201 |
+| `V`'s depth | 5.8.8 - 7.7.5 / 5.7.8 / 3.7.5 - 5.0.3 / 3.6.5 - 3.7.4 | a shallower ladder (`1 2 3 4 6 8 11 15 19 24 29 35 42 49 56 64`), the downward half a little short / half again (`0 1 2 3 4 5 7 9 11 13 16 19 22 25 28 31`) / period units: those integers times the note's divider in sixty-fourths, the downward half a thirty-second short / the same, symmetric | the instrument's `vibLadder`; the driver reads the depth through it | §203 |
+| `V 00` | 5.8.8 - 6.4.5 and from 9.1.0 / elsewhere | starts the slowest vibrato when none runs / nothing | matched (§151) | -- |
+| a cell with a blank instrument column | before 4.0.4 | sounds, with the channel's last instrument | the cell keeps its blank column and triggers | `bareNoteSounds`, §101 |
+| a table's `G` | before 9 | holds the groove's first step | the version's reading | `tableGrooveWalks`, §63 |
+| a table `ENV` hop | before 8.9.3 | costs a tick | the version's reading | `envHopCostsTick`, §64 |
 
-## Formats 0 - 15: LSDj 3.1.5 - 8.8.6
+## Instruments
 
-Measured in the second campaign on the ROMs of that time (`docs/LSDJ_VERSIONS.md` §3, §5); the
-models stay in the code as the record. None was re-probed against 9.4.2 in the third campaign,
-so a difference 9.4.2's driver has since corrected may hide behind one of these rows.
-
-| what | older | 9.4.2 | mapped at import | model field |
+| what | LSDj versions | what that LSDj does | what the import does | field, section |
 |---|---|---|---|---|
-| the command letters | no `B` before 8.4.0 (every letter from `C` up one code), no `Z` in 3.1 | the 9.x table | the letter table of the version | `commandLetters` |
-| the envelope | the chip's own NRx2 (formats 0-10); three stages the chip hands over between, each written with a retrigger `(2·|Δvol| + 1)·rate/128` s after the one before (11, §189); three stages ramped in software (15) | the 358 Hz countdown machine (§164) | `Chip`: the byte as ChipBoy's Chip envelope (the driver steps the level at the chip's rate); `HardwareStages`: Chip plus **`envStage2`/`envStage3`**, the bytes the driver writes with a retrigger on the ROM's timing (probed on seventeen triples); `SoftwareStages`: §164's machine | `envelopeLaw`, `envPeriods` |
-| the noise note | each nibble of SHAPE complemented, the high one raised by `3 − octave` and saturating on its own (0-14, §188); `FF − note` (15) | the musical map (§156) | `NoiseRule::Shape`: the instrument's **LSDj shape** mode (`noiseShapeMode`, `noiseShape`; the Instrument tab's third noise *Pitch* choice) and the cell keeps LSDj's note -- the driver writes the ROM's byte; `Raw` (8.8.6): still the nearest-clock note, to be revisited when 8.8.6 is swept | `noiseRule`, `noiseMap`, `noiseLo/Hi` |
-| `S` on noise | each nibble off NR43's, modulo 16, once | semitones through the map | the byte as it stands; in LSDj shape the driver's Register domain takes it off the byte | `noiseS` |
-| `P` on noise | the same nibble subtraction every tick (`P 02`: `1E 1C 1A …`) | map entries a tick | the byte as it stands; the Register domain steps it | -- |
-| `C` on noise | two states, the note and the note less the **whole byte** nibble-wise, a tick each (`C 37`: `10 E9 10 E9`) | note, +x, +y | the byte as it stands; the driver's shape mode alternates the two | `noiseChord` |
-| the noise table transpose column | a **byte** off NR43 (`03` on `00` is `FD`), written when it changes, dropping the S/P delta | semitones through the map | the byte as it stands; the driver's shape mode subtracts it and drops the delta (a `P` keeps its step) | -- |
-| noise `S MODE` (byte 2) | nonzero is STABLE: `S`, `P` and `C` keep the note's LFSR width bit | 9.2's `PITCH` byte | `noiseStable`, the Instrument tab's *S mode* | `noisePitchByte` |
-| the pulse FINETUNE | a nibble in byte 7 bits 2-5, `v/32` of a semitone down (5.7.8 - 8.5.1, §191); period units (3.6.8 - 5.0.3); none (3.1.5 - 3.5.1) | byte 11, 1/256 semitone | `fineTuneNibble`: `8·v` into `fineTune`; the period-unit law is **not mapped** (the list below) | `fineTuneNibble` |
-| `W xy` on a wave instrument whose PLAY is MANUAL | no frame run (9.4.2 and 8.5.1 alike, §192) | the same | dropped with a note, where ChipBoy's `U` would start one | -- |
-| a kit's `P` | 4 units an instant and one more step a tick (§190) | the same | nothing to map: the driver does it now | -- |
-| the vibrato | the same depth and rate, the swing rounded half an instant apart (`V 42`: `… 96 95 95 95 96 97 98 …` against 9.4.2's `… 96 97 97 98 …`) | -- | nothing to map (cosmetic) | -- |
-| `P` and `L` | period-register units a clock (0-3) | semitones (§169) | `PitchLaw::Register`: the byte becomes register units (`pitchRegisterUnits`) | `pitchLaw` |
-| `V` | a one-sided triangle **below** the note, register units (format 0) | centred, semitones | `VibratoLaw::RegisterOneSided`: speed and depth recomputed, with an import note | `vibratoLaw` |
-| `C` and `V` on noise | ignored (`C` before 5.7.8, `V` before 9.0) | applied | dropped, with an import note | `noiseChord`, `noiseVibrato` |
-| `R x y`'s interval | every **y + 1** ticks before 9.2; `R x 0` every tick between 4.8.0 and 8.8.0 | every `y` ticks, `R x 0` once | `y + 1`; `R x 0` becomes `R x 1` where it ran every tick; sixteen cannot be carried and becomes fifteen with a note | `retrigPlus`, `retrigZeroOnce` |
-| `T` bytes 0-39 | 40 BPM (clamped) before format 11 | 256-295 BPM | the version's reading | `tempoLowIsHigh` |
-| a cell with a blank instrument column | sounds, with the channel's last instrument (before 4.0.4) | moves the pitch without a trigger (a bare note) | `bareNoteSounds`: the cell keeps its blank column | `bareNoteSounds` |
-| the wave frame run | none before 6.8.2: frame 0 held; bytes 9-11 mean other things | a run of the synth's frames | `waveFrameRun = false`; the synth and REPEAT bytes read from where the version keeps them | `waveFrameRun`, `waveByte`, `waveRepeatByte`, `waveFineTuneByte` |
-| a table's `G` | holds the groove's first step before 9 | walks the groove | the version's reading | `tableGrooveWalks` |
-| a table `ENV` hop | costs a tick before 8.9.3 | costs none | the version's reading | `envHopCostsTick` |
-| the `DIST` pages | `D1` the mirror, `D2` the steep mirror (before 9.2) | `D1` the soft clip, `D2` the mirror | the version's list | `kitDist` |
-| `E` on the wave channel outside 0-3 (6.4.5 - 8.5.1) | a nonsense NR32 | clamped to the four levels | clamped, noted | -- |
-| the vibrato of 5.7.8; `M` on 4.6.9; the noise table transpose before 4.0.4 | each its own law | -- | **not mapped** (`docs/LSDJ_VERSIONS.md` §5) | -- |
+| the envelope | formats 0 - 10 / 11 / 15 and up | the chip's own NRx2 / NRx2 plus two stages the chip hands over between, each written with a retrigger / stages ramped in software | ChipBoy's Chip envelope, stepped at the chip's rate with zombie writes / that plus `envStage2`, `envStage3` / the shaped envelope | `envelopeLaw`, §51, §58, §189 |
+| the pulse FINETUNE | before 3.6.5 / 3.6.8 - 5.0.3 / 5.7.8 - 8.5.1 / from 8.8.6 | none / a nibble of period units / a nibble of `v`/32 semitone / byte 11 | none / `min(255, 42.2 v)` in 1/256 semitone (a semitone at most) / `8 v` / the byte | `fineTuneNibble`, `fineTuneUnits`, §191, §196, §208 |
+| any instrument on any channel | all | a WAV instrument placed on PU1 plays as a pulse reading the same bytes | every imported instrument carries its format and sixteen bytes; a channel of another kind reads them as the ROM would | `lsdjFormat`, `lsdjBytes`, §197 |
+| the PU2 transpose | all | instrument byte 2 | the instrument's `pu2Transpose` | §49 |
+| a wave `E` outside 0 - 3 | 6.4.5 - 8.5.1 | a nonsense NR32 | clamped to the four levels, noted | -- |
 
-## Gaps: what cannot be mapped yet, for a decision
+## Noise
 
-Everything the sweep found that the import does not carry, with what the ROM does and what
-ChipBoy does instead. The probes are in `/root/lsdj/probe/vs_sweep.py` by the name given.
+| what | LSDj versions | what that LSDj does | what the import does | field, section |
+|---|---|---|---|---|
+| the note | formats 0 - 14 / 15 / 22 | each nibble of SHAPE complemented, the high one raised by `3 - octave`, saturating / `FF - note` / the musical map | the instrument's *LSDj shape* pitch mode (`noiseShapeMode`, `noiseShape`) / `Raw` / the map | `noiseRule`, §188 |
+| the table's transpose column | 3.x / 4.0.4 - 8.x / 9.x | subtracted from the running byte nibble by nibble as each row plays, adding up / a byte off the note's, rewritten when it changes, dropping the S and P delta / semitones through the map | the instrument's `noiseTspNibbles` / the driver's shape mode / the map | §188, §207 |
+| a chain transpose on noise | before 3.6.5 | nothing | dropped with a note | `noiseChainTsp`, §207 |
+| `P` on noise | 5.4.4 - 8.x | each nibble less the byte's every tick (`P 02`: `1E 1C 1A ...`) | the Register domain steps it | §188 |
+| `C` on noise | 5.4.3 - 8.x | two states, the note and the note less the whole byte nibble-wise | the shape mode alternates them | §188 |
 
-| what | the ROM | ChipBoy | options |
-|---|---|---|---|
-| `R` on a DRUM instrument before 9.4.0 (§185) | the pitch word runs on through the roll | 9.4.2's reset | left by decision; a per-instrument "R keeps the pitch" switch would carry it |
-| a "wrong" instrument type in ChipBoy's own editor | a WAV instrument on PU1 plays as a pulse with its bytes (imported songs already get a per-channel variant) | `typeFits` refuses the cell | let the editor place any instrument on any channel and play it as the channel's kind |
-| a kit `V FF` (`X92_KIT_VFF`) | out of the depth table | not modelled | leave |
-| the pulse FINETUNE before 5.7.8 (`FTb7_*` on 3.6.8 - 5.0.3) | `v` **period units** down, whatever the note (`F` is 15 units at note 34) | `8·v` in 1/256 semitone (the 5.7.8+ law) | a `fineTune` in period units under `pitchRegisterUnits`, or leave |
-| a kit `L` (`KIT_L05`, 9.4.2 too) | the period runs away by `2AA` an instant, wrapping past `7FF` | the note holds | model the runaway, or leave |
-| `B` (`B08_*`) | a random roll | ChipBoy's own random | nothing to compare; leave |
-| the hardware envelope's rate-0 corner (`PU_adsr_A3_A0_20`) | stage 1's byte written as `A0` at the note and again 41 ms later | `A3` then nothing | leave (one triple of many) |
-| `NOI_all*` past the phrase | the ROM loops the chain | the probe's ChipBoy song ends | a probe artefact, not a gap |
-| the immediate `R` burst, the table `R` re-fired on the table's wrap, the note-on's column write, an `L` on a channel's first note | within 1-2 ms of ChipBoy's | -- | cosmetic; the batch compare splits them differently |
-| the page-`8E` mix on 9.2.L | the LCD phase of that ROM's run | the phase fitted on 9.4.2 (§184): 551 of 640 `FE` positions match on 9.2.L, 348 of 352 on 9.4.2 | fit 9.2.L's phase too, or leave |
-| a kit's `DIST` naming a video-RAM page the ROM draws at run time (`80`, `81`, `88`, `8D`, `90`, `94`, `98`-`9A`) or work RAM | whatever sits there | clips, with a note | leave |
-| `E` on a pulse whose hardware stages are running | unprobed | the stages stop | probe when a song needs it |
+## Wave
+
+| what | LSDj versions | what that LSDj does | what the import does | field, section |
+|---|---|---|---|---|
+| the frame run | before format 7 | no LENGTH or SPEED: one frame at a tick a step; byte 9's low two bits are PLAY (ONCE 0, LOOP 1, PINGPONG 2, MANUAL 3); a W lengthens the run; ONCE plays the frame a tick and turns the DAC off | a one-frame run with the loop counted from its end (`frameLoopTail`), PLAY read as above, ONCE as a one-tick note | `waveFrameRun`, §200, §201 |
+| the loop nibble | before 6.0.1 | not read: the loop is the last frame | tail 1 | `waveRepeatNibble`, §205 |
+| PLAY and REPEAT | formats 7 - 9 | PLAY ONCE 0 / LOOP 1 / PINGPONG 2 / MANUAL 3; REPEAT the loop's steps less one from the run's end | read so; the loop stays at the run's end under a W | `wavePlayOld`, `waveRepeatCount`, §198 |
+| the synth, REPEAT and FINETUNE bytes | by format | different bytes | read from where the version keeps them | `waveByte`, `waveRepeatByte`, `waveFineTuneByte`, §60, §93, §170 |
+
+## Kits
+
+| what | LSDj versions | what that LSDj does | what the import does | field, section |
+|---|---|---|---|---|
+| the `DIST` list | before 9.2 | `D1` the mirror, `D2` the steep mirror | the version's list | `kitDist`, §117 |
+| a `DIST` page outside `D0` - `D3` | all | the byte names a memory page, so the kit's samples pass through whatever sits there (`UNMASKED`'s `8E`: the font tiles) | the page is read from the ROM at the version's offset into the kit's Custom table (only pages a song uses); the Kits tab edits, randomises and loads such a table, with the LCD holes | §192, §194 |
+| kit numbers | all | the k-th kit bank in ROM order, empty banks skipped | the same (§172 had `k + 8`) | §193 |
+| a kit's `P` | all | four units an instant and one more step a tick | the same | §190 |
+| a kit's `V` | before 9.4.0 | twice 9.4.2's depth | the instrument's `vibDouble`, the Instrument tab's *Kit vibrato 2x* | `kitVibratoHalved`, §187 |
+
+## Differences measured and left alone
+
+Each is a millisecond or a period unit; the probe names are `vs_sweep.py`'s.
+
+- Timing inside a tick: an `E` re-attack or an `R`'s immediate fire lands in the note-on's own
+  millisecond (`E38_*`, `R03_*`); a finetune or a table's first column arrives one or two
+  milliseconds after the trigger (`F03_*`, `FTb7_*`, `env_tbl`); a table row and the roll's
+  trigger sit two milliseconds apart before 8.5.1 where 9.x writes them together (`Rtbl6_R03`,
+  `Rtick_tbl`); a kit's NR32 and its trigger swap order (`KIT_*`); a slide's first step is one
+  update ahead (`L03_second_ch0`); a noise table's wrap writes the transpose a millisecond
+  before the P step (`NOI_P02_tbl`); the wave channel's immediate `R` (`R03_ch2`).
+- The chip envelope of formats 0 - 11 is stepped in software at the chip's own rate: the same
+  levels within two milliseconds (`PU_env62`, `PU_adsr_*`, `NOI_env`).
+- The vibrato's fine steps: the older ROMs' pitch rounding differs from 9.x's by one period unit
+  on some updates -- 8.5.1 rounds toward zero, 5.8.8 - 7.0.2 land one unit lower at a few
+  points (`VLo_*`, `V4*_pu`); the kit's `V` on 6.0.1 is two units shallower downward
+  (`KIT_V42`).
+- The pitch table before 5.7.8 has six notes one or two units lower (`PU_all*`: notes 02, 03,
+  08, 0A, 19, 3E), three cents at most.
+- 4.7.3's `P` takes its first step in the note's own trigger (`P02_ch0`).
+- 5.0.3's wave note-on triggers twice inside a millisecond, its `W12`'s third frame comes a
+  tick late, and its noise `R` has no immediate fire.
+- `B` is random on both sides (`B08_*`); the probe songs' end: LSDj loops a one-chain song
+  where ChipBoy's plays it once (`NOI_all*`, `PU_all*`; a question, below).
+
+## Gaps: for a decision
+
+1. **Silence by turning the DAC off.** `K` writes `NRx2 = 00` through 8.5.1 and a wave ONCE
+   run ends with `NR30 = 00` through 7.x (`K02_*`, `K03_tbl`, `WvPlay0`); 8.8 and later walk the
+   level to zero, as ChipBoy does. On the hardware the DAC-off step is a pop. Leave: the pop
+   is the glitch the later versions removed; a per-instrument "kill by DAC off" would carry it
+   if a song wants its pops.
+2. **A table's ENV column retriggers the wave channel** on every step through 7.0.2
+   (`env_tbl_wav`; 8.5.1 writes NR32 alone as ChipBoy does). A retrigger restarts the wave from
+   its first sample, and on a DMG a retrigger while the channel reads can corrupt the wave RAM.
+   Leave unless a 6.x/7.x song needs the clicks.
+3. **`L` on a channel's first note**, with no period before it: 5.0.3 slides up from period 0
+   over seconds, 5.7.8 stays at period 0 (a 64 Hz drone), 5.8.8 - 6.4.5 chirp up from it in four
+   milliseconds, 9.4.2 plays the note (`L03_first_ch0`). ChipBoy plays the note. Leave.
+4. **The one-sided vibrato of 3.1.5 - 3.5.1** depends on the note (8 units a depth step at C3,
+   40 at D#6, `VLo_*` and `V4*_pu`); the import recomputes a centred vibrato with one depth
+   (§56). Leave unless a 3.1 - 3.5 song needs it; §203's unit law is the shape it would take.
+5. **The vibrato's rounding and the pitch table's six notes** (above): a unit, left.
+6. **A kit `L`** runs the period away by `2AA` an instant, wrapping past `7FF` (`KIT_L05`, 9.4.2
+   too); the note holds in ChipBoy. Left by decision.
+7. **A kit `V FF`** is out of the depth table. Left by decision.
+8. **A `DIST` page LSDj draws at run time** (`80`, `81`, `88`, `8D`, `90`, `94`, `98` - `9A`) or
+   work RAM changes with what is on screen or playing; the import clips with a note, and the
+   Kits tab's Custom table takes whatever a user puts in it (§194).
+9. **The song's end.** LSDj plays the probe songs -- one chain, then an empty row -- round again
+   (`NOI_all*`, `PU_all*` on every ROM) where ChipBoy plays them once. The rig's songs are
+   single-channel; a real song's end is worth a look before deciding what the tracker should
+   do when every channel's chain runs out.
+10. **Unmeasured ranges.** 7.7.6 - 8.0.0 take 8.5.1's laws (the changelog's 7.8.1 ladder, the
+    8.3.4 table fix falls inside it and is taken as late); 7.5.4 - 7.7.5 take 7.0.2's; 8.8.6's
+    vibrato ladder and its finetune are taken as 9.x's; 5.1 - 5.7.7 as 5.0.3's; 4.9.5 - 5.0.2
+    as 4.9.4's; PU2's `F` under the register law was not probed (the rig's second-channel
+    song is wrong). A ROM of any of these settles it in an afternoon.
 
 ## Adding a version
 
-Put its ROM in `/root/lsdj/roms/`, run `/root/lsdj/probe/vs_versions.py lsdjX_Y_Z lsdj9_4_2`
-(every matrix case on both ROMs), then `vv_all.py lsdjX_Y_Z lsdj9_4_2` for the list without
-the length-register noise, then the changelog's candidates as cases; each real difference gets a
-row here, a model field, and a value translation in `LsdjSong.cpp` where one exists.
+Put its ROM in `/root/lsdj/roms/`, run `python3 /root/lsdj/probe/vs_sweep.py trace lsdjX_Y_Z`
+(every sweep case on that ROM), `vs_sweep.py show A B TAG` between it and its neighbours, then
+`vs_cb.py lsdjX_Y_Z --sweep` (ChipBoy's import with that ROM beside the save) and `--show` on a
+case. A real difference gets a design-log section, a model field with a value in
+`LsdjModel.cpp`, a translation in `LsdjSong.cpp` or `LsdjInstrument.cpp`, and a row here.

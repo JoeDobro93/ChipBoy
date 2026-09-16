@@ -26,6 +26,51 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-16 -- the version sweep, 8.5.1 down to 3.1.5
+
+`docs/COMMANDS_AND_TEMPO.md` §188-§208 and `docs/LSDJ_VERSION_MAP.md`, rewritten as one row per
+behaviour: what each LSDj does, what the import does, the field. Every archive ROM was probed
+against 9.4.2 and against ChipBoy's import with that ROM beside the save; the differences that
+remain are listed there as measured-and-left or as gaps for a decision. What the engine gained:
+
+- **The noise channel before 9.1** as an instrument pitch mode, *LSDj shape* (§188): the SHAPE
+  rule per nibble, `S`, `P`, `C` on the byte, the table column as a byte, S MODE keeping the
+  width bit. **3.x's** version (§207): the column adds up nibble by nibble in the running byte,
+  the width bit crosses freely before 4.1.0, and a chain transpose does nothing before 3.6.5.
+- **The hardware envelope stages** of 8.1 - 8.5 (§189, `envStage2`, `envStage3`) and the
+  hardware envelope of every older version as ChipBoy's Chip envelope.
+- **A kit's `P`** steps once more a tick (§190, 9.4.2 too). **The FINETUNE nibble** of 5.7.8 -
+  8.5.1 (§191) and the period-unit finetune of 3.6.8 - 5.0.3 (§196); none before 3.6.5 (§208).
+- **A `DIST` page outside `D0` - `D3`** read from the ROM by version (§192) into a kit's
+  **Custom** table, which the Kits tab edits, randomises, zeroes and loads, LCD holes and all
+  (§194). **Kit numbers** count kit banks (§193; §172 was wrong).
+- **`R` keeps a DRUM instrument's pitch** as an instrument option, on for imports before 9.4.0
+  (§195). **Any instrument on any channel** (§197): imported instruments carry their sixteen
+  bytes and a channel of another kind reads them as the ROM does; the per-channel variants are
+  gone.
+- **The wave run before 7.7.6** (§198, §199, §200, §201, §205): PLAY and REPEAT's old
+  encodings, the loop counted from the run's end (`frameLoopTail`), the pre-format-7 one-frame
+  run that a W lengthens, ONCE as a one-tick note, the loop nibble read from 6.0.1 only, a
+  ping-pong's first pass walking every step.
+- **A roll restarts the instrument's table a tick late** before 8.3.4 (§202,
+  `retrigTableLate`).
+- **The vibrato's depth ladders** (§203, `vibLadder`): 9.x's from 7.7.6, a shallower one for
+  5.8.8 - 7.7.5 with one's-complement downward entries, half of that on 5.7.8, and period
+  units scaled by the note's divider before that.
+- **`F` on the pulses by version** (§204), **`P` on noise from 5.4.4** (§205), **a note's `L`
+  under the register law** sliding from the period the channel had (§206).
+- The models split where the ROMs differed inside one format: 6.0.1 - 6.4.5, 5.8.8 - 5.9.9,
+  5.7.8, 5.0.3, 4.1.0 - 4.3.0, 4.0.4, 3.7.5 - 3.9.2, 3.6.5 - 3.7.4 -- nineteen in all. Each
+  new instrument field is in the song file (`frameLoopTail`, `retrigTableLate`, `vibLadder`,
+  `noiseTspNibbles`, `retrigKeepsPitch`, `lsdjFormat`, `lsdjBytes`, `noiseShapeMode`,
+  `noiseShape`, `noiseStable`, `envStage2`, `envStage3`; kits: `distTable`, `distVram`,
+  `distPage`). The file's noise sweep domain key was `noiseSweep`, overwritten by the sweep
+  steps; it is `noiseDomain` now.
+- Not built, by decision or for a decision (`docs/LSDJ_VERSION_MAP.md`, *Gaps*): silence by
+  DAC-off (a pop), the wave retrigger on a table ENV step, `L` on a first note, the 3.1 - 3.5
+  one-sided vibrato's note dependence, the vibrato's unit rounding, a kit `L`'s runaway, a kit
+  `V FF`, the run-time `DIST` pages, the song's end, the unmeasured version ranges.
+
 ### 2026-09-15 -- the third parity campaign: 9.4.2's code, and what it corrected
 
 `docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§186. The audit target is

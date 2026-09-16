@@ -18,27 +18,30 @@ design-log section the change touches. Update this file at the end of every chan
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
 
-## Done (2026-09-16) -- the version sweep begins (8.5.1) and two 9.2.L reports
+## Done (2026-09-16) -- the version sweep, 8.5.1 down to 3.1.5, and two 9.2.L reports
 
-- **8.5.1 (format 11) against ChipBoy's import** (`vs_cb.py lsdj8_5_1 --sweep`, 190 cases with
-  the round's new ones): §188 the pre-9.1 noise channel as an instrument mode (LSDj shape:
-  the SHAPE rule per nibble, `S`/`P`/`C` on the byte, the table column as a byte, S MODE =
-  STABLE keeping the width bit; probed note by note and bit by bit); §189 the hardware envelope
-  stages (`envStage2`/`envStage3`, written with a retrigger after `(2·|Δvol|+1)·rate/128` s);
-  §190 a kit's `P` steps on the tick too (9.4.2 as well); §191 the FINETUNE nibble in byte 7
-  (`8·v`). 72 cases still differ, all in the cosmetic classes (the Chip envelope's hold byte
-  against the chip's running one, the vibrato's half-instant phase, 1 ms batch splits, `B`) or
-  in the gap list of `docs/LSDJ_VERSION_MAP.md`. The 9.4.2 sweep shows the same classes only.
-- **The two reports on 9.2.L imports**: `UNMASKED`'s `?8E00` kit (§192: the DIST page reader
-  is version-keyed now, VRAM dumped on every ROM with the trace tool's new `--dump`; the Kits
-  tab's *Page* choice) and `READROOM`'s chain `1C` (§193: kit numbers count kit banks, not
-  banks -- §172 had it wrong; the chain now matches the 9.2.L ROM hit for hit, the whole wave
-  channel within 14 ms of the ROM through 72 s). Also found on the way: the song file dropped
-  the noise sweep domain (`noiseSweep` written twice; now `noiseDomain`).
-- The probe rig grew `vs_sweep.py`'s round-2/3 cases (`NOI_all*`, `NOI_S03_b*`, `PU_adsr_*`,
-  `FTb7_*`, `Wv_W*`, `KIT_P04_t*`, `KIT_L05`, `NOI_*_tbl*`), `vramdump.py` (VRAM pages per
-  ROM, `scratchpad/vram_pages.txt`), and `lsdjref-trace --dump F:ADDR:LEN:FILE`. 310 core
-  tests, 11 plugin checks.
+- **Every archive ROM swept** (`vs_sweep.py trace`, `vs_cb.py lsdjX_Y_Z --sweep`, 326 cases):
+  9.4.2, 9.2.J/L, 8.5.1, 7.0.2, 6.8.2, 6.4.5, 6.0.1, 5.9.9, 5.8.8, 5.7.8, 5.0.3, 4.9.4, 4.8.0,
+  4.7.3, 4.5.4, 4.4.0, 4.3.0, 4.1.0, 4.0.4, 3.9.2, 3.8.9, 3.8.7, 3.7.5, 3.6.8, 3.5.1, 3.4.4,
+  3.1.9, 3.1.5. On every one the cases that still differ are in the measured-and-left classes
+  or the gap list of `docs/LSDJ_VERSION_MAP.md` (rewritten: one row per behaviour, the
+  models, the gaps numbered). Design log §188-§208; `CHANGES.md` 2026-09-16 has the list.
+- **What the engine gained**: the LSDj-shape noise mode and its 3.x variant (§188, §207); the
+  hardware envelope stages (§189); a kit's `P` on the tick (§190); the finetune laws by
+  version (§191, §196, §208); the version-keyed DIST page reader and the kit's Custom table
+  with the Kits tab's editor (§192, §194); kit numbers as the ROM counts them (§193); `R`
+  keeps a DRUM pitch as an option (§195); any instrument on any channel, the variants gone
+  (§197); the wave run before 7.7.6 with the loop counted from its end and the pre-format-7
+  one-frame run (§198-§201, §205); the late table restart on a roll (§202); the vibrato
+  ladders by version (§203); `F` by version (§204); `P` on noise from 5.4.4 (§205); the
+  register-law slide from the old period (§206). Nineteen models.
+- **The two reports on 9.2.L imports**: `UNMASKED`'s `?8E00` kit (§192, §194) and
+  `READROOM`'s chain `1C` (§193). The song file's noise sweep domain key collided with the
+  sweep steps (`noiseSweep` twice; now `noiseDomain`).
+- The probe rig: `vs_sweep.py` rounds 2-6 (`NOI_all*`, `PU_all*`, `VLo_*`, `W6_*`, `Rtbl6_*`,
+  `F*_lo_*`, ...), `probe_cmp.py` aligning both sides on the channel's first trigger,
+  `probe_vh.py` giving a pre-format-7 wave instrument PLAY 1, `vramdump.py`, `lsdjref-trace
+  --dump`. 324 core tests, 11 plugin checks.
 
 ## Done (2026-09-15) -- the third parity campaign, on 9.4.2's code
 
@@ -963,15 +966,20 @@ design-log section the change touches. Update this file at the end of every chan
 
 ## Open issues
 
-- **The version sweep's gap list** is `docs/LSDJ_VERSION_MAP.md`'s last table: the DRUM `R`,
-  the editor's `typeFits`, the pre-5.7.8 FINETUNE in period units, a kit `L`'s runaway (9.4.2
-  too, `KIT_L05`), the page-`8E` LCD phase on 9.2.L (551 of 640), `E` over running stages. Each
-  waits on the user's decision.
-- **Formats below 11 are not swept yet**: 7.0.2 (no stages), 6.x, 5.x (the register laws), 4.x,
-  3.x. `vs_cb.py lsdjX_Y_Z --sweep` per ROM; `NoiseRule::Raw` (8.8.6, format 15) should become
-  the shape mode's sibling when that ROM is available. Versions not in the archive that the
-  changelog makes worth having: 7.2.3, 7.5.4, 7.9.9, 8.0.0, 8.2.0, 8.4.4, 8.6.x - 8.9.x, 9.0.x,
-  9.1.x, 9.3.x.
+- **The version sweep's gap list** is `docs/LSDJ_VERSION_MAP.md`'s *Gaps* (ten items):
+  silence by DAC-off (a pop, through 8.5.1), the wave retrigger on a table ENV step (through
+  7.0.2), `L` on a first note, the 3.1 - 3.5 one-sided vibrato's note dependence, the
+  vibrato's unit rounding and the old pitch table's six notes, a kit `L`'s runaway (9.4.2 too),
+  a kit `V FF`, the run-time `DIST` pages, the song's end (LSDj loops a one-chain song), and
+  the unmeasured version ranges. Each waits on the user's decision; the sweep is otherwise
+  complete on every ROM in the archive.
+- **Versions not in the archive** that would settle a guess: 7.7.6 - 8.4.3 (the vibrato ladder
+  and the table-restart fix are placed by the changelog), 8.6 - 9.1 (`V 00`, the ladder's
+  depth 0, 8.8.6's finetune), 5.1 - 5.7.7, 4.9.5 - 5.0.2. `NoiseRule::Raw` (8.8.6) is still
+  the second campaign's measurement.
+- **Not in the UI yet**: the instrument's `vibLadder`, `frameLoopTail`, `retrigTableLate` and
+  `noiseTspNibbles` are import fields with no control in the Instrument tab (the song file
+  carries them); `vibDouble` and `retrigKeepsPitch` have one.
 
 - **Kits against 9.4.2 after §186**: the roll and the kit `F` are in; a plain kit note differs
   only by ChipBoy's `NR31 = 00`; the noise table transpose cases (`X92_NOI_tsp2`-`tsp4`) are
@@ -1141,13 +1149,13 @@ design-log section the change touches. Update this file at the end of every chan
 
 ## Next steps
 
-- **Continue the sweep downwards** from 7.0.2: `python3 vs_sweep.py trace lsdjX_Y_Z` (the ROM
-  side, cached), `python3 vs_cb.py lsdjX_Y_Z --sweep` (ChipBoy's import with that ROM beside the
-  save), `--show` on a case, then a model field and a translation at import, a design-log
-  section before the code, a row in `docs/LSDJ_VERSION_MAP.md`. The env, vibrato and 1 ms
-  classes are known; look at everything else.
-- **The gap list** (`docs/LSDJ_VERSION_MAP.md`) goes to the user for decisions before any of
-  it is built.
+- **The sweep is done on the archive**; the gap list (`docs/LSDJ_VERSION_MAP.md`) goes to the
+  user for decisions before any of it is built. A new ROM goes through *Adding a version* there.
+  The `vs_cb.py` result files of the last runs are in the session scratchpad (`cb_*_v9.txt`);
+  a fresh container re-traces in minutes (`vs_sweep.py trace`, four at a time).
+- **After a decision**: DAC-off silence would be a per-instrument flag on the K and ONCE-end
+  paths (`killDac`); the wave ENV retrigger a flag in the table's volume lane; the song's end
+  a tracker rule. The UI fields above are a stepper or a segment each in `InstrumentPanel`.
 
 - **9.4.2 is the base now** (`LSDJ_VERSIONS.md` §11). A version to map next goes through the
   same steps: put its ROM in `/root/lsdj/roms/`, `vs_versions.py lsdjX_Y_Z lsdj9_4_2`, then
