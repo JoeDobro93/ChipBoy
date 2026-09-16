@@ -542,7 +542,8 @@ than at low, because the period is not linear in frequency — that asymmetry is
 All pitch handling operates on the 11-bit period. Note → period is computed once and
 rounded to the nearest integer; every subsequent modification is integer arithmetic on
 that value. A note above the reachable range is clamped and reported in the UI; a note
-below it does not sound (C4).
+below it does not sound (C4). A chain or channel transpose that would take a note below it
+comes round by octaves instead, as LSDj's does (`COMMANDS_AND_TEMPO.md` §217).
 
 Slide (`L`) steps the period toward the target by a fixed increment per tick, so slides
 are faster at the top of the range than the bottom. Correct, and characteristic.

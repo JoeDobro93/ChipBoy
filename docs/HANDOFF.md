@@ -18,6 +18,27 @@ design-log section the change touches. Update this file at the end of every chan
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
 
+## Done (2026-09-16, last) -- a transpose under the floor comes round (§217)
+
+- **§217**: Cold Grenade's chain `28` wave steps were silent in ChipBoy where the note plus
+  the chain transpose plus the project's lands at C-2 or lower; the ROM brings the note index
+  up by twelves until it is a note (measured with `/root/lsdj/probe/tsp_low.py` on 3.1.5,
+  4.1.0, 5.8.8, 8.8.6, 9.1.C, 9.4.2; pulse and wave share the table, C-2 = `02C` on both).
+  `Driver::transposeIntoRange()` on both note-on paths; the note's own number under the floor
+  stays silent (C4). With it, chain `28`'s wave note-ons trace at the ROM's times and periods
+  (`wave_ons.py` on 240 s traces, `cg_rom3.csv` / `cg_cb3.csv` in the scratchpad), the pulses
+  too. The 8.8.6 and 9.1.C ROMs are under `/root/lsdj/roms/` now (`lsdj8_8_6.gb`,
+  `lsdj9_1_C.gb`), so the sweep's probes run on them.
+- **Seen on the way, left**: on 8.8.6 the table's transpose column adds up row by row (ChipBoy's
+  *Adds up* mode; check what the 8.x models set) and a value that leaves the table reads past
+  it (`D0` on `C-3` writes `7E1`, a second pass of the same rows writes other garbage) -- not a
+  note. ChipBoy clamps such a column to the floor. A note above the table's top (`0x70` under
+  `+0C`) is garbage on the ROM too; not modelled.
+- **`chipboy_recordtest`**: `--rate`, `--block`, `--console dmg|cgb|raw` for `--play-song`.
+  Sample rate and block size do not change the WATER2 kit render (correlation >= 0.97 across
+  44.1/96 kHz and 64/2048); the CGB model halves the kit's RMS and gives a crest of 8.6
+  against 3.8 -- the likeliest "standalone sounds bad" if its persisted Model is CGB.
+
 ## Done (2026-09-16, later still) -- the strip scopes as left and right monitors
 
 - **D-UI-31**: a channel strip's scope is two monitors, `L` and `R`, one period each by
@@ -35,7 +56,8 @@ design-log section the change touches. Update this file at the end of every chan
   two ticks before the bare note (`EC`, `26`), ChipBoy does not -- inaudible under the kill.
 - **Cold Grenade (8.8.6)**: the reported wrong notes are the save's working copy (project
   transpose -2) against its saved file (0); with the working copy imported the wave and pulse
-  note-ons trace as the ROM's. No silent note was found on chain 28's steps in either import.
+  note-ons trace as the ROM's. The silent notes on chain 28 were the transposes under the
+  floor, fixed in §217 (above).
   Left: a wave note under table 03's `L 4E` on a `-48` transpose row wobbles ±2 units on
   both, ChipBoy half a period out of phase and triggering on the plain period (`76B`) where
   the ROM triggers on the table's (`76D`); worth a probe on the 8.8.6 ROM, which the user has

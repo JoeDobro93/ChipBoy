@@ -26,6 +26,24 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-16 -- a transpose under the channel's floor comes round by octaves
+
+`docs/COMMANDS_AND_TEMPO.md` §217, a departure from §8.5's "a note below it does not sound
+(C4)" for the transposes. `Cold_Grenade`'s chain `28` had silent wave steps (1, 4, 6 with
+the working copy's project transpose of -2; 4, 6, C, E with the file's 0): each is a note
+whose chain transpose plus the song's reaches C-2 or lower. The ROM's note index comes up by
+twelves until it is a note, on 3.1.5 through 9.4.2, pulse and wave alike -- the note sounds in
+the bottom octave on its own pitch class. `Driver::transposeIntoRange()` does the same to the
+chain row's transpose in force at the note-on, on both note-on paths. What C4 still says: a
+note whose own number is under the floor (a MIDI key, a tracker cell under C2) stays silent.
+Considered: raising the note itself (the note-off matches by number) and clamping to the floor
+(the ROM does not). Left open: the table's transpose column on 8.8.6 adds up row by row and
+reads past its table when it leaves it (`D0` on `C-3` writes `7E1`); not touched.
+
+`chipboy_recordtest` gains `--rate N`, `--block N` and `--console dmg|cgb|raw` for
+`--play-song`, used to rule out the sample rate, the block size and the console model as the
+standalone's kit difference (the CGB model halves the kit's RMS and renders it spiky).
+
 ### 2026-09-16 -- an instrument column without a note ends the old instrument's bend
 
 `docs/COMMANDS_AND_TEMPO.md` §216. `SUNSET`'s PU2 phrase `2F` (a kick bending to the floor,

@@ -202,6 +202,7 @@ public:
     static int  periodOfSemitone(int note, bool waveChannel);
     /// The lowest note the channel has a period for (section 71).
     static int  lowestNote(bool waveChannel);
+    int8_t      transposeIntoRange(int ch, int8_t tsp) const;   ///< section 217
     static double periodRealForNote(double note, bool waveChannel);   ///< unrounded, for Drum
     /// Section 169: 9.x DRUM pitch. One entry of the ROM's linear period table
     /// (108 entries, 0 to 2044), a note's position in it (entry and fraction),

@@ -223,6 +223,45 @@ TEST_CASE("velocity quantises to sixteen levels and the pulse floor is silent", 
     CHECK_FALSE(has(w, 0xFF19, 0x80 | 0));     // no trigger at a fake period
 }
 
+TEST_CASE("a chain transpose under the channel's floor comes round by octaves", "[driver]")
+{
+    // Section 217: measured on 3.1.5 through 9.4.2, C-3 under a chain row's
+    // transpose of -16 plays G#2 (period 786) and under -20 E-2 (457), pulse
+    // and wave alike -- the note index comes up by twelves until it is a note.
+    // ChipBoy silenced both (Cold Grenade's chain 28).
+    for (int ch : { 0, 2 }) {
+        Rig r;
+        const bool wave = ch == 2;
+        const uint8_t note = wave ? 36 : 48;                 // C-3 on either channel
+        auto& in = r.bank.instruments[0];
+        in = Instrument::defaults(wave ? InstrumentType::Wave : InstrumentType::Pulse, "Low");
+        in.used = true; in.transpose = true;
+        r.song.noteSource[size_t(ch)] = tracker::NoteSource::Tracker;
+        ChannelParams p; p.instrument = 1; r.drv.setParams(ch, p);
+        const uint16_t loAddr = wave ? 0xFF1D : 0xFF13, hiAddr = wave ? 0xFF1E : 0xFF14;
+        auto periodOf = [&](const std::vector<RegWrite>& w) {
+            int lo = 0, hi = 0;
+            for (const auto& x : w) { if (x.addr == loAddr) lo = x.value; else if (x.addr == hiAddr) hi = x.value; }
+            return ((hi & 7) << 8) | lo;
+        };
+        NoteEvent e = cellOn(ch, note, 1); e.transpose = -16;
+        auto w = r.block({ e }, 512);
+        CHECK(periodOf(w) == 786);
+        CHECK_FALSE(r.drv.view(ch).outOfRange);
+        r.block({ Rig::off(ch, note) }, 256);
+        e = cellOn(ch, note, 1); e.transpose = -20;
+        w = r.block({ e }, 512);
+        CHECK(periodOf(w) == 457);
+        CHECK_FALSE(r.drv.view(ch).outOfRange);
+        r.block({ Rig::off(ch, note) }, 256);
+        // A note whose own number is under the floor stays silent (C4): the
+        // transposes come round, the note does not.
+        e = cellOn(ch, uint8_t(note - 24), 1); e.transpose = 0;
+        w = r.block({ e }, 512);
+        CHECK(r.drv.view(ch).outOfRange);
+    }
+}
+
 TEST_CASE("a cell's VEL is a start volume in any instance and a blank VEL is the instrument's", "[driver]")
 {
     // Section 9.1: a song file must sound the same whatever the channel's

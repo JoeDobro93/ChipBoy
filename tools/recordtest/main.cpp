@@ -65,8 +65,11 @@ using namespace chipboy::plugin;
 
 namespace {
 
-constexpr double  kSampleRate = 48000.0;
-constexpr int     kBlock = 512;
+int    gConsole = -1;           // --console dmg|cgb|raw: the Model parameter for --play-song, else the song's own state
+double gSampleRate = 48000.0;   // --rate: the render's sample rate (the demo checks stay at 48 kHz)
+int    gBlock = 512;            // --block: its block size
+#define kSampleRate gSampleRate
+#define kBlock gBlock
 constexpr int     kBars = 16;            // the demo, ...
 constexpr int     kTailBars = 1;         // ... and one bar of tail
 constexpr int64_t kTimeTolerance = 140;  // samples (section 9.5): one 358 Hz instant -- the wave's sync wait can
@@ -505,7 +508,7 @@ int traceSong(const juce::File& file, const juce::File& out, double seconds, dou
     uint64_t frame = 0;
     for (int64_t b = 0; b < blocks; ++b) {
         driver::Transport t;
-        clock.process(t, kBlock, frame);
+        clock.process(t, uint32_t(kBlock), frame);
         for (int ch = 0; ch < 4; ++ch) {
             const int slot = driver.tableGrooveSlot(ch);
             driver.setTableGroove(ch, slot >= 1 && slot <= tracker::kGrooveSlots ? song->grooves[size_t(slot - 1)].ticks.data() : nullptr);
@@ -517,8 +520,8 @@ int traceSong(const juce::File& file, const juce::File& out, double seconds, dou
         // Section 141: the tick rate in force, for the shaped envelope's
         // sub-tick position on the very first tick.
         driver.setTickRate(clock.bpm() * double(chipboy::driver::kTicksPerBeat) / 60.0);
-        driver.process(events.data(), events.size(), kBlock, frame, clock.ticks(), clock.tickCount(), cycleAt, blockWrites);
-        frame += kBlock;
+        driver.process(events.data(), events.size(), uint32_t(kBlock), frame, clock.ticks(), clock.tickCount(), cycleAt, blockWrites);
+        frame += uint64_t(kBlock);
     }
     driver.setWriteLog(nullptr);
     std::stable_sort(log.begin(), log.end(), [](const driver::RegWrite& a, const driver::RegWrite& b) { return a.cycle < b.cycle; });
@@ -587,6 +590,7 @@ bool playOnce(const juce::File& file, int solo, const SongShape& shape, SongRun&
     if (!openForPlayback(p, file, solo, report)) return false;
 
     p.prepareToPlay(kSampleRate, kBlock);
+    if (gConsole >= 0) setParameter(p, ids::model, double(gConsole));   // the choice index; setParameter normalises
     p.setLoop(false);
     p.transportPlay();                 // no play head at all: the song's own clock (section 16)
 
@@ -632,7 +636,8 @@ bool playOnce(const juce::File& file, int solo, const SongShape& shape, SongRun&
         const juce::File f = gWavDir.getChildFile(solo < 0 ? juce::String("mix.wav") : juce::String(kStreamName[solo]) + ".wav");
         f.deleteFile();
         juce::WavAudioFormat fmt;
-        std::unique_ptr<juce::AudioFormatWriter> w(fmt.createWriterFor(new juce::FileOutputStream(f), kSampleRate, 2, 16, {}, 0));
+        std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream>(f);
+        std::unique_ptr<juce::AudioFormatWriter> w = fmt.createWriterFor(stream, juce::AudioFormatWriterOptions{}.withSampleRate(kSampleRate).withNumChannels(2).withBitsPerSample(16));
         if (w != nullptr) {
             const float* chans[2] = { wavL.data(), wavR.data() };
             w->writeFromFloatArrays(chans, 2, int(wavL.size()));
@@ -755,6 +760,9 @@ int main(int argc, char** argv)
         else if (key == "--out") outDir = juce::File(juce::String(argv[++i]));
         else if (key == "--write-song") writeSong = juce::File(juce::String(argv[++i]));
         else if (key == "--wav" && i + 1 < argc) gWavDir = juce::File(juce::String(argv[++i]));
+        else if (key == "--rate" && i + 1 < argc) gSampleRate = std::strtod(argv[++i], nullptr);
+        else if (key == "--console" && i + 1 < argc) { const juce::String c = juce::String(argv[++i]).toLowerCase(); gConsole = c == "dmg" ? 0 : c == "cgb" ? 1 : c == "raw" ? 2 : -1; }
+        else if (key == "--block" && i + 1 < argc) gBlock = int(std::strtol(argv[++i], nullptr, 10));
         else if (key == "--check-song") checkSong = juce::File(juce::String(argv[++i]));
         else if (key == "--write-state") writeState = juce::File(juce::String(argv[++i]));
         else if (key == "--check-state") checkState = juce::File(juce::String(argv[++i]));

@@ -6338,3 +6338,46 @@ the next update.
 ChipBoy: `reloadInstrument()` -- the cell's instrument column and Live follow -- clears what
 a plain note-on clears of the pitch state: the `P` bend and offsets in every mode, a slide in
 progress, `F`'s units, the noise bends. It writes no period; the next note or update does.
+
+## 217. A transpose below the channel's floor comes round by octaves
+
+`CLD GRND` (the user's `Cold_Grenade.sav`, 8.8.6), chain `28` on the wave channel: phrase `7B`
+holds `F-2` and `7C` holds `C-3`, both instrument `15`, under the chain transposes `00 F4 FD FD
+F9 FB F8 FE` and the project's TRANSPOSE `FE`. Steps 1, 4 and 6 (and 9, C, E) were silent in
+ChipBoy and sound on the ROM; with the project transpose at 0, steps 4, 6, C and E. Those are
+exactly the steps whose note index -- the phrase's note plus the chain row's transpose plus the
+song's -- lands at 0 or below: `C-3 - 12 - 2`, `F-2 - 7 - 2`, `F-2 - 8 - 2`.
+
+Measured with `probe/tsp_low.py` (a chain of the same note under one transpose a step) on
+3.1.5, 4.1.0, 5.8.8, 8.8.6, 9.1.C and 9.4.2, pulse and wave alike -- the wave's note table is
+the pulse's, `C-2` (index 1) is period `02C` on both:
+
+| note | chain transpose | index asked | period written | note played |
+|---|---|---|---|---|
+| `C-3` (13) | `F4` (-12) | 1 | `02C` | `C-2` |
+| `C-3` | `F3` (-13) | 0 | `3DA` | `B-2` (12) |
+| `C-3` | `F0` (-16) | -3 | `312` | `G#2` (9) |
+| `C-3` | `EC` (-20) | -7 | `1C9` | `E-2` (5) |
+| `C-3` | `E8` (-24) | -11 | `02C` | `C-2` (1) |
+| `C-3` | `E0` (-32) | -19 | `1C9` | `E-2` (5) |
+| `C-3` | `D0` (-48) | -35 | `02C` | `C-2` (1) |
+| `C-3` | `C0` (-64) | -51 | `312` | `G#2` (9) |
+| `C-3` | `80` (-128) | -115 | `1C9` | `E-2` (5) |
+| `C-4` (25) | `E0` (-32) | -7 | `1C9` | `E-2` (5) |
+| `C-4` | `C0` (-64) | -39 | `312` | `G#2` (9) |
+
+Every index at or under 0 comes up by twelve until it is 1..12: the note plays in the bottom
+octave, on its own pitch class, never silent and never clamped to `C-2`. The rule is the
+ROM's on the note index at the note-on, before the instrument is looked at, so a bare note
+(no instrument column) gets it too, and the table's transpose column, a slide and a bend
+work from the raised note afterwards. (The table's column is another matter: on 8.8.6 its
+transposes add up row by row and one that leaves the table reads past it -- `D0` on `C-3`
+writes `7E1`, not a wrapped note. Not changed here; open.)
+
+ChipBoy: at a note-on on a pulse or wave voice, when the cell's note is itself in range, the
+chain row's transpose in force (`noteTsp`) grows by twelves until the note with its
+transposes -- the row's, the channel's, PU2's own -- reaches the channel's lowest note. A
+note whose own number is below the floor (a MIDI key, a tracker cell under C2) stays silent
+as C4 says; only the transposes come round. The bend wheel and the pitch effects keep
+section 125's floor. Both note-on paths get it: the instrument's and the bare cell's
+(section 177).

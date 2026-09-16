@@ -227,6 +227,22 @@ int Driver::lowestNote(bool waveChannel)
     return 0;
 }
 
+/// Section 217: a chain row's or the channel's transpose that takes a pulse or
+/// wave note under the channel's floor brings it up an octave at a time until
+/// it sounds -- the ROM's note index comes round to 1..12 (measured on 3.1.5
+/// through 9.4.2). A note whose own number is under the floor stays silent (C4);
+/// only the transposes come round. Returns the row's transpose to hold.
+int8_t Driver::transposeIntoRange(int ch, int8_t tsp) const
+{
+    const Voice& v = v_[size_t(ch)];
+    if (v.inst.type != InstrumentType::Pulse && v.inst.type != InstrumentType::Wave) return tsp;
+    const int floorNote = lowestNote(v.inst.type == InstrumentType::Wave);
+    if (int(v.note) < floorNote) return tsp;
+    int t = int(tsp);
+    while (int(v.note) + t + int(v.instTranspose) + int(v.p.transpose) < floorNote && t < 116) t += 12;
+    return int8_t(std::clamp(t, -128, 127));
+}
+
 /// The period of a note and a fraction. The table is one entry a semitone and
 /// the fraction is interpolated **in period units**, not in frequency: LSDj
 /// does that, and it is measurable -- a vibrato half a semitone below C-5
@@ -814,7 +830,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         // note (2:$4A07 adds it before the instrument column is looked at), so
         // a bare cell in a new chain row moves to the transposed note and its
         // `L` aims there -- EGOFLEX's pad slides 36 -> 44 across the row.
-        v.noteTsp = v.inst.transpose ? v.cellTranspose : int8_t(0);
+        v.noteTsp = transposeIntoRange(ch, v.inst.transpose ? v.cellTranspose : int8_t(0));
         const bool was = inNoteOn_; inNoteOn_ = true;
         // Section 146: what the cell's commands do to the level is owed to the
         // note's own burst (section 3) and a bare note has none, so it is
@@ -870,8 +886,8 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // The chain row's transpose, under the instrument's Transpose flag like
     // the table's column (section 48), and the instrument's own offset on the
     // second pulse (section 49). The note itself stays what the cell said.
-    v.noteTsp = core.transpose ? v.cellTranspose : int8_t(0);
     v.instTranspose = (ch == 1 && core.type == InstrumentType::Pulse) ? core.pu2Transpose : int8_t(0);
+    v.noteTsp = transposeIntoRange(ch, core.transpose ? v.cellTranspose : int8_t(0));   // section 217: under the floor, up by octaves
     v.noiseTsp = 0; v.noiseReg = 0; v.noiseRegStep = 0; v.noiseBend256 = 0; v.noiseBend9 = 0; v.noiseTspReg = 0;   // S and P on NOI start over (sections 55 and 66)
     v.noiseTableTsp = 0;                                                                          // section 188
     v.instKey = instrumentKey(ch, vel);
