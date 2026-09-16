@@ -6022,3 +6022,10 @@ nibble in either byte (`WvPlay*`, `WvP*` in `vs_sweep.py`):
   in two at 7.7.6).
 - The run itself is 9.x's: LENGTH frames spread across the sixteen (0 5 A F), SPEED + 4 ticks
   each, ONCE holding its last frame.
+
+## 199. A ping-pong run's first pass
+
+`WvP3_b2_0E` (9.4.2, 8.5.1: PLAY PINGPONG, LOOP POS E) and `WvP2_b2_01` (7.0.2, REPEAT 1): a
+four-step run whose loop is its last two steps plays `0 1 2 3 2 3 2 3 …` -- the first pass walks
+every step and the bounce is inside the loop afterwards. ChipBoy turned at the loop step on the
+way up as well and played `0 3 2 3 …`: the turn now happens only on the way down.

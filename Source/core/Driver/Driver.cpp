@@ -3185,7 +3185,9 @@ void Driver::tick(int ch)
                             }
                             break;
                         case FrameLoop::PingPong:
-                        case FrameLoop::Resync:   if (next >= len) { next = len - 2 < loop ? loop : len - 2; v.frameDir = -1; } else if (next < loop) { next = loop + 1 < len ? loop + 1 : loop; v.frameDir = 1; } break;
+                        // Section 199: the first pass walks every step; only the way
+                        // down turns at the loop step (WvP3_b2_0E: 0 1 2 3 2 3 2 3).
+                        case FrameLoop::Resync:   if (next >= len) { next = len - 2 < loop ? loop : len - 2; v.frameDir = -1; } else if (next < loop && v.frameDir < 0) { next = loop + 1 < len ? loop + 1 : loop; v.frameDir = 1; } break;
                     }
                     if (next != int(v.frameStep)) setFrameStep(ch, next, true);
                 }

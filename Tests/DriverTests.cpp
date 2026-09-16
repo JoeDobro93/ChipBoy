@@ -5481,3 +5481,27 @@ TEST_CASE("a channel reads an instrument of another kind as LSDj would, from its
         CHECK_FALSE(has(w, 0xFF1A));
     }
 }
+
+// --- section 199: a ping-pong run's first pass ----------------------------
+
+TEST_CASE("a ping-pong run walks its first pass through and bounces inside the loop after", "[driver][versions]")
+{
+    // Probed on 9.4.2 and 8.5.1 (WvP3_b2_0E) and on 7.0.2 (WvP2_b2_01): four
+    // steps, the loop the last two -- 0 1 2 3 2 3 2 3. ChipBoy turned at the loop
+    // step on the way up too and played 0 3 2 3.
+    Rig r;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    auto& wv = r.bank.waves[0];
+    REQUIRE(wv.frames.size() >= 16);
+    for (int f = 0; f < 16; ++f) wv.frames[size_t(f)].s.fill(uint8_t(f));
+    auto& i = r.bank.instruments[0]; i = Instrument::defaults(InstrumentType::Wave, "pp"); i.used = true;
+    i.wave = 1; i.frameLength = 4; i.frameLoopStep = 2; i.frameLoop = bank::FrameLoop::PingPong; i.frameAdvance = 4; i.frameStart = 0;
+    ChannelParams p; p.instrument = 1; r.drv.setParams(2, p);
+    std::vector<int> w0;
+    auto scan = [&](const std::vector<RegWrite>& w) { for (const auto& x : w) if (x.addr == 0xFF30) w0.push_back(x.value); };
+    scan(r.block({ cellOn(2, 60, 1) }, 200));
+    for (int k = 0; k < 40; ++k) scan(r.block({}, 200));
+    REQUIRE(w0.size() >= 8);
+    const std::vector<int> want = { 0x00, 0x55, 0xAA, 0xFF, 0xAA, 0xFF, 0xAA, 0xFF };
+    CHECK(std::vector<int>(w0.begin(), w0.begin() + 8) == want);
+}
