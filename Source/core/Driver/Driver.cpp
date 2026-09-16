@@ -58,6 +58,25 @@ inline int vibWave(bank::VibShape shape, int i)
 constexpr int kVibDepth256[16] = {
     32, 64, 96, 128, 192, 256, 384, 512, 640, 768, 896, 1024, 1280, 1536, 1792, 2048
 };
+/// Section 203: the ladders the older versions read the depth through, measured
+/// at C3 and D#6 on every archive ROM. 6.8.2 - 7.7.5 (5.8.8 - 6.4.5 with depth
+/// 0 on) and 5.7.8; the latter's sixteen integers are also the unit laws' (3.6.5
+/// - 5.0.3), times the note's divider.
+constexpr int kVibLadder68[16] = { 0, 2, 3, 4, 6, 8, 11, 15, 19, 24, 29, 35, 42, 49, 56, 64 };
+constexpr int kVibLadder57[16] = { 0, 1, 2, 3, 4, 5, 7, 9, 11, 13, 16, 19, 22, 25, 28, 31 };
+inline int vibMultiplier(bank::VibLadder ladder, int depth)
+{
+    const int d = depth & 15;
+    switch (ladder) {
+        case bank::VibLadder::Lsdj78: return d == 0 ? 0 : kVibDepth256[d] / 32;
+        case bank::VibLadder::Lsdj68: return kVibLadder68[d];
+        case bank::VibLadder::Lsdj58: return d == 0 ? 1 : kVibLadder68[d];
+        case bank::VibLadder::Lsdj57:
+        case bank::VibLadder::Units39:
+        case bank::VibLadder::Units36: return kVibLadder57[d];
+        default: return kVibDepth256[d] / 32;
+    }
+}
 /// Section 174: where a vibrato starts -- $0000 with the direction bit set,
 /// else $8000, or $FC00 for the saw (2:$7E64).
 inline uint16_t vibStartPhase(bank::VibDir dir, bank::VibShape shape)
@@ -865,14 +884,14 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // second pulse (section 49). The note itself stays what the cell said.
     v.noteTsp = core.transpose ? v.cellTranspose : int8_t(0);
     v.instTranspose = (ch == 1 && core.type == InstrumentType::Pulse) ? core.pu2Transpose : int8_t(0);
-    v.noiseTsp = 0; v.noiseReg = 0; v.noiseRegStep = 0; v.noiseBend256 = 0; v.noiseBend9 = 0;   // S and P on NOI start over (sections 55 and 66)
+    v.noiseTsp = 0; v.noiseReg = 0; v.noiseRegStep = 0; v.noiseBend256 = 0; v.noiseBend9 = 0; v.noiseTspReg = 0;   // S and P on NOI start over (sections 55 and 66)
     v.noiseTableTsp = 0;                                                                          // section 188
     v.instKey = instrumentKey(ch, vel);
     v.ticks = 0; v.vibPhase = vibStartPhase(v.inst.vib.dir, v.inst.vib.shape); v.pitchCount = 0;
     // Section 112: a note starts on the instrument's own finetune, not on zero
     // -- down on PU1, up on PU2, so a pair of pulses beat. A cell's F writes
     // over it for the note in progress and the next note-on brings it back.
-    v.fineOffset = 0; v.fineQueued = 0; v.drumOffset = 0.0;
+    v.fineOffset = 0; v.fineQueued = 0; v.drumOffset = 0.0; v.fineUnits = 0;
     v.fineTune = (v.inst.type == InstrumentType::Pulse && v.inst.fineTune != 0)
                      ? int16_t(ch == 1 ? int(v.inst.fineTune) : -int(v.inst.fineTune))
                      : (v.inst.type == InstrumentType::Wave ? int16_t(int8_t(v.inst.fineTune)) : int16_t(0));   // section 170
@@ -1230,8 +1249,15 @@ int Driver::vibratoFine(const Voice& v) const
     // Section 174: the waveform entry for the phase's top six bits times the
     // depth's multiplier; the direction chose the start phase, not the sign.
     if (!v.vibOn || v.ticks < v.vibDelay) return 0;
-    const int value = vibWave(v.vibShape, int(v.vibPhase >> 10) & 63);
-    return value * (kVibDepth256[v.vibDepth & 15] / 32);
+    int value = vibWave(v.vibShape, int(v.vibPhase >> 10) & 63);
+    const auto ladder = v.inst.vibLadder;
+    const int m = vibMultiplier(ladder, v.vibDepth);                // section 203: the version's ladder
+    // Section 203: before 7.7.6 the waveform's downward entries are one's
+    // complements, one short -- -1, -3, ... -31 for 9.x's -2, -4, ... -32 (5.7.8
+    // - 7.0.2 measured: `-3 -8 -13 -18` a step at C3 for a multiplier of 11
+    // where 9.x's entries give `-5 -10 -15 -20`, and a peak of `-81` for `-84`).
+    if (value < 0 && (ladder == bank::VibLadder::Lsdj68 || ladder == bank::VibLadder::Lsdj58 || ladder == bank::VibLadder::Lsdj57)) value += 1;
+    return value * m;
 }
 
 /// Section 187: a kit's vibrato swings the period register by the depth
@@ -1250,9 +1276,26 @@ int Driver::kitVibratoUnits(const Voice& v) const
 /// The vibrato in Drum mode, in period units: the same triangle and the same
 /// depth table, but the swing is the period's, not the note's -- LSDj works in
 /// the register there and one semitone is worth kDrumUnitsPerSemitone units.
-double Driver::vibratoDrumUnits(const Voice& v) const
+double Driver::vibratoDrumUnits(const Voice& v, int basePeriod) const
 {
     if (!v.vibOn || v.ticks < v.vibDelay) return 0.0;
+    if (v.inst.vibLadder == bank::VibLadder::Units39 || v.inst.vibLadder == bank::VibLadder::Units36) {
+        // Section 203: before 5.7.8 the swing is the waveform entry times the
+        // ladder's integer times the note's frequency divider in sixty-fourths,
+        // over 32 and rounded up, in period units (5.0.3 at C3, depth 6: `-4
+        // -10 -17 -23 -30` a step, `-102 / +105` at the peaks). From 3.7.5 the
+        // downward entries are the one's complements, one short (`-451` for
+        // `+465` at depth F); 3.6.x's are symmetric. The first half of the swing
+        // lowers the period, so a downward entry comes back positive here: the
+        // caller subtracts.
+        int value = vibWave(v.vibShape, int(v.vibPhase >> 10) & 63);
+        if (value < 0 && v.inst.vibLadder == bank::VibLadder::Units39) value += 1;
+        const int scale = (2048 - std::clamp(basePeriod, 0, 2047)) >> 6;
+        const int prod = std::abs(value) * scale * kVibLadder57[v.vibDepth & 15];
+        // The ROM floors the signed offset: a downward step rounds away from
+        // the note (`-4` for -3.3), an upward one toward it (`+6` for 6.6).
+        return value < 0 ? double((prod + 31) / 32) : -double(prod / 32);
+    }
     return double(vibratoFine(v)) / 256.0 * kDrumUnitsPerSemitone;
 }
 
@@ -1353,7 +1396,7 @@ int Driver::computePeriod(int ch)
         // falling off the bottom really does (docs/LSDJ_PARITY.md section 5).
         const int base = periodForNote(noteOfVoice(ch), wave);
         if (base < 0) return -1;
-        double per = double(base) + v.drumOffset - vibratoDrumUnits(v);
+        double per = double(base) + v.drumOffset + double(v.fineUnits) - vibratoDrumUnits(v, base);   // section 204: F's units ride here
         per = std::fmod(per, 2048.0);
         if (per < 0.0) per += 2048.0;
         return std::clamp(int(std::floor(per + 0.5)), 0, 2047);
@@ -1497,9 +1540,14 @@ uint8_t Driver::noiseNr43(int ch)
         // A change of the column rewrites the byte from the note and drops the
         // S/P delta with it (NOI_S03_tsp); a P already stepped this tick keeps
         // its step, as the ROM's P runs on from the rewritten byte (NOI_P02_tbl).
-        if (tsp != int(v.noiseTableTsp)) { v.noiseTableTsp = int8_t(std::clamp(tsp, -128, 127)); v.noiseReg = (v.noiseRegStep && !v.noiseStepFresh) ? v.noiseRegStep : uint8_t(0); }
-        const uint8_t withTsp = uint8_t((int(base) - tsp) & 0xFF);
+        // Section 207: on 3.x the column adds up nibble by nibble in a running
+        // byte of its own as each row is read (stepTableLane), nothing is
+        // rewritten on a change, and the note-on's trigger is the plain byte.
+        const bool nibbles = v.inst.noiseTspNibbles;
+        if (!nibbles && tsp != int(v.noiseTableTsp)) { v.noiseTableTsp = int8_t(std::clamp(tsp, -128, 127)); v.noiseReg = (v.noiseRegStep && !v.noiseStepFresh) ? v.noiseRegStep : uint8_t(0); }
+        const uint8_t withTsp = nibbles ? base : uint8_t((int(base) - tsp) & 0xFF);
         uint8_t delta = v.noiseReg;
+        if (nibbles && !plainTrigger_) delta = bank::noiseNibbleAdd(delta, v.noiseTspReg);
         if (v.chordN && (v.chordIdx % 2) == 1) delta = bank::noiseNibbleAdd(delta, uint8_t((v.chord[1] << 4) | (v.chord[2] & 15)));
         uint8_t nr = bank::noiseNibbleSub(withTsp, delta);
         if (v.inst.noiseStable) nr = uint8_t((nr & ~8) | (withTsp & 8));
@@ -2284,6 +2332,9 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             // transpose of `x` semitones plus `y`/32. Both are absolute -- three
             // in a row leave the same offset as one -- and a note-on clears them.
             // Inert on noise.
+            // Section 204: under the register law (5.0.3) it is `y` period units
+            // down, x ignored, on both pulses.
+            else if (pulse && v.inst.pitchRegisterUnits) { v.fineUnits = int16_t(-(c.b & 15)); if (live) writePeriod(ch, false); }
             else if (pulse && ch == 0) { v.fineTune = int16_t(-8 * (c.b & 15)); if (live) writePeriod(ch, false); }
             else if (pulse && ch == 1) {
                 v.instTranspose = int8_t(c.a & 15);
@@ -2355,7 +2406,10 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
                 const int floorPer = periodForNote(double(lowestNote(waveCh)), waveCh);
                 const int basePer = periodForNote(baseNote, waveCh);
                 if (basePer < 0) { if (live) writePeriod(ch, false); break; }
-                const int curPer = basePer + int(std::lround(v.drumOffset));
+                int curPer = basePer + int(std::lround(v.drumOffset));
+                // Section 206: a note's L slides from the period the channel had
+                // -- the trigger carries it, and the DRUM offset walks to zero.
+                if (inNoteOn_ && !fromTable && v.lastPeriod >= 0) { curPer = int(v.lastPeriod); v.drumOffset = double(curPer - basePer); }
                 int tgtPer = periodForNote(baseNote + double(tsp), waveCh);
                 if (tgtPer < 0) tgtPer = floorPer;                     // out of range: the bottom
                 tgtPer = std::clamp(tgtPer, floorPer, 2047);
@@ -2632,7 +2686,7 @@ void Driver::revertCommand(int ch, Cmd cmd)
         case Cmd::F:
             if (i.type == InstrumentType::Wave) setFrameStep(ch, 0, live);
             else if (pulse) {                                           // section 78
-                v.fineTune = 0;
+                v.fineTune = 0; v.fineUnits = 0;
                 if (ch == 1) v.instTranspose = i.pu2Transpose;          // the instrument's own PU2 transpose back (section 49)
                 if (live) writePeriod(ch, false);
             }
@@ -2988,6 +3042,10 @@ void Driver::stepTableLane(int ch, int lane)
         // same row holds it -- the row runs again next tick, and hops again.
         if (raw.cmd == Cmd::H && v.hopTaken) { v.hopTaken = false; if (step != was) continue; return; }
         if (v.tableHopped) { v.tableHopped = false; return; }   // a B took its hop (section 73)
+        // Section 207: on 3.x noise the row's transpose column goes into the
+        // running byte, nibble by nibble, as the row plays -- an H row's never.
+        if (lane == 1 && v.inst.type == InstrumentType::Noise && v.inst.noiseTspNibbles && s.hasTranspose)
+            v.noiseTspReg = bank::noiseNibbleAdd(v.noiseTspReg, uint8_t(int8_t(s.transpose)));
         if (step + 1 < kTableSteps) { ++step; return; }
         switch (t->end) {
             case TableEnd::Loop: step = 0; break;

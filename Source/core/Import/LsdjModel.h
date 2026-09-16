@@ -47,6 +47,7 @@
 #include <cstdint>
 
 #include "core/Import/LsdjKitDist.h"
+#include "core/Bank/Bank.h"
 
 namespace chipboy::lsdj {
 
@@ -56,6 +57,14 @@ enum class NoiseRule : uint8_t {
     Raw,        ///< FF - note byte; format 15
     Map         ///< the measured musical map, `noiseMap`; format 22
 };
+/// Section 204: what `F` does on the pulses -- nothing before 5.0.3, `y` period
+/// units down on 5.0.3, `y`/32 of a semitone from 5.7.8.
+enum class FineCmdLaw : uint8_t { None, Units, Semitone32 };
+
+/// Section 207: whether an S on noise keeps the note's LFSR width bit -- never
+/// before 4.1.0, by byte 2 (S MODE, nonzero keeps it) from 4.1.0.
+enum class NoiseStable : uint8_t { Free, Byte2 };
+
 /// How an instrument's envelope bytes are read (sections 51 and 58).
 enum class EnvelopeLaw : uint8_t {
     Chip,            ///< byte 1 is NRx2 and nothing else; formats 0-7
@@ -153,6 +162,15 @@ struct LsdjModel {
     /// after its own (every ROM through 7.0.2; the changelog's 8.3.4 fix ends
     /// it, so 8.1.0 - 8.3.3 are taken as late with no ROM to ask).
     bool           retrigTableLate;
+    /// Section 205: the wave instrument's loop nibble (section 201) is read
+    /// from 6.0.1; before, the loop is the run's last step whatever it holds.
+    bool           waveRepeatNibble;
+    bank::VibLadder vibLadder;       ///< section 203: the version's vibrato depth ladder
+    FineCmdLaw     fineCmdLaw;       ///< section 204
+    bool           noiseP;           ///< section 205: `P` reaches the noise channel (5.4.4 and later)
+    NoiseStable    noiseStableRule;  ///< section 207
+    bool           noiseTspNibbles;  ///< section 207: a table's transposes add up nibble by nibble in the running byte (3.x)
+    bool           noiseChainTsp;    ///< section 207: a chain transpose reaches the noise channel (3.6.5 and later)
 };
 
 /// Every model, newest first. `count` receives how many.

@@ -34,6 +34,15 @@ enum class NoteOff : uint8_t { Kill = 0, Release = 1, Ignore = 2 };
 /// the note; bit 0 picks which half it starts on, and shape 3 is no vibrato.
 enum class VibShape : uint8_t { Triangle = 0, Saw = 1, Square = 2, Off = 3 };
 enum class VibDir : uint8_t { Down = 0, Up = 1 };
+/// Section 203: which depth ladder a `V` reads -- LSDj's own by version. Lsdj9 is
+/// section 174's (1 2 3 4 6 8 12 16 20 24 28 32 40 48 56 64 times the waveform's 32,
+/// in 1/256 semitone); Lsdj78 the same with depth 0 off (7.7.6 - 8.8.6); Lsdj68
+/// 0 2 3 4 6 8 11 15 19 24 29 35 42 49 56 64 (6.8.2 - 7.7.5); Lsdj58 that with
+/// depth 0 on (5.8.8 - 6.4.5); Lsdj57 0 1 2 3 4 5 7 9 11 13 16 19 22 25 28 31
+/// (5.7.8); Units39 those sixteen in **period units** times the note's divider
+/// `(2048 - period) >> 6`, the downward half short by a thirty-second (3.7.5 -
+/// 5.0.3); Units36 the same, symmetric (3.6.5 - 3.7.4).
+enum class VibLadder : uint8_t { Lsdj9 = 0, Lsdj78 = 1, Lsdj68 = 2, Lsdj58 = 3, Lsdj57 = 4, Units39 = 5, Units36 = 6 };
 /// How fast P, L and V move (docs/COMMANDS_AND_TEMPO.md section 7). Fast is
 /// 360 updates a second, tempo-independent; Tick is one per tracker tick, so
 /// the effect follows the tempo; Step is Fast with P as an immediate offset
@@ -217,6 +226,7 @@ struct InstrumentCore {
     /// Section 187: a kit's vibrato at twice 9.4.2's depth -- what every LSDj
     /// before 9.4.0 gave a kit's `V`; the importer sets it for those versions.
     bool     vibDouble = false;
+    VibLadder vibLadder = VibLadder::Lsdj9;   ///< section 203: the version's depth ladder; the importer sets it
     /// Section 195: a roll leaves a DRUM instrument's pitch word where it is,
     /// as every LSDj before 9.4.0 did; off, each hit starts from the note's
     /// entry (section 185, 9.4.0 and later). The importer sets it by version.
@@ -307,6 +317,10 @@ struct InstrumentCore {
     bool     noiseShapeMode = false;
     uint8_t  noiseShape = 0xFF;
     bool     noiseStable = false;
+    /// Section 207: a table's transpose column is subtracted from the running
+    /// NR43 nibble by nibble as each row is read, adding up (LSDj 3.x); off,
+    /// the column is a byte off the note's, rewritten when it changes (4.x - 8.x).
+    bool     noiseTspNibbles = false;
     /// Section 189: LSDj 8.1.0 - 8.5.1's hardware envelope stages, for a Chip
     /// envelope: NRx2 bytes the driver writes with a retrigger once the stage
     /// before has stepped `|volume - next volume|` levels and half a step more

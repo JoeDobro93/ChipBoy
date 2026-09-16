@@ -196,7 +196,7 @@ TEST_CASE("the default codes expand to the default wave and instrument", "[lsdj]
 TEST_CASE("a model is chosen by format, by ROM title, by name, or the newest", "[lsdj]")
 {
     int n = 0; const auto* const* models = lsdjModels(n);
-    REQUIRE(n == 14);                                              // three inside format 22 (docs/LSDJ_VERSIONS.md section 11), the 7.5 model split at 7.7.6 (section 198)
+    REQUIRE(n == 19);                                              // three inside format 22 (docs/LSDJ_VERSIONS.md section 11), the 7.5 model split at 7.7.6 (section 198), 5.7.8 / 5.8.8 / 6.0.1, 5.0.3, 3.7.5 (sections 203-205), 4.0.4 (section 207)
     CHECK(std::string(lsdjLatestModel().name).find("9.4.2") != std::string::npos);
     CHECK(lsdjModelForFormat(22) == models[0]);
     CHECK(lsdjModelForFormat(15)->formatVersion == 15);          // 8.8.6, measured
@@ -1547,6 +1547,116 @@ TEST_CASE("a 7.0.2 wave instrument's PLAY and REPEAT read by the old laws", "[ls
     CHECK(bank->instruments[0].frameLoop == bank::FrameLoop::PingPong); CHECK(int(bank->instruments[0].frameLoopStep) == 0);
 }
 
+TEST_CASE("the models carry the vibrato ladder, F's law, P on noise and the loop nibble by version", "[lsdj][versions]")
+{
+    // Sections 203 - 205.
+    using bank::VibLadder;
+    CHECK(lsdjModelForRomVersion("9.4.2")->vibLadder == VibLadder::Lsdj9);
+    CHECK(lsdjModelForRomVersion("8.5.1")->vibLadder == VibLadder::Lsdj78);
+    CHECK(lsdjModelForRomVersion("7.0.2")->vibLadder == VibLadder::Lsdj68);
+    CHECK(lsdjModelForRomVersion("6.0.1")->vibLadder == VibLadder::Lsdj58); CHECK(lsdjModelForRomVersion("5.8.8")->vibLadder == VibLadder::Lsdj58);
+    CHECK(lsdjModelForRomVersion("5.7.8")->vibLadder == VibLadder::Lsdj57);
+    CHECK(lsdjModelForRomVersion("5.0.3")->vibLadder == VibLadder::Units39); CHECK(lsdjModelForRomVersion("3.9.2")->vibLadder == VibLadder::Units39);
+    CHECK(lsdjModelForRomVersion("3.6.8")->vibLadder == VibLadder::Units36);
+    CHECK(lsdjModelForRomVersion("5.7.8")->fineCmdLaw == FineCmdLaw::Semitone32);
+    CHECK(lsdjModelForRomVersion("5.0.3")->fineCmdLaw == FineCmdLaw::Units);
+    CHECK(lsdjModelForRomVersion("4.9.4")->fineCmdLaw == FineCmdLaw::None);
+    CHECK(lsdjModelForRomVersion("5.7.8")->noiseP); CHECK_FALSE(lsdjModelForRomVersion("5.0.3")->noiseP);
+    CHECK(lsdjModelForRomVersion("6.0.1")->waveRepeatNibble); CHECK_FALSE(lsdjModelForRomVersion("5.9.9")->waveRepeatNibble);
+    CHECK(lsdjModelForFormat(4) == lsdjModelForRomVersion("6.0.1"));      // a format-4 save without a ROM takes the newest of the three
+    CHECK(lsdjModelForFormat(3) == lsdjModelForRomVersion("5.0.3"));
+    CHECK(lsdjModelForRomVersion("3.7.5") == lsdjModelForRomVersion("3.9.2")); CHECK(lsdjModelForRomVersion("3.6.5") == lsdjModelForRomVersion("3.6.8"));
+    // The importer: a 4.7.3 song's F on a pulse and a 5.0.3 song's P on noise
+    // are dropped with a note; 5.7.8 keeps both.
+    auto song = blankSong(3);
+    song[kInstAlloc + 0] = 1; song[kInstAlloc + 1] = 1;
+    uint8_t* i0 = song.data() + kInst; i0[0] = 0; i0[1] = 0xF0; i0[7] = 0x83;
+    uint8_t* i1 = song.data() + kInst + 16; i1[0] = 3; i1[1] = 0xF0; i1[4] = 0xFF; i1[7] = 3;
+    song[kPhraseAlloc] |= 3;
+    song[kNotes] = uint8_t(60 - 35); song[kPhraseInst] = 0; song[kCmd] = 5; song[kCmdV] = 0x03;                      // phrase 0: F03 on PU1
+    song[kNotes + 16] = 0x20; song[kPhraseInst + 16] = 1; song[kCmd + 16] = 12; song[kCmdV + 16] = 0x02;              // phrase 1: P02 on NOI
+    song[kChainPhrases] = 0; song[kChainPhrases + 16] = 1;
+    song[kRows + 0] = 0; song[kRows + 1] = 0xFF; song[kRows + 2] = 0xFF; song[kRows + 3] = 1;
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForRomVersion("4.7.3"), *bank, *out, sum, notes));
+    const auto* p0 = out->phrase(out->chain[0].at(0)); const auto* p1 = out->phrase(out->chain[3].at(0));
+    REQUIRE(p0 != nullptr); REQUIRE(p1 != nullptr);
+    CHECK(p0->cells[0].cmd1.cmd == bank::Cmd::None); CHECK(p1->cells[0].cmd1.cmd == bank::Cmd::None);
+    bool f = false, pn = false;
+    for (const auto& l : notes.lines) { if (l.find("F does nothing") != std::string::npos) f = true; if (l.find("P does nothing") != std::string::npos) pn = true; }
+    CHECK(f); CHECK(pn);
+    ImportNotes notes2;
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForRomVersion("5.0.3"), *bank, *out, sum, notes2));
+    p0 = out->phrase(out->chain[0].at(0)); p1 = out->phrase(out->chain[3].at(0));
+    REQUIRE(p0 != nullptr); REQUIRE(p1 != nullptr);
+    CHECK(p0->cells[0].cmd1.cmd == bank::Cmd::F); CHECK(p1->cells[0].cmd1.cmd == bank::Cmd::None);
+    CHECK(bank->instruments[0].vibLadder == VibLadder::Units39); CHECK(bank->instruments[0].pitchRegisterUnits);
+    auto song4 = blankSong(4);
+    std::copy(song.begin() + kInst, song.begin() + kInst + 32, song4.begin() + kInst);
+    song4[kInstAlloc + 0] = 1; song4[kInstAlloc + 1] = 1; song4[kPhraseAlloc] |= 3;
+    std::copy(song.begin() + kNotes, song.begin() + kNotes + 32, song4.begin() + kNotes);
+    std::copy(song.begin() + kPhraseInst, song.begin() + kPhraseInst + 32, song4.begin() + kPhraseInst);
+    std::copy(song.begin() + kCmd, song.begin() + kCmd + 32, song4.begin() + kCmd);
+    std::copy(song.begin() + kCmdV, song.begin() + kCmdV + 32, song4.begin() + kCmdV);
+    song4[kChainPhrases] = 0; song4[kChainPhrases + 16] = 1;
+    song4[kRows + 0] = 0; song4[kRows + 1] = 0xFF; song4[kRows + 2] = 0xFF; song4[kRows + 3] = 1;
+    ImportNotes notes3;
+    REQUIRE(importSong(song4.data(), song4.size(), *lsdjModelForRomVersion("5.7.8"), *bank, *out, sum, notes3));
+    p0 = out->phrase(out->chain[0].at(0)); p1 = out->phrase(out->chain[3].at(0));
+    REQUIRE(p0 != nullptr); REQUIRE(p1 != nullptr);
+    CHECK(p0->cells[0].cmd1.cmd == bank::Cmd::F); CHECK(p1->cells[0].cmd1.cmd == bank::Cmd::P);
+    CHECK(bank->instruments[0].vibLadder == VibLadder::Lsdj57);
+}
+
+TEST_CASE("the 3.x noise laws and the width bit through S come from the model", "[lsdj][versions]")
+{
+    // Sections 207 and 208.
+    CHECK(lsdjModelForRomVersion("4.0.4")->noiseStableRule == NoiseStable::Free); CHECK(lsdjModelForRomVersion("3.9.2")->noiseStableRule == NoiseStable::Free);
+    CHECK(lsdjModelForRomVersion("4.1.0")->noiseStableRule == NoiseStable::Byte2); CHECK(lsdjModelForRomVersion("4.7.3")->noiseStableRule == NoiseStable::Byte2);
+    CHECK(lsdjModelForRomVersion("5.0.3")->noiseStableRule == NoiseStable::Byte2);
+    CHECK(lsdjModelForRomVersion("3.9.2")->noiseTspNibbles); CHECK_FALSE(lsdjModelForRomVersion("4.0.4")->noiseTspNibbles);
+    CHECK_FALSE(lsdjModelForRomVersion("3.1.5")->noiseChainTsp); CHECK(lsdjModelForRomVersion("3.6.8")->noiseChainTsp);
+    CHECK(lsdjModelForRomVersion("4.1.0") != lsdjModelForRomVersion("4.0.4")); CHECK(lsdjModelForRomVersion("4.3.0") == lsdjModelForRomVersion("4.1.0"));
+    // A noise instrument with byte 2 = 01: STABLE on 4.3.0, FREE on 4.0.4 and 3.9.2, byte 2 on 5.0.3.
+    auto song = blankSong(2);
+    song[kInstAlloc + 0] = 1;
+    uint8_t* i0 = song.data() + kInst; i0[0] = 3; i0[1] = 0xF0; i0[2] = 0x01; i0[4] = 0xFF; i0[7] = 3;
+    song[kPhraseAlloc] |= 1; song[kNotes] = 0x20; song[kPhraseInst] = 0;
+    song[kChainPhrases] = 0; song[kChainTsp] = 12;                                        // a chain transpose on the noise chain
+    song[kRows + 0] = 0xFF; song[kRows + 1] = 0xFF; song[kRows + 2] = 0xFF; song[kRows + 3] = 0;
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForRomVersion("4.3.0"), *bank, *out, sum, notes));
+    CHECK(bank->instruments[0].noiseStable); CHECK_FALSE(bank->instruments[0].noiseTspNibbles);
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForRomVersion("4.0.4"), *bank, *out, sum, notes));
+    CHECK_FALSE(bank->instruments[0].noiseStable);
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForRomVersion("3.9.2"), *bank, *out, sum, notes));
+    CHECK_FALSE(bank->instruments[0].noiseStable); CHECK(bank->instruments[0].noiseTspNibbles);
+    CHECK(int(out->rowTranspose(3, 0)) == 12);                                      // 3.6.5 and later take the chain transpose
+    // 3.1.5 - 3.5.1 drop it with a note.
+    auto songA = blankSong(0);
+    songA[kInstAlloc + 0] = 1;
+    std::copy(song.begin() + kInst, song.begin() + kInst + 16, songA.begin() + kInst);
+    songA[kPhraseAlloc] |= 1; songA[kNotes] = 0x20; songA[kPhraseInst] = 0;
+    songA[kChainPhrases] = 0; songA[kChainTsp] = 12;
+    songA[kRows + 0] = 0xFF; songA[kRows + 1] = 0xFF; songA[kRows + 2] = 0xFF; songA[kRows + 3] = 0;
+    ImportNotes notes3;
+    REQUIRE(importSong(songA.data(), songA.size(), *lsdjModelForRomVersion("3.1.5"), *bank, *out, sum, notes3));
+    CHECK(int(out->rowTranspose(3, 0)) == 0);
+    bool said = false;
+    for (const auto& l : notes3.lines) if (l.find("chain transpose does nothing on the noise channel") != std::string::npos) said = true;
+    CHECK(said);
+    // Section 208: a 3.1.5 pulse instrument's byte 11 is not a finetune.
+    auto song0 = blankSong(0);
+    song0[kInstAlloc + 0] = 1;
+    uint8_t* j0 = song0.data() + kInst; j0[0] = 0; j0[1] = 0xF0; j0[7] = 0x83; j0[11] = 0x40;
+    REQUIRE(importSong(song0.data(), song0.size(), *lsdjModelForRomVersion("3.1.5"), *bank, *out, sum, notes));
+    CHECK(int(bank->instruments[0].fineTune) == 0);
+    REQUIRE(importSong(song0.data(), song0.size(), *lsdjModelForRomVersion("9.4.2"), *bank, *out, sum, notes));
+    CHECK(int(bank->instruments[0].fineTune) == 0x40);
+}
+
 TEST_CASE("before the frame run, PLAY and REPEAT read as 7.x's and a W on MANUAL is dropped", "[lsdj][versions]")
 {
     // Section 201 (W6_* on 5.7.8, 6.0.1, 6.4.5): PLAY 1 LOOP, 2 PINGPONG, 3
@@ -1573,6 +1683,8 @@ TEST_CASE("before the frame run, PLAY and REPEAT read as 7.x's and a W on MANUAL
     i0[9] = 2; i0[2] = 0x0F;                                                // PINGPONG over the whole run
     REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
     CHECK(bank->instruments[0].frameLoop == bank::FrameLoop::PingPong); CHECK(int(bank->instruments[0].frameLoopTail) == 16);
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForRomVersion("5.9.9"), *bank, *out, sum, notes));
+    CHECK(int(bank->instruments[0].frameLoopTail) == 1);                    // section 205: the nibble is read from 6.0.1
     i0[9] = 3;                                                              // MANUAL: no W moves it
     REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
     CHECK(int(bank->instruments[0].frameAdvance) == 0);

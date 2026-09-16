@@ -6083,3 +6083,99 @@ ChipBoy: `retrigTableLate` on the instrument (the importer sets it on every mode
 8.0.0). The retrigger sets a flag, the table phase of the next tick starts the instrument's own
 table from row 0 as §182's replay does on the retrigger's own tick, and that tick's table phase
 runs its row as any other.
+
+## 203. The vibrato's depth ladder by version: five ladders and two unit laws
+
+`V 0d` for every depth at C3 (period `$416`, 56 units a semitone, speed 0 so the waveform's
+peak entry is hit) on every archive ROM (`VLo_0*`), and `V 4d` at D#6 (`$797`, `V4*_pu`). The
+swing's peaks, up and down, give the multiplier of §174's ±32 waveform (1/256 semitone) or,
+before 5.7.8, the period units:
+
+- **9.2.J - 9.4.2**: §174's ladder, `1 2 3 4 6 8 12 16 20 24 28 32 40 48 56 64` for depths
+  0-F; `V x0` is a vibrato of an eighth of a semitone.
+- **7.7.6 - 8.5.1** (8.5.1 measured; the changelog's 7.8.1 "new vibrato depth table"): the
+  same ladder with depth 0 **off**. 8.8.6 is taken with it.
+- **6.8.2 - 7.7.5** (6.8.2, 7.0.2; 7.6.5 "adjusted Vx7" is unmeasured): `0 2 3 4 6 8 11 15
+  19 24 29 35 42 49 56 64` -- depth 0 off, and 6-D between §174's and 5.7.8's.
+- **5.8.8 - 6.4.5** (5.8.8, 5.9.9, 6.0.1, 6.4.5): that ladder with depth 0 on, `1 2 3 4 6 8
+  11 15 19 24 29 35 42 49 56 64`.
+- **5.7.8**: `0 1 2 3 4 5 7 9 11 13 16 19 22 25 28 31` -- half the swing of everything after.
+- **3.7.5 - 5.0.3** (3.7.5, 3.8.7, 3.8.9, 3.9.2, 4.3.0, 4.7.3, 4.8.0, 4.9.4, 5.0.3): **period
+  units**, the same sixteen integers as 5.7.8's times the note's frequency divider `(2048 -
+  period) >> 6` -- 15 a step at C3, 1 at D#6 -- and the downward half short by a
+  thirty-second: `x - (x >> 5)` (`-451 / +465` at depth F, `-16 / +16` at D#6).
+- **3.6.5 - 3.6.8**: the same, symmetric (`±465`).
+- **3.1.5 - 3.5.1**: §'s one-sided law as before, and its depth depends on the note in a way
+  this round did not settle (8 units a step at C3, 40 at D#6; the gap list).
+
+Before 7.7.6 the waveform's downward half peaks at 31 where the upward peaks at 32 (5.7.8,
+6.0.1, 7.0.2: `-81 / +76` at C3 for a multiplier of 11, `-58` for 8 where 8.5.1 and 9.x give
+`-60`); the unit laws' thirty-second is the same entry.
+
+ChipBoy: a `vibLadder` on the instrument (`Lsdj9`, `Lsdj78`, `Lsdj68`, `Lsdj58`, `Lsdj57`,
+`Units39`, `Units36`), set by the model; `vibratoFine()` reads the depth through the ladder,
+and the unit laws run in `vibratoDrumUnits()`, where every pre-5.7.8 instrument's pitch lives
+(the register law's DRUM speed). The models split for it: 5.7.8 alone, 5.8.8 - 5.9.9 and 6.0.1
+- 6.4.5 (§205), 3.6.5 - 3.7.4 and 3.7.5 - 3.9.2.
+
+## 204. `F` on the pulses by version: nothing, period units, then a thirty-second of a semitone
+
+`F12`, `F30`, `F0F` at C3 on PU1 (`F*_lo_ch0`): 9.4.2 and 5.7.8 move the period by y/32 of a
+semitone down (`-4`, `0`, `-28`; 5.7.8 two milliseconds after the trigger); 5.0.3 by **y period
+units** (`-2`, `0`, `-15`, and `F03` at D#6 `-3`); 4.9.4, 4.8.0, 4.7.3 and 3.6.8 not at all. So a
+`fineCmdLaw` on the model -- none before 5.0.3 (4.9.5 - 5.0.2 unmeasured), units on 5.0.3
+(its own model now, §205), a thirty-second from 5.7.8 -- and the importer drops the F with a
+note where it did nothing; under the register law the driver's F on a pulse sets
+`fineUnits`, a period offset the DRUM pitch carries, cleared by the note-on as the semitone
+finetune is. PU2 was not probed (the rig's second-channel song is wrong) and takes the same.
+
+## 205. `P` reaches the noise channel from 5.4.4; the wave loop nibble from 6.0.1; the models
+
+- `P02` on noise (`NOI_P02`, `P02_ch3`, `PFE_ch3`): 5.7.8 walks NR43 a tick; 5.0.3, 4.7.3,
+  4.3.0, 3.9.2 and 3.6.8 write nothing. The changelog dates it: 5.4.4 "enabled P command for
+  noise channel" (5.4.3 the C, §'s `noiseChord`). `noiseP` on the model; the importer drops it
+  with a note before.
+- The wave instrument's loop nibble (§201) is read from 6.0.1: on 5.9.9, 5.8.8, 5.7.8 and 5.0.3
+  a `W12` under nibble F holds the last frame as nibble 0 does (`W6_p1_rF_W12`). `waveRepeatNibble`
+  on the model; the tail is 1 without it.
+- New models, all from measured ROMs: 6.0.1 - 6.4.5 (formats 4-6, the one a format-4 or -5 save
+  takes without a ROM), 5.8.8 - 5.9.9 (format 4), 5.7.8 (format 4), 5.0.3 (format 3, the
+  one a format-3 save takes), 4.8.0 - 4.9.4 (format 3), 3.7.5 - 3.9.2 (format 2), 3.6.5 -
+  3.7.4 (format 2).
+
+## 206. Under the register law a note's `L` slides from the period the channel had
+
+`L03` on a second note (`L03_second_ch0`, 5.0.3): the note-on triggers at the **old** period
+(`TRIG` with NR13 unchanged at `97`) and the pitch walks three units an instant to the new
+note (`9A 9D A0 ...`); the bare note's `L02` (`bare`) the same at two. ChipBoy's register-law
+slide started from the new note's period plus the DRUM offset, which at a note-on is the new
+note itself, so the trigger carried the target and nothing slid. Now the note-on's L takes
+the last period written as its start and puts the difference in the DRUM offset, so the
+trigger carries the old period and the offset walks to zero. A first note's `L` (no period
+before it) still plays the note where 5.0.3 slides up from period 0 over seconds, 5.7.8 stays
+at 0, and 5.8.8 - 6.4.5 chirp from it for four milliseconds (the gap list).
+
+## 207. The 3.x noise channel: S crosses the width bit, the table's transposes add up nibble by nibble, the chain's do nothing
+
+`S03` on a noise note whose NR43 is `10` (`NOI_S03_b2*`, byte 2 nonzero): 3.1.5, 3.5.1, 3.6.8,
+3.9.2 and 4.0.4 write `1D` -- each nibble less the command's, the width bit (bit 3) crossed --
+where 4.1.0, 4.3.0, 4.4.0, 4.5.4 and 4.7.3 write `15`, the width bit kept from the note; with
+byte 2 zero they cross it as 3.x does (`NOI_S03*` on 4.3.0 and 4.7.3), so §188's S MODE holds
+from 4.1.0 (the changelog's 4.0.5) and 4.0.4 has none. A table's transpose column (`tsp_tbl_noi`: 3, 7, C, F4 with an H): 4.0.4
+and later write the note's byte less the row's, `FD F9 F4` (§188); the 3.x ROMs subtract each
+row's value **from the running byte, nibble by nibble** -- `0D 06 0A 07`, the H row's own
+column skipped as the hop lands on row 0 -- and `NOI_S03_tsp` shows the S's byte taking the
+rows' subtractions on top (`1D 1A 17 14`). A chain transpose on the noise channel moves nothing
+on 3.1.5 - 3.5.1 (`chain_tsp_noi`: `10` where 3.6.8 and later write `00`).
+
+ChipBoy: `noiseStable` on the model is a rule now -- Free (3.1.5 - 4.0.4), Byte2 (4.1.0 and
+later) -- so 4.0.4 is its own model and 4.1.0 - 4.3.0 the next; `noiseTspNibbles` on the instrument makes the table's column an
+addition to the running byte when its row is read, no byte subtraction from the note and no
+rewrite on change; `noiseChainTsp` off on the model drops a chain transpose on the noise channel
+with a note.
+
+## 208. Before 3.6.5 the pulse FINETUNE byte is not read at all
+
+`FT_pu1` on 3.1.5 (byte 11 = `40`): the note plays at `97`, ChipBoy at `95` -- the decoder read
+byte 11 as 9.x's finetune on every model without the nibble or unit laws. It reads it from
+format 15 only (8.8.6, where §191's nibble is gone); 3.1.5 - 3.5.1 have no finetune.

@@ -84,6 +84,7 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     if (i.pitchRegisterUnits) o->setProperty("pitchRegisterUnits", true);          // section 88
     o->setProperty("vibShape", int(i.vib.shape)); o->setProperty("vibDir", int(i.vib.dir)); o->setProperty("vibSpeed", int(i.vib.speed)); o->setProperty("vibDepth", int(i.vib.depth)); o->setProperty("vibDelay", int(i.vib.delay));
     if (i.vibDouble) o->setProperty("vibDouble", true);   /* section 187 */
+    if (i.vibLadder != bank::VibLadder::Lsdj9) o->setProperty("vibLadder", int(i.vibLadder));   /* section 203 */
     o->setProperty("duty", int(i.duty));
     { Array<var> seq; for (int k = 0; k < i.dutySeqLen; ++k) seq.add(int(i.dutySeq[size_t(k)])); o->setProperty("dutySeq", seq); }
     o->setProperty("envVol", int(i.envVol)); o->setProperty("envDir", int(i.envDir)); o->setProperty("envRate", int(i.envRate));
@@ -113,6 +114,7 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     o->setProperty("sweepRate", int(i.sweepRate)); o->setProperty("sweepDown", i.sweepDown); o->setProperty("sweepShift", int(i.sweepShift));
     if (i.noiseLsdjMap) o->setProperty("noiseLsdjMap", true);          // section 81
     if (i.noiseShapeMode) { o->setProperty("noiseShapeMode", true); o->setProperty("noiseShape", int(i.noiseShape)); o->setProperty("noiseStable", i.noiseStable); }   // section 188
+    if (i.noiseTspNibbles) o->setProperty("noiseTspNibbles", true);   // section 207
     if (i.envStage2) { o->setProperty("envStage2", int(i.envStage2)); o->setProperty("envStage3", int(i.envStage3)); }   // section 189
     if (i.retrigKeepsPitch) o->setProperty("retrigKeepsPitch", true);    // section 195
     if (i.retrigTableLate) o->setProperty("retrigTableLate", true);      // section 202
@@ -159,6 +161,7 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     // The vibrato's shape used to carry its direction (Triangle, Square,
     // SawUp, SawDown); it is a shape and a direction now.
     i.vibDouble = bool(o->getProperty("vibDouble"));
+    i.vibLadder = bank::VibLadder(std::clamp(getOr(o, "vibLadder", 0), 0, 6));   // section 203
     if (o->hasProperty("vibDir")) {
         i.vib.shape = VibShape(std::clamp(getOr(o, "vibShape", 0), 0, 3));   // section 114: 3 is off
         i.vib.dir = VibDir(std::clamp(getOr(o, "vibDir", 0), 0, 1));
@@ -201,6 +204,7 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.noiseShapeMode = bool(o->getProperty("noiseShapeMode"));         // section 188
     i.noiseShape = uint8_t(std::clamp(getOr(o, "noiseShape", 255), 0, 255));
     i.noiseStable = bool(o->getProperty("noiseStable"));
+    i.noiseTspNibbles = bool(o->getProperty("noiseTspNibbles"));          // section 207
     i.envStage2 = uint8_t(std::clamp(getOr(o, "envStage2", 0), 0, 255));   // section 189
     i.envStage3 = uint8_t(std::clamp(getOr(o, "envStage3", 0), 0, 255));
     i.retrigKeepsPitch = bool(o->getProperty("retrigKeepsPitch"));       // section 195

@@ -4507,6 +4507,143 @@ TEST_CASE("with retrigTableLate a retrigger starts the instrument's table over o
     CHECK(duties(true) == std::vector<int>{ 3, 3, 1, 2, 3, 1, 2, 3 });
 }
 
+namespace {
+/// The period register's swing about the note over the blocks: (lowest, highest) minus the note-on's period.
+std::pair<int, int> periodSwing(const std::vector<RegWrite>& w, int lo13, int lo14)
+{
+    int nr13 = 0, nr14 = 0, base = -1, lo = 0, hi = 0; bool seen14 = false;
+    for (size_t k = 0; k < w.size(); ++k) {
+        const auto& x = w[k];
+        if (x.addr == lo13) nr13 = x.value;
+        else if (x.addr == lo14) { nr14 = x.value & 7; seen14 = true; }
+        else continue;
+        // The pair is one write: read the period once the burst is over.
+        size_t j = k + 1;
+        while (j < w.size() && w[j].addr != lo13 && w[j].addr != lo14) ++j;
+        if (j < w.size() && w[j].cycle - x.cycle < 64) continue;
+        if (!seen14) continue;
+        const int per = (nr14 << 8) | nr13;
+        if (base < 0) { base = per; continue; }
+        lo = std::min(lo, per - base); hi = std::max(hi, per - base);
+    }
+    return { lo, hi };
+}
+}
+
+TEST_CASE("the vibrato's depth follows the instrument's ladder", "[driver][vibrato]")
+{
+    // Section 203, at C3 (56 units a semitone): the 9.x ladder's depth 2 is a
+    // multiplier of 3 and its depth 6 of 12; 5.7.8's are 2 and 7; the unit laws
+    // swing the register by the ladder times the divider in sixty-fourths (15
+    // at C3), the downward half a thirty-second short from 3.7.5; and depth 0
+    // is off on 6.8.2 - 8.8.6, an eighth of a semitone before and after.
+    const auto swing = [](bank::VibLadder ladder, int depth, bool registerLaw) {
+        auto r = std::make_unique<Rig>();
+        r->tickHz = 100.0;
+        r->song.noteSource[0] = tracker::NoteSource::Tracker;
+        auto& i = r->bank.instruments[1];
+        i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Vib");
+        i.used = true; i.vibLadder = ladder;
+        if (registerLaw) { i.pitchSpeed = bank::PitchSpeed::Drum; i.pitchRegisterUnits = true; }
+        ChannelParams p; p.instrument = 2; r->drv.setParams(0, p);
+        NoteEvent on = cellOn(0, 48, 2); on.cmd1 = { Cmd::V, 0, int16_t(depth), 0 };
+        std::vector<RegWrite> w = r->block({ on }, 480);
+        for (int k = 0; k < 80; ++k) { auto more = r->block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+        return periodSwing(w, 0xFF13, 0xFF14);
+    };
+    const auto near = [](std::pair<int, int> got, int lo, int hi) { return std::abs(got.first - lo) <= 1 && std::abs(got.second - hi) <= 1; };
+    CHECK(near(swing(bank::VibLadder::Lsdj9, 2, false), -22, 21));
+    CHECK(near(swing(bank::VibLadder::Lsdj9, 6, false), -91, 83));
+    CHECK(near(swing(bank::VibLadder::Lsdj57, 2, false), -15, 14));
+    CHECK(near(swing(bank::VibLadder::Lsdj57, 6, false), -51, 49));
+    CHECK(near(swing(bank::VibLadder::Lsdj68, 6, false), -81, 76));            // the downward half peaks at 31/32
+    CHECK(swing(bank::VibLadder::Lsdj68, 0, false) == std::pair<int, int>{ 0, 0 });
+    CHECK(near(swing(bank::VibLadder::Lsdj58, 0, false), -7, 7));
+    CHECK(swing(bank::VibLadder::Lsdj78, 0, false) == std::pair<int, int>{ 0, 0 });
+    CHECK(near(swing(bank::VibLadder::Lsdj78, 6, false), -91, 83));
+    CHECK(swing(bank::VibLadder::Units39, 6, true) == std::pair<int, int>{ -102, 105 });
+    CHECK(swing(bank::VibLadder::Units36, 6, true) == std::pair<int, int>{ -105, 105 });
+    CHECK(swing(bank::VibLadder::Units39, 15, true) == std::pair<int, int>{ -451, 465 });
+}
+
+TEST_CASE("under the register law F on a pulse is period units down and a note's L slides from the old period", "[driver][commands]")
+{
+    // Section 204 (F03 on 5.0.3: 97 -> 94) and section 206 (L03_second_ch0 on
+    // 5.0.3: the trigger keeps the old period and walks three units an instant).
+    const auto run = [](bool registerLaw, std::vector<NoteEvent> first, std::vector<NoteEvent> second, int blocksBetween) {
+        auto r = std::make_unique<Rig>();
+        r->tickHz = 100.0;
+        r->song.noteSource[0] = tracker::NoteSource::Tracker;
+        auto& i = r->bank.instruments[1];
+        i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Reg");
+        i.used = true;
+        if (registerLaw) { i.pitchSpeed = bank::PitchSpeed::Drum; i.pitchRegisterUnits = true; }
+        ChannelParams p; p.instrument = 2; r->drv.setParams(0, p);
+        std::vector<RegWrite> w = r->block(first, 480);
+        for (int k = 0; k < blocksBetween; ++k) r->block({}, 480);
+        if (!second.empty()) { w = r->block(second, 480); auto more = r->block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+        return w;
+    };
+    // Every period the block wrote, in order, from the NR13/NR14 pairs.
+    const auto periods = [](const std::vector<RegWrite>& w) {
+        std::vector<int> out; int nr13 = 0, nr14 = 0; bool seen14 = false;
+        for (const auto& x : w) {
+            if (x.addr == 0xFF13) nr13 = x.value; else if (x.addr == 0xFF14) { nr14 = x.value & 7; seen14 = true; } else continue;
+            if (seen14) out.push_back((nr14 << 8) | nr13);
+        }
+        return out;
+    };
+    NoteEvent plain = cellOn(0, 48, 2);
+    NoteEvent withF = cellOn(0, 48, 2); withF.cmd1 = { Cmd::F, 0, 3, 0 };
+    // The finetune lands on the update after the trigger (section 163), so the
+    // block's last period is the one to read.
+    const int base = periods(run(true, { plain }, {}, 0)).back();
+    CHECK(periods(run(true, { withF }, {}, 0)).back() == base - 3);             // section 204: three units, x ignored
+    CHECK(periods(run(false, { withF }, {}, 0)).back() < base - 3);             // 9.x: 3/32 of a semitone, five units here
+    // Section 206: note 60, then note 65 with L02 (three updates): the second
+    // trigger carries note 60's period and the walk ends on note 65's.
+    NoteEvent hi = cellOn(0, 65, 2); hi.cmd1 = { Cmd::L, 2, 0, 0 };
+    const int per60 = periods(run(true, { cellOn(0, 60, 2) }, {}, 0)).front();
+    const int per65 = periods(run(true, { cellOn(0, 65, 2) }, {}, 0)).front();
+    const auto slid = periods(run(true, { cellOn(0, 60, 2) }, { hi }, 4));
+    REQUIRE(slid.size() >= 2);
+    CHECK(slid.front() == per60);
+    CHECK(slid.back() == per65);
+    CHECK(slid[1] > per60); CHECK(slid[1] < per65);
+}
+
+TEST_CASE("a 3.x noise table's transposes add up nibble by nibble in the running byte", "[driver][noise]")
+{
+    // Section 207 (tsp_tbl_noi on 3.9.2): note $34 gives NR43 $00 under shape FF;
+    // rows of 3, 7 and C subtract nibble by nibble as they play -- 0D, 06, 0A --
+    // and the note-on's trigger carries the plain byte. Under the 4.x rule the
+    // same rows are a byte off the note's: FD, F9, F4.
+    const auto nr43s = [](bool nibbles) {
+        auto r = std::make_unique<Rig>();
+        r->tickHz = 100.0;
+        r->song.noteSource[3] = tracker::NoteSource::Tracker;
+        Table t0; t0.used = true;
+        t0.steps[0].hasTranspose = true; t0.steps[0].transpose = 3;
+        t0.steps[1].hasTranspose = true; t0.steps[1].transpose = 7;
+        t0.steps[2].hasTranspose = true; t0.steps[2].transpose = 12;
+        r->bank.tables[0] = t0;
+        auto& i = r->bank.instruments[1];
+        i = bank::Instrument::defaults(bank::InstrumentType::Noise, "Old");
+        i.used = true; i.table = 1; i.tableMode = bank::TableMode::Tick;
+        i.noiseShapeMode = true; i.noiseShape = 0xFF; i.noiseStable = false; i.noiseTspNibbles = nibbles;
+        i.noiseDomain = bank::NoiseSweepDomain::Register;
+        ChannelParams p; p.instrument = 2; r->drv.setParams(3, p);
+        std::vector<RegWrite> w = r->block({ cellOn(3, 0x34 + 35, 2) }, 480);
+        for (int k = 0; k < 3; ++k) { auto more = r->block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+        std::vector<int> seen; int last = -1;
+        for (const auto& x : w) if (x.addr == 0xFF22 && int(x.value) != last) { last = int(x.value); seen.push_back(last); }
+        if (seen.size() > 4) seen.resize(4);                                  // the rows after the third are empty
+        return seen;
+    };
+    CHECK(nr43s(true) == std::vector<int>{ 0x00, 0x0D, 0x06, 0x0A });
+    CHECK(nr43s(false) == std::vector<int>{ 0x00, 0xFD, 0xF9, 0xF4 });
+}
+
 TEST_CASE("U sets the wave run's speed and length", "[driver][wave]")
 {
     // Sections 115 and 129, measured on 9.2.L: LSDj's `W` on a wave instrument

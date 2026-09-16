@@ -541,7 +541,11 @@ struct Reader {
             case 'P':
                 // Section 66: P on noise goes through too -- the instrument's
                 // Sweep says whether it walks the map or the NR43 nibbles.
-                if (channel == 3) { out = { Cmd::P, int16_t(v), 0, 0 }; return true; }
+                if (channel == 3) {
+                    // Section 205: P reaches the noise channel from 5.4.4.
+                    if (!m.noiseP) { notes.add("P" + hex2(v) + " at " + where + ": this version's P does nothing on the noise channel; dropped"); return false; }
+                    out = { Cmd::P, int16_t(v), 0, 0 }; return true;
+                }
                 // Section 88: under the register law the byte **is** the number
                 // of units a clock, and the instrument's pitchRegisterUnits makes
                 // the driver move exactly that many. It used to be squeezed into
@@ -594,7 +598,11 @@ struct Reader {
                 // Section 186: on a kit the byte is the frame both samples start
                 // over from, so it goes through whole too.
                 if (instKind == 1 || instKind == 2) { out = { Cmd::F, int16_t(x), int16_t(y), 0 }; return true; }
-                if (channel == 0 || channel == 1) { out = { Cmd::F, int16_t(x), int16_t(y), 0 }; return true; }
+                if (channel == 0 || channel == 1) {
+                    // Section 204: before 5.0.3 the ROM's F moves nothing on the pulses.
+                    if (m.fineCmdLaw == FineCmdLaw::None) { notes.add("F" + hex2(v) + " at " + where + ": this version's F does nothing on the pulses; dropped"); return false; }
+                    out = { Cmd::F, int16_t(x), int16_t(y), 0 }; return true;
+                }
                 notes.add("F" + hex2(v) + " at " + where + " on the noise channel does nothing on the ROM either; dropped"); return false;
             case 'B':
                 // Section 73: in a cell the two nibbles are independent x/15 rolls
@@ -865,7 +873,11 @@ struct Reader {
                     const int slot = phraseFor(p, ch, state[size_t(ch)], fold ? tsp : 0, &stops);
                     auto& chain = song.chain[size_t(ch)];
                     chain.push_back(uint8_t(slot));
-                    if (tsp && !fold) { song.setTranspose(ch, int(chain.size()) - 1, int8_t(tsp)); if (ch == 3) noiseTsp = true; }
+                    if (tsp && !fold) {
+                        // Section 207: a chain transpose moves nothing on the noise channel before 4.0.4.
+                        if (ch == 3 && !m.noiseChainTsp) notes.add("chain " + hex2(c) + " step " + std::to_string(st) + ": this version's chain transpose does nothing on the noise channel; dropped");
+                        else { song.setTranspose(ch, int(chain.size()) - 1, int8_t(tsp)); if (ch == 3) noiseTsp = true; }
+                    }
                     // Section 120: the channel's timeline ends at the phrase
                     // whose H F F the ROM stops on; nothing after it is laid out.
                     if (stops) { stopped[size_t(ch)] = true; break; }

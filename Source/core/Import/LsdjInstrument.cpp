@@ -112,6 +112,7 @@ bool decodeInstrumentBytes(const uint8_t* b, int t, const LsdjModel& m, const ba
     // Section 195: before 9.4.0 a roll leaves a DRUM pitch running.
     o.retrigKeepsPitch = !m.retrigResetsDrumPitch;
     o.retrigTableLate = m.retrigTableLate;                                // section 202
+    o.vibLadder = m.vibLadder;                                            // section 203
     // Section 81: a noise instrument reads LSDj's own table straight off
     // the bank, so the cell's note is LSDj's note and the byte the driver
     // writes is the byte the ROM writes.
@@ -142,7 +143,7 @@ bool decodeInstrumentBytes(const uint8_t* b, int t, const LsdjModel& m, const ba
         // 42/256 of a semitone each at the middle of the keyboard, capped at a
         // semitone (the closest the 9.x byte comes; a whole nibble is far past it).
         if (m.fineTuneNibble) { const int v = (b[7] >> 2) & 15; o.fineTune = uint8_t(m.fineTuneUnits ? std::min(255, int(std::lround(v * 42.2))) : v * 8); }
-        else o.fineTune = b[11];          // section 112
+        else if (m.formatVersion >= 15) o.fineTune = b[11];   // section 112; section 208: unread before 8.8.6 (3.1.5 - 3.5.1 have none)
     } else if (t == 1) {
         static const uint8_t kLevel[4] = { 0, 3, 2, 1 };       // the stored bits are the NR32 code, 1 = 100 %
         o.waveLevel = kLevel[(b[1] >> 5) & 3];
@@ -176,7 +177,7 @@ bool decodeInstrumentBytes(const uint8_t* b, int t, const LsdjModel& m, const ba
             // frame at a tick a step until a W lengthens it; ONCE plays that
             // frame a tick and the channel goes quiet.
             o.frameLength = 1; o.frameLoopStep = 0; o.frameAdvance = 1;
-            o.frameLoopTail = uint8_t(loopPos + 1);
+            o.frameLoopTail = uint8_t(m.waveRepeatNibble ? loopPos + 1 : 1);   // section 205: the nibble is read from 6.0.1
             switch (b[9] & 3) {
                 case 0: o.frameLoop = bank::FrameLoop::Once; break;
                 case 1: o.frameLoop = bank::FrameLoop::Loop; break;
@@ -227,7 +228,12 @@ bool decodeInstrumentBytes(const uint8_t* b, int t, const LsdjModel& m, const ba
             o.noisePitch = bank::NoisePitch::Never;
             // Section 188: the note picks NR43 from SHAPE (byte 4), S MODE
             // (byte 2, nonzero = STABLE) keeps the width bit through S, P and C.
-            if (m.noiseRule == NoiseRule::Shape) { o.noiseShapeMode = true; o.noiseShape = b[4]; o.noiseStable = b[2] != 0; o.noiseLsdjMap = false; }
+            if (m.noiseRule == NoiseRule::Shape) {
+                o.noiseShapeMode = true; o.noiseShape = b[4]; o.noiseLsdjMap = false;
+                // Section 207: the width bit through an S -- never before 4.1.0, byte 2 (S MODE) from 4.1.0.
+                o.noiseStable = m.noiseStableRule == NoiseStable::Byte2 && b[2] != 0;
+                o.noiseTspNibbles = m.noiseTspNibbles;
+            }
             else if (b[2] && notes) notes->add("noise instrument " + name + " has S MODE = STABLE (byte 2 = " + hex2(b[2]) + "), which holds the LFSR width through an S command; ChipBoy has no equivalent and lets S cross it");
         } else {
             o.noisePitch = b[size_t(m.noisePitchByte)] ? bank::NoisePitch::Safe : bank::NoisePitch::Free;
