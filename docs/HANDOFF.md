@@ -25,6 +25,9 @@ design-log section the change touches. Update this file at the end of every chan
   the picture takes the same width and an `O` shows on it. `ScopeView::setStereo()`.
 - **D-UI-32**: the digital trace is centred on its own swing (a pulse at volume 11 sat at
   the top); the levels and the grid are as they were.
+- **D-UI-33**: the import dialog warns when no ROM is beside the save and offers *Choose
+  ROM…* (`useRomFile()`: a `.gb` of any name or a `.zip` holding one). The kit report
+  below was that: the save had been imported without its ROM.
 - **A report of kit instruments not loading from a 4.1.0 save** (`Computer_Savvy`, CLUCK's
   chain 18 and WATER2's wave channel) did not reproduce: with the ROM beside the save the
   CLI import carries the kits (TR-909, DR-55, TR-727), and the wave RAM frames the driver

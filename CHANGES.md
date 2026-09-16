@@ -26,6 +26,16 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-16 -- the import dialog asks for the ROM it cannot find
+
+`docs/UI_DESIGN.md` D-UI-33. A save carries no samples: a kit instrument names a bank of the
+ROM, and the importer read kits only from a `.gb` beside the save. Imported without one, the
+kit instruments were skipped with a note the user could miss. The dialog now says so in the
+warning colour and offers *Choose ROM…* -- a `.gb` of any name, or a `.zip` holding one;
+among several the one whose version reads the songs' format, then the newest; a ROM whose
+version cannot be read still gives its kits. Considered: default kits shipped with ChipBoy
+(L3 forbids bundling LSDj's samples) and reading kits from the save (there are none).
+
 ### 2026-09-16 -- the digital trace sits on its own swing
 
 `docs/UI_DESIGN.md` D-UI-32. A pulse or a noise at volume 11 walks levels 0 to 11 and, with

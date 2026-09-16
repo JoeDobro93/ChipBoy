@@ -4,6 +4,14 @@
 namespace chipboy::plugin {
 
 namespace {
+/// A ROM's kits and pages into the preview, under the name it is shown as.
+void applyRom(const uint8_t* rom, size_t size, const juce::File& shownAs, const juce::String& version, SavePreview& out)
+{
+    out.romFile = shownAs;
+    out.romVersion = version;
+    out.kits = lsdj::readKits(rom, size);
+    out.rawPages = lsdj::lsdjRawPages(rom, size, version.toStdString());
+}
 /// The ROM beside `file`, its version and kits, into the preview.
 void sniffRom(const juce::File& file, int preferFormat, SavePreview& out)
 {
@@ -11,13 +19,59 @@ void sniffRom(const juce::File& file, int preferFormat, SavePreview& out)
     out.kits.clear();
     if (out.romFile != juce::File()) {
         juce::MemoryBlock rom;
-        if (out.romFile.loadFileAsData(rom)) {
-            out.kits = lsdj::readKits(static_cast<const uint8_t*>(rom.getData()), rom.getSize());
-            out.rawPages = lsdj::lsdjRawPages(static_cast<const uint8_t*>(rom.getData()), rom.getSize(), out.romVersion.toStdString());
-        }
+        if (out.romFile.loadFileAsData(rom)) applyRom(static_cast<const uint8_t*>(rom.getData()), rom.getSize(), out.romFile, out.romVersion, out);
     }
 }
+/// The format the preview's songs are in, for choosing among several ROMs.
+int previewFormat(const SavePreview& out)
+{
+    if (!out.bytes.empty()) return out.index.workingFormat;
+    return out.projects.empty() ? -1 : out.projects.front().formatVersion;
+}
 } // namespace
+
+bool useRomFile(const juce::File& chosen, SavePreview& out, juce::String& error)
+{
+    if (!chosen.existsAsFile()) { error = "could not read " + chosen.getFileName(); return false; }
+    const int preferFormat = previewFormat(out);
+    // Every candidate: the file itself, or each .gb inside a zip. The one
+    // whose version reads the songs' format wins, then the newest, then any
+    // with kit banks at all -- a ROM without a readable version still has kits.
+    struct Candidate { juce::MemoryBlock data; juce::String name, version; bool fits = false; int kits = 0; };
+    std::vector<Candidate> found;
+    auto consider = [&](juce::MemoryBlock&& data, const juce::String& name) {
+        if (data.getSize() < 0x8000) return;
+        Candidate c; c.data = std::move(data); c.name = name;
+        const auto* p = static_cast<const uint8_t*>(c.data.getData());
+        c.version = juce::String(lsdj::romVersion(p, c.data.getSize()));
+        c.kits = int(lsdj::readKits(p, c.data.getSize()).size());
+        const auto* rm = c.version.isEmpty() ? nullptr : lsdj::lsdjModelForRomVersion(c.version.toRawUTF8());
+        c.fits = rm != nullptr && preferFormat >= rm->formatMin && preferFormat <= rm->formatMax;
+        if (c.kits > 0 || c.version.isNotEmpty()) found.push_back(std::move(c));
+    };
+    if (chosen.hasFileExtension(".zip")) {
+        juce::ZipFile zip(chosen);
+        for (int i = 0; i < zip.getNumEntries(); ++i) {
+            const auto* e = zip.getEntry(i);
+            if (e == nullptr || !e->filename.endsWithIgnoreCase(".gb")) continue;
+            std::unique_ptr<juce::InputStream> in(zip.createStreamForEntry(i));
+            if (in == nullptr) continue;
+            juce::MemoryBlock data;
+            in->readIntoMemoryBlock(data);
+            consider(std::move(data), chosen.getFileName() + "/" + e->filename);
+        }
+    } else {
+        juce::MemoryBlock data;
+        if (chosen.loadFileAsData(data)) consider(std::move(data), chosen.getFileName());
+    }
+    if (found.empty()) { error = chosen.getFileName() + " holds no LSDj ROM with kits"; return false; }
+    const Candidate* best = nullptr;
+    for (const auto& c : found)
+        if (best == nullptr || (c.fits && !best->fits) || (c.fits == best->fits && c.version.compareNatural(best->version) > 0)) best = &c;
+    applyRom(static_cast<const uint8_t*>(best->data.getData()), best->data.getSize(), chosen, best->version, out);
+    if (best->name != chosen.getFileName()) out.romFile = chosen.getParentDirectory().getChildFile(best->name);   // shown as zip/entry
+    return true;
+}
 
 bool readSave(const juce::File& file, SavePreview& out, juce::String& error)
 {

@@ -51,5 +51,10 @@ juce::String romVersionIn(const juce::File& folder, int preferFormat, juce::File
 /// The model a song takes on its own: its format's, else the ROM's, else the
 /// newest (plan section 3).
 const lsdj::LsdjModel& autoModel(int formatVersion, const juce::String& romVersion);
+/// D-UI-33: a ROM the user chose by hand -- a `.gb` of any name, or a `.zip`
+/// holding one (the one whose version reads the save's format when several
+/// do, else the newest) -- into the preview's version, kits and pages. False
+/// with a message when the file holds no LSDj ROM with kits.
+bool useRomFile(const juce::File& chosen, SavePreview& out, juce::String& error);
 
 } // namespace chipboy::plugin

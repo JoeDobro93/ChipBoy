@@ -26,7 +26,7 @@ struct LsdjImportDialog::Row {
 
 LsdjImportDialog::LsdjImportDialog(ChipBoyProcessor& processor, SavePreview preview, std::function<void(const Outcome&)> done)
     : processor_(processor), preview_(std::move(preview)), done_(std::move(done)),
-      import_("Import"), cancel_("Cancel")
+      import_("Import"), cancel_("Cancel"), chooseRom_(String(CharPointer_UTF8("Choose ROM\xe2\x80\xa6")))
 {
     const auto& idx = preview_.index;
     const bool haveSave = !preview_.bytes.empty();
@@ -77,10 +77,13 @@ LsdjImportDialog::LsdjImportDialog(ChipBoyProcessor& processor, SavePreview prev
     version_.onChange();
 
     romLine_.setFont(Fonts::sans(11.0f));
-    romLine_.setColour(Label::textColourId, colours::textDim);
-    romLine_.setText(preview_.romVersion.isNotEmpty() ? "ROM beside the file: LSDj " + preview_.romVersion + " (" + preview_.romFile.getFileName() + "), " + String(int(preview_.kits.size())) + " kits for the kit instruments"
-                                                      : "No LSDj ROM beside the file: kit instruments cannot be read, and an unknown format takes the newest version.", dontSendNotification);
     addAndMakeVisible(romLine_);
+    // D-UI-33: the samples live in the ROM, never in the save, so a kit
+    // instrument needs one -- any name, or inside a zip.
+    chooseRom_.setTooltip("Pick the LSDj ROM the songs were made with: a .gb of any name, or a .zip that holds one. A save carries no samples, so kit instruments are read from the ROM's kit banks; a custom kit needs the ROM it was patched into.");
+    chooseRom_.onClick = [this] { chooseRom(); };
+    addAndMakeVisible(chooseRom_);
+    refreshRomLine();
 
     import_.onClick = [this] { runImport(); };
     cancel_.onClick = [this] { close(); };
@@ -115,7 +118,10 @@ void LsdjImportDialog::resized()
     auto vrow = area.removeFromTop(kVersionRow);
     versionLabel_.setBounds(vrow.removeFromLeft(56));
     version_.setBounds(vrow.removeFromLeft(280).withSizeKeepingCentre(280, 24));
-    romLine_.setBounds(area.removeFromTop(22));
+    auto romRow = area.removeFromTop(22);
+    chooseRom_.setBounds(romRow.removeFromRight(104).reduced(0, 1));
+    romRow.removeFromRight(8);
+    romLine_.setBounds(romRow);
     for (auto& r : rows_) {
         auto row = area.removeFromTop(kRowH);
         r->detail.setBounds(row.removeFromRight(250));
@@ -161,6 +167,28 @@ void LsdjImportDialog::runImport()
     }
     if (done_) done_(out);
     close();
+}
+
+void LsdjImportDialog::refreshRomLine()
+{
+    const bool have = !preview_.kits.empty() || preview_.romVersion.isNotEmpty();
+    romLine_.setColour(Label::textColourId, have ? colours::textDim : colours::warn);
+    romLine_.setText(have ? "ROM: LSDj " + (preview_.romVersion.isEmpty() ? String("(version unknown)") : preview_.romVersion) + " (" + preview_.romFile.getFileName() + "), " + String(int(preview_.kits.size())) + " kits for the kit instruments"
+                          : "No LSDj ROM found: kit instruments will be skipped, their samples live in the ROM. Choose the ROM the songs were made with.", dontSendNotification);
+    version_.onChange();   // the models an unknown format takes follow the ROM
+}
+
+void LsdjImportDialog::chooseRom()
+{
+    chooser_ = std::make_unique<FileChooser>("The LSDj ROM the songs were made with", preview_.file.getParentDirectory(), "*.gb;*.zip", true, false, this);
+    chooser_->launchAsync(FileBrowserComponent::openMode | FileBrowserComponent::canSelectFiles, [safe = Component::SafePointer<LsdjImportDialog>(this)](const FileChooser& fc) {
+        if (safe == nullptr) return;
+        const File f = fc.getResult();
+        if (f == File()) return;
+        String error;
+        if (!useRomFile(f, safe->preview_, error)) { safe->romLine_.setColour(Label::textColourId, colours::warn); safe->romLine_.setText(error, dontSendNotification); return; }
+        safe->refreshRomLine();
+    });
 }
 
 void LsdjImportDialog::close()
