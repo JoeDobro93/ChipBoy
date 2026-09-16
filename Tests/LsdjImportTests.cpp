@@ -196,7 +196,7 @@ TEST_CASE("the default codes expand to the default wave and instrument", "[lsdj]
 TEST_CASE("a model is chosen by format, by ROM title, by name, or the newest", "[lsdj]")
 {
     int n = 0; const auto* const* models = lsdjModels(n);
-    REQUIRE(n == 13);                                              // three inside format 22 (docs/LSDJ_VERSIONS.md section 11)
+    REQUIRE(n == 14);                                              // three inside format 22 (docs/LSDJ_VERSIONS.md section 11), the 7.5 model split at 7.7.6 (section 198)
     CHECK(std::string(lsdjLatestModel().name).find("9.4.2") != std::string::npos);
     CHECK(lsdjModelForFormat(22) == models[0]);
     CHECK(lsdjModelForFormat(15)->formatVersion == 15);          // 8.8.6, measured
@@ -219,6 +219,11 @@ TEST_CASE("a model is chosen by format, by ROM title, by name, or the newest", "
     CHECK(lsdjModelForRomVersion("9.4.2") == models[0]); CHECK(lsdjModelForRomVersion("9.3.9") == models[1]); CHECK(lsdjModelForRomVersion("9.2.L") == models[2]);
     CHECK(lsdjModelForRomVersion("8.8.6")->formatVersion == 15);
     CHECK(lsdjModelForRomVersion("8.4.0")->formatVersion == 11);
+    // Section 198: the wave run's old PLAY and REPEAT laws end at 7.7.6.
+    CHECK(lsdjModelForRomVersion("7.0.2")->wavePlayOld); CHECK(lsdjModelForRomVersion("7.0.2")->waveRepeatCount);
+    CHECK(lsdjModelForRomVersion("7.5.4")->wavePlayOld); CHECK(lsdjModelForRomVersion("7.5.4")->formatVersion == 9);
+    CHECK_FALSE(lsdjModelForRomVersion("7.7.6")->wavePlayOld); CHECK(lsdjModelForRomVersion("7.7.6")->formatVersion == 10);
+    CHECK_FALSE(lsdjModelForRomVersion("8.4.0")->wavePlayOld); CHECK_FALSE(lsdjModelForRomVersion("9.4.2")->waveRepeatCount);
     // docs/LSDJ_VERSIONS.md: two releases can write the same format byte and
     // still read a song differently, and then only the ROM's version tells them
     // apart. Format 3 is the case: 4.8.0 changed `R x 0` from a single
@@ -716,11 +721,13 @@ TEST_CASE("the wave instrument's synth comes from byte 2 before 9 and REPEAT fro
     const auto& w22 = bank->instruments[0];
     CHECK(int(w22.frameLoopStep) == 5);                                    // REPEAT still byte 2 (section 93)
     CHECK(int(bank->waves[size_t(w22.wave - 1)].frames[0].s[0]) == 4);      // synth 4, from byte 3
-    // Formats 7 and 8 take the synth from byte 2 and REPEAT from byte 3.
+    // Formats 7 and 8 take the synth from byte 2 and REPEAT from byte 2's low
+    // nibble as well, counting the loop's steps less one (section 198): 5 makes
+    // the loop the last six of sixteen steps.
     song[kFormatVersionAt] = 7;
     REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(7), *bank, *out, sum, notes));
     const auto& w7 = bank->instruments[0];
-    CHECK(int(w7.frameLoopStep) == 0);                                     // byte 3's low nibble is 0
+    CHECK(int(w7.frameLoopStep) == 10);
     CHECK(int(bank->waves[size_t(w7.wave - 1)].frames[0].s[0]) == 2);      // synth 2, from byte 2
 }
 
@@ -1512,4 +1519,29 @@ TEST_CASE("an instrument named on a channel of another kind keeps its own slot; 
     CHECK(asPulse.type == bank::InstrumentType::Pulse);
     CHECK(int(asPulse.envVol) == 2); CHECK(int(asPulse.envRate) == 0);
     CHECK(int(asPulse.pu2Transpose) == 0x0F);
+}
+
+TEST_CASE("a 7.0.2 wave instrument's PLAY and REPEAT read by the old laws", "[lsdj][versions]")
+{
+    // Section 198, probed with sixteen tagged frames: PLAY 1 loops, 3 is MANUAL;
+    // REPEAT 2 in byte 2 makes the loop the run's last three steps.
+    auto song = blankSong(7);
+    song[kInstAlloc + 0] = 1;
+    uint8_t* i0 = song.data() + kInst; i0[0] = 1; i0[1] = 0x20; i0[2] = 0x02; i0[7] = 3; i0[9] = 1; i0[10] = 0x0C; i0[11] = 0x00;
+    song[kPhraseAlloc] |= 1; song[kNotes] = uint8_t(60 - 35); song[kPhraseInst] = 0;
+    song[kChainPhrases] = 0;
+    song[kRows + 0] = 0; song[kRows + 1] = 0xFF; song[kRows + 2] = 0xFF; song[kRows + 3] = 0xFF;
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    const auto* m = lsdjModelForRomVersion("7.0.2");
+    REQUIRE(m != nullptr);
+    REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
+    const auto& w = bank->instruments[0];
+    CHECK(w.frameLoop == bank::FrameLoop::Loop); CHECK(int(w.frameLength) == 4); CHECK(int(w.frameLoopStep) == 1); CHECK(int(w.frameAdvance) == 4);
+    i0[9] = 3;                                                              // MANUAL on 7.x
+    REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
+    CHECK(int(bank->instruments[0].frameAdvance) == 0);
+    i0[9] = 2; i0[2] = 0x0F;                                                // PINGPONG over the whole run
+    REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
+    CHECK(bank->instruments[0].frameLoop == bank::FrameLoop::PingPong); CHECK(int(bank->instruments[0].frameLoopStep) == 0);
 }

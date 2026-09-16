@@ -6000,3 +6000,25 @@ identical to the ROM through the importer's per-channel copies). The user's deci
 - The bank's noise map is set up front for a Map-rule import, so a noise channel's reading of
   a pulse finds it. The variant slots, their names and their import notes are gone: a cell
   names the instrument itself.
+
+## 198. The wave run's PLAY and REPEAT before 7.7.6 (6.8.2, 7.0.2)
+
+The 7.0.2 sweep showed every wave case retriggering every four ticks where ChipBoy held one
+frame: the probe's wave instrument has PLAY 0, which 9.x reads as MANUAL. Probed on 6.8.2 and
+7.0.2 with sixteen tagged frames, LENGTH 4 (`10 = 0C`) and SPEED 0, every PLAY value and the
+nibble in either byte (`WvPlay*`, `WvP*` in `vs_sweep.py`):
+
+- **PLAY (byte 9) is its low two bits: 0 ONCE, 1 LOOP, 2 PINGPONG, 3 MANUAL** (4-6 read as
+  0-2, 7 as 3). 9.x has MANUAL 0, ONCE 1, LOOP 2, PINGPONG 3, RESYNC 4 (8.5.1: 4 is one frame).
+- **The loop nibble is byte 2's low nibble** on these two ROMs as on 9.x (byte 3's nibble
+  moves nothing; §93's "byte 3 on formats 7-8" was wrong), and it **counts the loop's steps less
+  one** from the run's end: 0 holds the last frame, 1 ping-pongs the last two (`AA FF AA FF`), 2
+  the last three, 3 and up the whole four-step run. 9.x's LOOP POS is the other way round --
+  the steps *before* the loop, so F holds the last frame there and 0 loops everything. 7.5.0
+  "changed default wave repeat to F" (loop everything under this law) and 7.7.6 renamed the
+  field to LOOP POS, which is where the law is assumed to have turned; no ROM between 7.0.2
+  and 8.4.0 is in the archive, so 7.5.4 - 7.7.5 (format 9) take the old laws and 7.7.6 - 8.0.0
+  (format 10) the new, unmeasured (`wavePlayOld`, `waveRepeatCount`; the 7.5 model is split
+  in two at 7.7.6).
+- The run itself is 9.x's: LENGTH frames spread across the sixteen (0 5 A F), SPEED + 4 ticks
+  each, ONCE holding its last frame.

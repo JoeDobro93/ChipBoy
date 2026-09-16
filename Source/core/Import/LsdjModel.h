@@ -142,6 +142,13 @@ struct LsdjModel {
     /// Section 196: the nibble is **period units** (3.6.8 - 5.0.3), one unit
     /// about 42/256 of a semitone at the middle of the keyboard.
     bool           fineTuneUnits;
+    /// Section 198: the wave run's bytes before 7.7.6 (probed on 6.8.2 and
+    /// 7.0.2). PLAY is ONCE 0 / LOOP 1 / PINGPONG 2 / MANUAL 3 in its low two
+    /// bits (9.x: MANUAL 0, ONCE 1, LOOP 2, PINGPONG 3, RESYNC 4), and the
+    /// REPEAT nibble counts the loop's steps less one from the run's end (9.x's
+    /// LOOP POS is the steps *before* the loop: `16 - nibble` steps loop).
+    bool           wavePlayOld;
+    bool           waveRepeatCount;
 };
 
 /// Every model, newest first. `count` receives how many.

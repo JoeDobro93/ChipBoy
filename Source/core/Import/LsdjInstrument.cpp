@@ -177,10 +177,15 @@ bool decodeInstrumentBytes(const uint8_t* b, int t, const LsdjModel& m, const ba
             // bits, and the loop covers the last 16 - LOOP POS steps.
             const int len = 16 - int(b[10] & 15);
             o.frameLength = uint8_t(len);
-            o.frameLoopStep = uint8_t(std::max(0, len - (16 - loopPos)));
+            // Section 198: before 7.7.6 the nibble counts the loop's steps less
+            // one from the run's end; from 7.7.6 it is the steps before the loop.
+            o.frameLoopStep = uint8_t(std::max(0, len - (m.waveRepeatCount ? loopPos + 1 : 16 - loopPos)));
             // Section 171: PLAY is the whole byte -- 4 is 9.2.E's RESYNC,
             // ping-pong with every frame written at its tick.
-            switch (b[9]) {
+            // Section 198: before 7.7.6 the low two bits are ONCE 0, LOOP 1,
+            // PINGPONG 2, MANUAL 3 (probed on 6.8.2 and 7.0.2).
+            const int play = m.wavePlayOld ? (b[9] & 3) + 1 == 4 ? 0 : (b[9] & 3) + 1 : int(b[9]);
+            switch (play) {
                 case 0: o.frameAdvance = 0; o.frameLoop = bank::FrameLoop::Loop; break;      // MANUAL: only an F moves it
                 case 1: o.frameLoop = bank::FrameLoop::Once; break;
                 case 3: o.frameLoop = bank::FrameLoop::PingPong; break;
@@ -191,7 +196,7 @@ bool decodeInstrumentBytes(const uint8_t* b, int t, const LsdjModel& m, const ba
             // every `speed + 4` ticks, so FD is one tick and not 255.
             // Every wave instrument in the user's SAMESONG stores a
             // negative speed, which read unsigned froze the run.
-            if (b[9]) o.frameAdvance = uint8_t(std::clamp(signedByte(b[11]) + 4, 1, 255));
+            if (play) o.frameAdvance = uint8_t(std::clamp(signedByte(b[11]) + 4, 1, 255));
         }
     } else if (t == 2) {
         return true;                                          // the kit is the importer's: it needs the ROM
