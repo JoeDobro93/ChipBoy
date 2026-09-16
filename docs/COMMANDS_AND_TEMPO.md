@@ -5617,3 +5617,110 @@ note-on the crossing is judged from the note, not from whatever the channel last
 `S21_ph_ch3` restarts (NR43, NR42 at the machine's level 0 → `08`, NR44 `BF`) before the
 trigger. ChipBoy set `lastPeriod` to the note's own NR43 (`noiseNr43()`) before the pre-trigger
 `S`; the restart's NR44 is the register read back with `$80` set.
+
+## 182. A roll replays the instrument's table; `Z` on a wave `F` rolls the byte; `F 00` writes nothing
+
+Four things `UNMASKED` showed once §180's fold was gone, each probed both-sided.
+
+**A tick's `R` retrigger starts the instrument's table over.** The handler (`2:$64AA`) arms the
+countdown; the tick's retrigger goes through `2:$4000` into `jp $5735`, the tail the note-on
+shares -- the instrument's copy is reloaded and its table pointer set to row 0 -- so every roll
+plays row 0 again, a TICK table and a STEP one alike, and a table an `A` had moved the channel
+to is gone with the reload (`Rtick_tbl`: a four-row `W` table under `R 03` writes rows 0, 1, 2,
+0, 1, 2 …, never row 3; `Rtick_Astop`, `Rstep_Astop`: the `A`'d table restarts on each roll;
+`Rstep_tbl`: the STEP position is left where the last note parked it, the next note plays its
+own next row). Row 0 is **the retrigger tick's row**: the row the table was on is not played,
+and the row after row 0 is the next tick's. Timings, one channel: the roll's trigger to its row-0
+write 0.93 ms (`NR14` at 0.07271, `NR11` at 0.07360); a note-on's `R` 1.06 ms after its trigger
+without a table (`R01_ph_ch0`, §180's 1.0 ms) and 1.34 ms with one (`Rtick_tbl`: the table's setup
+runs first), the table's row 0 then 1.2 ms after the retrigger it ran (2.52 ms into the note).
+`UNMASKED`'s chain `30` is this: instrument `15`'s table `0A` is `W00 A0B` and table `0B` puts a
+`+C` on row 0 -- the octave blip -- and stops; the phrase's `R C0` and the `Z` rolls of it
+retrigger the note, and the ROM blips on every roll where ChipBoy played the blip once.
+
+ChipBoy: the tick decides the periodic retrigger **before** the table's row (`retrigReplays`),
+skips the row for that tick, runs the retrigger, then starts the instrument's own table over
+(`tableOverride` or the instrument's, the lanes at row 0 with their hop counters clear, the STEP
+position untouched) and plays row 0 `kRollRowCycles` on, with `tableJustStarted` clear so the
+next tick plays the row after -- or an `A`'d table's row 0. A note-on with an `R` puts its
+retrigger at `kRetrigPhaseCycles` (1.06 ms now), `kRetrigTableExtraCycles` later when the
+instrument has a table, and its row 0 `kTableRowCycles` after that.
+
+**`Z` on a wave `F` rolls the byte.** `F`'s argument is the whole byte (`x · 16 + y`, §100), and
+§159's roll adds `random(x) << 4 + random(y)` to the byte; `resolveRandom()` treated `F` as a
+one-field letter, so `Z 0F` on `F 00` became `F` with `x` = 0..15 -- whole slots of sixteen
+frames, into synths the song never drew (`UNMASKED`'s phrase `10`, row D: `A 0F` into a table of
+`F 00` then `Z 0F`, the ROM writing one of synth 3's frames 0-15 on the tick after the note,
+ChipBoy a frame from an empty synth, which is the "quiet" note). `F` is on the byte list now
+(`ZF_wave_F00`, `ZF_wave_cellA`: both sides write a frame on row 1). The roll itself is the ROM's
+random and stays unreproducible: in the song each side lands on a different frame of the sixteen,
+and a roll of 0 writes nothing on either.
+
+**`F 00` writes no frame.** The handler adds the byte to `$C694` and writes the frame it lands on;
+a step of 0 lands where it is and the ROM writes nothing (the same phrase, row 0 of the table;
+`ZF_wave_F00`'s row 0). ChipBoy's `F` returned early on a step of 0 -- it wrote the current frame
+again through the sync grid before.
+
+**A bare note that starts a slide takes no finetune refresh.** §163's refresh writes the finetuned
+period after a note's own writes; under an `L` the ROM's first write is the slide's first step
+(`UN_c05_full`: `NR13 = 6D` in the note's batch, from `762` toward `783`, no `62` before it) and the
+slide's steps and landing are on the plain periods. ChipBoy set `fineTunePending` on the bare note
+whether or not an `L` came with it, so the note-on wrote the plain period and the refresh the
+finetuned one before the slide began; not when sliding now.
+
+## 183. A STEP table's position after a hop: the `A`'s own row plus one
+
+`UNMASKED`'s chain `05` (instrument `07`, STEP table `10` = `A11 / A12 / H00`; tables `11` and `12`
+blip an octave and pan left or right, then `A 20`): on the ROM every note of the chain blips and the
+pans alternate L, R, L, R; ChipBoy panned twice and then played thirteen clean notes. §179 made the
+position after a row's `A` "this note's row plus one", counted from the row the note **started** on;
+the ROM's `H` handler (`2:$55F9`) stores the hop's target through the same routine the advance uses
+(`2:$5475`, `$C250 + inst`), and the `A` on the row it lands on then stores that row plus one. So
+the third note goes 2 → `H00` → 0 → `A11`, position 1, and the cycle is three rows long for ever
+where ChipBoy's went to 3 and walked the twelve empty rows behind it (`UN_c05_full`: pans
+L R L R L on both sides now; the earlier `UN_c05*` replicas had collapsed table `10` to its first row,
+which is why none of them reproduced the song). ChipBoy: `stepTableLane()` records the row an `A`
+was read on (`tableRowA`, after any hop) and the note-on parks that row plus one.
+
+Still different in those replicas, and left: a slide's step lands one period unit off at one of
+its updates (`NR13 = 68` against `67` on the second of three steps from `783` to `758`: the
+ROM's 1/256-entry offset and division round differently from ChipBoy's semitone fraction); and a
+bare note's finetune refresh, 1.1 ms after its plain write on the ROM against 40 cycles in
+ChipBoy, which the batch compare shows as one write against two.
+
+## 184. A kit's raw page in video RAM: the LCD's mode-3 reads, modelled
+
+§172 left it: `UNMASKED`'s kits mix through page `$8E`, the font tiles in video RAM, and a CPU read
+of video RAM while the LCD is drawing a line (mode 3) returns `$FF`, so about a third of the mixed
+bytes come out `FE` -- the "glitchy distorted" kit sound the song is written around (the user's
+phrase `6E` report: the character was missing in ChipBoy). Read and measured now:
+
+- **The mixer.** The routine the ROM generates at `$D480` (from the run's RAM dump) is sixteen
+  unrolled blocks of the same twenty-three instructions, **140 cycles a block**: the buffer byte
+  from HRAM, the second side's from the sample, the two nibble pairs assembled, the page read for
+  the high nibble **100 cycles** into the block (`ld a,[hl]`), the swap, the page read for the
+  low nibble at **120** (`add a,[hl]`), the byte stored, the pointers stepped. Both reads in mode 3
+  give `swap($FF) + $FF = $FE`; one of them gives a nibble `F` on one side.
+- **The LCD.** 456 cycles a line, 154 lines a frame (70224), mode 3 from cycle 80 of each of the
+  144 drawn lines; the ten lines of VBlank read freely. A line is 3.26 bytes of mixing, so a
+  frame of sixteen bytes crosses 4.9 lines and carries four to seven `FE`s, a line apart, in runs
+  of one or two (mode 3's length against 140 a byte).
+- **The fit.** Over `UNMASKED`'s first twenty-two kit frames (the trace's `$FF30`-`$FF3F` writes),
+  a model with those constants and a free LCD phase reproduces the `FE` positions at **348 of
+  352 bytes** with mode 3 at **176 cycles**; the four misses are a frame's first byte. The phase
+  drifts: the instant is 11712 cycles and the frame 70224, six instants short by 48, so the
+  pattern of one instant returns six instants later 48 cycles on -- a slow beat over 160 ms --
+  and each instant's pattern is the last one's shifted by 312 cycles of line.
+- **What cannot be had.** The console's LCD phase against the song is whatever it was when play
+  was pressed; the emulator run had the phase `kLcdPhaseAtStart` (46684 cycles into the LCD
+  frame) at its play start, and ChipBoy uses that from its own cycle 0. Even so the song trace
+  lines up only in character (267 of 384 bytes over the first twenty-four frames): the ROM's
+  frame writes alternate 11800 and 11620 cycles apart -- its handler's cost before the mixer
+  swings ±90 cycles an instant, 0.6 of a byte -- where ChipBoy's instants are even, which is
+  §160's unmodelled latency again. A listener hears the same character at another alignment.
+
+ChipBoy: `Kit::distVram` (the importer sets it for a raw page in `$80`-`$9F`; the bank JSON
+carries it as `distVram`), `kitMixRawLcd()` beside `kitMixRaw()`, and `kitFrame(ch, at)` deciding
+each read of a video RAM page against the virtual LCD (`lcdMode3At()`, the constants above). A
+page in work RAM (`$D0`-`$D3`, or a raw one elsewhere) is unchanged. The test builds a kit on a
+flat page and counts the `FE`s a frame, their runs, and that a work RAM page has none.

@@ -321,6 +321,7 @@ var kitToVarImpl(const Kit& k, int slot)
     o->setProperty("dist", String(kitDistName(k.dist)));   /* section 117 */
     // Section 172: the raw page, the half-speed flag and the samples' own loops.
     if (k.dist == KitDist::Raw && k.distTable.size() == 256) o->setProperty("distTable", Base64::toBase64(k.distTable.data(), k.distTable.size()));
+    if (k.dist == KitDist::Raw && k.distVram) o->setProperty("distVram", true);   /* section 184 */
     if (k.halfSpeed) o->setProperty("halfSpeed", true);
     if (k.perSampleLoop) o->setProperty("perSampleLoop", true);
     Array<var> samples;
@@ -352,6 +353,7 @@ void kitFromVarImpl(const var& v, Kit& k)
         if (mo.getDataSize() == 256) k.distTable.assign(static_cast<const uint8_t*>(mo.getData()), static_cast<const uint8_t*>(mo.getData()) + 256);
         else k.dist = KitDist::Clip;
     }
+    k.distVram = k.dist == KitDist::Raw && bool(o->getProperty("distVram"));
     k.halfSpeed = bool(o->getProperty("halfSpeed"));
     k.perSampleLoop = bool(o->getProperty("perSampleLoop"));
     k.samples.clear();

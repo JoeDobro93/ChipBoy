@@ -28,7 +28,7 @@ intended product rather than a progress report.
 
 ### 2026-09-15 -- the third parity campaign: 9.4.2's code, and what it corrected
 
-`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§181. The audit target is
+`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§184. The audit target is
 LSDj 9.4.2 now, read as code: the dispatcher, every handler's address, the work RAM the commands
 share, the order a phrase step and a table tick run their columns, and a two-sided probe rig that
 builds a song, traces the ROM and ChipBoy and reports the first register batch that differs (200
@@ -227,6 +227,22 @@ on into the next sample for the bytes past its end (ChipBoy reads silence), and 
 during the LCD's mode 3 returns `$FF` (`UNMASKED`'s frames: about a third of the bytes, `FE` after
 the add), which the mixer's position in the scanline decides; four more bytes of that first frame
 differ for a reason not found (VRAM bank 1 is the suspect).
+
+- **A roll replays the instrument's table, `Z` on a wave `F` rolls the byte, `F 00` writes
+  nothing, a bare slide takes no finetune refresh** (§182): the tick's `R` retrigger reloads the
+  instrument and starts its table at row 0 -- that tick's row, the row after it the next tick's
+  -- so `UNMASKED`'s chain `30` blips on every roll; `Z 0F` on `F 00` rolls frames 0-15 of the
+  synth instead of whole slots (the "quiet" note of phrase `10`); a step of 0 writes no frame;
+  the retrigger phase is 1.06 ms, 1.34 with a table, and the table's row 0 follows it.
+- **A STEP table's position after a hop is the `A`'s own row plus one** (§183): `H00` on the
+  last row of a three-row STEP table cycles it for ever, as `UNMASKED`'s chain `05` needs;
+  ChipBoy counted from the row the note started on and walked the empty rows behind.
+
+- **A kit's raw page in video RAM reads `$FF` in the LCD's mode 3** (§184): the mixer's two
+  page reads a byte, 140 cycles a byte, against a virtual LCD (456 cycles a line, 144 drawn
+  lines of 154, mode 3 176 cycles from cycle 80) reproduce the ROM's `FE` pattern at 348 of 352
+  bytes of `UNMASKED`'s first kit frames; the LCD's phase is the console's own and the
+  emulator run's is used (`Kit::distVram`, `kitMixRawLcd`, `lcdMode3At`).
 
 Left as measured: the ROM's tick-handler latency in a four-channel song. §180 models the fold with
 the one-channel costs (a cell command 0.3 ms in, a row 0 1.2 ms in); a note-on tick that loads

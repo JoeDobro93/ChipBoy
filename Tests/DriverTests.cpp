@@ -642,6 +642,66 @@ TEST_CASE("a STEP table resumes at the row after its A on the next note, and the
     CHECK(duties(w).front() == 2);                            // the trigger; row 2's W02 is the duty it already has
 }
 
+TEST_CASE("a periodic R replays the instrument's table from row 0 and leaves the STEP position alone", "[driver][commands][table][rom942]")
+{
+    // Section 182 (Rtick_Astop, Rstep_Astop): table 0 = A02 on row 0 and W01 on
+    // row 1, table 2 = W03 / W00 / A20. A STEP instrument with `R 03`: the
+    // note plays row 0 (A02: duties 3, 0 on the ticks after), every retrigger
+    // starts table 0 over (A02 again: 3, 0 again), and the next note plays
+    // row 1 -- duty 1 -- as if no retrigger had run a row.
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    Table t0; t0.used = true; t0.steps[0].cmd1 = { Cmd::A, 2, 0, 0 }; t0.steps[1].cmd1 = { Cmd::W, 1, 0, 0 };
+    Table t1; t1.used = true; t1.steps[0].cmd1 = { Cmd::W, 3, 0, 0 }; t1.steps[1].cmd1 = { Cmd::W, 0, 0, 0 }; t1.steps[2].cmd1 = { Cmd::A, 0x20, 0, 0 };
+    r.bank.tables[0] = t0; r.bank.tables[1] = t1;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Roll");
+    i.used = true; i.table = 1; i.tableMode = bank::TableMode::Step; i.duty = 2;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(0, p);
+    const auto duties = [](const std::vector<RegWrite>& w) { std::vector<int> d; int last = -1; for (const auto& x : w) if (x.addr == 0xFF11 && (x.value >> 6) != last) { last = x.value >> 6; d.push_back(last); } return d; };
+    NoteEvent on = cellOn(0, 60, 2); on.cmd1 = { Cmd::R, 0, 3, 0 };
+    std::vector<RegWrite> w = r.block({ on }, 480);
+    for (int k = 0; k < 9; ++k) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+    // The note: duty 2 in the burst, table 2 on the ticks after: 3, 0. The R
+    // at tick 3 and tick 6 keeps the duty the W left (the ROM's retrigger
+    // writes the copy's duty), then 3, 0 again each time.
+    CHECK(duties(w) == std::vector<int>{ 2, 3, 0, 3, 0, 3, 0 });
+    w = r.block({ cellOn(0, 60, 2) }, 480);
+    for (int k = 0; k < 3; ++k) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+    CHECK(duties(w) == std::vector<int>{ 2, 1 });     // row 1 of the STEP table: the retriggers moved nothing
+}
+
+TEST_CASE("a STEP table ending in H00 cycles its rows: the position is the A's own row plus one", "[driver][commands][table][rom942]")
+{
+    // Section 183 (UN_c05_full, UNMASKED's chain 05): table 0 = A02 / A03 /
+    // H00, table 2 = W01, table 3 = W03. Notes 1, 2, 3, 4, 5 play A02, A03,
+    // H00 -> row 0's A02, A03, A02 again: the hop moves the position first
+    // and the A's row plus one is what the instrument keeps, so the third
+    // note leaves it at 1, not at 3 (where twelve empty rows would follow).
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    Table t0; t0.used = true; t0.steps[0].cmd1 = { Cmd::A, 2, 0, 0 }; t0.steps[1].cmd1 = { Cmd::A, 3, 0, 0 }; t0.steps[2].cmd1 = { Cmd::H, 0, 0, 0 };
+    Table t1; t1.used = true; t1.steps[0].cmd1 = { Cmd::W, 1, 0, 0 };
+    Table t2; t2.used = true; t2.steps[0].cmd1 = { Cmd::W, 3, 0, 0 };
+    r.bank.tables[0] = t0; r.bank.tables[1] = t1; r.bank.tables[2] = t2;
+    auto& i = r.bank.instruments[1];
+    i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Cycle");
+    i.used = true; i.table = 1; i.tableMode = bank::TableMode::Step; i.duty = 2;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(0, p);
+    const auto duties = [](const std::vector<RegWrite>& w) { std::vector<int> d; int last = -1; for (const auto& x : w) if (x.addr == 0xFF11 && (x.value >> 6) != last) { last = x.value >> 6; d.push_back(last); } return d; };
+    std::vector<int> seen;
+    for (int n = 0; n < 6; ++n) {
+        std::vector<RegWrite> w = r.block({ cellOn(0, 60, 2) }, 480);
+        for (int k = 0; k < 3; ++k) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+        const auto d = duties(w);
+        REQUIRE(d.size() == 2);                                   // the trigger's duty 2, then the A'd table's W on the tick after
+        seen.push_back(d.back());
+    }
+    CHECK(seen == std::vector<int>{ 1, 3, 1, 3, 1, 3 });
+}
+
 TEST_CASE("a K cell kills its own note and no other", "[driver][commands]")
 {
     // K is a per-note letter (section 12): it shapes the cell it is on.
@@ -3484,6 +3544,61 @@ TEST_CASE("a kit note's VEL column names a second sample, summed through the kit
     CHECK_FALSE(r.drv.view(2).active);
 }
 
+TEST_CASE("a raw kit page in video RAM reads back FF in the LCD's mode 3: FE bytes, one every three or four, drifting", "[driver][kit][rom942]")
+{
+    // Section 184: the mixer reads a video RAM page twice a byte, 140 cycles a
+    // byte, and a read in mode 3 (176 of every 456 cycles on 144 of 154
+    // lines) is `$FF`, so a byte with both reads there is `FE`. One line is
+    // 3.26 bytes, so a frame carries four or five `FE`s a line apart; a page
+    // in work RAM (the flag off) carries none.
+    Rig r;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    auto& k = r.bank.kits[0];
+    k = bank::Kit{};
+    k.used = true; k.name = "Vram"; k.period = 1865;
+    std::vector<uint8_t> ramp(4096), full(4096, uint8_t(15));
+    for (size_t i = 0; i < ramp.size(); ++i) ramp[i] = uint8_t((i + 1) % 16);
+    bank::KitSample a; a.note = 60; a.data = ramp;
+    bank::KitSample b; b.note = 61; b.data = full;
+    k.samples.push_back(a); k.samples.push_back(b);
+    k.dist = bank::KitDist::Raw; k.distTable.assign(256, uint8_t(0x33)); k.distVram = true;
+    auto& i0 = r.bank.instruments[1];
+    i0 = Instrument::defaults(InstrumentType::Kit, "Vram");
+    i0.used = true; i0.kit = 1;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(2, p);
+    const auto frames = [&](int n) {
+        std::vector<std::array<int, 16>> out;
+        auto w = r.block({ cellOn(2, 60, 2, 2) }, 480);
+        for (int i = 0; i < n; ++i) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+        std::array<int, 16> cur{}; int have = 0;
+        for (const auto& x : w) {
+            if (x.addr < 0xFF30 || x.addr > 0xFF3F) continue;
+            if (x.addr == 0xFF30) { have = 0; cur.fill(-1); }
+            cur[size_t(x.addr - 0xFF30)] = x.value;
+            if (++have == 16) out.push_back(cur);
+        }
+        r.block({ Rig::off(2, 60) }, 64);
+        return out;
+    };
+    const auto got = frames(20);
+    REQUIRE(got.size() >= 20);
+    int total = 0; std::vector<std::string> pattern;
+    for (const auto& f : got) {
+        int n = 0; std::string s;
+        for (int j = 0; j < 16; ++j) { const bool fe = f[size_t(j)] == 0xFE; n += fe; s += fe ? '#' : '.'; }
+        CHECK(n >= 3); CHECK(n <= 8);                  // four to seven a frame, a line apart, in runs of one or two
+        CHECK(s.find("####") == std::string::npos);
+        total += n; pattern.push_back(s);
+    }
+    CHECK(total >= 4 * int(got.size())); CHECK(total <= 6 * int(got.size()));
+    // A byte that is not FE is the page's mix (33 swapped + 33 = 66), or a
+    // half-hit (F3 + 33 = 26, or 33 + FF = 32 -- one read in mode 3).
+    for (const auto& f : got) for (int j = 0; j < 16; ++j) CHECK((f[size_t(j)] == 0xFE || f[size_t(j)] == 0x66 || f[size_t(j)] == 0x26 || f[size_t(j)] == 0x32));
+    // The same page in work RAM: no FE at all.
+    k.distVram = false;
+    for (const auto& f : frames(20)) for (int j = 0; j < 16; ++j) CHECK(f[size_t(j)] == 0x66);
+}
+
 TEST_CASE("P on a kit moves the period register, not the note", "[driver][kit]")
 {
     // Section 97: the byte is period-register units -- three of them once under
@@ -4976,3 +5091,33 @@ TEST_CASE("a bare cell takes its own chain row's transpose, and its L slides the
     CHECK(per == to);                                          // and it lands on the transposed note
 }
 
+
+TEST_CASE("Z on a wave F adds to the frame, and F 00 writes no frame", "[driver][wave][rom942]")
+{
+    // Section 182 (UNMASKED's phrase 10, instrument 18's table: F 00 on row 0,
+    // Z 0F on row 1): the Z's byte is x * 16 + y, so `Z 0F` moves the frame by
+    // 0-15 within the slot, and `F 00` rewrites nothing.
+    Rig r;
+    r.tickHz = 100.0;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    auto& w = r.bank.waves[0];
+    w.used = true; w.frames.clear();
+    for (int f = 0; f < 16; ++f) { bank::Frame fr; fr.s.fill(uint8_t(f)); w.frames.push_back(fr); }
+    Table t; t.used = true; t.steps[0].cmd1 = { Cmd::F, 0, 0, 0 }; t.steps[1].cmd1 = { Cmd::Z, 0, 15, 0 };
+    r.bank.tables[7] = t;
+    auto& i = r.bank.instruments[1];
+    i = Instrument::defaults(InstrumentType::Wave, "Z"); i.used = true; i.wave = 1; i.frameAdvance = 0; i.table = 8;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(2, p);
+    int moved = 0;
+    for (int n = 0; n < 12; ++n) {
+        std::vector<RegWrite> all = r.block({ cellOn(2, 60, 2) }, 480);
+        for (int k = 0; k < 2; ++k) { auto more = r.block({}, 480); all.insert(all.end(), more.begin(), more.end()); }
+        std::vector<int> w0;
+        for (const auto& x : all) if (x.addr == 0xFF30) w0.push_back(x.value);
+        REQUIRE(w0.size() >= 1);
+        CHECK(w0.size() <= 2);                          // the note's frame, then the Z's: no rewrite for F 00
+        CHECK(w0[0] == 0);
+        if (w0.size() == 2 && w0[1] != 0) ++moved;
+    }
+    CHECK(moved >= 6);                                   // 0-15 at random: most notes move
+}

@@ -261,6 +261,7 @@ private:
         /// TSP and CMD 1, lane 2 is CMD 2, lane E is VOL and LEN.
         uint8_t  tableSlot = 0, tableStep = 0, tableRow = 0; bool tableOn = false;
         uint8_t  tableStep2 = 0, tableRow2 = 0, tableStepE = 0, tableRowE = 0;
+        uint8_t  tableRowA = 0;       ///< section 183: the row a table's `A` was read on (after any hop), for the STEP position
         /// Section 157: an `A` inside a table **replaces** the table -- one run
         /// per channel, as the ROM keeps one table number per channel. The
         /// column the `A`'s own row had in force stays until the new table's
@@ -662,7 +663,7 @@ private:
     void queueFrame(int ch, const bank::Frame& f);            ///< hold a frame for the next sync boundary
     uint64_t waveSyncStep(int ch, uint64_t at);               ///< section 178: the phase word fed for this instant; the cycle a pending frame is written at, 0 if not from this one
     const bank::Frame* frameAt(int ch, int idx) const;        ///< frame `idx` of the voice's slot, past its end the next slot's
-    void kitFrame(int ch);                                    ///< section 172: one kit frame from the instant loop
+    void kitFrame(int ch, uint64_t at);                       ///< section 172: one kit frame from the instant loop; `at` its instant (section 184)
     int  computePeriod(int ch);
     uint8_t levelFromVelocity(uint8_t vel) const;
     void refreshView(int ch);

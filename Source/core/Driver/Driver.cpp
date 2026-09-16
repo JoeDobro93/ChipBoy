@@ -116,7 +116,14 @@ constexpr uint32_t kZombieInner = 16, kZombieDownStep = 112, kZombieUpStep = 68;
 /// commands, fires a cell `R`'s retrigger, runs the table's row 0 and writes a
 /// TICK instrument's period -- one-channel measurements, in cycles after the
 /// trigger's burst starts.
-constexpr uint64_t kCellDispatchCycles = 1258, kRetrigPhaseCycles = 4194, kTableRowCycles = 5033, kTickPitchCycles = 8389;
+constexpr uint64_t kCellDispatchCycles = 1258, kRetrigPhaseCycles = 4450, kTableRowCycles = 5033, kTickPitchCycles = 8389;
+/// Section 182: a tick's roll (`R`) plays the instrument's table row 0 0.93 ms after its trigger
+/// (Rtick_tbl: NR14 at 0.07271, NR11 at 0.07360); a note-on's `R` puts the table phase after
+/// the retrigger it runs, `kTableRowCycles` on from it.
+constexpr uint64_t kRollRowCycles = 3900;
+/// Section 182: with a table on the instrument the note-on reaches its `R` later, 1.34 ms in
+/// (Rtick_tbl: NR14 at 0.02213 and 0.02347) against §180's 1.0 ms without one.
+constexpr uint64_t kRetrigTableExtraCycles = 1170;
 
 uint16_t regAddr(int ch, int r) { return uint16_t(0xFF10 + ch * 5 + r); }
 
@@ -806,7 +813,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         applyCellCommands(ch, v.noteCmd[0], v.noteCmd[1]);
         v.noteCmd[0] = {}; v.noteCmd[1] = {};
         inNoteOn_ = was;
-        if ((v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Wave) && v.fineTune != 0) v.fineTunePending = true;   // sections 163, 170
+        if ((v.inst.type == InstrumentType::Pulse || v.inst.type == InstrumentType::Wave) && v.fineTune != 0 && !v.sliding) v.fineTunePending = true;   // sections 163, 170; 182: a slide's first step carries it
         writePeriod(ch, false);
         if (oweW) emit(regAddr(ch, 1), uint8_t((v.duty << 6) | lengthCode6(v.inst.length)), true);
         if (oweS) retrigger(ch, true, false);
@@ -1056,31 +1063,37 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         if (postCmd[0].cmd != Cmd::None || postCmd[1].cmd != Cmd::None) applyCellCommands(ch, postCmd[0], postCmd[1]);
         if (!v.active) return;
     }
+    uint64_t rowStart = burstStart;                               // section 182: an `R`'s retrigger runs first, and the table phase follows it
+    const uint64_t retrigAt = burstStart + kRetrigPhaseCycles + (v.tableOn ? kRetrigTableExtraCycles : 0);
     if (retrigCmd.cmd != Cmd::None) {
-        burst_ = std::max(burst_, burstStart + kRetrigPhaseCycles);
+        burst_ = std::max(burst_, retrigAt);
         applyCellCommands(ch, retrigCmd, Command{});
         if (!v.active) return;
+        rowStart = retrigAt;
     }
-    if (v.retrigPending) { burst_ = std::max(burst_, burstStart + kRetrigPhaseCycles); const bool env = v.retrigPending == 1; v.retrigPending = 0; retrigger(ch, true, env); }
+    if (v.retrigPending) { burst_ = std::max(burst_, retrigAt); const bool env = v.retrigPending == 1; v.retrigPending = 0; retrigger(ch, true, env); rowStart = retrigAt; }
     if (v.panQueued) { v.pan = Pan(v.panQueued - 1); v.panQueued = 0; writeNr51(); }
     // Section 180: the table's row 0, in the handler's table phase 1.2 ms in,
     // live: the volume lane walks, a `W` writes, an `F` writes its frame. The
     // ROM's pitch work then carries the row's transpose -- at the next instant
     // on the pitch clock, 2 ms in for a TICK instrument.
     if (v.tableOn) {
-        burst_ = std::max(burst_, burstStart + kTableRowCycles);
-        const uint8_t stepBefore = v.tableStep;
+        burst_ = std::max(burst_, rowStart + kTableRowCycles);
         const double noteBefore = noteOfVoice(ch);
         stepTable(ch);
         // Section 166: the instrument's position is written through at once
         // for the next channel to take. When the row's own `A` has replaced
         // the table, the position is still this note's row plus one: the ROM
         // counts the instrument's steps, not the table the `A` moved to.
+        // Section 183: "this note's row" is the row the `A` was read on -- an
+        // `H` before it moved the position first (the ROM's H handler stores
+        // the target through the same routine), so a STEP table whose last row
+        // is `H00` cycles its rows for ever, as UNMASKED's chain 05 does.
         if (v.stepKey != kNoStepKey) {
             if (v.tableSlot == tbl) parkStep(ch);
             else {
                 StepPark& p = stepState_[size_t(v.stepKey)];
-                p.step = p.step2 = p.stepE = uint8_t((stepBefore + 1) % kTableSteps);
+                p.step = p.step2 = p.stepE = uint8_t((v.tableRowA + 1) % kTableSteps);
                 p.row = p.row2 = p.rowE = p.step; p.table = tbl; p.used = true;
             }
             v.stepDirty = false;
@@ -1924,7 +1937,26 @@ const Frame* Driver::frameAt(int ch, int idx) const
 /// moves sixteen bytes whatever the period. Half speed runs every other
 /// instant. Bytes past a side's end read as silence (the ROM reads on into
 /// the next sample for the rest of that frame).
-void Driver::kitFrame(int ch)
+/// Section 184: the ROM's kit mixer reads its page twice a byte, 140 cycles a
+/// byte (the routine it generates at `$D480`: the first read 100 cycles into
+/// the byte's block, the second 120), and a video RAM page reads back `$FF`
+/// while the LCD is in mode 3 -- 176 cycles from cycle 80 of each of the 144
+/// drawn lines of 456, in a frame of 154. Fitted on `UNMASKED`'s first
+/// twenty-two kit frames: 348 of 352 bytes. The LCD's phase against the
+/// instant is the console's own and cannot be known; the ROM's emulator run
+/// had `kLcdPhaseAtStart` at its play start, so a trace compare lines up.
+constexpr uint64_t kLcdFrameCycles = 70224, kLcdLineCycles = 456, kLcdDrawnLines = 144;
+constexpr uint64_t kLcdMode3Start = 80, kLcdMode3Cycles = 176;
+constexpr uint64_t kMixByteCycles = 140, kMixFirstRead = 100, kMixSecondRead = 120;
+constexpr uint64_t kLcdPhaseAtStart = 46684;
+static bool lcdMode3At(uint64_t cycle)
+{
+    const uint64_t f = (cycle + kLcdPhaseAtStart) % kLcdFrameCycles;
+    const uint64_t line = f / kLcdLineCycles, x = f % kLcdLineCycles;
+    return line < kLcdDrawnLines && x >= kLcdMode3Start && x < kLcdMode3Start + kLcdMode3Cycles;
+}
+
+void Driver::kitFrame(int ch, uint64_t at)
 {
     Voice& v = v_[size_t(ch)];
     const Kit* kit = bank_ ? bank_->kit(v.inst.kit) : nullptr;
@@ -1954,7 +1986,13 @@ void Driver::kitFrame(int ch)
         };
         const uint8_t a = take(da, v.kitPos);
         const uint8_t b = take(db, v.kitPosB);
-        bytes[size_t(i)] = (da && db) ? kitMixByte(*kit, a, b) : (da ? a : b);
+        if (da && db && kit->dist == KitDist::Raw && kit->distVram && kit->distTable.size() == 256) {
+            // Section 184: the page is video RAM; each read that lands in the
+            // LCD's mode 3 comes back `$FF`.
+            const uint64_t block = at + uint64_t(i) * kMixByteCycles;
+            bytes[size_t(i)] = kitMixRawLcd(kit->distTable.data(), a, b, lcdMode3At(block + kMixFirstRead), lcdMode3At(block + kMixSecondRead));
+        }
+        else bytes[size_t(i)] = (da && db) ? kitMixByte(*kit, a, b) : (da ? a : b);
     }
     if (!da) v.kitPos += 32;
     if (!db) v.kitPosB += 32;
@@ -2118,6 +2156,7 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
                 // -- past this slot's last frame it lands in the next slot's,
                 // and past the last slot's it wraps to slot 1 frame 0.
                 const int step = (int(c.a) & 15) * 16 + (int(c.b) & 15);
+                if (step == 0) break;                                    // section 182: `$C694 += 0` moves nothing and the ROM writes no frame (UNMASKED's phrase 10)
                 const int to = waveFlatWrap(waveFlatOf(v.waveSlot, v.frameIdx) + step);
                 const uint8_t slot = uint8_t(waveSlotOfFlat(to)), want = uint8_t(waveFrameOfFlat(to));
                 if (const Wave* w = bank_ ? bank_->waveAt(slot) : nullptr) {
@@ -2577,7 +2616,7 @@ Command Driver::resolveRandom(int ch, const Command& z, int lane)
     // 1 or 2, and on a `P 05` a bend of 5-7. Z's own arguments are nibbles.
     const int add = (randomArg(ch, z.a & 15) << 4) | randomArg(ch, z.b & 15);
     switch (c.cmd) {
-        case Cmd::V: case Cmd::C: case Cmd::R: case Cmd::M: case Cmd::E: case Cmd::S: case Cmd::B: {
+        case Cmd::V: case Cmd::C: case Cmd::R: case Cmd::M: case Cmd::E: case Cmd::S: case Cmd::B: case Cmd::F: {   // section 182: F reads x * 16 + y too
             const int byte = ((((c.a & 15) << 4) | (c.b & 15)) + add) & 0xFF;
             c.a = int16_t(byte >> 4); c.b = int16_t(byte & 15);
             break;
@@ -2815,6 +2854,7 @@ void Driver::stepTableLane(int ch, int lane)
         // ROM has already read this row's CMD 2 and dispatches it after the
         // `A` in CMD 1, so that one command is applied here before leaving.
         if (v.tableRun != runWas) {
+            v.tableRowA = was;                            // section 183: the row the `A` sat on, hop or no hop
             if (lane == 1 && s.cmd2.cmd != Cmd::None && s.cmd2.cmd != Cmd::A) {
                 const bool z2 = s.cmd2.cmd == Cmd::Z;
                 applyCommand(ch, z2 ? resolveRandom(ch, s.cmd2, 2) : s.cmd2, true, 2, z2);
@@ -2908,9 +2948,23 @@ void Driver::tick(int ch)
     // firing -- `K 10` in a sixteen row table dies on the tick the row comes
     // round, as the ROM's does.
     if (v.killAt >= 0 && int64_t(tickCount_) >= v.killAt) { killLevel(ch); stopVoice(ch, false); v.killAt = -1; return; }
+    // R: the interval is **y ticks** and `y = 0` retriggers **once** (section 76,
+    // measured on 9.3.9). x = 8 resyncs instead: the retrigger runs on the pitch
+    // clock, and pitchBefore() does it. Section 182: decided here, before the
+    // table's row, because the retrigger starts the instrument's table over
+    // (below) and its row 0 is this tick's row -- the ROM's roll never plays
+    // the row the table was on (Rtick_tbl: rows 0, 1, 2, 0, 1, 2 under `R 03`).
+    bool retrig = false;
+    if (v.retrigOn && !v.retrigFast && v.retrigEvery > 0 && int64_t(tickCount_) >= v.retrigNext) {
+        v.retrigNext = int64_t(tickCount_) + int64_t(v.retrigEvery);       // section 134
+        retrig = true;
+    }
+    const uint8_t ownTable = v.tableOverride ? v.tableOverride : v.inst.table;
+    const bool retrigReplays = retrig && ownTable && bank_ && bank_->table(ownTable);
     // The table: a row per tick, or per the row length a G inside it asked
     // for. A Step-mode table advances at notes instead (section 7).
     if (v.tableJustStarted) v.tableJustStarted = false;      // row 0 fired with the note-on (section 31)
+    else if (retrigReplays) {}                                // section 182: the retrigger's row 0 is this tick's row
     else if (v.inst.tableMode == TableMode::Tick || v.tableTicks) {   // section 122
         // Each lane counts down its own row (section 64).
         uint16_t* const waits[3] = { &v.tableWaitE, &v.tableWait, &v.tableWait2 };
@@ -2968,14 +3022,6 @@ void Driver::tick(int ch)
         v.noiseBend9 += v.noiseBend256;
         const int whole = v.noiseBend9 / 256;
         if (whole != 0) { v.noiseBend9 -= whole * 256; v.noiseTsp = int16_t(std::clamp(int(v.noiseTsp) + whole, -30000, 30000)); writePeriod(ch, false); }   // section 156
-    }
-    // R: the interval is **y ticks** and `y = 0` retriggers **once** (section 76,
-    // measured on 9.3.9). x = 8 resyncs instead: the retrigger runs on the pitch
-    // clock, and pitchBefore() does it.
-    bool retrig = false;
-    if (v.retrigOn && !v.retrigFast && v.retrigEvery > 0 && int64_t(tickCount_) >= v.retrigNext) {
-        v.retrigNext = int64_t(tickCount_) + int64_t(v.retrigEvery);       // section 134
-        retrig = true;
     }
     // wave frames
     if (v.inst.type == InstrumentType::Wave && v.inst.frameAdvance) {
@@ -3038,7 +3084,30 @@ void Driver::tick(int ch)
             v.frameDirty = true; v.framePending = false; v.frameSilenced = false; v.frameFresh = true;
             v.frameStep = 0; v.frameCount = 0; v.frameDir = 1; v.frameIdx = v.inst.frameStart;
         }
+        const uint64_t retrigStart = burst_;
         retrigger(ch, true);
+        // Section 182: and the instrument's table starts over from row 0 in
+        // the handler's table phase, a TICK table and a STEP one alike -- a
+        // table an `A` had moved the channel to is gone with the reload -- and
+        // the STEP position stays where the last note parked it (Rtick_tbl,
+        // Rtick_Astop, Rstep_Astop; UNMASKED's chain 30 blips on every roll).
+        if (v.active && retrigReplays) {
+            {
+                const uint8_t own = ownTable;
+                burst_ = std::max(burst_, retrigStart + kRollRowCycles);
+                v.tableSlot = own; v.tableOn = true; v.tableTicks = false; v.tableGroove = 0;
+                v.tableStep = v.tableStep2 = v.tableStepE = 0;
+                v.tableRow = v.tableRow2 = v.tableRowE = 0;
+                v.tableWait = v.tableWait2 = v.tableWaitE = 0;
+                v.hopLeft = v.hopLeft2 = 0; v.hopFrom = v.hopFrom2 = 0xFF; v.volLaneOn = true; v.tableTspHoldOn = false;
+                ++v.tableRun;
+                const double noteBefore = noteOfVoice(ch);
+                stepTable(ch);
+                v.tableJustStarted = false;                 // the row after it, or an A'd table's row 0, is the next tick's
+                if (v.active && v.tableOn && v.inst.type == InstrumentType::Noise) { v.pitchClockOn = true; v.pitchWrite = true; }
+                else if (v.active && noteOfVoice(ch) != noteBefore) { if (v.pitchClockOn) v.pitchWrite = true; else writePeriod(ch, false); }
+            }
+        }
     }
     else if (v.inst.type == InstrumentType::Noise) { if (v.noiseSweep || tspReleased || tickNote() != noteBeforeTick) writePeriod(ch, false); }   // a table's transpose reaches NR43 (section 45)
     else if (tickNote() != noteBeforeTick) writePeriod(ch, false);
@@ -3307,7 +3376,7 @@ void Driver::process(NoteEvent* events, size_t n, uint32_t numSamples, uint64_t 
                 // wait puts every channel's pitch work, and the tick, after the
                 // write -- so it runs before the channels, as the ROM's does.
                 Voice& v = v_[2];
-                if (v.active && v.kitOn) kitFrame(2);                      // section 172: the mixer first (0:$03A9)
+                if (v.active && v.kitOn) kitFrame(2, at);                  // section 172: the mixer first (0:$03A9)
                 else {
                     const uint64_t due = waveSyncStep(2, at);             // section 178: fed every instant, note or none
                     if (due) { if (due > cycle_ + burst_) moveTo(due); writeWaveFrame(2, v.framePendingBytes); }

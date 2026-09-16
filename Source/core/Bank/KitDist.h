@@ -78,6 +78,16 @@ inline uint8_t kitMixRaw(const uint8_t* table, uint8_t a, uint8_t b)
     return uint8_t(sw + table[((a & 15) << 4) | (b & 15)]);
 }
 
+/// Section 184: the same with either read falling in the LCD's mode 3, when a
+/// video RAM page reads back as `$FF` -- both make the byte `FE`.
+inline uint8_t kitMixRawLcd(const uint8_t* table, uint8_t a, uint8_t b, bool firstFF, bool secondFF)
+{
+    const uint8_t hi = firstFF ? uint8_t(0xFF) : table[((b >> 4) << 4) | (a >> 4)];
+    const uint8_t sw = uint8_t((hi << 4) | (hi >> 4));
+    const uint8_t lo = secondFF ? uint8_t(0xFF) : table[((a & 15) << 4) | (b & 15)];
+    return uint8_t(sw + lo);
+}
+
 /// The name shown in the editor and written to a bank.
 inline const char* kitDistName(KitDist m)
 {

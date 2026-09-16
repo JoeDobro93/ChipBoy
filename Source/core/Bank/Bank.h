@@ -414,6 +414,9 @@ struct Kit {
     KitDist     dist = KitDist::Clip;
     /// Section 172: `Raw` mixes through this 256-byte page of the ROM's memory.
     std::vector<uint8_t> distTable;
+    /// Section 184: the page is video RAM (`$80`-`$9F`), which the LCD's mode 3
+    /// reads back as `$FF` -- the mix carries the scanline's `FE` bytes.
+    bool        distVram = false;
     bool        perSampleLoop = false;   ///< the samples' own `loop` fields apply, not `loop`
     bool        halfSpeed = false;       ///< a frame every other instant (LSDj's SPEED half)
 };

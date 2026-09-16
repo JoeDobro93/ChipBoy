@@ -72,9 +72,18 @@ design-log section the change touches. Update this file at the end of every chan
   restarts the machine at byte 1, the wave retrigger's two forms (`Voice::frameDirty`); §181:
   a ONCE run's end stops the pitch effects, a note-on's noise `S` restart is judged against the
   note (`noiseNr43()`). The matrix: 53 of 323 cases differ, all timing, random or unmodelled;
-  `REPTCOMP`'s wave channel is identical whole. `CHANGES.md` has the round. 295 core tests. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
-  `probe/raw.py TAG [ch] [n]` prints the first raw writes of both sides. 287 core tests, 11
-  plugin checks.
+  `REPTCOMP`'s wave channel is identical whole. §182 (the user's `UNMASKED` reports): a tick's
+  `R` retrigger reloads the instrument and starts its table over at row 0 as that tick's row
+  (`retrigReplays`, `kRollRowCycles`; chain `30` blips on every roll), `Z` on a wave `F` rolls
+  the whole byte (phrase `10`'s "quiet" note), `F 00` writes no frame, a bare slide takes no
+  finetune refresh, the retrigger phase is 1.06 ms and 1.34 with a table; §183: a STEP table's
+  position after a hop's row `A` is that row plus one (`Voice::tableRowA`; chain `05` cycles
+  `A11 / A12 / H00` for ever); §184: a kit's raw page in video RAM reads `$FF` in the LCD's
+  mode 3 -- the mixer's 140 cycles a byte and two reads against a virtual LCD reproduce the
+  ROM's `FE` pattern (348 of 352 bytes of `UNMASKED`'s first frames; `Kit::distVram`,
+  `kitMixRawLcd`, `lcdMode3At`), the phase the emulator run's. `CHANGES.md` has the round.
+  299 core tests. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
+  `probe/raw.py TAG [ch] [n]` prints the first raw writes of both sides. 11 plugin checks.
 - The probe rig for this campaign lives in the container at `/root/lsdj/probe/`: `vs_matrix.py`
   (the interaction cases, two-sided, `--show` for the first differing batch), `songdiff.py NAME`
   (a whole song of the 9.4.2 save, both sides; `--seq` compares the sequence of register
@@ -940,8 +949,13 @@ design-log section the change touches. Update this file at the end of every chan
   `UNMASKED`'s PU2 machines, `REACTION`'s pulses at the wave's sync wait (the ROM's note-on
   frame lands 0.8 ms into the interrupt, so the ROM waits for the boundary from the next
   instant with a 0.5 ms wait where ChipBoy waits 2.6 ms from the one before -- the boundary is
-  the same). The fold (above) still shows as a first-batch difference in `AtblW_L`, `ENV_R`,
-  `FT40_R01`.
+  the same). The fold (above) still shows as a first-batch difference in `AtblW_L`,
+  `FT40_R01`; `ENV_R` matches since §182's retrigger phase. Two trace cosmetics the batch
+  compare counts as differences and the chip does not: the ROM's wave volume-lane byte carries
+  bit 7 (`E0 C0 A0` for 25/50/100 %, ChipBoy's `60 40 20`; a note-on's is the instrument's
+  byte 1 verbatim, `A8` for `UNMASKED`'s synth instruments), and a bare note's finetune refresh
+  comes 1.1 ms after its plain write on the ROM and 40 cycles after in ChipBoy (§183). A slide's
+  step lands one period unit off at one update in `UN_c05_full` (§183).
 - **The ROM's CPU cost, measured and not modelled** (§171's probes, `CASTSHDW`/`READROOM`/
   `REACTION`): (1) in a four-channel song the note-on tick reaches the wave's table row 0 some
   3.5 ms after the wave trigger (`$C2D4` watched: +3.5 ms in `READROOM`, +3.7 in `CASTSHDW`,
@@ -954,10 +968,9 @@ design-log section the change touches. Update this file at the end of every chan
   at 8 s -- an effective tempo 0.4 % under 280). A DAW-synced ChipBoy should not drift, so this
   is left as the ROM's own defect. (3) A `K` on a wave note writes `NR31` in the kill; ChipBoy's
   rides the refresh. The Instrument tab has no field for `frameStart` (imported songs only).
-- **Kits, left after §172**: a raw DIST page read in the LCD's mode 3 returns `$FF` (about a
-  third of `UNMASKED`'s mixed bytes come out `FE`), which the mixer's position in the scanline
-  decides -- modelling it needs the instant's scanline phase and the mixer's per-byte cost;
-  four more bytes of `UNMASKED`'s first frame differ from the font page's mix (VRAM bank 1
+- **Kits, left after §172 and §184**: the mode-3 `$FF` reads are modelled (§184) with the
+  emulator run's LCD phase; a console's is unknowable, so the `FE` positions on hardware are
+  the same character at another alignment. Four more bytes of `UNMASKED`'s first frame differ from the font page's mix (VRAM bank 1
   is the suspect: `lsdjref_pc --dump-ram` dumps one bank); a side's last frame reads on past
   its end into the next sample (ChipBoy: silence); the Kits tab edits `loop` for every sample
   at once and has no `halfSpeed` or per-side fields. The songs' remaining wave divergences are
@@ -1072,7 +1085,12 @@ design-log section the change touches. Update this file at the end of every chan
 
 ## Next steps
 
-- **The 9.4.2 campaign (§147-§181) is done as far as the ROM's logic goes.** What the eight
+- **The user's four `UNMASKED` reports**: chain `05` (§183), chain `30` (§182), phrase `10`
+  (§182) and phrase `6E`'s kits (§184, the mode-3 reads) are modelled; the first three
+  reproduce on the ROM in `UN_c05_full`, `Rtick_tbl` and `ZF_wave_*`, the kits' `FE` pattern
+  against the song trace. The CB side of a song diff is the build at the time of `--nocache`;
+  rerun it after a driver change.
+- **The 9.4.2 campaign (§147-§183) is done as far as the ROM's logic goes.** What the eight
   songs and the 323-case matrix still show is the ROM's own timing (its tick handler's latency in
   a four-channel song, the lost-interrupt slip), its randomness (`Z`, `B`), the LCD's mode-3 reads
   in a kit mix, and the two unmodelled instrument settings (a wave speed of `FC`, `PLAY` = 5) --
@@ -1081,7 +1099,8 @@ design-log section the change touches. Update this file at the end of every chan
   and build a two-sided probe; `docs/LSDJ_COMMAND_MATRIX.md` §11 has the dispatcher and every
   handler's address. The probe rig lives in `tools/lsdjref/` (`probe_h.py`, `probe_vh.py`,
   `probe_cb.py`) so a fresh container has it; the `vs_matrix.py`, `songdiff.py`, `watch.py`,
-  `rawwin.py`, `songrows.py`, `frtimes.py` scripts in `/root/lsdj/probe/` do not survive the
+  `rawwin.py`, `songrows.py`, `frtimes.py`, `timeline.py`, `chainrows.py`, `songvar.py`
+  scripts in `/root/lsdj/probe/` do not survive the
   container and are named in the design log where each was used. Two things the campaign left
   for the UI rather than the engine: the Instrument tab has no field for a wave's start frame
   (`frameStart`, §171), and the Kits tab edits `loop` for every sample at once and has no

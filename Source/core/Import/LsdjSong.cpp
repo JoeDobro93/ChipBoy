@@ -584,7 +584,7 @@ struct Reader {
         // as it stands; the pages read from the ROM come with the kits.
         const int distPage = int(b[10]) - int(kKitDistFirstPage);
         if (distPage >= 0 && distPage < kKitDistPages && m.kitDist != nullptr) use.dist = m.kitDist[distPage];
-        else if (rawPages != nullptr && rawPages->count(int(b[10]))) { use.dist = KitDist::Raw; k.distTable = rawPages->at(int(b[10])); }
+        else if (rawPages != nullptr && rawPages->count(int(b[10]))) { use.dist = KitDist::Raw; k.distTable = rawPages->at(int(b[10])); k.distVram = b[10] >= 0x80 && b[10] <= 0x9F; }   // section 184
         else use.distByte = int(b[10]);
         k.dist = use.dist;
         kitUse[i] = use;
