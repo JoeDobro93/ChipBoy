@@ -265,7 +265,7 @@ struct InstrumentPanel::Widgets {
     Segmented* duty = nullptr; NameField* dutySeq = nullptr; Stepper* sweepRate = nullptr; Segmented* sweepDir = nullptr; Stepper* sweepShift = nullptr;
     Stepper* pu2Transpose = nullptr;
     Stepper* fineTune = nullptr;
-    Stepper* wave = nullptr; Stepper* frameLength = nullptr; Stepper* frameLoopStep = nullptr; Stepper* frameLoopEnd = nullptr; Segmented* frameLoopFrom = nullptr; Stepper* frameAdv = nullptr; Segmented* frameLoop = nullptr; Segmented* waveLevel = nullptr;
+    Stepper* wave = nullptr; Stepper* frameLength = nullptr; Stepper* frameLoopStep = nullptr; Stepper* frameLoopEnd = nullptr; Segmented* frameLoopFrom = nullptr; Stepper* frameAdv = nullptr; Segmented* frameLoop = nullptr; Segmented* waveLevel = nullptr; Segmented* waveWrite = nullptr;
     Stepper* kit = nullptr; Segmented* kitLoop = nullptr; TextLine* kitRate = nullptr;
     Segmented* noiseDomain = nullptr; Segmented* lfsr = nullptr; Segmented* pitchMode = nullptr; Stepper* shift = nullptr; Stepper* divisor = nullptr; Stepper* noiseSweep = nullptr;
     Stepper* noiseShape = nullptr; Segmented* noiseStable = nullptr; Segmented* noiseTableTsp = nullptr;   // section 188
@@ -721,6 +721,7 @@ void InstrumentPanel::rebuildEditor()
         w_->frameAdv = stepper(*sound, "Frame advance", "Ticks per frame; 0 holds the frame.", 0, 15, 0, {}, [](bank::Instrument& i, int v) { i.frameAdvance = uint8_t(v); });
         w_->frameLoop = seg(*sound, "Frame loop", "How the frames run.", { "Loop", "One-shot", "Ping-pong", "Resync" }, [](bank::Instrument& i, int v) { i.frameLoop = bank::FrameLoop(std::clamp(v, 0, 3)); });
         w_->waveLevel = seg(*sound, "Level", "NR32 bits 6-5: four levels, and no envelope unit on this channel.", { "mute", "25", "50", "100" }, [](bank::Instrument& i, int v) { i.waveLevel = uint8_t(v); });
+        w_->waveWrite = seg(*sound, "RAM writes", "How each frame reaches wave RAM (section 215). Pre-trigger is LSDj 9's way: the channel muted for the write and a fast pre-trigger; Muted is 4.7.3 - 8.5.1's, the mute alone; Plain is 3.x - 4.6's, no mute -- no click every frame, which is what an old song's kits sounded like. Imported songs set it by version.", { "Pre-trigger", "Muted", "Plain" }, [](bank::Instrument& i, int v) { i.waveWrite = bank::WaveWrite(std::clamp(v, 0, 2)); });
     } else if (type == bank::InstrumentType::Kit) {
         w_->kit = stepper(*sound, "Kit", "Streamed through wave RAM. Right-click lists the bank, double-click opens it.", 1, bank::kKitSlots, 1,
                           [this](int v) { const auto bk = processor.bank(); const bank::Kit* k = bk ? bk->kit(v) : nullptr; return k ? slotAndName(v, k->name) : slotAndName(v, "empty"); },
@@ -729,6 +730,7 @@ void InstrumentPanel::rebuildEditor()
         w_->kit->onList = [this] { showKitMenu(); };
         w_->kit->onOpen = [this] { if (w_ && w_->kit) { if (w_->kit->value() > 0) openSlot(ui::SlotKind::Kit, w_->kit->value()); else w_->kit->beginTypedEntry(); } };
         w_->kitLoop = seg(*sound, "Loop", "Per note.", { "One-shot", "Loop", "From point" }, [](bank::Instrument& i, int v) { i.kitLoop = bank::KitLoop(std::clamp(v, 0, 2)); });
+        w_->waveWrite = seg(*sound, "RAM writes", "How each frame reaches wave RAM (section 215). Pre-trigger is LSDj 9's way: the channel muted for the write and a fast pre-trigger; Muted is 4.7.3 - 8.5.1's, the mute alone; Plain is 3.x - 4.6's, no mute -- no click every frame, which is what an old song's kits sounded like. Imported songs set it by version.", { "Pre-trigger", "Muted", "Plain" }, [](bank::Instrument& i, int v) { i.waveWrite = bank::WaveWrite(std::clamp(v, 0, 2)); });
         auto rate = std::make_unique<TextLine>(String(), Fonts::mono(12.0f), colours::text);
         w_->kitRate = sound->add("Rate", std::move(rate), 190, Stepper::kHeight, "NR33/34: one register does the pitch and the rate.");
     } else {
@@ -979,7 +981,7 @@ void InstrumentPanel::syncValues()
     S(w.duty, i.duty);
     if (w.dutySeq && w.dutySeq->text() != dutySeqText(i)) w.dutySeq->setText(dutySeqText(i));
     T(w.sweepRate, i.sweepRate); S(w.sweepDir, i.sweepDown ? 1 : 0); T(w.sweepShift, i.sweepShift); T(w.pu2Transpose, i.pu2Transpose); T(w.fineTune, i.fineTune);
-    T(w.wave, i.wave); T(w.frameLength, i.frameLength); T(w.frameLoopStep, i.frameLoopStep); T(w.frameLoopEnd, i.frameLoopEnd); S(w.frameLoopFrom, i.frameLoopFromEnd ? 1 : 0); T(w.frameAdv, i.frameAdvance); S(w.frameLoop, int(i.frameLoop)); S(w.waveLevel, i.waveLevel);
+    T(w.wave, i.wave); T(w.frameLength, i.frameLength); T(w.frameLoopStep, i.frameLoopStep); T(w.frameLoopEnd, i.frameLoopEnd); S(w.frameLoopFrom, i.frameLoopFromEnd ? 1 : 0); T(w.frameAdv, i.frameAdvance); S(w.frameLoop, int(i.frameLoop)); S(w.waveLevel, i.waveLevel); S(w.waveWrite, int(i.waveWrite));
     T(w.kit, i.kit); S(w.kitLoop, int(i.kitLoop));
     if (w.kitRate) {
         const bank::Kit* k = b->kit(i.kit);

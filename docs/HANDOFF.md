@@ -25,6 +25,10 @@ design-log section the change touches. Update this file at the end of every chan
   the picture takes the same width and an `O` shows on it. `ScopeView::setStereo()`.
 - **D-UI-32**: the digital trace is centred on its own swing (a pulse at volume 11 sat at
   the top); the levels and the grid are as they were.
+- **§215, the wave RAM write by version** (`waveWrite`: Plain 3.1.5 - 4.6.9, Muted 4.7.3 -
+  8.5.1, PreTrigger 9.x; 8.8.6 assumed muted; twenty models). The user's 4.1.0 kits were
+  "lo-fi and distorted": every frame carried 9.x's `NR51` mute and `$7E0` pre-trigger. The
+  control is *RAM writes* on wave and kit instruments. Left: the old note-on's double trigger.
 - **D-UI-33**: the import dialog warns when no ROM is beside the save and offers *Choose
   ROM…* (`useRomFile()`: a `.gb` of any name or a `.zip` holding one). The kit report
   below was that: the save had been imported without its ROM.

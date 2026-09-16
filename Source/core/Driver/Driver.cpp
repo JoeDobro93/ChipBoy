@@ -1582,7 +1582,7 @@ uint8_t Driver::noiseNr43(int ch)
     }
 }
 
-void Driver::writePeriod(int ch, bool trigger, bool preTriggered)
+void Driver::writePeriod(int ch, bool trigger, bool preTriggered, bool hiFirst)
 {
     Voice& v = v_[size_t(ch)];
     // Section 171: the period after a wave's $7E0 pre-trigger is the note-on's
@@ -1652,9 +1652,10 @@ void Driver::writePeriod(int ch, bool trigger, bool preTriggered)
     // not the high bits moved (docs/LSDJ_PARITY.md section 11); there is no
     // trigger bit in it, so it changes nothing but the log -- and the log is
     // what a parity harness can line up.
-    emit(regAddr(ch, 3), uint8_t(f & 0xFF), true);
     const uint8_t hi = uint8_t((f >> 8) | (trigger ? 0x80 : 0) | lengthBit(v.inst));
-    emit(regAddr(ch, 4), hi, true);
+    if (hiFirst) emit(regAddr(ch, 4), hi, true);          // section 215: the old burst triggers, then writes the low byte
+    emit(regAddr(ch, 3), uint8_t(f & 0xFF), true);
+    if (!hiFirst) emit(regAddr(ch, 4), hi, true);
     if (trigger && v.inst.type == InstrumentType::Pulse) markTrigger(ch);
     // Section 171: the wave refresh (2:$1C7A) writes NR31 after the period,
     // every time; the note-on's burst and the frame writer carry none.
@@ -1975,28 +1976,37 @@ void Driver::writeWaveFrame(int ch, const std::array<uint8_t, 16>& bytes)
     // wave's own cycle boundary (the sync grid), which is what hides the click.
     v.wavePhase = 0; v.waveDivLast = uint8_t((cycle_ + burst_) >> 8); v.waveSyncValid = true;   // the phase word and its DIV are zeroed here (0:$0784)
     waveRamBurst(ch, bytes);
-    writePeriod(ch, false, true);
     v.framePending = false; v.frameDirty = false;               // section 180: 2:$610B
 }
 
 /// Section 171/172: the wave RAM write itself, shared by the frame writer and
 /// the kit mixer (0:$0787, 0:$0535): the wave's pan bits cleared, the DAC off,
 /// the sixteen bytes, the DAC on, the $7E0 pre-trigger -- sixty-four cycles a
-/// sample, so the first fetch is at once -- and the pan restored. The caller
-/// writes the real period after it, without a trigger bit.
+/// sample, so the first fetch is at once -- the pan restored and the real
+/// period after it without a trigger bit; or the older forms (section 215).
 void Driver::waveRamBurst(int ch, const std::array<uint8_t, 16>& bytes)
 {
     Voice& v = v_[size_t(ch)];
-    if (known_[0x15]) emit(0xFF25, uint8_t(shadow_[0x15] & 0xBB), true);
+    // Section 215: the sequence is the version's -- 9.x's mute and $7E0
+    // pre-trigger, 4.7.3 - 8.5.1's mute alone, or 3.x - 4.6's plain write,
+    // which triggers on the real period and writes its low byte after.
+    const auto law = v.inst.waveWrite;
+    if (law != bank::WaveWrite::Plain && known_[0x15]) emit(0xFF25, uint8_t(shadow_[0x15] & 0xBB), true);
     emit(regAddr(2, 0), 0x00, true);
     v.dacOn = false;
     for (int i = 0; i < 16; ++i) emit(uint16_t(0xFF30 + i), bytes[size_t(i)], true);
     v.ram = bytes; v.ramValid = true;
     emit(regAddr(2, 0), 0x80, true);
     v.dacOn = true;
-    emit(regAddr(2, 3), 0xE0, true);
-    emit(regAddr(2, 4), 0x87, true);
-    writeNr51(true);
+    if (law == bank::WaveWrite::PreTrigger) {
+        emit(regAddr(2, 3), 0xE0, true);
+        emit(regAddr(2, 4), 0x87, true);
+        writeNr51(true);
+        writePeriod(ch, false, true);
+    } else {
+        writePeriod(ch, true, false, true);
+        if (law == bank::WaveWrite::Muted) writeNr51(true);
+    }
 }
 
 void Driver::queueFrame(int ch, const Frame& f)
@@ -2119,7 +2129,6 @@ void Driver::kitFrame(int ch, uint64_t at)
     if (!da) v.kitPos += 32;
     if (!db) v.kitPosB += 32;
     waveRamBurst(ch, bytes);
-    writePeriod(ch, false, true);
 }
 
 /* ----------------------------------------------------------- commands */

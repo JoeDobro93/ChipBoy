@@ -518,7 +518,7 @@ private:
     void stepRelease(int ch);                 ///< WAV/KIT: 100 -> 50 -> 25 -> mute, a tick apart
     void latch(int ch);
     uint8_t noiseNr43(int ch);                                   ///< section 180: the NR43 the noise voice sounds at now
-    void writePeriod(int ch, bool trigger, bool preTriggered = false);
+    void writePeriod(int ch, bool trigger, bool preTriggered = false, bool hiFirst = false);   ///< hiFirst: NRx4 before NRx3, the old burst's order (section 215)
     /// NRx2 (or NR32 on the wave channel) from the running state, with the
     /// trigger a note-on, R or an E that moves the envelope needs. Every
     /// other level change goes through setLevel() instead (section 26).

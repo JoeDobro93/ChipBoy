@@ -196,7 +196,7 @@ TEST_CASE("the default codes expand to the default wave and instrument", "[lsdj]
 TEST_CASE("a model is chosen by format, by ROM title, by name, or the newest", "[lsdj]")
 {
     int n = 0; const auto* const* models = lsdjModels(n);
-    REQUIRE(n == 19);                                              // three inside format 22 (docs/LSDJ_VERSIONS.md section 11), the 7.5 model split at 7.7.6 (section 198), 5.7.8 / 5.8.8 / 6.0.1, 5.0.3, 3.7.5 (sections 203-205), 4.0.4 (section 207)
+    REQUIRE(n == 20);                                              // three inside format 22 (docs/LSDJ_VERSIONS.md section 11), the 7.5 model split at 7.7.6 (section 198), 5.7.8 / 5.8.8 / 6.0.1, 5.0.3, 3.7.5 (sections 203-205), 4.0.4 (section 207), 4.7.3 (section 215)
     CHECK(std::string(lsdjLatestModel().name).find("9.4.2") != std::string::npos);
     CHECK(lsdjModelForFormat(22) == models[0]);
     CHECK(lsdjModelForFormat(15)->formatVersion == 15);          // 8.8.6, measured
@@ -1564,6 +1564,12 @@ TEST_CASE("the models carry the vibrato ladder, F's law, P on noise and the loop
     CHECK(lsdjModelForRomVersion("5.7.8")->vibScale == VibScale::Half);
     CHECK(lsdjModelForRomVersion("5.0.3")->vibScale == VibScale::One); CHECK(lsdjModelForRomVersion("3.9.2")->vibScale == VibScale::One);
     CHECK(lsdjModelForRomVersion("3.6.8")->vibScale == VibScale::One);
+    // Section 215: the wave RAM write by version.
+    using bank::WaveWrite;
+    CHECK(lsdjModelForRomVersion("4.6.9")->waveWrite == WaveWrite::Plain); CHECK(lsdjModelForRomVersion("3.1.5")->waveWrite == WaveWrite::Plain);
+    CHECK(lsdjModelForRomVersion("4.7.3")->waveWrite == WaveWrite::Muted); CHECK(lsdjModelForRomVersion("8.5.1")->waveWrite == WaveWrite::Muted);
+    CHECK(lsdjModelForRomVersion("9.2.J")->waveWrite == WaveWrite::PreTrigger); CHECK(lsdjModelForRomVersion("9.4.2")->waveWrite == WaveWrite::PreTrigger);
+    CHECK(lsdjModelForRomVersion("4.4.0") != lsdjModelForRomVersion("4.7.3")); CHECK(lsdjModelForRomVersion("4.7.9") == lsdjModelForRomVersion("4.7.3"));
     CHECK(lsdjModelForRomVersion("5.7.8")->fineCmdLaw == FineCmdLaw::Semitone32);
     CHECK(lsdjModelForRomVersion("5.0.3")->fineCmdLaw == FineCmdLaw::Units);
     CHECK(lsdjModelForRomVersion("4.9.4")->fineCmdLaw == FineCmdLaw::None);

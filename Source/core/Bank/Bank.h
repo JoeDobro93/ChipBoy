@@ -37,6 +37,9 @@ enum class NoteOff : uint8_t { Kill = 0, Release = 1, Ignore = 2 };
 /// the note; bit 0 picks which half it starts on, and shape 3 is no vibrato.
 enum class VibShape : uint8_t { Triangle = 0, Saw = 1, Square = 2, Off = 3 };
 enum class VibDir : uint8_t { Down = 0, Up = 1 };
+/// Section 215: how a wave RAM frame goes out -- 9.x's mute and $7E0
+/// pre-trigger, 4.7.3 - 8.5.1's mute alone, or the plain write of 3.x - 4.6.
+enum class WaveWrite : uint8_t { PreTrigger = 0, Muted = 1, Plain = 2 };
 /// Section 210: the vibrato's depth against 9.x's ladder -- as it is, halved
 /// (5.7.8's ladder), or doubled (a kit's V before 9.4.0, section 187).
 enum class VibScale : uint8_t { One = 0, Half = 1, Double = 2 };
@@ -223,6 +226,9 @@ struct InstrumentCore {
     /// Section 210: the depth scale -- 9.x's ladder as it is, halved (5.7.8)
     /// or doubled (a kit's V before 9.4.0, section 187); the importer sets it.
     VibScale vibScale = VibScale::One;
+    /// Section 215: the wave RAM write sequence, for a wave's frames and a
+    /// kit's; the importer sets it by version.
+    WaveWrite waveWrite = WaveWrite::PreTrigger;
     /// Section 195: a roll leaves a DRUM instrument's pitch word where it is,
     /// as every LSDj before 9.4.0 did; off, each hit starts from the note's
     /// entry (section 185, 9.4.0 and later). The importer sets it by version.

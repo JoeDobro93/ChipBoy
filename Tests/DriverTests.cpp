@@ -4479,6 +4479,50 @@ TEST_CASE("a loop counted from the run's end stays at the end when U lengthens t
     CHECK(runs(bank::FrameLoop::PingPong, false, 0, 2, 4) == std::vector<int>{ 0, 7, 0, 7, 0 });
 }
 
+TEST_CASE("a wave RAM frame goes out plain, muted or pre-triggered by the instrument's law", "[driver][wave]")
+{
+    // Section 215 (KIT_plain on every archive ROM): 3.x - 4.6 write NR30 = 00,
+    // the bytes, NR30 = 80, NR34 with the trigger, NR33; 4.7.3 - 8.5.1 the same
+    // inside an NR51 mute; 9.x the mute, a $7E0 pre-trigger and the period after.
+    const auto burst = [](bank::WaveWrite law) {
+        auto r = std::make_unique<Rig>();
+        r->tickHz = 100.0;
+        r->song.noteSource[2] = tracker::NoteSource::Tracker;
+        auto& w = r->bank.waves[0]; w.used = true;
+        auto& i = r->bank.instruments[1];
+        i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Law");
+        i.used = true; i.wave = 1; i.waveWrite = law;
+        ChannelParams p; p.instrument = 2; p.velocityMode = 2; r->drv.setParams(2, p);
+        const auto writes = r->block({ cellOn(2, 60, 2) }, 480);
+        // The sequence from the first NR30 = 00: wave RAM bytes folded to one token.
+        std::vector<std::string> seq; bool ram = false;
+        size_t k = 0;
+        while (k < writes.size() && !(writes[k].addr == 0xFF1A && writes[k].value == 0)) ++k;
+        if (k > 0) --k;                                        // the write before it: the mute, when there is one
+        for (; k < writes.size() && seq.size() < 12; ++k) {
+            const auto& x = writes[k];
+            if (x.addr >= 0xFF30 && x.addr <= 0xFF3F) { if (!ram) seq.push_back("RAM"); ram = true; continue; }
+            ram = false;
+            if (x.addr == 0xFF25) seq.push_back(x.value == 0xFF ? "NR51=FF" : "NR51=BB");
+            else if (x.addr >= 0xFF1A && x.addr <= 0xFF1E) {
+                char buf[16]; std::snprintf(buf, sizeof buf, "NR3%d=%02X", int(x.addr - 0xFF1A), int(x.value)); seq.push_back(buf);
+            }
+        }
+        return seq;
+    };
+    const auto plain = burst(bank::WaveWrite::Plain);
+    REQUIRE(plain.size() >= 6);
+    CHECK(plain[0] != "NR51=BB");
+    CHECK(plain[1] == "NR30=00"); CHECK(plain[2] == "RAM"); CHECK(plain[3] == "NR30=80");
+    CHECK(plain[4].rfind("NR34=8", 0) == 0); CHECK(plain[5].rfind("NR33=", 0) == 0);
+    const auto muted = burst(bank::WaveWrite::Muted);
+    REQUIRE(muted.size() >= 7);
+    CHECK(muted[0] == "NR51=BB"); CHECK(muted[1] == "NR30=00"); CHECK(muted[4].rfind("NR34=8", 0) == 0); CHECK(muted[5].rfind("NR33=", 0) == 0); CHECK(muted[6] == "NR51=FF");
+    const auto pre = burst(bank::WaveWrite::PreTrigger);
+    REQUIRE(pre.size() >= 8);
+    CHECK(pre[0] == "NR51=BB"); CHECK(pre[4] == "NR33=E0"); CHECK(pre[5] == "NR34=87"); CHECK(pre[6] == "NR51=FF"); CHECK(pre[7].rfind("NR33=", 0) == 0);
+}
+
 TEST_CASE("a run longer than the wave's frames walks on into the next slot", "[driver][wave]")
 {
     // Section 211: sixteen tagged frames in slot 1 and sixteen more in slot 2;

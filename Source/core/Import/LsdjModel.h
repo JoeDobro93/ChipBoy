@@ -167,6 +167,7 @@ struct LsdjModel {
     NoiseStable    noiseStableRule;  ///< section 207
     bool           noiseTspNibbles;  ///< section 207: a table's transposes add up nibble by nibble in the running byte (3.x)
     bool           noiseChainTsp;    ///< section 207: a chain transpose reaches the noise channel (3.6.5 and later)
+    bank::WaveWrite waveWrite;       ///< section 215: how a wave RAM frame is written (plain / muted / pre-triggered)
 };
 
 /// Every model, newest first. `count` receives how many.

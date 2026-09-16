@@ -85,6 +85,7 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     if (i.pitchRegisterUnits) o->setProperty("pitchRegisterUnits", true);          // section 88
     o->setProperty("vibShape", int(i.vib.shape)); o->setProperty("vibDir", int(i.vib.dir)); o->setProperty("vibSpeed", int(i.vib.speed)); o->setProperty("vibDepth", int(i.vib.depth)); o->setProperty("vibDelay", int(i.vib.delay));
     if (i.vibScale != bank::VibScale::One) o->setProperty("vibScale", int(i.vibScale));   /* section 210 */
+    if (i.waveWrite != bank::WaveWrite::PreTrigger) o->setProperty("waveWrite", int(i.waveWrite));   /* section 215 */
     o->setProperty("duty", int(i.duty));
     { Array<var> seq; for (int k = 0; k < i.dutySeqLen; ++k) seq.add(int(i.dutySeq[size_t(k)])); o->setProperty("dutySeq", seq); }
     o->setProperty("envVol", int(i.envVol)); o->setProperty("envDir", int(i.envDir)); o->setProperty("envRate", int(i.envRate));
@@ -166,6 +167,7 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     // Section 210; a file before it carried `vibDouble` (a kit, section 187) or
     // section 203's ladder, whose 5.7.8 entry (2) is the half scale.
     i.vibScale = bank::VibScale(std::clamp(getOr(o, "vibScale", 0), 0, 2));
+    i.waveWrite = bank::WaveWrite(std::clamp(getOr(o, "waveWrite", 0), 0, 2));   // section 215
     if (bool(o->getProperty("vibDouble"))) i.vibScale = bank::VibScale::Double;
     if (getOr(o, "vibLadder", 0) == 2) i.vibScale = bank::VibScale::Half;
     if (o->hasProperty("vibDir")) {

@@ -112,6 +112,7 @@ bool decodeInstrumentBytes(const uint8_t* b, int t, const LsdjModel& m, const ba
     // Section 195: before 9.4.0 a roll leaves a DRUM pitch running.
     o.retrigKeepsPitch = !m.retrigResetsDrumPitch;
     o.vibScale = m.vibScale;                                              // section 210
+    o.waveWrite = m.waveWrite;                                            // section 215
     // Section 81: a noise instrument reads LSDj's own table straight off
     // the bank, so the cell's note is LSDj's note and the byte the driver
     // writes is the byte the ROM writes.

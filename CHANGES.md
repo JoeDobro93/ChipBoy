@@ -26,6 +26,17 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-16 -- the wave RAM write follows the version: plain, muted, pre-triggered
+
+`docs/COMMANDS_AND_TEMPO.md` §215. A 4.1.0 song's kits sounded "lo-fi and distorted" next to
+the ROM. The samples matched byte for byte; the write did not: ChipBoy wrote every frame the
+9.x way -- `NR51` muted around the write and a `$7E0` pre-trigger -- where 3.x - 4.6 write
+the frame plainly and 4.7.3 - 8.5.1 mute without the pre-trigger (`KIT_plain` on every
+archive ROM). The mute is a step in the mix every frame, a buzz at the frame rate, which a
+4.1.0 song never had. `waveWrite` on the instrument (*RAM writes*), set by the model; a
+twentieth model splits 4.7.3 from 4.4.0 - 4.6.9; 8.8.6 is taken as muted. A file without the
+key reads as 9.x's. Left: 4.x's note-on writes its trigger twice.
+
 ### 2026-09-16 -- the import dialog asks for the ROM it cannot find
 
 `docs/UI_DESIGN.md` D-UI-33. A save carries no samples: a kit instrument names a bank of the

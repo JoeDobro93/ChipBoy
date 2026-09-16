@@ -28,7 +28,8 @@ the ROM is the only thing that tells them apart -- keep the ROM beside the save.
 | 5.7.8 | 4 | 5.7.8 |
 | 5.0.3 - 5.7.7 | 3 | 5.0.3 |
 | 4.8.0 - 4.9.4 | 3 | 4.8.0, 4.9.4 |
-| 4.4.0 - 4.7.3 | 3 | 4.4.0, 4.5.4, 4.7.3 |
+| 4.7.3 - 4.7.9 | 3 | 4.7.3 |
+| 4.4.0 - 4.6.9 | 3 | 4.4.0, 4.5.4, 4.6.0, 4.6.2, 4.6.9 |
 | 4.1.0 - 4.3.0 | 2 | 4.1.0, 4.3.0 |
 | 4.0.4 | 2 | 4.0.4 |
 | 3.7.5 - 3.9.2 | 2 | 3.7.5, 3.8.7, 3.8.9, 3.9.2 |
@@ -101,6 +102,7 @@ that is a guess.
 | kit numbers | all | the k-th kit bank in ROM order, empty banks skipped | the same (§172 had `k + 8`) | §193 |
 | a kit's `P` | all | four units an instant and one more step a tick | the same | §190 |
 | a kit's `V` | before 9.4.0 | twice 9.4.2's depth | the instrument's `vibScale` at 2x, the Instrument tab's *V depth* | `kitVibratoHalved`, §187, §210 |
+| the wave RAM write (a kit's frames, a wave's) | 3.1.5 - 4.6.9 / 4.7.3 - 8.5.1 / 9.x | `NR30 = 00`, the bytes, `NR30 = 80`, `NR34` with the trigger, `NR33` / the same inside an `NR51` mute / the mute, a `$7E0` pre-trigger, the period after | the instrument's `waveWrite` (*RAM writes*: Plain / Muted / Pre-trigger); 8.8.6 taken as muted | `waveWrite`, §215 |
 
 ## Differences measured and left alone
 

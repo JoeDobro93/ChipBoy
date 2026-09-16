@@ -6293,3 +6293,30 @@ loop stops there; the Player fires a note-off on every channel at that tick and 
 it until the timeline jumps back. The importer keeps the phrase to the `H F F`'s step (its
 note dropped: the ROM never plays it), still ends that channel's chain there, and leaves
 `chainEnd` alone -- §212's Stop is ChipBoy's own toggle, not an import.
+
+## 215. The wave RAM write by version: plain, muted, pre-triggered
+
+The user's 4.1.0 save (`Computer_Savvy`, kits on every song) came back "lo-fi and distorted"
+against the ROM on an emulator. Its kits import and their samples match the ROM's frames byte
+for byte (§214's session, `/root/lsdj/cs/`); what differs is how each frame is **written**.
+`KIT_plain` on every archive ROM, one frame's writes:
+
+- **3.1.5 - 4.6.9**: `NR30 = 00`, the sixteen bytes, `NR30 = 80`, `NR34 = 87` (the trigger,
+  the period's high bits), `NR33 = 49`. Nothing else; the wave note-on's burst is the same.
+- **4.7.3 - 8.5.1**: the same inside `NR51` with the wave's two bits cleared before and put
+  back after (the changelog's "slightly reduced noise of kit and wave instruments").
+- **9.2.J - 9.4.2** (8.8.6 unmeasured, taken as the muted form): §172's sequence -- the
+  mute, `NR30 = 00`, the bytes, `NR30 = 80`, `NR33 = E0`, `NR34 = 87`, the pan back, then
+  the real period without the trigger bit.
+
+ChipBoy wrote every frame 9.x's way. The `NR51` mute is a step in the mix for the length of
+the write, every frame, which is a buzz at the frame rate on a DMG and in ChipBoy's mix alike
+-- what 4.7.3 added and 9.x kept, and what a 4.1.0 song never had; the `$7E0` pre-trigger
+races the first samples of every frame. Now `waveWrite` on the instrument -- `PreTrigger`
+(9.x, the default, and what a file without the key reads as), `Muted`, `Plain` -- decides
+the burst in `waveRamBurst()`, which writes the period itself: the ROM's order (`NR34` with
+the trigger, then `NR33`) under `Plain` and `Muted`, §171's pre-trigger then the period under
+`PreTrigger`. The models carry it (4.4.0 - 4.7.3 splits at 4.7.3, a twentieth model); the
+control is "RAM writes" on wave and kit instruments. Left: 4.x's note-on writes the trigger
+twice (the burst's and the note-on's own, `NR33=83 NR34=87` after `NR32`), a write ChipBoy
+does not make.
