@@ -78,6 +78,7 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     if (i.fineTune) o->setProperty("fineTune", int(i.fineTune));   // section 112
     if (i.frameLength) o->setProperty("frameLength", int(i.frameLength));
     if (i.frameLoopStep) o->setProperty("frameLoopStep", int(i.frameLoopStep));
+    if (i.frameLoopTail) o->setProperty("frameLoopTail", int(i.frameLoopTail));   // section 201
     o->setProperty("pitchSpeed", int(i.pitchSpeed)); o->setProperty("cmdRate", int(i.cmdRate)); o->setProperty("chordRate", int(i.chordRate)); o->setProperty("tableMode", int(i.tableMode));
     if (i.pu2Transpose != 0) o->setProperty("pu2Transpose", int(i.pu2Transpose));   // section 49; absent reads as 0
     if (i.pitchRegisterUnits) o->setProperty("pitchRegisterUnits", true);          // section 88
@@ -114,6 +115,7 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     if (i.noiseShapeMode) { o->setProperty("noiseShapeMode", true); o->setProperty("noiseShape", int(i.noiseShape)); o->setProperty("noiseStable", i.noiseStable); }   // section 188
     if (i.envStage2) { o->setProperty("envStage2", int(i.envStage2)); o->setProperty("envStage3", int(i.envStage3)); }   // section 189
     if (i.retrigKeepsPitch) o->setProperty("retrigKeepsPitch", true);    // section 195
+    if (i.retrigTableLate) o->setProperty("retrigTableLate", true);      // section 202
     if (i.lsdjFormat >= 0) {                                              // section 197
         o->setProperty("lsdjFormat", int(i.lsdjFormat));
         String hex; for (uint8_t byte : i.lsdjBytes) hex += String::toHexString(int(byte)).paddedLeft('0', 2);
@@ -140,6 +142,7 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.fineTune = uint8_t(std::clamp(getOr(o, "fineTune", 0), 0, 255));   // section 112
     i.frameLength = uint8_t(std::clamp(getOr(o, "frameLength", 0), 0, 16));
     i.frameLoopStep = uint8_t(std::clamp(getOr(o, "frameLoopStep", 0), 0, 15));
+    i.frameLoopTail = uint8_t(std::clamp(getOr(o, "frameLoopTail", 0), 0, 16));   // section 201
     // Overlap replaced the legato flag: a file written before it carries only
     // legato, and one with neither takes the type's own default.
     if (o->hasProperty("overlap")) i.overlap = Overlap(std::clamp(getOr(o, "overlap", 0), 0, 1));
@@ -201,6 +204,7 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.envStage2 = uint8_t(std::clamp(getOr(o, "envStage2", 0), 0, 255));   // section 189
     i.envStage3 = uint8_t(std::clamp(getOr(o, "envStage3", 0), 0, 255));
     i.retrigKeepsPitch = bool(o->getProperty("retrigKeepsPitch"));       // section 195
+    i.retrigTableLate = bool(o->getProperty("retrigTableLate"));         // section 202
     i.lsdjFormat = int8_t(std::clamp(getOr(o, "lsdjFormat", -1), -1, 127));   // section 197
     i.lsdjBytes.fill(0);
     if (i.lsdjFormat >= 0) {

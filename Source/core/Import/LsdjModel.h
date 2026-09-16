@@ -149,6 +149,10 @@ struct LsdjModel {
     /// LOOP POS is the steps *before* the loop: `16 - nibble` steps loop).
     bool           wavePlayOld;
     bool           waveRepeatCount;
+    /// Section 202: a retrigger starts the instrument's table over on the tick
+    /// after its own (every ROM through 7.0.2; the changelog's 8.3.4 fix ends
+    /// it, so 8.1.0 - 8.3.3 are taken as late with no ROM to ask).
+    bool           retrigTableLate;
 };
 
 /// Every model, newest first. `count` receives how many.

@@ -37,6 +37,12 @@ class VP(PF.Probe):
     def __init__(self, v):
         self.version = v
         super().__init__(host=hostPath(v), blank=True, want_format=None)
+    def wave(self, i, **kw):
+        # Section 200: before the frame run, byte 9's PLAY 0 is a one-tick ONCE
+        # note, so a probe's wave instrument holds its frame with PLAY 1 there.
+        r = super().wave(i, **kw)
+        if fmt(self.version) <= 6 and 9 not in (kw.get('extra') or {}): self.s[PF.IP + i * 16 + 9] = 1
+        return r
 
 def trace(p, v, tag, frames=500, keys='180:start'):
     sav = os.path.join(DIR, '%s_%s.sav' % (v, tag))

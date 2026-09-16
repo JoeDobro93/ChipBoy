@@ -6040,3 +6040,46 @@ formats as well, and **0 is ONCE** -- the one frame plays a tick and the channel
 was measured with a nonzero byte. The decoder gives such an instrument a ONCE run of one frame
 at one tick (`frameAdvance = 1`), which ends the way §171's ONCE does; the two milliseconds of
 the older ROMs are a tick here (the gap list).
+
+## 201. The wave run before format 7: PLAY, the loop's tail and W (5.7.8, 6.0.1, 6.4.5)
+
+Sixteen tagged frames (`f * 11`), PLAY 1, 2 and 3 in byte 9 against the byte 2 nibble at 0, 1
+and F, each under `W12`, and PLAY 1 under `W00`, `W10`, `W20`, `W1F` and `W32` (`W6_*`). The
+same on 5.7.8, 6.0.1 and 6.4.5:
+
+- PLAY 3 is MANUAL: no W moves the frame. PLAY 1 is LOOP, PLAY 2 PINGPONG, PLAY 0 ONCE (§200).
+- The instrument has no LENGTH or SPEED of its own: the run is the one frame at a tick a step
+  until a W gives it `x` ticks a frame (0 keeps) and `y + 1` frames, spread across the sixteen
+  as 9.x's are (`W12`: frames 0, 7, F; `W1F`: all sixteen). A speed-only W on the one frame
+  moves nothing.
+- The loop is the byte 2 nibble plus one steps counted from the run's **end**, whatever a W
+  makes the length: nibble 0 holds the last frame once the walk is done (`00 77 FF FF ...`),
+  1 keeps the last two (`77 FF 77 FF`, LOOP and PINGPONG alike), F the whole run (PINGPONG
+  `00 77 FF 77 00 ...`). That is §198's rule without the LENGTH byte.
+
+ChipBoy: a `frameLoopTail` on the instrument -- 0 keeps the loop at `frameLoopStep` (9.x, where
+§131's `U` keeps the loop's *frame*), n makes the loop the run's last n steps and a `U` that
+changes the length puts it at the new end. The decoder sets it from the REPEAT nibble on every
+model before 7.7.6 (the `waveRepeatCount` ones and the formats before the run), and before
+format 7 reads PLAY 1, 2 and 3 as LOOP, PINGPONG and MANUAL over a one-frame run at one tick a
+step. The importer's "W on MANUAL is dropped" check now reads MANUAL by the version's own PLAY
+encoding (byte 9 & 3 == 3 before 7.7.6, byte 9 == 0 after); it read byte 9 == 0 on every
+version, which on 7.x is ONCE, and dropped the W there. 5.0.3 writes the third frame of a
+`W12` a tick late (`0.134` for 5.7.8's `0.118`); that is the format-3 sweep's.
+
+## 202. A retrigger starts the instrument's table over a tick late before 8.3.4
+
+Six transpose steps in the instrument's table under `R03` (`Rtbl6_R03`), on 9.4.2, 8.5.1,
+7.0.2, 6.8.2, 6.4.5, 6.0.1, 5.7.8 and 5.0.3. From 8.5.1 the retrigger and the table's row 0
+are one batch (`TRIG NR13=9D`, §182). On 7.0.2 and every older ROM the retrigger's tick runs
+the row the table was on, the trigger comes alone, and row 0 is written on the tick **after**
+(`0.126 NR13=AC`, `0.127 TRIG`, `0.141 NR13=9D`); the immediate fire at the note-on does the
+same, so its row 1 comes two ticks after row 0 where 9.4.2's comes one. A table without an R
+starts on the note-on's own tick on every version (`Rtbl6_plain`). The changelog's 8.3.4 entry
+("R command restarted table one tick too late") places the change; 8.1.0 - 8.3.3 are taken as
+late with it, there being no ROM.
+
+ChipBoy: `retrigTableLate` on the instrument (the importer sets it on every model up to
+8.0.0). The retrigger sets a flag, the table phase of the next tick starts the instrument's own
+table from row 0 as §182's replay does on the retrigger's own tick, and that tick's table phase
+runs its row as any other.

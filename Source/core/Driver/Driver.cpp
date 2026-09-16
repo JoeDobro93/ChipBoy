@@ -842,7 +842,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         // with no trigger, then `E`'s trigger where the LENGTH counter asks for
         // one (section 138), then the level's own writes. `setLevel()` is right
         // to leave these to a plain note's burst; this note has no burst.
-        if (v.retrigPending) { const bool env = v.retrigPending == 1; v.retrigPending = 0; retrigger(ch, true, env); }
+        if (v.retrigPending) { const bool env = v.retrigPending == 1; v.retrigPending = 0; retrigger(ch, true, env); if (env) flagLateTableRestart(ch); }
         if ((levelIsNr32 ? v.waveLevel : v.envVol) != levelWas) setLevel(ch);
         writeNr51();
         return;
@@ -922,6 +922,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     v.tableJustStarted = v.tableOn;                       // section 84: the trigger is the plain note; row 0's column follows it (section 180)
     v.tableTicks = false;                                 // the instrument's own table again (section 122)
     v.tableWait = v.tableWait2 = v.tableWaitE = 0;        // every lane starts its row afresh (section 64)
+    v.tableRestartLate = false;
     v.tableTspHoldOn = false;                     // section 157: a note starts on its own column
     if (v.tableOn) ++v.tableRun;                  // a note-on starts a run of its own (section 32)
     // A Step-mode table advances one row per trigger instead of restarting,
@@ -1093,7 +1094,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
         if (!v.active) return;
         rowStart = retrigAt;
     }
-    if (v.retrigPending) { burst_ = std::max(burst_, retrigAt); const bool env = v.retrigPending == 1; v.retrigPending = 0; retrigger(ch, true, env); rowStart = retrigAt; }
+    if (v.retrigPending) { burst_ = std::max(burst_, retrigAt); const bool env = v.retrigPending == 1; v.retrigPending = 0; retrigger(ch, true, env); if (env) flagLateTableRestart(ch); rowStart = retrigAt; }
     if (v.panQueued) { v.pan = Pan(v.panQueued - 1); v.panQueued = 0; writeNr51(); }
     // Section 180: the table's row 0, in the handler's table phase 1.2 ms in,
     // live: the volume lane walks, a `W` writes, an `F` writes its frame. The
@@ -1172,7 +1173,7 @@ void Driver::stopVoice(int ch, bool kill)
     Voice& v = v_[size_t(ch)];
     v.active = false; v.tableOn = false; v.tableTspHoldOn = false; v.sliding = false; v.chordN = 0; v.kitOn = false; v.kitPair = false; v.kitALive = false; v.kitBLive = false; v.pendingOn = false;
     v.pitchClockOn = false; v.releasing = false; v.pulseReleasing = false;
-    v.shapedOn = false; v.shapedRelease = false; v.tableJustStarted = false; v.lsdjStage = 0;
+    v.shapedOn = false; v.shapedRelease = false; v.tableJustStarted = false; v.tableRestartLate = false; v.lsdjStage = 0;
     // A kill or a stop ends the phrase: a key released afterwards must not
     // bring a note back that nobody is playing (section 8).
     v.heldCount = 0;
@@ -2491,7 +2492,7 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
             // Section 143: the fast roll (`x = 8`) starts on the pitch clock,
             // `y + 1` clocks after the command, with nothing at the command
             // itself -- measured, where every other `x` fires one as it is read.
-            if (!v.retrigFast) { if (live) retrigger(ch, true); else v.retrigPending = 1; }
+            if (!v.retrigFast) { if (live) { retrigger(ch, true); flagLateTableRestart(ch); } else v.retrigPending = 1; }
             break;
         case Cmd::S: {
             // PU1's sweep; on NOI a transpose through the map that adds up
@@ -2567,12 +2568,18 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
                     const uint8_t loopFrame = was[size_t(std::clamp<int>(v.inst.frameLoopStep, 0, lenWas - 1))];
                     v.inst.frameLength = uint8_t(int(c.b & 15) + 1);
                     uint8_t now[16]; const int lenNow = waveRunOf(ch, now);
-                    int best = 0, bestD = 256;
-                    for (int k = 0; k < lenNow; ++k) {
-                        const int d = std::abs(int(now[size_t(k)]) - int(loopFrame));
-                        if (d < bestD) { bestD = d; best = k; }
+                    if (v.inst.frameLoopTail) {
+                        // Section 201: before 7.7.6 the loop is the run's last
+                        // `tail` steps, so a new length moves it to the new end.
+                        v.inst.frameLoopStep = uint8_t(std::max(0, lenNow - int(v.inst.frameLoopTail)));
+                    } else {
+                        int best = 0, bestD = 256;
+                        for (int k = 0; k < lenNow; ++k) {
+                            const int d = std::abs(int(now[size_t(k)]) - int(loopFrame));
+                            if (d < bestD) { bestD = d; best = k; }
+                        }
+                        v.inst.frameLoopStep = uint8_t(best);
                     }
-                    v.inst.frameLoopStep = uint8_t(best);
                 }
                 // Section 129: the command writes no frame -- the wave keeps
                 // sounding where it is and the next speed period steps on.
@@ -3080,11 +3087,29 @@ void Driver::tick(int ch)
         retrig = true;
     }
     const uint8_t ownTable = v.tableOverride ? v.tableOverride : v.inst.table;
-    const bool retrigReplays = retrig && ownTable && bank_ && bank_->table(ownTable);
+    // Section 202: before 8.3.4 the restart is the next tick's (retrigger() flags
+    // it), and this tick's table phase runs its row as any other.
+    const bool retrigReplays = retrig && ownTable && bank_ && bank_->table(ownTable) && !v.inst.retrigTableLate;
     // The table: a row per tick, or per the row length a G inside it asked
     // for. A Step-mode table advances at notes instead (section 7).
     if (v.tableJustStarted) v.tableJustStarted = false;      // row 0 fired with the note-on (section 31)
     else if (retrigReplays) {}                                // section 182: the retrigger's row 0 is this tick's row
+    else if (v.tableRestartLate) {
+        // Section 202: the retrigger of the tick before starts the instrument's
+        // own table over now -- §182's replay, a tick late -- the table an `A`
+        // had moved the channel to gone with it.
+        v.tableRestartLate = false;
+        if (ownTable && bank_ && bank_->table(ownTable)) {
+            v.tableSlot = ownTable; v.tableOn = true; v.tableTicks = false; v.tableGroove = 0;
+            v.tableStep = v.tableStep2 = v.tableStepE = 0;
+            v.tableRow = v.tableRow2 = v.tableRowE = 0;
+            v.tableWait = v.tableWait2 = v.tableWaitE = 0;
+            v.hopLeft = v.hopLeft2 = 0; v.hopFrom = v.hopFrom2 = 0xFF; v.volLaneOn = true; v.tableTspHoldOn = false;
+            ++v.tableRun;
+            stepTable(ch);
+            if (!v.active) return;
+        }
+    }
     else if (v.inst.tableMode == TableMode::Tick || v.tableTicks) {   // section 122
         // Each lane counts down its own row (section 64).
         uint16_t* const waits[3] = { &v.tableWaitE, &v.tableWait, &v.tableWait2 };
@@ -3219,6 +3244,7 @@ void Driver::tick(int ch)
         }
         const uint64_t retrigStart = burst_;
         retrigger(ch, true);
+        flagLateTableRestart(ch);
         // Section 182: and the instrument's table starts over from row 0 in
         // the handler's table phase, a TICK table and a STEP one alike -- a
         // table an `A` had moved the channel to is gone with the reload -- and
@@ -3244,6 +3270,15 @@ void Driver::tick(int ch)
     }
     else if (v.inst.type == InstrumentType::Noise) { if (v.noiseSweep || tspReleased || tickNote() != noteBeforeTick || (nrBeforeTick >= 0 && int(noiseNr43(ch)) != nrBeforeTick)) writePeriod(ch, false); }   // a table's transpose reaches NR43 (section 45)
     else if (tickNote() != noteBeforeTick) writePeriod(ch, false);
+}
+
+/// Section 202: an `R`'s retrigger -- the immediate fire and the roll alike,
+/// never an E's re-attack -- owes the instrument's table its row 0 on the next
+/// tick before 8.3.4; the tick's table phase pays it.
+void Driver::flagLateTableRestart(int ch)
+{
+    Voice& v = v_[size_t(ch)];
+    if (v.inst.retrigTableLate && (v.tableOverride ? v.tableOverride : v.inst.table)) v.tableRestartLate = true;
 }
 
 /// One retrigger. LSDj writes the whole note-on sequence again -- NR10, NR11,

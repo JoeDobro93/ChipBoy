@@ -111,6 +111,7 @@ bool decodeInstrumentBytes(const uint8_t* b, int t, const LsdjModel& m, const ba
     o.envRetrig = m.envelopeLaw != EnvelopeLaw::SoftwareStages;
     // Section 195: before 9.4.0 a roll leaves a DRUM pitch running.
     o.retrigKeepsPitch = !m.retrigResetsDrumPitch;
+    o.retrigTableLate = m.retrigTableLate;                                // section 202
     // Section 81: a noise instrument reads LSDj's own table straight off
     // the bank, so the cell's note is LSDj's note and the byte the driver
     // writes is the byte the ROM writes.
@@ -169,11 +170,19 @@ bool decodeInstrumentBytes(const uint8_t* b, int t, const LsdjModel& m, const ba
         // heard as the wave channel retriggering two or three times a
         // step.
         if (!m.waveFrameRun) {
-            o.frameLength = 1; o.frameLoopStep = 0; o.frameAdvance = 0;
-            o.frameLoop = bank::FrameLoop::Loop;
-            // Section 200: the low two bits of byte 9 are PLAY here too, and 0 is
-            // ONCE -- the one frame plays a tick and the channel goes quiet.
-            if ((b[9] & 3) == 0) { o.frameLoop = bank::FrameLoop::Once; o.frameAdvance = 1; }
+            // Sections 200 and 201: no LENGTH or SPEED, but byte 9's low two bits
+            // are PLAY (ONCE 0, LOOP 1, PINGPONG 2, MANUAL 3) and the REPEAT
+            // nibble the loop, counted from the run's end. The run is the one
+            // frame at a tick a step until a W lengthens it; ONCE plays that
+            // frame a tick and the channel goes quiet.
+            o.frameLength = 1; o.frameLoopStep = 0; o.frameAdvance = 1;
+            o.frameLoopTail = uint8_t(loopPos + 1);
+            switch (b[9] & 3) {
+                case 0: o.frameLoop = bank::FrameLoop::Once; break;
+                case 1: o.frameLoop = bank::FrameLoop::Loop; break;
+                case 2: o.frameLoop = bank::FrameLoop::PingPong; break;
+                default: o.frameLoop = bank::FrameLoop::Loop; o.frameAdvance = 0; break;   // MANUAL: only an F moves it
+            }
         } else {
             // The run: LENGTH is 16 - the low nibble of byte 10, SPEED is
             // byte 11 and costs four ticks on top, PLAY is byte 9's low two
@@ -183,6 +192,7 @@ bool decodeInstrumentBytes(const uint8_t* b, int t, const LsdjModel& m, const ba
             // Section 198: before 7.7.6 the nibble counts the loop's steps less
             // one from the run's end; from 7.7.6 it is the steps before the loop.
             o.frameLoopStep = uint8_t(std::max(0, len - (m.waveRepeatCount ? loopPos + 1 : 16 - loopPos)));
+            if (m.waveRepeatCount) o.frameLoopTail = uint8_t(loopPos + 1);   // section 201: the loop stays at the run's end under a W
             // Section 171: PLAY is the whole byte -- 4 is 9.2.E's RESYNC,
             // ping-pong with every frame written at its tick.
             // Section 198: before 7.7.6 the low two bits are ONCE 0, LOOP 1,

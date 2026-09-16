@@ -221,6 +221,10 @@ struct InstrumentCore {
     /// as every LSDj before 9.4.0 did; off, each hit starts from the note's
     /// entry (section 185, 9.4.0 and later). The importer sets it by version.
     bool     retrigKeepsPitch = false;
+    /// Section 202: a retrigger starts the instrument's table over on the tick
+    /// **after** its own, as every LSDj before 8.3.4 did; off, row 0 is the
+    /// retrigger's own tick (section 182). The importer sets it by version.
+    bool     retrigTableLate = false;
     /// Section 197: the instrument as its LSDj save held it -- the format the
     /// bytes were written in (-1: not imported) and the sixteen bytes -- so a
     /// channel of another kind can read them as the ROM would.
@@ -257,6 +261,10 @@ struct InstrumentCore {
     /// `frameLoopStep`, which is a step of that run and not a frame number.
     uint8_t  frameLength = 0;
     uint8_t  frameLoopStep = 0;
+    /// Section 201: 0 keeps the loop at `frameLoopStep`; n makes it the run's
+    /// **last n steps**, wherever a `U` puts the run's end (LSDj before 7.7.6
+    /// counted the loop from the end; the importer sets it from the REPEAT nibble).
+    uint8_t  frameLoopTail = 0;
     uint8_t  frameAdvance = 0;       ///< ticks per frame, 0 holds
     FrameLoop frameLoop = FrameLoop::Loop;
     /// Section 171: the frame the run starts at (LSDj's byte 3 low nibble; in

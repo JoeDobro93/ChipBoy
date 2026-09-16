@@ -4442,6 +4442,71 @@ TEST_CASE("every vibrato shape is centred on the note", "[driver][commands]")
     }
 }
 
+TEST_CASE("a loop counted from the run's end stays at the end when U lengthens the run", "[driver][wave]")
+{
+    // Section 201 (W6_p1_r0_W12, W6_p1_r1_W12, W6_p2_rF_W12 on 6.0.1): before
+    // 7.7.6 the loop is the REPEAT nibble plus one steps from the run's end. A
+    // one-frame run under `W12` walks frames 0, 7 and F; a tail of one then
+    // holds F, a tail of two keeps 7 and F, and a ping-pong over the whole run
+    // turns at both ends.
+    const auto runs = [](bank::FrameLoop loop, int tail, int blocks) {
+        auto r = std::make_unique<Rig>();
+        r->tickHz = 100.0;
+        r->song.noteSource[2] = tracker::NoteSource::Tracker;
+        auto& w = r->bank.waves[0];
+        w.used = true;
+        for (int f = 0; f < bank::kMaxFrames; ++f) w.frames[size_t(f)].s.fill(uint8_t(f));
+        auto& i = r->bank.instruments[1];
+        i = bank::Instrument::defaults(bank::InstrumentType::Wave, "Tail");
+        i.used = true; i.wave = 1; i.frameAdvance = 1; i.frameLength = 1; i.frameLoopStep = 0;
+        i.frameLoop = loop; i.frameLoopTail = uint8_t(tail);
+        ChannelParams p; p.instrument = 2; p.velocityMode = 2; r->drv.setParams(2, p);
+        NoteEvent on = cellOn(2, 60, 2);
+        on.cmd1 = { Cmd::U, 1, 2, 0 };
+        r->block({ on }, 480);
+        std::vector<int> seen{ int(r->drv.view(2).frame) - 1 };
+        for (int k = 0; k < blocks; ++k) { r->block({}, 480); seen.push_back(int(r->drv.view(2).frame) - 1); }
+        return seen;
+    };
+    CHECK(runs(bank::FrameLoop::Loop, 1, 5) == std::vector<int>{ 0, 7, 15, 15, 15, 15 });
+    CHECK(runs(bank::FrameLoop::Loop, 2, 5) == std::vector<int>{ 0, 7, 15, 7, 15, 7 });
+    CHECK(runs(bank::FrameLoop::PingPong, 16, 6) == std::vector<int>{ 0, 7, 15, 7, 0, 7, 15 });
+    // Without a tail the 9.x rule holds: the loop keeps its frame, here frame 0.
+    CHECK(runs(bank::FrameLoop::Loop, 0, 4) == std::vector<int>{ 0, 7, 15, 0, 7 });
+}
+
+TEST_CASE("with retrigTableLate a retrigger starts the instrument's table over on the next tick", "[driver][commands][table]")
+{
+    // Section 202 (Rtbl6_R03 on 7.0.2 and older): the retrigger's tick runs the
+    // row the table was on, row 0 comes the tick after -- the immediate fire at
+    // the note-on included, so row 1 is two ticks after row 0 there. Table 0 =
+    // W03, W01, W02, W00 under `R 03` on a duty-2 instrument; the duty after
+    // each tick tells the row.
+    const auto duties = [](bool late) {
+        auto r = std::make_unique<Rig>();
+        r->tickHz = 100.0;
+        r->song.noteSource[0] = tracker::NoteSource::Tracker;
+        Table t0; t0.used = true;
+        t0.steps[0].cmd1 = { Cmd::W, 3, 0, 0 }; t0.steps[1].cmd1 = { Cmd::W, 1, 0, 0 }; t0.steps[2].cmd1 = { Cmd::W, 2, 0, 0 }; t0.steps[3].cmd1 = { Cmd::W, 0, 0, 0 };
+        r->bank.tables[0] = t0;
+        auto& i = r->bank.instruments[1];
+        i = bank::Instrument::defaults(bank::InstrumentType::Pulse, "Late");
+        i.used = true; i.table = 1; i.tableMode = bank::TableMode::Tick; i.duty = 2; i.retrigTableLate = late;
+        ChannelParams p; p.instrument = 2; r->drv.setParams(0, p);
+        NoteEvent on = cellOn(0, 60, 2); on.cmd1 = { Cmd::R, 0, 3, 0 };
+        r->block({ on }, 480);
+        std::vector<int> seen{ int(r->drv.view(0).duty) };
+        for (int k = 0; k < 7; ++k) { r->block({}, 480); seen.push_back(int(r->drv.view(0).duty)); }
+        return seen;
+    };
+    // The 9.x rule (section 182): row 0 on the note-on, rows 1 and 2 on the
+    // ticks after, and the roll at tick 3 plays row 0 on its own tick.
+    CHECK(duties(false) == std::vector<int>{ 3, 1, 2, 3, 1, 2, 3, 1 });
+    // Late: the note-on's immediate fire replays row 0 on tick 1, and the roll
+    // at tick 3 lets row 2 run and starts over on tick 4.
+    CHECK(duties(true) == std::vector<int>{ 3, 3, 1, 2, 3, 1, 2, 3 });
+}
+
 TEST_CASE("U sets the wave run's speed and length", "[driver][wave]")
 {
     // Sections 115 and 129, measured on 9.2.L: LSDj's `W` on a wave instrument

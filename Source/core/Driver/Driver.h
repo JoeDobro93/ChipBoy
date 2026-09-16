@@ -345,6 +345,7 @@ private:
         uint32_t shapedPosMax = 0;
         uint8_t  shapedFrom = 0;           ///< the level the release started from
         bool     tableJustStarted = false; ///< row 0 fired with the note-on (section 31)
+        bool     tableRestartLate = false; ///< section 202: a retrigger owes the table its row 0 on the next tick
         bool     tableHopped = false;      ///< a `B` in this lane took its hop (section 73)
         // The instrument's own envelope, run in software (section 26): from
         // LSDj 8.8.0 the program never lets the chip's envelope run -- NRx2
@@ -492,6 +493,7 @@ private:
     /// and an `E`'s (§138) does not: that one must carry the level the `E` just
     /// set, which is what the ROM's burst writes.
     void retrigger(int ch, bool full, bool restartEnv = true);
+    void flagLateTableRestart(int ch);   // section 202
     void emitAt(uint64_t cycle, uint16_t addr, uint8_t v);
     void tick(int ch);
     void tickAll();

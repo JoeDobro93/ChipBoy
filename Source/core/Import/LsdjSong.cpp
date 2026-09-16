@@ -567,7 +567,10 @@ struct Reader {
                     // Section 192: on a MANUAL instrument (PLAY byte 9 = 0) the ROM's W
                     // starts no run -- probed on 9.4.2 and 8.5.1 (`Wv_W12`) -- where
                     // ChipBoy's U would; so it is dropped there.
-                    if (st && m.waveFrameRun && st->inst >= 0 && st->inst < kLsdjInstruments && inst(st->inst)[0] == 1 && inst(st->inst)[9] == 0) {
+                    // Section 201: MANUAL by the version's own PLAY encoding -- byte 9 & 3 == 3
+                    // before 7.7.6 (and before the run, §200), byte 9 == 0 from 7.7.6.
+                    const auto manual = [&](const uint8_t* ib) { return (!m.waveFrameRun || m.wavePlayOld) ? (ib[9] & 3) == 3 : ib[9] == 0; };
+                    if (st && st->inst >= 0 && st->inst < kLsdjInstruments && inst(st->inst)[0] == 1 && manual(inst(st->inst))) {
                         notes.add("W" + hex2(v) + " at " + where + ": the wave instrument's PLAY is MANUAL, where the ROM's W starts no frame run; dropped"); return false;
                     }
                     out = { Cmd::U, int16_t(x), int16_t(y), 0 }; return true;

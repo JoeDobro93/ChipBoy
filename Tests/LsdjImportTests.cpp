@@ -1538,12 +1538,65 @@ TEST_CASE("a 7.0.2 wave instrument's PLAY and REPEAT read by the old laws", "[ls
     REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
     const auto& w = bank->instruments[0];
     CHECK(w.frameLoop == bank::FrameLoop::Loop); CHECK(int(w.frameLength) == 4); CHECK(int(w.frameLoopStep) == 1); CHECK(int(w.frameAdvance) == 4);
+    CHECK(int(w.frameLoopTail) == 3);                                       // section 201: the loop stays at the run's end under a W
     i0[9] = 3;                                                              // MANUAL on 7.x
     REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
     CHECK(int(bank->instruments[0].frameAdvance) == 0);
     i0[9] = 2; i0[2] = 0x0F;                                                // PINGPONG over the whole run
     REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
     CHECK(bank->instruments[0].frameLoop == bank::FrameLoop::PingPong); CHECK(int(bank->instruments[0].frameLoopStep) == 0);
+}
+
+TEST_CASE("before the frame run, PLAY and REPEAT read as 7.x's and a W on MANUAL is dropped", "[lsdj][versions]")
+{
+    // Section 201 (W6_* on 5.7.8, 6.0.1, 6.4.5): PLAY 1 LOOP, 2 PINGPONG, 3
+    // MANUAL over a one-frame run at a tick a step, the REPEAT nibble plus one
+    // the loop's tail; the phrase's W12 comes in as U except on MANUAL.
+    auto song = blankSong(5);
+    song[kInstAlloc + 0] = 1;
+    uint8_t* i0 = song.data() + kInst; i0[0] = 1; i0[1] = 0x20; i0[2] = 0x01; i0[7] = 3; i0[9] = 1;
+    song[kPhraseAlloc] |= 1; song[kNotes] = uint8_t(60 - 35); song[kPhraseInst] = 0;
+    song[kCmd] = 17; song[kCmdV] = 0x12;                                    // the legacy letters' W
+    song[kChainPhrases] = 0;
+    song[kRows + 0] = 0xFF; song[kRows + 1] = 0xFF; song[kRows + 2] = 0; song[kRows + 3] = 0xFF;   // on WAV, where a W is the run
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    const auto* m = lsdjModelForRomVersion("6.0.1");
+    REQUIRE(m != nullptr);
+    REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
+    const auto& w = bank->instruments[0];
+    CHECK(w.frameLoop == bank::FrameLoop::Loop); CHECK(int(w.frameLength) == 1); CHECK(int(w.frameAdvance) == 1); CHECK(int(w.frameLoopTail) == 2);
+    CHECK(w.retrigTableLate);                                               // section 202
+    const auto* p = out->phrase(out->chain[2].at(0));
+    REQUIRE(p != nullptr);
+    CHECK(p->cells[0].cmd1.cmd == bank::Cmd::U); CHECK(int(p->cells[0].cmd1.a) == 1); CHECK(int(p->cells[0].cmd1.b) == 2);
+    i0[9] = 2; i0[2] = 0x0F;                                                // PINGPONG over the whole run
+    REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
+    CHECK(bank->instruments[0].frameLoop == bank::FrameLoop::PingPong); CHECK(int(bank->instruments[0].frameLoopTail) == 16);
+    i0[9] = 3;                                                              // MANUAL: no W moves it
+    REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
+    CHECK(int(bank->instruments[0].frameAdvance) == 0);
+    p = out->phrase(out->chain[2].at(0));
+    REQUIRE(p != nullptr);
+    CHECK(p->cells[0].cmd1.cmd == bank::Cmd::None);
+    bool said = false;
+    for (const auto& l : notes.lines) if (l.find("MANUAL") != std::string::npos) said = true;
+    CHECK(said);
+    // On 7.x byte 9 = 0 is ONCE, not MANUAL: the W stays.
+    auto song7 = blankSong(7);
+    song7[kInstAlloc + 0] = 1;
+    uint8_t* j0 = song7.data() + kInst; j0[0] = 1; j0[1] = 0x20; j0[7] = 3; j0[9] = 0; j0[10] = 0x0C;
+    song7[kPhraseAlloc] |= 1; song7[kNotes] = uint8_t(60 - 35); song7[kPhraseInst] = 0;
+    song7[kCmd] = 17; song7[kCmdV] = 0x12;
+    song7[kChainPhrases] = 0;
+    song7[kRows + 0] = 0xFF; song7[kRows + 1] = 0xFF; song7[kRows + 2] = 0; song7[kRows + 3] = 0xFF;
+    const auto* m7 = lsdjModelForRomVersion("7.0.2");
+    REQUIRE(m7 != nullptr);
+    REQUIRE(importSong(song7.data(), song7.size(), *m7, *bank, *out, sum, notes));
+    CHECK(bank->instruments[0].frameLoop == bank::FrameLoop::Once);
+    p = out->phrase(out->chain[2].at(0));
+    REQUIRE(p != nullptr);
+    CHECK(p->cells[0].cmd1.cmd == bank::Cmd::U);
 }
 
 TEST_CASE("before the frame run, a wave instrument's PLAY 0 is a one-tick ONCE note", "[lsdj][versions]")
@@ -1563,7 +1616,7 @@ TEST_CASE("before the frame run, a wave instrument's PLAY 0 is a one-tick ONCE n
     REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
     const auto& w = bank->instruments[0];
     CHECK(w.frameLoop == bank::FrameLoop::Once); CHECK(int(w.frameAdvance) == 1); CHECK(int(w.frameLength) == 1);
-    i0[9] = 1;                                                              // any nonzero PLAY holds frame 0
+    i0[9] = 1;                                                              // PLAY 1 is LOOP over the one frame (section 201)
     REQUIRE(importSong(song.data(), song.size(), *m, *bank, *out, sum, notes));
-    CHECK(bank->instruments[0].frameLoop == bank::FrameLoop::Loop); CHECK(int(bank->instruments[0].frameAdvance) == 0);
+    CHECK(bank->instruments[0].frameLoop == bank::FrameLoop::Loop); CHECK(int(bank->instruments[0].frameAdvance) == 1);
 }
