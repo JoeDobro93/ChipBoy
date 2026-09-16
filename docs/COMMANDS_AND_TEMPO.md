@@ -5978,3 +5978,25 @@ nibble of 6 or more is capped at a semitone.
 
 §189 addendum: an `E` over running hardware stages ends them (`PU_adsr_E`, `_E2` on 8.5.1: the
 `E`'s byte with a retrigger, then no stage byte follows), which is what ChipBoy does.
+
+## 197. Any instrument on any channel, read as LSDj reads it
+
+LSDj keeps an instrument as sixteen bytes and a channel reads whichever instrument a cell names
+by its own layout: a WAV instrument on PU1 is a pulse whose envelope is byte 1 and whose duty is
+byte 7, a pulse on NOI a noise instrument, a kit on PU2 a pulse (the `X942_*` probes, all six
+identical to the ROM through the importer's per-channel copies). The user's decision
+(docs/plan-any-channel.md): ChipBoy does this itself and the copies go.
+
+- The importer's `buildInstrument` body for pulse, wave and noise, and the envelope laws with
+  it, are `lsdj::decodeInstrumentBytes()` in `core/Import/LsdjInstrument.cpp`; the importer
+  reads every instrument through it and keeps the sixteen bytes and the format on the
+  instrument (`InstrumentCore::lsdjFormat`, `lsdjBytes`, in the file as a 32-digit string).
+- The driver, where a cell's instrument is not the channel's kind (`typeFits`), reads it as
+  that kind through `crossKind()`: the save's own bytes under the model of their format, or,
+  for a ChipBoy-native instrument, `lsdj::encodeInstrumentBytes()`'s 9.4.2 layout (lossy where
+  ChipBoy has more than LSDj -- a Shaped envelope encodes as its Chip fields). PU1/PU2 read a
+  pulse, WAV a wave (a kit fits already), NOI a noise instrument; a kit's number is never
+  needed, since a kit read on another channel is a pulse or a noise instrument.
+- The bank's noise map is set up front for a Map-rule import, so a noise channel's reading of
+  a pulse finds it. The variant slots, their names and their import notes are gone: a cell
+  names the instrument itself.

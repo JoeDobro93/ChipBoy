@@ -114,6 +114,11 @@ var instrumentToVarSlot(const Instrument& i, int slot)
     if (i.noiseShapeMode) { o->setProperty("noiseShapeMode", true); o->setProperty("noiseShape", int(i.noiseShape)); o->setProperty("noiseStable", i.noiseStable); }   // section 188
     if (i.envStage2) { o->setProperty("envStage2", int(i.envStage2)); o->setProperty("envStage3", int(i.envStage3)); }   // section 189
     if (i.retrigKeepsPitch) o->setProperty("retrigKeepsPitch", true);    // section 195
+    if (i.lsdjFormat >= 0) {                                              // section 197
+        o->setProperty("lsdjFormat", int(i.lsdjFormat));
+        String hex; for (uint8_t byte : i.lsdjBytes) hex += String::toHexString(int(byte)).paddedLeft('0', 2);
+        o->setProperty("lsdjBytes", hex);
+    }
     if (i.noisePitch != NoisePitch::Free) o->setProperty("noisePitch", int(i.noisePitch));   // section 86
     o->setProperty("wave", int(i.wave)); o->setProperty("frameAdvance", int(i.frameAdvance)); o->setProperty("frameLoop", int(i.frameLoop)); o->setProperty("waveLevel", int(i.waveLevel));
     if (i.frameStart) o->setProperty("frameStart", int(i.frameStart));   // section 171
@@ -196,6 +201,13 @@ void instrumentFromVarImpl(const var& v, Instrument& i)
     i.envStage2 = uint8_t(std::clamp(getOr(o, "envStage2", 0), 0, 255));   // section 189
     i.envStage3 = uint8_t(std::clamp(getOr(o, "envStage3", 0), 0, 255));
     i.retrigKeepsPitch = bool(o->getProperty("retrigKeepsPitch"));       // section 195
+    i.lsdjFormat = int8_t(std::clamp(getOr(o, "lsdjFormat", -1), -1, 127));   // section 197
+    i.lsdjBytes.fill(0);
+    if (i.lsdjFormat >= 0) {
+        const String hex = o->getProperty("lsdjBytes").toString();
+        if (hex.length() == 32) for (int k = 0; k < 16; ++k) i.lsdjBytes[size_t(k)] = uint8_t(hex.substring(2 * k, 2 * k + 2).getHexValue32());
+        else i.lsdjFormat = -1;
+    }
     i.noisePitch = NoisePitch(std::clamp(getOr(o, "noisePitch", 0), 0, 2));                 // section 86
     i.wave = uint8_t(std::clamp(getOr(o, "wave", 1), 1, kWaveSlots));   /* section 103 */ i.frameAdvance = uint8_t(std::clamp(getOr(o, "frameAdvance", 0), 0, 15)); i.frameLoop = FrameLoop(std::clamp(getOr(o, "frameLoop", 0), 0, 3)); i.waveLevel = uint8_t(std::clamp(getOr(o, "waveLevel", 3), 0, 3));
     i.frameStart = uint8_t(std::clamp(getOr(o, "frameStart", 0), 0, 15));   // section 171

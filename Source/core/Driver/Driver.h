@@ -641,6 +641,8 @@ private:
     void reloadInstrument(int ch);            ///< a cell's instrument column, or Live follow
     static bank::InstrumentType defaultType(int ch);
     static bool typeFits(int ch, bank::InstrumentType t);
+    /// Section 197: the instrument read as this channel's kind from its LSDj bytes.
+    bank::InstrumentCore crossKind(int ch, const bank::InstrumentCore& own) const;
     void stepTable(int ch);
     void stepTableLane(int ch, int lane);             ///< 1 = TSP and CMD 1, 2 = CMD 2, 0 = VOL (section 64)
     int  waveRunOf(int ch, uint8_t* out) const;       ///< the run's frames, section 65; returns its length

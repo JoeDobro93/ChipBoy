@@ -1,6 +1,7 @@
 // ChipBoy -- an LSDj song into a bank and a song (docs/plan-lsdj-import.md
 // section 4; the rules are docs/COMMANDS_AND_TEMPO.md sections 45-52).
 #include "core/Import/LsdjSong.h"
+#include "core/Import/LsdjInstrument.h"
 
 #include "core/Driver/Driver.h"
 
@@ -34,10 +35,7 @@ constexpr size_t kTableAlloc = 0x2020, kInstAlloc = 0x2040, kChainPhrases = 0x20
 constexpr size_t kTableTsp = 0x3480, kTableCmd1 = 0x3680, kTableCmd1V = 0x3880, kTableCmd2 = 0x3A80, kTableCmd2V = 0x3C80;
 constexpr size_t kPhraseAlloc = 0x3E82, kTempo = 0x3FB4, kSongTranspose = 0x3FB5, kPhraseCmd = 0x4000, kPhraseCmdV = 0x4FF0, kWaves = 0x6000, kPhraseInst = 0x7000;
 constexpr int kLsdjTables = 32, kLsdjInstruments = 64, kLsdjPhrases = 255, kLsdjChains = 128;
-constexpr double kPitchClockMs = 11712.0 * 1000.0 / 4194304.0;   // 2.7924 ms
 
-int signedByte(int b) { return b >= 128 ? b - 256 : b; }
-std::string hex2(int v) { static const char* d = "0123456789ABCDEF"; std::string s; s += d[(v >> 4) & 15]; s += d[v & 15]; return s; }
 double noiseClockHz(int shift, int divisor) { return 524288.0 / (divisor == 0 ? 0.5 : double(divisor)) / double(1u << (shift + 1)); }
 
 /// S on noise before 9 (section 56): each nibble of NR43 less the matching
@@ -104,10 +102,8 @@ struct Reader {
     // ChipBoy's instruments have a type, so such a use gets a variant of the
     // channel's kind in the slots above LSDj's 64.
     std::map<int, std::set<int>> phraseChannels;         // LSDj phrase -> the channels it plays on
-    std::map<std::pair<int, int>, int> variantSlot;      // (LSDj instrument, kind) -> ChipBoy slot, 1-based
     std::map<int, std::set<std::tuple<int, int, int>>> tableUse;   // table -> (LSDj instrument, channel, MIDI) of the notes that run it
     std::set<int> instUsed;                              // LSDj instruments a note plays, allocated or not
-    int nextVariant = kLsdjInstruments;                  // the next free 0-based slot for a variant
     int phrasesOut = 0;
     /// ChipBoy's LFSR clock for a note, -72..127: the map continues below the
     /// keyboard for transposes (section 55).
@@ -139,7 +135,7 @@ struct Reader {
     /// The kind a channel plays: pulse on PU1 and PU2, a kit or a wave on WAV, noise on NOI.
     int kindFor(int ins, int ch) const { if (ch == 3) return 3; if (ch == 2) return (ins >= 0 && ins < kLsdjInstruments && inst(ins)[0] == 2) ? 2 : 1; return 0; }
     /// The ChipBoy slot (1-based) a cell on `ch` reaches for LSDj instrument `ins`.
-    int slotFor(int ins, int ch) const { const auto it = variantSlot.find({ ins, kindFor(ins, ch) }); return it != variantSlot.end() ? it->second : ins + 1; }
+    int slotFor(int ins, int ch) const { (void) ch; return ins + 1; }   // section 197: its own slot on every channel
     bool transposeOn(int ins) const { return ins >= 0 && ins < kLsdjInstruments && !(inst(ins)[5] & 0x20); }
     static const char* channelName(int ch) { static const char* k[4] = { "PU1", "PU2", "WAV", "NOI" }; return k[ch & 3]; }
 
@@ -152,16 +148,7 @@ struct Reader {
         std::array<int, 4> cur{ 0, 0, 0, 0 };
         int runNr = -1;                                       // the noise channel's NR43, for the S rows' clocks
         const bool fold = m.noiseRule != NoiseRule::Map && !shapeNoise();
-        const auto use = [this](int ins, int ch) {
-            if (ins < 0 || ins >= kLsdjInstruments) return;
-            instUsed.insert(ins);
-            const int kind = kindFor(ins, ch), own = inst(ins)[0];
-            if (kind == own || kind == 2) return;
-            const auto key = std::make_pair(ins, kind);
-            if (variantSlot.count(key)) return;
-            if (nextVariant >= bank::kInstrumentSlots) { notes.add("no slot left for a " + std::string(channelName(ch)) + " variant of instrument " + hex2(ins) + "; it plays as itself"); return; }
-            variantSlot[key] = ++nextVariant;                                  // 1-based: 0-based slot nextVariant - 1
-        };
+        const auto use = [this](int ins, int ch) { (void) ch; if (ins >= 0 && ins < kLsdjInstruments) instUsed.insert(ins); };
         for (int r = 0; r < 256; ++r) {
             const uint8_t* row = s + kSongRows + size_t(r) * 4;
             if (row[0] == 0xFF && row[1] == 0xFF && row[2] == 0xFF && row[3] == 0xFF) break;
@@ -289,87 +276,7 @@ struct Reader {
         }
     }
 
-    // --- envelope (sections 51 and 58) ------------------------------------
-    /// The ticks a stage costs to walk `delta` levels at `speed`: the measured
-    /// period table on the software stages, the chip's own (period / 64) of a
-    /// second a level on the hardware ones (section 58).
-    int envTicks(int delta, int speed) const
-    {
-        if (speed == 0 || delta == 0) return 0;
-        const double perLevelMs = m.envPeriods != nullptr ? double(m.envPeriods[size_t(speed & 15)]) * kPitchClockMs
-                                                          : double(speed & 7) * 1000.0 / 64.0;
-        const double ms = std::abs(delta) * perLevelMs;
-        return std::clamp(int(std::lround(ms / tickMs)), 1, 255);
-    }
-    /// Section 132: a stage's length carried to 1/256 of a tick. §121 gave the
-    /// bank and the driver the fine byte; the importer was still rounding each
-    /// stage to a whole tick, which stretched `READROOM`'s instrument 09 from
-    /// 75.4 ms a level to 76.7 and slid every level after the first.
-    void envStage(uint8_t& ticks, uint8_t& fine, int delta, int speed) const
-    {
-        ticks = 0; fine = 0;
-        if (speed == 0 || delta == 0) return;
-        const double perLevelMs = m.envPeriods != nullptr ? double(m.envPeriods[size_t(speed & 15)]) * kPitchClockMs
-                                                          : double(speed & 7) * 1000.0 / 64.0;
-        const double t = std::abs(delta) * perLevelMs / tickMs;
-        const int whole = std::clamp(int(t), 0, 255);
-        int frac = int(std::lround((t - double(whole)) * 256.0));
-        ticks = uint8_t(whole); fine = uint8_t(std::clamp(frac, 0, 255));
-    }
-    void envelope(const uint8_t* b, bank::Instrument& o)
-    {
-        if (m.envelopeLaw == EnvelopeLaw::Chip) {
-            // The byte is NRx2: the chip's own envelope, exactly.
-            o.env.mode = bank::EnvMode::Chip;
-            o.envVol = uint8_t(b[1] >> 4); o.envDir = (b[1] & 8) ? bank::EnvDir::Up : bank::EnvDir::Down; o.envRate = uint8_t(b[1] & 7);
-            return;
-        }
-        const bool hw = m.envelopeLaw == EnvelopeLaw::HardwareStages;
-        if (hw) {
-            // Section 189: byte 1 is NRx2 and the chip runs it; bytes 9 and 10
-            // are the stages the ROM writes with a retrigger, byte for byte.
-            o.env.mode = bank::EnvMode::Chip;
-            o.envVol = uint8_t(b[1] >> 4); o.envDir = (b[1] & 8) ? bank::EnvDir::Up : bank::EnvDir::Down; o.envRate = uint8_t(b[1] & 7);
-            o.envStage2 = b[9]; o.envStage3 = b[9] ? b[10] : uint8_t(0);
-            return;
-        }
-        const int mask = hw ? 7 : 15;                                     // NRx2 keeps the period in three bits
-        const int a1 = b[1] >> 4, s1 = b[1] & mask, a2 = b[9] >> 4, s2 = b[9] & mask, a3 = b[10] >> 4, s3 = b[10] & mask;
-        // On the chip a stage hands over only when its ramp can reach the next
-        // amplitude; a direction that points away from it never arrives, and
-        // the note holds where it is (section 58).
-        const auto reaches = [hw](uint8_t from, int to, int speed) {
-            if (speed == 0) return false;
-            if (!hw) return true;
-            return (from & 8) ? to > (from >> 4) : to < (from >> 4);
-        };
-        o.envVol = uint8_t(a1);
-        if (!reaches(b[1], a2, s1)) {   // a held level: the chip's own envelope says it best
-            o.env.mode = bank::EnvMode::Chip;
-            o.envDir = (b[1] & 8) ? bank::EnvDir::Up : bank::EnvDir::Down;
-            o.envRate = uint8_t(hw ? s1 : 0);
-            return;
-        }
-        o.env.mode = bank::EnvMode::Shaped;
-        // Section 164: the software machine runs the ROM's bytes as they are;
-        // the shaped stages below are its picture for the Instrument tab.
-        if (!hw) { o.env.lsdj = true; o.env.lsdjByte1 = b[1]; o.env.lsdjByte9 = b[9]; o.env.lsdjByte10 = b[10]; }
-        o.env.start = uint8_t(a1); envStage(o.env.attackTicks, o.env.attackFine, a1 - a2, s1); o.env.peak = uint8_t(a2); o.env.releaseTicks = 0;
-        if (!reaches(b[9], a3, s2)) { o.env.decayTicks = 0; o.env.decayFine = 0; o.env.sustain = uint8_t(a2); o.env.fadeTicks = 0; o.env.fadeFine = 0; }
-        else {
-            envStage(o.env.decayTicks, o.env.decayFine, a2 - a3, s2); o.env.sustain = uint8_t(a3);
-            if (s3 && !hw) { envStage(o.env.fadeTicks, o.env.fadeFine, a3, s3); o.env.fadeTo = 0; }
-        }
-        // Sections 116 and 121: the levels are walked on the pitch clock and the
-        // stages carry their fraction of a tick, so nothing is rounded away and
-        // there is nothing left to warn about.
-    }
-
     // --- instruments ------------------------------------------------------
-    static bank::PitchSpeed pitchSpeedOf(uint8_t b5)
-    {
-        return (b5 & 0x80) ? bank::PitchSpeed::Step : (b5 & 0x40) ? bank::PitchSpeed::Drum : (b5 & 0x10) ? bank::PitchSpeed::Tick : bank::PitchSpeed::Fast;
-    }
     /// Section 103: all sixteen synths, in order, LSDj synth k into ChipBoy wave
     /// slot k + 1. The bank is one flat 256-frame table and `F` walks straight
     /// out of one slot into the next, so the slot next door has to hold what the
@@ -390,9 +297,17 @@ struct Reader {
                 }
         }
     }
-    static int waveSlotFor(int synth) { return (synth & (bank::kWaveSlots - 1)) + 1; }
     void instruments(ImportSummary& sum)
     {
+        // Section 81: LSDj's own noise table on the bank, for every noise
+        // instrument -- and, section 197, for any instrument a noise channel reads.
+        if (mappedNoise()) {
+            const int len = std::min(noiseMapLen(), int(bank.noiseMap.size()));
+            std::copy(m.noiseMap, m.noiseMap + len, bank.noiseMap.begin());
+            bank.noiseMapLen = uint8_t(len);
+            bank.noiseMapNote0 = uint8_t(kNoiseMapNote0);
+            bank.noiseMapSet = true;
+        }
         for (int i = 0; i < kLsdjInstruments; ++i) {
             if (!at(kInstAlloc + size_t(i)) && !instUsed.count(i)) continue;
             bank::Instrument o;
@@ -401,168 +316,30 @@ struct Reader {
             bank.instruments[size_t(i)] = o;
             ++sum.instruments;
         }
-        for (const auto& [key, slot] : variantSlot) {
-            bank::Instrument o;
-            if (!buildInstrument(key.first, key.second, o)) continue;
-            static const char* kKind[4] = { " (PU)", " (WAV)", " (kit)", " (NOI)" };
-            o.name += kKind[key.second & 3];
-            bank.instruments[size_t(slot - 1)] = o;
-            // Section 119: on NOI this is exact -- a pulse instrument played on
-            // the noise channel writes what a noise instrument with the same
-            // bytes writes, measured register for register on 9.2.L -- so the
-            // copy is bookkeeping, not a loss, and says nothing. The other
-            // kinds are not measured yet and still do.
-            if (key.second != 3)
-                notes.add("instrument " + hex2(key.first) + " " + bank.instruments[size_t(key.first)].name + " also plays on " + (key.second == 0 ? "PU1/PU2" : "WAV") + ": ChipBoy's instruments carry a type, so a " + std::string(kKind[key.second & 3] + 2, std::strlen(kKind[key.second & 3]) - 3) + " copy of it sits in slot " + hex2(slot - 1) + "; whether the ROM reads it the same way there is not measured");
-            ++sum.instruments;
-        }
         for (const auto& [slot, o] : noiseOffset) if (slot >= 1 && slot <= bank::kInstrumentSlots) bank.instruments[size_t(slot - 1)].noiseShift = uint8_t(std::clamp(5 + o, 0, 13));
         if (m.pitchLaw == PitchLaw::Register) notes.add("this format's P and L work in the period register (section 56): pulse and wave instruments are set to the Drum pitch mode and P, L and V are converted");
     }
-    /// LSDj instrument `i` read as kind `t` (its own, or the channel's for a variant).
+    /// LSDj instrument `i` read as kind `t` (its own, or another channel's --
+    /// section 197: the driver does that itself now, from the bytes kept here).
     bool buildInstrument(int i, int t, bank::Instrument& o)
     {
-        {
-            const uint8_t* b = inst(i);
-            std::string name = instName(i);
-            if (name.empty()) name = "Inst " + hex2(i);
-            if (t == 2 && (kits == nullptr || kits->empty())) { notes.add("instrument " + hex2(i) + " " + name + " is a kit: its samples live in the ROM, and none was found beside the save; skipped"); return false; }
-            if (t > 3) { notes.add("instrument " + hex2(i) + " has an unknown type " + std::to_string(t) + "; skipped"); return false; }
-            const auto type = t == 0 ? bank::InstrumentType::Pulse : t == 1 ? bank::InstrumentType::Wave : t == 2 ? bank::InstrumentType::Kit : bank::InstrumentType::Noise;
-            o = bank::Instrument::defaults(type, name.c_str());
-            o.name = name;
-            o.pan = bank::Pan(b[7] & 3); o.length = 0; o.noteOff = bank::NoteOff::Kill;
-            o.cmdRate = uint8_t(b[8] & 15); o.chordRate = o.cmdRate;
-            o.tableMode = (b[5] & 0x08) ? bank::TableMode::Step : bank::TableMode::Tick;
-            o.vib.shape = bank::VibShape((b[5] >> 1) & 3);   // section 114: 3 is off
-            o.vib.dir = (b[5] & 1) ? bank::VibDir::Up : bank::VibDir::Down;
-            o.vib.speed = 8; o.vib.depth = 0; o.vib.delay = 0;
-            o.table = (b[6] & 0x20) ? uint8_t((b[6] & 0x1F) + 1) : uint8_t(0);
-            o.transpose = !(b[5] & 0x20);
-            // Before 8.8 an E writes NRx2 and triggers (section 59). The
-            // levels come at the same interval either way -- 9.3.9 steps them
-            // itself at the chip's own rate (section 70).
-            o.envRetrig = m.envelopeLaw != EnvelopeLaw::SoftwareStages;
-            // Section 195: before 9.4.0 a roll leaves a DRUM pitch running.
-            o.retrigKeepsPitch = !m.retrigResetsDrumPitch;
-            instTranspose[size_t(i)] = o.transpose;
-            // Section 81: a noise instrument reads LSDj's own table straight off
-            // the bank, so the cell's note is LSDj's note and the byte the driver
-            // writes is the byte the ROM writes.
-            if (type == bank::InstrumentType::Noise && mappedNoise()) {
-                o.noiseLsdjMap = true;
-                // The table's entries are whole NR43 bytes, so nothing may be
-                // added to the shift afterwards: Shift stays at its neutral 5.
-                o.noiseShift = 5;
-                const int len = std::min(noiseMapLen(), int(bank.noiseMap.size()));
-                std::copy(m.noiseMap, m.noiseMap + len, bank.noiseMap.begin());
-                bank.noiseMapLen = uint8_t(len);
-                bank.noiseMapNote0 = uint8_t(kNoiseMapNote0);
-                bank.noiseMapSet = true;
-            }
-            if (t == 0 || t == 3) envelope(b, o);
-            if (t == 0) {
-                o.duty = uint8_t(b[7] >> 6); o.dutySeqLen = 0; o.pitchSpeed = m.pitchLaw == PitchLaw::Register ? bank::PitchSpeed::Drum : pitchSpeedOf(b[5]);
-                // Section 134: a pulse instrument's LENGTH, which was never read
-                // at all. Byte 3's low six bits are NR11's length code and bit 6
-                // enables the counter -- a short length with the bit set is what
-                // makes `READROOM`'s `R` rolls stutter instead of ringing on.
-                if (b[3]) { o.length = uint16_t(64 - int(b[3] & 63)); o.lengthLatent = (b[3] & 0x40) == 0; }
-                o.pitchRegisterUnits = m.pitchLaw == PitchLaw::Register;      // section 88
-                const int nr10 = (~b[4]) & 0xFF;
-                o.sweepRate = uint8_t((nr10 >> 4) & 7); o.sweepDown = (nr10 & 8) != 0; o.sweepShift = uint8_t(nr10 & 7);
-                // Section 49: a whole signed byte of semitones, which ChipBoy's
-                // own pu2Transpose is too -- carried exactly, so no note unless
-                // it takes a note off the keyboard (pu2TransposeRange()).
-                if (m.pu2Transpose && b[2]) o.pu2Transpose = int8_t(signedByte(b[2]));
-                // Section 191: before 9.x the nibble in byte 7 bits 2-5, v/32 of a
-                // semitone down -- 9.4.2's `F 0v`, so eight times it in byte 11's units.
-                // Section 196: 3.6.8 - 5.0.3 read the nibble as period units -- about
-                // 42/256 of a semitone each at the middle of the keyboard, capped at a
-                // semitone (the closest the 9.x byte comes; a whole nibble is far past it).
-                if (m.fineTuneNibble) { const int v = (b[7] >> 2) & 15; o.fineTune = uint8_t(m.fineTuneUnits ? std::min(255, int(std::lround(v * 42.2))) : v * 8); }
-                else o.fineTune = b[11];          // section 112
-            } else if (t == 1) {
-                static const uint8_t kLevel[4] = { 0, 3, 2, 1 };       // the stored bits are the NR32 code, 1 = 100 %
-                o.waveLevel = kLevel[(b[1] >> 5) & 3];
-                // The synth byte is 2 before 9.x and 3 after (section 60); its low
-                // nibble is LSDj's LOOP POS, not a start frame (section 65).
-                const uint8_t wb = b[size_t(m.waveByte == 3 ? 3 : 2)];
-                const int synth = wb >> 4;
-                // Section 93: REPEAT is a byte of its own. Both bytes carry the
-                // synth in their high nibble, so reading the run's loop point
-                // off the synth byte was right only for formats 9 to 15.
-                const int loopPos = b[size_t(m.waveRepeatByte == 3 ? 3 : 2)] & 15;
-                o.wave = uint8_t(waveSlotFor(synth));
-                // Section 171: on the 9.x layout byte 3 is the frame index whole,
-                // synth above and the start frame below; the ROM adds the run's
-                // steps to it unwrapped, and in MANUAL it is the frame that plays.
-                o.frameStart = uint8_t(m.waveByte == 3 ? (wb & 15) : 0);
-                // Section 170: the wave FINETUNE, a signed byte of 1/256 semitones.
-                if (m.waveFineTuneByte >= 0) o.fineTune = b[size_t(m.waveFineTuneByte)];
-                o.pitchSpeed = m.pitchLaw == PitchLaw::Register ? bank::PitchSpeed::Drum : pitchSpeedOf(b[5]);
-                o.pitchRegisterUnits = m.pitchLaw == PitchLaw::Register;      // section 88
-                // docs/LSDJ_VERSIONS.md: a wave instrument walks a run of frames
-                // only from format 7. Before that it loads frame 0 and holds it,
-                // and bytes 9, 10 and 11 mean something else -- reading them as
-                // the run gives an old song a frame run it never had, which is
-                // heard as the wave channel retriggering two or three times a
-                // step.
-                if (!m.waveFrameRun) {
-                    o.frameLength = 1; o.frameLoopStep = 0; o.frameAdvance = 0;
-                    o.frameLoop = bank::FrameLoop::Loop;
-                } else {
-                    // The run: LENGTH is 16 - the low nibble of byte 10, SPEED is
-                    // byte 11 and costs four ticks on top, PLAY is byte 9's low two
-                    // bits, and the loop covers the last 16 - LOOP POS steps.
-                    const int len = 16 - int(b[10] & 15);
-                    o.frameLength = uint8_t(len);
-                    o.frameLoopStep = uint8_t(std::max(0, len - (16 - loopPos)));
-                    // Section 171: PLAY is the whole byte -- 4 is 9.2.E's RESYNC,
-                    // ping-pong with every frame written at its tick.
-                    switch (b[9]) {
-                        case 0: o.frameAdvance = 0; o.frameLoop = bank::FrameLoop::Loop; break;      // MANUAL: only an F moves it
-                        case 1: o.frameLoop = bank::FrameLoop::Once; break;
-                        case 3: o.frameLoop = bank::FrameLoop::PingPong; break;
-                        case 4: o.frameLoop = bank::FrameLoop::Resync; break;
-                        default: o.frameLoop = bank::FrameLoop::Loop; break;
-                    }
-                    // Section 91: SPEED is a **signed** byte and the run advances
-                    // every `speed + 4` ticks, so FD is one tick and not 255.
-                    // Every wave instrument in the user's SAMESONG stores a
-                    // negative speed, which read unsigned froze the run.
-                    if (b[9]) o.frameAdvance = uint8_t(std::clamp(signedByte(b[11]) + 4, 1, 255));
-                }
-            } else if (t == 2) {
-                if (!kitInstrument(i, b, o, name)) return false;
-            } else {
-                o.lfsr7 = false; o.noiseManual = false; o.noiseShift = 5; o.noiseDivisor = 1; o.noiseSweep = 0;
-                // Section 66: before 9 the noise commands work on the NR43 byte.
-                o.noiseDomain = m.noiseS == NoiseS::Semitones ? bank::NoiseSweepDomain::Notes : bank::NoiseSweepDomain::Register;
-                // Section 86 and docs/LSDJ_VERSIONS.md: PITCH. Only 9.2 and
-                // later restart the channel on a pitch change at all -- zero is
-                // FREE (a restart when the 7-bit LFSR comes on) and anything
-                // else SAFE (a restart on every change). Before that the byte
-                // is the S CMD / S MODE setting, which clamps the LFSR width
-                // during an S command and has no ChipBoy equivalent.
-                if (m.noisePitchByte < 0) {
-                    o.noisePitch = bank::NoisePitch::Never;
-                    // Section 188: the note picks NR43 from SHAPE (byte 4), S MODE
-                    // (byte 2, nonzero = STABLE) keeps the width bit through S, P and C.
-                    if (shapeNoise()) { o.noiseShapeMode = true; o.noiseShape = b[4]; o.noiseStable = b[2] != 0; o.noiseLsdjMap = false; }
-                    else if (b[2]) notes.add("noise instrument " + name + " has S MODE = STABLE (byte 2 = " + hex2(b[2]) + "), which holds the LFSR width through an S command; ChipBoy has no equivalent and lets S cross it");
-                } else {
-                    o.noisePitch = b[size_t(m.noisePitchByte)] ? bank::NoisePitch::Safe : bank::NoisePitch::Free;
-                }
-                // Section 134, correcting §87: byte 3's low six bits are the
-                // length code and **bit 6 enables the counter** at the note-on.
-                // §87 saw only instruments with the bit clear, which is the
-                // latent case -- the code sits in NR41 and nothing arms it.
-                if (b[3]) { o.length = uint16_t(64 - int(b[3] & 63)); o.lengthLatent = (b[3] & 0x40) == 0; }
-            }
-            o.used = true;
-            return true;
-        }
+        const uint8_t* b = inst(i);
+        std::string name = instName(i);
+        if (name.empty()) name = "Inst " + hex2(i);
+        if (t == 2 && (kits == nullptr || kits->empty())) { notes.add("instrument " + hex2(i) + " " + name + " is a kit: its samples live in the ROM, and none was found beside the save; skipped"); return false; }
+        if (t > 3) { notes.add("instrument " + hex2(i) + " has an unknown type " + std::to_string(t) + "; skipped"); return false; }
+        const auto type = t == 0 ? bank::InstrumentType::Pulse : t == 1 ? bank::InstrumentType::Wave : t == 2 ? bank::InstrumentType::Kit : bank::InstrumentType::Noise;
+        o = bank::Instrument::defaults(type, name.c_str());
+        o.name = name;
+        if (!decodeInstrumentBytes(b, t, m, bank, tickMs, o, &notes, name)) return false;
+        instTranspose[size_t(i)] = o.transpose;
+        if (t == 2 && !kitInstrument(i, b, o, name)) return false;
+        // Section 197: the bytes stay with the instrument, so a channel of another
+        // kind can read them as the ROM would.
+        o.lsdjFormat = int8_t(m.formatVersion);
+        std::copy(b, b + 16, o.lsdjBytes.begin());
+        o.used = true;
+        return true;
     }
 
     // --- kits (plan section 4a) -------------------------------------------

@@ -221,6 +221,11 @@ struct InstrumentCore {
     /// as every LSDj before 9.4.0 did; off, each hit starts from the note's
     /// entry (section 185, 9.4.0 and later). The importer sets it by version.
     bool     retrigKeepsPitch = false;
+    /// Section 197: the instrument as its LSDj save held it -- the format the
+    /// bytes were written in (-1: not imported) and the sixteen bytes -- so a
+    /// channel of another kind can read them as the ROM would.
+    int8_t   lsdjFormat = -1;
+    std::array<uint8_t, 16> lsdjBytes{};
     // pulse
     uint8_t  duty = 2;               ///< 0 12.5%, 1 25%, 2 50%, 3 75%
     std::array<uint8_t, 16> dutySeq{};

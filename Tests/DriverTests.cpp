@@ -5454,3 +5454,30 @@ TEST_CASE("a kit's P moves the period once more on every tick", "[driver][kit][v
     // 4 an instant (287) plus 4 a tick (192): about 479, where the instant alone gave 287.
     CHECK(period - 1000 > 440); CHECK(period - 1000 < 500);
 }
+
+// --- section 197: any instrument on any channel ---------------------------
+
+TEST_CASE("a channel reads an instrument of another kind as LSDj would, from its bytes", "[driver][versions]")
+{
+    Rig r;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    SECTION("a native pulse on the wave channel is a wave: its envelope byte's bits 5-6 are the level") {
+        auto& i = r.bank.instruments[0]; i = Instrument::defaults(InstrumentType::Pulse, "lead"); i.used = true;
+        i.envVol = 0xC; i.envRate = 3;                                   // byte 1 = C3: code 2, level 2 (50 %)
+        ChannelParams p; p.instrument = 1; r.drv.setParams(2, p);
+        auto w = r.block({ cellOn(2, 60, 1) }, 480);
+        CHECK(has(w, 0xFF1A, 0x80));                                     // NR30: the DAC on
+        REQUIRE(last(w, 0xFF1C) != nullptr); CHECK(last(w, 0xFF1C)->value == 0x40);   // NR32 50 %
+        CHECK_FALSE(has(w, 0xFF12));
+    }
+    SECTION("an imported wave on PU1 is a pulse read from the save's bytes") {
+        auto& i = r.bank.instruments[0]; i = Instrument::defaults(InstrumentType::Wave, "bass"); i.used = true;
+        i.lsdjFormat = 22;
+        i.lsdjBytes = { 1, 0x20, 0x0F, 0x00, 0xFF, 0, 0, 3, 0, 0x01, 0x0F, 0xFF, 0, 0, 0, 0 };   // X942_wavOnPu's instrument
+        ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(0, p);
+        auto w = r.block({ cellOn(0, 60, 1, 16) }, 480);                              // velocity 16 is level 2, the byte's own
+        REQUIRE(last(w, 0xFF12) != nullptr); CHECK(last(w, 0xFF12)->value == 0x28);   // byte 1 = 20: volume 2, held
+        REQUIRE(last(w, 0xFF11) != nullptr); CHECK((last(w, 0xFF11)->value & 0xC0) == 0);   // byte 7 = 03: duty 0
+        CHECK_FALSE(has(w, 0xFF1A));
+    }
+}

@@ -1,5 +1,6 @@
 // ChipBoy -- the LSDj importer (docs/plan-lsdj-import.md section 6). Every
 // save here is built in memory: no LSDj content enters the repository (L3).
+#include "core/Import/LsdjInstrument.h"
 #include "core/Import/LsdjModel.h"
 #include "core/Import/LsdjSave.h"
 #include "core/Import/LsdjSong.h"
@@ -1459,6 +1460,7 @@ TEST_CASE("a format-11 song's noise, finetune and envelope stages come in as the
     CHECK(int(pu.envStage2) == 0x54); CHECK(int(pu.envStage3) == 0x20);
     CHECK(int(pu.fineTune) == 0x0F * 8);
     CHECK(pu.retrigKeepsPitch);                                            // section 195: before 9.4.0
+    CHECK(int(pu.lsdjFormat) == 11); CHECK(int(pu.lsdjBytes[1]) == 0xA3); CHECK(int(pu.lsdjBytes[9]) == 0x54);   // section 197
     // Section 196: 3.6.8 - 5.0.3 read the same nibble as period units, capped at a semitone.
     const auto* m3 = lsdjModelForRomVersion("4.7.3");
     REQUIRE(m3 != nullptr); CHECK(m3->fineTuneNibble); CHECK(m3->fineTuneUnits);
@@ -1483,4 +1485,31 @@ TEST_CASE("a format-11 song's noise, finetune and envelope stages come in as the
     CHECK(c.cmd1.cmd == bank::Cmd::S); CHECK(int(c.cmd1.a) == 0); CHECK(int(c.cmd1.b) == 3);
     // 9.x keeps byte 11: the same bytes under the 9.4.2 model read 0 there.
     CHECK_FALSE(lsdjModelForFormat(22)->fineTuneNibble);
+}
+
+TEST_CASE("an instrument named on a channel of another kind keeps its own slot; the driver reads it there", "[lsdj][versions]")
+{
+    // Section 197: no per-channel copy any more -- the cell names the instrument
+    // itself and carries its bytes and format for the driver's reading.
+    auto song = blankSong(22);
+    song[kInstAlloc + 0] = 1;
+    uint8_t* i0 = song.data() + kInst; i0[0] = 1; i0[1] = 0x20; i0[2] = 0x0F; i0[7] = 3; i0[9] = 0x01; i0[10] = 0x0F; i0[11] = 0xFF;   // a wave instrument
+    song[kPhraseAlloc] |= 1; song[kNotes] = uint8_t(60 - 35); song[kPhraseInst] = 0;    // played on PU1
+    song[kChainPhrases] = 0;
+    song[kRows + 0] = 0; song[kRows + 1] = 0xFF; song[kRows + 2] = 0xFF; song[kRows + 3] = 0xFF;
+    auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+    ImportSummary sum; ImportNotes notes;
+    REQUIRE(importSong(song.data(), song.size(), *lsdjModelForFormat(22), *bank, *out, sum, notes));
+    CHECK(sum.instruments == 1);
+    CHECK(int(out->phrases[0].cells[0].inst) == 1);
+    CHECK(bank->instruments[0].type == bank::InstrumentType::Wave);
+    CHECK(int(bank->instruments[0].lsdjFormat) == 22);
+    CHECK(int(bank->instruments[0].lsdjBytes[0]) == 1); CHECK(int(bank->instruments[0].lsdjBytes[11]) == 0xFF);
+    for (int k = 1; k < bank::kInstrumentSlots; ++k) CHECK_FALSE(bank->instruments[size_t(k)].used);
+    // The driver's reading of it on PU1: a pulse with byte 1 as its envelope.
+    bank::InstrumentCore asPulse;
+    REQUIRE(decodeInstrumentBytes(bank->instruments[0].lsdjBytes.data(), 0, *lsdjModelForFormat(22), *bank, 15.3, asPulse, nullptr, std::string()));
+    CHECK(asPulse.type == bank::InstrumentType::Pulse);
+    CHECK(int(asPulse.envVol) == 2); CHECK(int(asPulse.envRate) == 0);
+    CHECK(int(asPulse.pu2Transpose) == 0x0F);
 }

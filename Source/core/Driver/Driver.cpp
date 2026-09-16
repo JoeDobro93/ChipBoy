@@ -1,4 +1,5 @@
 #include "core/Driver/Driver.h"
+#include "core/Import/LsdjInstrument.h"
 
 #include <algorithm>
 #include <cmath>
@@ -534,8 +535,28 @@ void Driver::applyLevelParam(int ch)
 InstrumentType Driver::defaultType(int ch) { return ch == 2 ? InstrumentType::Wave : ch == 3 ? InstrumentType::Noise : InstrumentType::Pulse; }
 bool Driver::typeFits(int ch, InstrumentType t)
 {
-    // A channel can only host its own kind (section 9.2).
+    // A channel hosts its own kind as itself (section 9.2); any other kind it
+    // reads as LSDj would, through crossKind() (section 197).
     return (ch < 2 && t == InstrumentType::Pulse) || (ch == 2 && (t == InstrumentType::Wave || t == InstrumentType::Kit)) || (ch == 3 && t == InstrumentType::Noise);
+}
+
+/// Section 197: an instrument of another kind, read as this channel's kind
+/// from its LSDj bytes -- the save's own for an imported instrument, the 9.4.2
+/// encoding for a ChipBoy-native one. PU1/PU2 read a pulse, WAV a wave (a kit
+/// already fits), NOI a noise instrument.
+InstrumentCore Driver::crossKind(int ch, const InstrumentCore& own) const
+{
+    const int kind = ch < 2 ? 0 : ch == 2 ? 1 : 3;
+    uint8_t b[16];
+    const lsdj::LsdjModel* m = own.lsdjFormat >= 0 ? lsdj::lsdjModelForFormat(int(own.lsdjFormat)) : nullptr;
+    if (m != nullptr) std::copy(own.lsdjBytes.begin(), own.lsdjBytes.end(), b);
+    else { lsdj::encodeInstrumentBytes(own, b); m = &lsdj::lsdjLatestModel(); }
+    InstrumentCore out;
+    static const bank::Bank kNoBank{};
+    constexpr double kTickMs = 60000.0 / (163.0 * 24.0);   // only the shaped picture of a software-stage envelope reads it
+    if (!lsdj::decodeInstrumentBytes(b, kind, *m, bank_ ? *bank_ : kNoBank, kTickMs, out, nullptr, std::string()))
+        return Instrument::defaults(defaultType(ch));
+    return out;
 }
 
 /// Load the instrument on a sounding channel: the tracker's instrument column
@@ -545,7 +566,7 @@ void Driver::reloadInstrument(int ch)
     Voice& v = v_[size_t(ch)];
     const Instrument* inst = resolveInstrument(ch, v.vel);
     InstrumentCore core = inst ? *inst : Instrument::defaults(defaultType(ch));
-    if (!typeFits(ch, core.type)) core = Instrument::defaults(defaultType(ch));
+    if (!typeFits(ch, core.type)) core = crossKind(ch, core);
     v.inst = core; v.haveInst = true;
     latch(ch);
     applyLevelParam(ch);
@@ -831,7 +852,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     InstrumentCore core;
     if (inst) core = *inst;
     else core = Instrument::defaults(defaultType(ch));
-    if (!typeFits(ch, core.type)) core = Instrument::defaults(defaultType(ch));
+    if (!typeFits(ch, core.type)) core = crossKind(ch, core);
 
     // A Step-mode table keeps its place across notes, note-offs included -- and
     // across another instrument playing in between, because the place is the
