@@ -1106,6 +1106,7 @@ TEST_CASE("inside format 22 a 9.2 song's wave R nibble and kit vibrato depth are
     song[kNotes + 4] = 0x10; song[kPhraseInst + 4] = 1; song[kCmd + 4] = V; song[kCmdV + 4] = 0x42;
     song[kNotes + 8] = 0x10; song[kPhraseInst + 8] = 1; song[kCmd + 8] = V; song[kCmdV + 8] = 0x4A;
     song[kNotes + 12] = 0x34; song[kPhraseInst + 12] = 0; song[kCmd + 12] = R; song[kCmdV + 12] = 0x84;
+    song[kCmd + 6] = 6; song[kCmdV + 6] = 0x01;              // a bare F 01 on the kit: the frame to start over from (section 186)
     song[kChainPhrases + 0] = 0;
     song[kRows + 0] = 0xFF; song[kRows + 1] = 0xFF; song[kRows + 2] = 0; song[kRows + 3] = 0xFF;
     const LsdjModel* old = lsdjModelNamed("LSDj 9.2.J - 9.3.3 (format 22)");
@@ -1126,6 +1127,7 @@ TEST_CASE("inside format 22 a 9.2 song's wave R nibble and kit vibrato depth are
         CHECK(ph->cells[4].cmd1.cmd == bank::Cmd::V); CHECK(ph->cells[4].cmd1.a == 4); CHECK(ph->cells[4].cmd1.b == (o ? 4 : 2));
         CHECK(ph->cells[8].cmd1.cmd == bank::Cmd::V); CHECK(ph->cells[8].cmd1.b == (o ? 15 : 10));
         CHECK(ph->cells[12].cmd1.cmd == bank::Cmd::R); CHECK(ph->cells[12].cmd1.a == 8);            // the resync is not a volume
+        CHECK(ph->cells[6].cmd1.cmd == bank::Cmd::F); CHECK(ph->cells[6].cmd1.a == 0); CHECK(ph->cells[6].cmd1.b == 1);
         bool noted = false;
         for (const auto& n : notes.lines) if (n.find("V4A") != std::string::npos) noted = true;
         CHECK(noted == o);

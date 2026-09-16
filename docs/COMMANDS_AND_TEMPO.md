@@ -5768,3 +5768,26 @@ ROM's writer runs before that interrupt's pitch work and ChipBoy's deferred writ
 
 The other two map by value at import (§11 of the versions doc): a wave or kit `R x y` from before
 9.3.4 drops its nibble, and a kit `V x y` from before 9.4.0 doubles its depth.
+
+## 186. A kit's samples start over on a roll and on a kit `F`; the note outlives its samples
+
+The `X92_*` probes were the first kit cases in the matrix, and three things showed against 9.4.2:
+
+- **A roll restarts the kit.** `R 04` on a kit note (`X92_KIT_R04`): every four ticks the ROM's
+  frames are the kit's first frames again (`68 BD EF FF …` at 0.144 s, 0.206 s …) for as long as
+  the note lasts, 263 frames in 0.75 s where ChipBoy played the sample once (45). The retrigger is
+  the note-on's kit start: both sides from their start, NR32 with the nibble's level
+  (`X92_KIT_RF4`: `NR32 = 40` at the immediate retrigger), the first frame from the next
+  instant's mixer.
+- **`F xy` on a kit plays the samples again from frame `xy`** -- sixteen bytes a frame -- and does
+  so on a bare cell after the samples have ended: `X92_KIT_F01`, a lone `F 01` two rows after the
+  note, brings back `NR30 = 80` and the sample's second frame (`06 44 43 32 …`) at 0.206 s.
+- **The note outlives its samples.** For the `F` above to work, and for a roll to keep restarting
+  a short sample, the channel must still be the note's after the samples end: the ROM writes
+  `NR30 = 00` and waits. ChipBoy ended the voice there; now it keeps it, DAC off, until a note-off,
+  a kill or the next note -- as a ONCE wave run's end leaves its note (§185).
+
+ChipBoy: `restartKit(ch, frame)` (both positions to `frame · 32` nibbles, the sides live while
+inside their samples, `kitOn`, the voice active), called by `retrigger()` for a kit with
+`writeEnvelope()` after it and by the `F` handler on a kit; `kitFrame()` no longer clears
+`active` when both sides end. `R`'s nibble walks the kit's level as the wave's (§182).

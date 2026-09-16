@@ -1975,8 +1975,12 @@ void Driver::kitFrame(int ch, uint64_t at)
     head(v.kitALive, v.kitPos, v.kitLen, v.kitLoopPoint, v.kitLoop);
     head(v.kitBLive, v.kitPosB, v.kitLenB, v.kitLoopPointB, v.kitLoopB);
     if (!v.kitALive && !v.kitBLive) {
+        // Section 186: the samples over, the channel goes quiet (NR30 = 00)
+        // but the note stays: a roll or a kit `F` on the rows after starts
+        // the samples again (X92_KIT_F01), as a ONCE wave run's end leaves
+        // its note for the roll (section 185).
         emit(regAddr(2, 0), 0x00, true);
-        v.dacOn = false; v.kitOn = false; v.active = false;
+        v.dacOn = false; v.kitOn = false;
         return;
     }
     const std::vector<uint8_t>* da = v.kitALive && v.kitIdx < kit->samples.size() ? &kit->samples[v.kitIdx].data : nullptr;
@@ -2175,6 +2179,10 @@ void Driver::applyCommand(int ch, const Command& cIn, bool fromTable, int lane, 
                     if (live && !w->frames.empty()) loadFrame(ch, w->frames[size_t(std::min<int>(want, int(w->frames.size()) - 1))], model_ == Console::DMG);
                 }
             }
+            // Section 186: on a kit `F xy` plays both samples again from frame
+            // xy (X92_KIT_F01: the ROM's second frame comes back two rows on,
+            // on a bare cell, after the sample had ended).
+            else if (v.inst.type == InstrumentType::Kit) restartKit(ch, (int(c.a) & 15) * 16 + (int(c.b) & 15));
             // Section 78, measured on 9.3.9. On **PU1** it is a downward finetune
             // of `y`/32 of a semitone and `x` does nothing; on **PU2** an upward
             // transpose of `x` semitones plus `y`/32. Both are absolute -- three
@@ -3200,7 +3208,7 @@ void Driver::retrigger(int ch, bool full, bool restartEnv)
     // nothing measured behind it, and it is what silenced `READROOM`'s rolls.
     // It accumulates over the retriggers from that start (section 136): R F4 is
     // 9, 8, 7, 6 from a volume of nine, not 9, 8, 8, 8.
-    if (v.retrigStep && !lsdjMachine && v.inst.type == InstrumentType::Wave) {
+    if (v.retrigStep && !lsdjMachine && (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit)) {
         // Section 182: on the wave channel the nibble walks NR32's level a
         // notch a retrigger, 100 % -> 50 % -> 25 % -> mute, and stays at the
         // ends (RF4_ph_ch2: NR32 20, 40, 60, 00, then 00).
@@ -3241,8 +3249,36 @@ void Driver::retrigger(int ch, bool full, bool restartEnv)
         v.pitchWrite = true;
         return;
     }
+    if (v.inst.type == InstrumentType::Kit) {
+        // Section 186: a kit's retrigger starts both samples over -- the ROM's
+        // roll (`R 04`) plays the kit's first frames again every four ticks for
+        // as long as the note lasts (X92_KIT_R04), NR32 with the nibble's level
+        // and the first frame from the next instant's mixer, as a note-on.
+        restartKit(ch, 0);
+        writeEnvelope(ch, false);
+        return;
+    }
     writePeriod(ch, true);
     v.pitchWrite = true;
+}
+
+/// Section 186: both kit samples from `frame` (sixteen bytes, thirty-two
+/// nibbles) -- a note-on's or a roll's from 0, a kit `F xy`'s from xy. The
+/// channel comes back on if the samples had ended: the ROM's bare `F 01` two
+/// rows after a kit note plays the sample again from its second frame.
+void Driver::restartKit(int ch, int frame)
+{
+    Voice& v = v_[size_t(ch)];
+    const Kit* kit = bank_ ? bank_->kit(v.inst.kit) : nullptr;
+    if (!kit || v.inst.type != InstrumentType::Kit) return;
+    const uint32_t pos = uint32_t(frame) * 32u;
+    v.kitPos = pos; v.kitPosB = pos;
+    v.kitALive = v.kitLen > pos;
+    v.kitBLive = v.kitPair && v.kitLenB > pos;
+    v.kitHalf = kit->halfSpeed; v.kitPhase = false;
+    v.kitOn = v.kitALive || v.kitBLive;
+    v.framePending = false;
+    if (v.kitOn) { v.active = true; v.killed = false; v.releasing = false; }
 }
 
 void Driver::tickAll()

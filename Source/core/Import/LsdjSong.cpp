@@ -783,7 +783,9 @@ struct Reader {
                 // Section 103: the advance walks ChipBoy's flat table too, so an
                 // `F 10` lands on the next slot's frame as it does on the ROM
                 // and there is nothing left to warn about.
-                if (instKind == 1) { out = { Cmd::F, int16_t(x), int16_t(y), 0 }; return true; }
+                // Section 186: on a kit the byte is the frame both samples start
+                // over from, so it goes through whole too.
+                if (instKind == 1 || instKind == 2) { out = { Cmd::F, int16_t(x), int16_t(y), 0 }; return true; }
                 if (channel == 0 || channel == 1) { out = { Cmd::F, int16_t(x), int16_t(y), 0 }; return true; }
                 notes.add("F" + hex2(v) + " at " + where + " on the noise channel does nothing on the ROM either; dropped"); return false;
             case 'B':

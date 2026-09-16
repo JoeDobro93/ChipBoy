@@ -28,7 +28,7 @@ intended product rather than a progress report.
 
 ### 2026-09-15 -- the third parity campaign: 9.4.2's code, and what it corrected
 
-`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§185. The audit target is
+`docs/LSDJ_COMMAND_MATRIX.md` §11 and `docs/COMMANDS_AND_TEMPO.md` §147-§186. The audit target is
 LSDj 9.4.2 now, read as code: the dispatcher, every handler's address, the work RAM the commands
 share, the order a phrase step and a table tick run their columns, and a two-sided probe rig that
 builds a song, traces the ROM and ChipBoy and reports the first register batch that differs (200
@@ -254,6 +254,12 @@ differ for a reason not found (VRAM bank 1 is the suspect).
   import a 9.2 kick roll to. The older models stay as the record of what each format did. On
   9.4.2 itself the probes showed a ONCE run's end does not stop a tick roll (ChipBoy's did) and
   a roll's tick starts the run over before the frame step (no flat frame on that tick).
+  `docs/LSDJ_VERSION_MAP.md` is the table of every version difference and its mapping; the
+  DRUM `R` stays 9.4.2's by decision, with its row.
+- **A kit's samples start over on a roll and on a kit `F`, and the note outlives its samples**
+  (§186, the first kit cases in the matrix): `R 04` on a kit plays the first frames again every
+  four ticks, a bare `F 01` after the sample's end plays it again from its second frame, and the
+  channel stays the note's, DAC off, when both samples end (`restartKit`).
 
 Left as measured: the ROM's tick-handler latency in a four-channel song. §180 models the fold with
 the one-channel costs (a cell command 0.3 ms in, a row 0 1.2 ms in); a note-on tick that loads

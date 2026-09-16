@@ -90,8 +90,11 @@ design-log section the change touches. Update this file at the end of every chan
   (`vs_versions.py`, `vv_all.py`, the `X92_*` cases): three models inside format 22
   (`waveRetrigNibble`, `kitVibratoHalved`, `retrigResetsDrumPitch`), the wave/kit `R` nibble and
   the kit `V` depth translated at import, the DRUM pitch reset added to the driver, a ONCE
-  run's end no longer stopping a tick roll and a roll's tick skipping the frame step. `CHANGES.md`
-  has the round. 304 core tests. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
+  run's end no longer stopping a tick roll and a roll's tick skipping the frame step; 9.2.L (the
+  songs' own version) probed the same way: identical to 9.2.J, `docs/LSDJ_VERSION_MAP.md` the
+  table of every difference and its mapping; §186: a kit's samples start over on a roll and on a
+  kit `F`, the note outliving its samples (`restartKit`). `CHANGES.md` has the round. 305 core
+  tests. `probe_fmt22.py`'s instrument writers take `extra={byte: value}`;
   `probe/raw.py TAG [ch] [n]` prints the first raw writes of both sides. 11 plugin checks.
 - The probe rig for this campaign lives in the container at `/root/lsdj/probe/`: `vs_matrix.py`
   (the interaction cases, two-sided, `--show` for the first differing batch), `songdiff.py NAME`
@@ -938,19 +941,17 @@ design-log section the change touches. Update this file at the end of every chan
 
 ## Open issues
 
-- **Kits and the noise table against 9.4.2, found by the `X92_*` probes and left**: the old
-  matrix had no kit case. On the ROM an `R` on a kit note restarts the sample every roll
-  (`X92_KIT_R04`, `_RF4`, `_P04_R`: 263 batches against ChipBoy's 45 -- ChipBoy's kit does not
-  retrigger), a kit `F 01` writes 86 batches against 44 (`X92_KIT_F01`), a kit `E 02` one more
-  batch, and a noise table's transpose column differs from ChipBoy's over a second note
-  (`X92_NOI_tsp2`-`tsp4`, ROM 2-4 batches against 3-6). A plain kit note differs only by ChipBoy's
-  `NR31 = 00`. The 9.2 mapping does not depend on these; they are the next 9.4.2 round.
-- **A 9.2 song's rolled DRUM kick** keeps falling through the retriggers on 9.2.J and restarts
-  on 9.4.2 (§185); the importer has no value to carry that, so such a song plays 9.4.2's way. An
-  instrument switch ("R keeps the pitch") would carry it; `retrigResetsDrumPitch` on the model
-  is ready for one.
-- **The 9.2.J save the user uploaded holds only its working song** (the file area at `$8000` is
-  empty), so the eight songs were not re-run under 9.2.J; the probe matrix stood in.
+- **Kits against 9.4.2 after §186**: the roll and the kit `F` are in; a plain kit note differs
+  only by ChipBoy's `NR31 = 00`; the noise table transpose cases (`X92_NOI_tsp2`-`tsp4`) are
+  identical write for write (the batch compare split them differently); a kit `E` after the
+  samples' end writes NR32 on both now that the note outlives them. Left: the roll's own frame
+  write on a DRUM wave carries one more bend step than the ROM's (§185).
+- **A 9.2 song's rolled DRUM kick** keeps falling through the retriggers on 9.2.J/L and restarts
+  on 9.4.2 (§185); no value carries that, and by the user's decision it stays 9.4.2's way, the
+  row kept in `docs/LSDJ_VERSION_MAP.md` (`retrigResetsDrumPitch` on the model, unused).
+- **The 9.2.J save holds only its working song**; the 9.2.L save has the eight songs
+  (`/root/lsdj/lsdj9_2_L.sav`, the ROM beside it), `songdiff.py NAME --sav … --rom lsdj9_2_L`
+  runs one on its ROM against its import under the 9.2 model, with its own caches.
 
 - **From the third campaign (9.4.2), measured and left** (`docs/COMMANDS_AND_TEMPO.md` §147,
   §180): the fold is modelled since §180 with one-channel handler costs; what stays is the

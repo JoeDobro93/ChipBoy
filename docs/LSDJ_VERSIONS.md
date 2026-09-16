@@ -320,9 +320,10 @@ and `waveRepeatByte` (§93), `pitchLaw` (§88), `noiseS`, and the `NoiseRule` th
 ## 11. 9.4.2 is the base; 9.2.J against it, probed
 
 From this round 9.4.2 is the reference every other version maps **to** (the driver is 9.4.2's
-code, §147-§185 of `docs/COMMANDS_AND_TEMPO.md`). A 9.2.J ROM (the user's, the one the eight
-songs were written in; 9.2.L differs from it only by a kit-and-wave noise tweak and two fixes the
-changelog lists) was run against 9.4.2 on the whole probe matrix, ROM against ROM
+code, §147-§186 of `docs/COMMANDS_AND_TEMPO.md`); `docs/LSDJ_VERSION_MAP.md` is the table of
+every difference and its mapping. A 9.2.J ROM and then the 9.2.L ROM the eight songs were written
+on (the two differ in nothing the matrix sees: the same 17 cases, the same three differences)
+were run against 9.4.2 on the whole probe matrix, ROM against ROM
 (`/root/lsdj/probe/vs_versions.py A B [filter]`, `vv_all.py` to recompare the traces ignoring
 the length registers), 349 cases plus the changelog's candidates (`X92_*` in `vs_matrix.py`: kits
 with `V`, `F`, `E`, `R`, a DRUM wave under `R`, the noise table transpose across notes). Both write
@@ -358,6 +359,11 @@ refresh `0:$1B48` (`0:$1BA7`), `Z`'s roll `1:$73D3` (`0:$73CA`), the DRUM table 
 (`0:$09B9`), the tempo words `7:$5E0B` (`7:$5E49`), the font page `30:$442A` (same). The
 dispatcher, the STEP store, the wave stop and note-on, the interrupt and tick entry, the play start
 and the noise `S` did not match by their first bytes and were not traced.
+
+The 9.2.L save holds the eight songs, byte for byte the 9.4.2 save's but for the editor's
+bookkeeping bytes (`$3FB3`, `$3FB6`-`$3FB8`, `$3FC1`, `$3FCB`, none of them read by the importer);
+`UNMASKED` on the 9.2.L ROM against its import under the 9.2 model diverges where the 9.4.2 pair
+does (change 24, 7, 3, 1736 per channel).
 
 The older models (§3) stay in the code as the record of what each format did; none of them was
 re-probed this round, and a song from one of those versions still maps through them.

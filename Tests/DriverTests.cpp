@@ -370,7 +370,7 @@ TEST_CASE("a kit writes a frame every instant on both consoles, through the ROM'
         CHECK(r.drv.view(2).active);                // the kick is 0.3 s long: still playing
         std::vector<RegWrite> rest;
         for (int i = 0; i < 3; ++i) { w = r.block({}, 4800); rest.insert(rest.end(), w.begin(), w.end()); }
-        CHECK_FALSE(r.drv.view(2).active);         // ended: one-shot
+        CHECK_FALSE(r.drv.view(2).dacOn);          // ended: one-shot, the DAC off; the note stays for a roll or a kit F (section 186)
         CHECK(has(rest, 0xFF1A, 0x00));
     }
 }
@@ -3596,7 +3596,7 @@ TEST_CASE("a kit note's VEL column names a second sample, summed through the kit
     k.samples[1].data.assign(4096, uint8_t(8));
     r.block({ cellOn(2, 60, 2, 2) }, 64);
     for (int j = 0; j < 12; ++j) r.block({}, 4800);
-    CHECK_FALSE(r.drv.view(2).active);
+    CHECK_FALSE(r.drv.view(2).dacOn);                        // section 186: quiet, the note itself kept
 }
 
 TEST_CASE("a raw kit page in video RAM reads back FF in the LCD's mode 3: FE bytes, one every three or four, drifting", "[driver][kit][rom942]")
@@ -3730,6 +3730,47 @@ TEST_CASE("a roll keeps rolling while the table it replays bends a DRUM pitch", 
     trig = 0;
     for (const auto& x : w) if (x.addr == 0xFF1E && (x.value & 0x80)) ++trig;
     CHECK(trig >= 4);
+}
+
+TEST_CASE("a kit's samples start over on a roll and on a kit F, even after they had ended", "[driver][kit][rom942]")
+{
+    // Section 186 (X92_KIT_R04, X92_KIT_F01): the ROM's `R 04` on a kit note
+    // plays the kit's first frames again every four ticks; a bare `F 01` two
+    // rows after the note plays the sample again from its second frame,
+    // although it had ended.
+    Rig r;
+    r.tickHz = 100.0;
+    for (auto& src : r.song.noteSource) src = tracker::NoteSource::Tracker;
+    auto& k = r.bank.kits[0];
+    k = bank::Kit{};
+    k.used = true; k.name = "Short"; k.period = 1865;
+    std::vector<uint8_t> ramp(96);                       // three frames: 0..15, 0..15, 0..15 with the frame in the high nibble
+    for (size_t i = 0; i < ramp.size(); ++i) ramp[i] = uint8_t(i % 16);
+    ramp[0] = 9; ramp[32] = 10; ramp[64] = 11;           // each frame's first nibble names it
+    bank::KitSample a; a.note = 60; a.data = ramp;
+    k.samples.push_back(a);
+    auto& i0 = r.bank.instruments[1];
+    i0 = Instrument::defaults(InstrumentType::Kit, "Short");
+    i0.used = true; i0.kit = 1;
+    ChannelParams p; p.instrument = 2; r.drv.setParams(2, p);
+    const auto firstBytes = [](const std::vector<RegWrite>& w) { std::vector<int> out; for (const auto& x : w) if (x.addr == 0xFF30) out.push_back(x.value >> 4); return out; };
+    NoteEvent on = cellOn(2, 60, 2); on.cmd1 = { Cmd::R, 0, 4, 0 };
+    auto w = r.block({ on }, 480);
+    for (int t = 0; t < 12; ++t) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+    auto fb = firstBytes(w);
+    // The three frames, then -- the sample over -- the roll at tick 4 and 8 and 12 plays them again.
+    CHECK(std::count(fb.begin(), fb.end(), 9) >= 3);
+    r.block({ Rig::off(2, 60) }, 64);
+    // A plain note, and a bare F 01 four ticks on, after the three frames have played.
+    w = r.block({ cellOn(2, 60, 2) }, 480);
+    for (int t = 0; t < 4; ++t) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+    fb = firstBytes(w);
+    CHECK(std::count(fb.begin(), fb.end(), 9) == 1); CHECK(std::count(fb.begin(), fb.end(), 11) == 1);
+    w = r.block({ cellCmd(2, { Cmd::F, 0, 1, 0 }) }, 480);
+    for (int t = 0; t < 4; ++t) { auto more = r.block({}, 480); w.insert(w.end(), more.begin(), more.end()); }
+    fb = firstBytes(w);
+    CHECK(std::count(fb.begin(), fb.end(), 9) == 0);     // from the second frame
+    CHECK(std::count(fb.begin(), fb.end(), 10) == 1); CHECK(std::count(fb.begin(), fb.end(), 11) == 1);
 }
 
 TEST_CASE("P on a kit moves the period register, not the note", "[driver][kit]")
