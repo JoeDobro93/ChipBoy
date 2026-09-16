@@ -220,6 +220,12 @@ breathing rather than as the trace sliding.
   CGB, and DAC-on clicks show as the steps they are. Both can be shown together.
 - **Zoom:** 1, 2, 4 or 8 periods. Noise uses a fixed time window, and so does a kit —
   a kit is a sample, not a repeating wave, so there is no period to lock to.
+- **Left and right monitors** (D-UI-31). A channel strip's scope is two monitors side by
+  side with a bar between them, `L` and `R`, each drawing the channel's trace over the
+  chosen periods (one by default). A channel is mono at the DAC, so a note panned both
+  ways reads as one picture with a seam; a half whose NR51 gate is off draws the off
+  baseline instead, so an `O` shows where the sound went. The visualizer and the Voice
+  editor keep the single picture.
 - **The master scope** shows the actual output, with the clicks and the droop.
 - **Visualizer window.** A separate, resizable, clean window — the four scopes stacked
   or tiled, plus the master, no chrome, adjustable line weight, black or LCD ground,
@@ -765,3 +771,4 @@ recorded in `CHANGES.md`.
 | D-UI-28 | Where does the mixing curve live? | **A *Dist* switch on the Kits tab**, beside *Loop*, per kit ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §117): Clip, Soft, Fold, Fold2, Wrap — LSDj's four tables, with the one the versions before 9.2 had as well. It applies to a cell that names two samples and to nothing else, so a kit with a blank VEL column sounds the same whatever it says |
 | D-UI-29 | Can a kit sample be heard without playing the song? | **Yes: *Audition* → *Play* on the Kits tab**, beside the waveform. The audio thread reads the sample out of the live bank at the kit's own rate, through the DAC's curve, and mixes it in after the render — it never touches the driver, so the song plays on and nothing in the state changes. Pressing it again starts over; it stops at the end of the sample |
 | D-UI-30 | How does the Instrument tab show a stage shorter than a tick? | **The stage steppers stay whole ticks and the readout carries the fraction** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §121): an imported envelope's stages can be 1.7 or 0.6 of a tick, so the envelope preview is drawn in 1/256 of a tick and its total prints to one decimal (`6.6 t`). Setting a stage's stepper clears that stage's fraction — the number shown becomes the truth — and the tooltip says so, because an invisible 0.7 of a tick surviving an edit is worse than losing it |
+| D-UI-31 | How does a channel strip's scope show where the sound goes? | **Two monitors side by side, `L` and `R`, a bar between them**, each the channel's trace over the chosen periods (one by default): a channel is mono at its DAC, so a note panned both ways reads as one picture with a seam, and a half whose NR51 gate is off draws the off baseline, so an `O` shows at a glance. The visualizer and the Voice editor keep one picture across the width |

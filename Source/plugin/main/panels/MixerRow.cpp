@@ -74,6 +74,7 @@ ChannelStrip::ChannelStrip(ChipBoyProcessor& p, int ch)
     scope_.setSource(src);
     scope_.setChannel(ch_);
     scope_.setChrome(false);
+    scope_.setStereo(true);           // a left and a right monitor (UI_DESIGN section 3)
     scope_.setLcdGround(true);
     scope_.setAnalogCornerHz(analogCornerHz(processor_));
     regs_.setChannel(ch_);

@@ -429,6 +429,11 @@ public:
     /// period to lock to: the scope keeps noise's fixed time window while
     /// one is playing (docs/COMMANDS_AND_TEMPO.md section 22).
     void setFixedWindow(bool on);
+    /// A left and a right monitor side by side (UI_DESIGN section 3): each
+    /// half draws the channel's trace over `periods` periods, and a half whose
+    /// NR51 gate is off draws the off baseline instead, so an `O` reads at a
+    /// glance. Off, one picture across the width.
+    void setStereo(bool on);
     void setAnalogCornerHz(double hz);  ///< the coupling corner of the current model; <= 0 = RAW (no analog trace)
     void setLcdGround(bool lcd);        ///< LCD green on near-black, or the panel's dark ground
     void setLineWidth(float px);

@@ -151,6 +151,7 @@ struct ScopeView::Impl : juce::Timer {
     /// A kit is a sample, not a repeating wave, so it keeps noise's fixed
     /// time window (docs/COMMANDS_AND_TEMPO.md section 22).
     bool fixedWindow = false;
+    bool stereo = false;              ///< a left and a right monitor side by side
     juce::Colour ground = colours::lcd, grid = colours::lcdGrid, border = colours::scopeBorder;
     float lineWidth = 1.0f;
 
@@ -165,6 +166,7 @@ struct ScopeView::Impl : juce::Timer {
     double endCycle = 0.0;
     bool active = false;
     bool audible = true;          ///< the mix lets the channel through (section 53)
+    bool leftOn = true, rightOn = true;   ///< NR51's two gates for the channel, for the stereo monitors
     int period = 0;
     juce::Path digital, analog;
 
@@ -251,8 +253,10 @@ struct ScopeView::Impl : juce::Timer {
         // DAC does (section 53); an unpowered mix word says nothing.
         const uint32_t mix = src.mix != nullptr ? src.mix->load(std::memory_order_relaxed) : 0;
         const bool newAudible = !(mix & (1u << 16)) || (((mix >> 8) & ((1u << ch) | (1u << (ch + 4)))) != 0);
-        const bool audibleChanged = newAudible != audible;
-        audible = newAudible;
+        const bool newLeft = !(mix & (1u << 16)) || ((mix >> 8) & (1u << (ch + 4))) != 0;
+        const bool newRight = !(mix & (1u << 16)) || ((mix >> 8) & (1u << ch)) != 0;
+        const bool audibleChanged = newAudible != audible || newLeft != leftOn || newRight != rightOn;
+        audible = newAudible; leftOn = newLeft; rightOn = newRight;
         active = v.active && audible;
         period = v.period;
         if (changed || audibleChanged) owner.repaint();
@@ -279,16 +283,36 @@ struct ScopeView::Impl : juce::Timer {
             g.fillRect(float(area.getX()), std::round(toY(lv)) - 0.5f, float(W), 1.0f);
         }
 
-        if (n > 0 && audible) buildAndDraw(g, area, toY);
-        else if (n > 0) {
-            // Silenced by the mix: the off baseline, as a channel with its DAC off
-            // draws. D-UI-25: at level 7.5, the DAC's own zero -- a channel that
-            // is not sounding sits in the middle, which is where the analog trace
-            // already puts a DAC-off sample (`xOf` returns 0 for one).
+        // Silenced by the mix: the off baseline, as a channel with its DAC off
+        // draws. D-UI-25: at level 7.5, the DAC's own zero -- a channel that
+        // is not sounding sits in the middle, which is where the analog trace
+        // already puts a DAC-off sample (`xOf` returns 0 for one).
+        const auto offLine = [&](juce::Rectangle<int> r) {
             const float dashes[2] = { 3.0f, 3.0f };
             const float yBase = std::round(toY(7.5)) - 0.5f;
             g.setColour(colours::channel(ch).withAlpha(0.4f));
-            g.drawDashedLine({ float(area.getX()), yBase, float(area.getRight()), yBase }, dashes, 2, 1.0f);
+            g.drawDashedLine({ float(r.getX()), yBase, float(r.getRight()), yBase }, dashes, 2, 1.0f);
+        };
+        if (!stereo) {
+            if (n > 0 && audible) buildAndDraw(g, area, toY);
+            else if (n > 0) offLine(area);
+        } else {
+            // Two monitors, left and right, a bar between them: each draws
+            // the channel's own trace when NR51 lets it through on that side.
+            const int gap = 3, wl = (W - gap) / 2;
+            const auto left = area.withWidth(wl);
+            const auto right = area.withX(area.getX() + wl + gap).withWidth(W - wl - gap);
+            g.setColour(border);
+            g.fillRect(area.getX() + wl, area.getY(), gap, H);
+            for (int side = 0; side < 2; ++side) {
+                const auto r = side == 0 ? left : right;
+                const bool on = side == 0 ? leftOn : rightOn;
+                if (n > 0 && on) buildAndDraw(g, r, toY);
+                else if (n > 0) offLine(r);
+                g.setFont(Fonts::pixel(7.0f));
+                g.setColour(grid.withAlpha(on ? 1.0f : 0.6f));
+                g.drawText(side == 0 ? "L" : "R", r.getX() + 3, r.getBottom() - 11, 8, 9, juce::Justification::centredLeft, false);
+            }
         }
 
         if (idleDim && !active) { g.setColour(ground.withAlpha(0.4f)); g.fillRoundedRectangle(bounds.toFloat(), 3.0f); }
@@ -413,6 +437,12 @@ void ScopeView::setFixedWindow(bool on)
     if (on == impl_->fixedWindow) return;
     impl_->fixedWindow = on;
     impl_->syncChrome();
+    repaint();
+}
+void ScopeView::setStereo(bool on)
+{
+    if (on == impl_->stereo) return;
+    impl_->stereo = on;
     repaint();
 }
 void ScopeView::setAnalogCornerHz(double hz)

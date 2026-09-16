@@ -18,6 +18,16 @@ design-log section the change touches. Update this file at the end of every chan
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
 
+## Done (2026-09-16, later still) -- the strip scopes as left and right monitors
+
+- **D-UI-31**: a channel strip's scope is two monitors, `L` and `R`, one period each by
+  default (`ui_periods` defaults to 1; a stored 2 is kept), gated by NR51's two bits, so
+  the picture takes the same width and an `O` shows on it. `ScopeView::setStereo()`.
+- **Open**: `chipboy_uishot --scope-check` reports PU1 moving between two frames (237
+  pixels at one period, 1155 at two, split or not): the factory Square lead has a vibrato
+  of its own, so the "steady tone" breathes. The check wants an instrument without one,
+  or a tolerance; it is not in the gate.
+
 ## Done (2026-09-16, later) -- the decisions on the sweep: the song's end, the import fields as controls
 
 - **The song's end** (§212): each channel plays its chain round again from its own row 0 when

@@ -26,6 +26,18 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-16 -- a channel strip's scope is a left and a right monitor
+
+`docs/UI_DESIGN.md` section 3, D-UI-31. Each strip's scope is two monitors side by side
+with a bar between them, `L` and `R`, each drawing the channel's trace over the chosen
+periods -- one by default now, where it was two, so the picture takes the same space. A
+channel is mono at its DAC, so a note panned both ways reads as before with a seam in the
+middle; a half whose NR51 gate is off draws the off baseline, so an `O` shows where the
+sound went. `ScopeView::setStereo()`; the visualizer and the Voice editor keep the single
+picture. Noted in passing: `chipboy_uishot --scope-check` has been reporting PU1's scope as
+moving between two frames since the factory Square lead gained its own vibrato -- the
+tone it holds is not steady -- before this change and independent of it.
+
 ### 2026-09-16 -- the decisions on the sweep: the song's end, and the import fields as controls
 
 `docs/COMMANDS_AND_TEMPO.md` §209-§213. The user's decisions on the version map's gap list and

@@ -188,7 +188,7 @@ ScopeView::Trace HardwarePanel::storedTrace(const ChipBoyProcessor& p)
 
 int HardwarePanel::storedPeriods(const ChipBoyProcessor& p)
 {
-    const int v = int(p.apvts.state.getProperty(kPeriodsProp, 2));
+    const int v = int(p.apvts.state.getProperty(kPeriodsProp, 1));   // one period a monitor (UI_DESIGN section 3)
     return v == 1 || v == 2 || v == 4 || v == 8 ? v : 2;
 }
 
@@ -276,7 +276,7 @@ HardwarePanel::HardwarePanel(ChipBoyProcessor& p) : EditorPanel(p)
         display->add(std::move(r));
     }
     {
-        auto r = std::make_unique<ChoiceRow>("Periods shown", "How many periods of the channel's own register fill a scope. Noise uses a fixed window.", "", StringArray{ "1", "2", "4", "8" });
+        auto r = std::make_unique<ChoiceRow>("Periods shown", "How many periods of the channel's own register fill each of a strip's two monitors. Noise uses a fixed window.", "", StringArray{ "1", "2", "4", "8" });
         const int pv = storedPeriods(processor);
         r->seg.setSelected(pv == 1 ? 0 : pv == 2 ? 1 : pv == 4 ? 2 : 3, dontSendNotification);
         r->seg.onChange = [this](int i) { processor.apvts.state.setProperty(kPeriodsProp, i == 0 ? 1 : i == 1 ? 2 : i == 2 ? 4 : 8, nullptr); announceDisplay(); };
