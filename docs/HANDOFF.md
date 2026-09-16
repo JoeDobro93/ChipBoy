@@ -29,6 +29,19 @@ design-log section the change touches. Update this file at the end of every chan
   8.5.1, PreTrigger 9.x; 8.8.6 assumed muted; twenty models). The user's 4.1.0 kits were
   "lo-fi and distorted": every frame carried 9.x's `NR51` mute and `$7E0` pre-trigger. The
   control is *RAM writes* on wave and kit instruments. Left: the old note-on's double trigger.
+- **The "lo-fi, distorted" kit, second report after §215**: not reproduced by measurement.
+  With §215 in, `WATER2`'s kit frames trace write for write as the 4.1.0 ROM's; the data is
+  the ROM's own self-mix of the DR-55 hi-hat through its clip (note bytes `11`, `22`, ...
+  play the sample on both sides, on 4.1.0 too); the harness's `--wave-probe` renders the
+  ROM's audio (SameBoy, 131072 Hz, with the wave DAC's nibble per sample), and
+  `chipboy_recordtest --play-song FILE BARS --wav DIR` (new) renders ChipBoy's mix and each
+  soloed channel to 48 kHz WAVs. The two mixes correlate at 0.79 with the same RMS and
+  octave spectrum; the wave channel alone reaches 0.99 in the 50 ms windows where the two
+  timelines line up and 0 where they drift (the ROM's frames jitter, ChipBoy's are exact),
+  so a single lag cannot compare a whole second. The residual is flat across the frame
+  phase and carries no frame-rate harmonics. What to ask for: a WAV from the user's build.
+  Scripts of the session: `/root/lsdj/cs/` (the save, the ROM, `water2_work.sav` with
+  WATER2 in the working area, the probe and trace CSVs under the scratchpad).
 - **D-UI-33**: the import dialog warns when no ROM is beside the save and offers *Choose
   ROM…* (`useRomFile()`: a `.gb` of any name or a `.zip` holding one). The kit report
   below was that: the save had been imported without its ROM.

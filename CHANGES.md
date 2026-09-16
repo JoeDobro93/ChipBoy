@@ -26,6 +26,12 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-16 -- `--play-song` can write what it hears
+
+`chipboy_recordtest --play-song FILE BARS --wav DIR` writes the mix and each soloed channel
+as 48 kHz WAVs beside the RMS table, so a rendering can be compared with the harness's
+`--wave-probe` audio of the ROM rather than inferred from the register log.
+
 ### 2026-09-16 -- the wave RAM write follows the version: plain, muted, pre-triggered
 
 `docs/COMMANDS_AND_TEMPO.md` §215. A 4.1.0 song's kits sounded "lo-fi and distorted" next to

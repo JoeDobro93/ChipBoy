@@ -577,6 +577,8 @@ bool openForPlayback(ChipBoyProcessor& p, const juce::File& file, int solo, Song
     return true;
 }
 
+juce::File gWavDir;   ///< --wav DIR: the mix and each soloed channel of --play-song as 48 kHz WAVs
+
 bool playOnce(const juce::File& file, int solo, const SongShape& shape, SongRun& out)
 {
     const auto pOwned = std::make_unique<ChipBoyProcessor>();
@@ -597,9 +599,13 @@ bool playOnce(const juce::File& file, int solo, const SongShape& shape, SongRun&
     out.rms.assign(bars, 0.0);
     const int blocks = int((shape.samples + kBlock - 1) / kBlock);
     size_t bar = 0;
+    std::vector<float> wavL, wavR;
+    if (gWavDir != juce::File()) { wavL.reserve(size_t(shape.samples)); wavR.reserve(size_t(shape.samples)); }
     for (int b = 0; b < blocks; ++b) {
         midi.clear();
         p.processBlock(buffer, midi);
+        if (gWavDir != juce::File())
+            for (int i = 0; i < kBlock; ++i) { wavL.push_back(buffer.getSample(0, i)); wavR.push_back(buffer.getSample(buffer.getNumChannels() > 1 ? 1 : 0, i)); }
         const int64_t f0 = int64_t(b) * kBlock;
         for (int i = 0; i < kBlock; ++i) {
             const int64_t f = f0 + i;
@@ -621,6 +627,19 @@ bool playOnce(const juce::File& file, int solo, const SongShape& shape, SongRun&
     pump(50);
     for (size_t i = 0; i < bars; ++i) out.rms[i] = count[i] > 0.0 ? std::sqrt(sum[i] / count[i]) : 0.0;
     if (!p.ownsTransport()) { std::printf("FAIL the plugin did not take the transport with no play head\n"); return false; }
+    if (gWavDir != juce::File()) {
+        gWavDir.createDirectory();
+        const juce::File f = gWavDir.getChildFile(solo < 0 ? juce::String("mix.wav") : juce::String(kStreamName[solo]) + ".wav");
+        f.deleteFile();
+        juce::WavAudioFormat fmt;
+        std::unique_ptr<juce::AudioFormatWriter> w(fmt.createWriterFor(new juce::FileOutputStream(f), kSampleRate, 2, 16, {}, 0));
+        if (w != nullptr) {
+            const float* chans[2] = { wavL.data(), wavR.data() };
+            w->writeFromFloatArrays(chans, 2, int(wavL.size()));
+            w.reset();
+            std::printf("wrote %s (%d samples)\n", f.getFullPathName().toRawUTF8(), int(wavL.size()));
+        }
+    }
     return true;
 }
 
@@ -735,6 +754,7 @@ int main(int argc, char** argv)
         else if (key == "--demo") demoDir = juce::File(juce::String(argv[++i]));
         else if (key == "--out") outDir = juce::File(juce::String(argv[++i]));
         else if (key == "--write-song") writeSong = juce::File(juce::String(argv[++i]));
+        else if (key == "--wav" && i + 1 < argc) gWavDir = juce::File(juce::String(argv[++i]));
         else if (key == "--check-song") checkSong = juce::File(juce::String(argv[++i]));
         else if (key == "--write-state") writeState = juce::File(juce::String(argv[++i]));
         else if (key == "--check-state") checkState = juce::File(juce::String(argv[++i]));
