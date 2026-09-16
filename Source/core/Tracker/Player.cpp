@@ -22,6 +22,7 @@ void Player::prepare(double sampleRate)
     for (auto& o : ownedNotes_) o = false;
     for (auto& g : grooveCell_) g = kGrooveNone;
     for (auto& b : firedRow_) b = -1;
+    for (auto& b : stopFired_) b = false;
 }
 
 uint8_t Player::groove(int ch) const
@@ -117,6 +118,7 @@ void Player::process(const TickPoint* ticks, size_t nTicks, bool playing, std::v
         for (auto& o : ownedNotes_) o = false;
         for (auto& g : grooveCell_) g = kGrooveNone;
         for (auto& b : firedRow_) b = -1;
+        for (auto& b : stopFired_) b = false;
         return;
     }
     playing_ = true;
@@ -156,6 +158,7 @@ void Player::process(const TickPoint* ticks, size_t nTicks, bool playing, std::v
         if (late) {
             for (auto& g : grooveCell_) g = kGrooveNone;
             for (auto& b : firedRow_) b = -1;
+        for (auto& b : stopFired_) b = false;
             for (auto& b : builtRow) b = -1;
         }
         lastTick_ = tick;
@@ -168,6 +171,12 @@ void Player::process(const TickPoint* ticks, size_t nTicks, bool playing, std::v
             if (!lane[ch]) continue;
             int row = 0, inRow = 0, pass = 0;
             rowAtTick(*song_, ch, tick, row, inRow, &pass);
+            // Section 214: the song's `H F F` -- every channel stops before
+            // that step's notes: one note-off, then nothing.
+            if (song_->stopTick >= 0 && tick >= song_->stopTick) {
+                if (!stopFired_[ch]) { stopFired_[ch] = true; firedRow_[ch] = -1; firedStep_[ch] = -1; fireStep(ch, row, 0, 0, ticks[k].offset, out); }
+                continue;
+            }
             // Section 212: a new pass of a looping chain is a new row, even
             // when it is the same row number.
             if (pass != firedPass_[ch]) { firedPass_[ch] = pass; firedRow_[ch] = -1; firedStep_[ch] = -1; }

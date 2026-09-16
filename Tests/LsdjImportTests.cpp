@@ -846,10 +846,11 @@ TEST_CASE("a real save, when one is given, imports every song without a fault", 
     CHECK(imported == int(idx.files.size()));
 }
 
-TEST_CASE("H FF ends the channel's chain", "[lsdj]")
+TEST_CASE("H FF stops the song: the cell keeps it and the channel's chain ends there", "[lsdj]")
 {
-    // Section 120: the ROM stops the channel outright, so ChipBoy's channel
-    // has no timeline past it -- a playhead dropped beyond finds silence.
+    // Sections 120 and 214: the ROM stops the whole song at the step, so the
+    // cell keeps its H FF (the song's stop tick, section 214), the phrase runs
+    // to that step and the channel has no timeline past it.
     auto song = blankSong(22);
     song[kInstAlloc + 0] = 1;
     song[kPhraseAlloc] |= 0x07;                     // phrases 0, 1 and 2
@@ -865,8 +866,13 @@ TEST_CASE("H FF ends the channel's chain", "[lsdj]")
     REQUIRE(out->chain[0].size() == 1);             // the two phrases after it are not laid out
     const auto* p0 = out->phrase(out->chain[0][0]);
     REQUIRE(p0 != nullptr);
-    CHECK(int(p0->steps) == 2);                     // and the phrase ends at the H
+    CHECK(int(p0->steps) == 3);                     // the phrase runs to the H's step
     CHECK(p0->cells[0].note != 0);
+    CHECK(p0->cells[2].cmd1.cmd == bank::Cmd::H); CHECK(int(p0->cells[2].cmd1.a) == 15); CHECK(int(p0->cells[2].cmd1.b) == 15);
+    CHECK(p0->cells[2].note == 0);                  // the ROM never plays that step's note
+    buildRowTables(*out);
+    CHECK(out->stopTick == 12);                     // step 2 at six ticks a step
+    CHECK(songTicks(*out) == 12);
     for (int ch = 1; ch < 4; ++ch) CHECK(out->chain[size_t(ch)].empty());   // the others are untouched
     bool said = false;
     for (const auto& l : notes.lines) if (l.find("HFF") != std::string::npos) said = true;

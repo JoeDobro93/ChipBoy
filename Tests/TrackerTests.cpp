@@ -433,6 +433,35 @@ TEST_CASE("a channel whose chain runs out plays it round again on its own clock"
     CHECK(songTicks(s) == 288);
 }
 
+TEST_CASE("an H FF stops every channel at its step", "[tracker][rows]")
+{
+    // Section 214 (hff_noi, hff_row1 on 9.4.2): NOI's H FF at step 8 of its
+    // one phrase stops PU1 too, before PU1's own step-8 note; nothing plays
+    // after, and the song's length is the stop.
+    const auto owned = std::make_unique<Song>(); Song& s = *owned;
+    s.noteSource[0] = NoteSource::Tracker; s.noteSource[3] = NoteSource::Tracker;
+    auto& pu = s.phrases[0]; pu.used = true; pu.steps = 16; pu.cells[0].note = 60; pu.cells[8].note = 62;
+    auto& pu2 = s.phrases[1]; pu2.used = true; pu2.steps = 16; pu2.cells[0].note = 64;
+    auto& noi = s.phrases[2]; noi.used = true; noi.steps = 9; noi.cells[0].note = 40; noi.cells[8].cmd1 = { bank::Cmd::H, 15, 15, 0 };
+    s.chain[0] = { 1, 2 };
+    s.chain[3] = { 3 };
+    buildRowTables(s);
+    CHECK(s.stopTick == 48);
+    CHECK(songTicks(s) == 48);
+    Player p; p.prepare(48000.0); p.setSong(&s);
+    std::vector<std::pair<int, int64_t>> ons; std::vector<int64_t> offs;
+    for (int64_t tick = 0; tick < 300; ++tick)
+        for (const auto& e : ticks(p, tick, 1)) {
+            if (e.kind == NoteEvent::NoteOn) ons.push_back({ int(e.channel), tick });
+            if (e.kind == NoteEvent::NoteOff) offs.push_back(tick);
+        }
+    CHECK(ons == std::vector<std::pair<int, int64_t>>{ { 0, 0 }, { 3, 0 } });
+    CHECK(offs == std::vector<int64_t>{ 48, 48 });   // one note-off a channel at the stop
+    // A jump back plays it again.
+    const auto again = ticks(p, 0, 1);
+    CHECK(again.size() == 2);
+}
+
 TEST_CASE("the groove in force is the slot, then the last cell, then the phrase", "[tracker][groove]")
 {
     const auto owned = std::make_unique<Song>(); Song& s = *owned;

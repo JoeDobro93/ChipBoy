@@ -131,6 +131,9 @@ private:
     /// Section 212: the pass of the chain the fired row was on, so a looping
     /// channel fires its rows again each time round.
     int     firedPass_[4] = { 0, 0, 0, 0 };
+    /// Section 214: the channel's note-off at the song's `H F F` has gone out;
+    /// nothing fires after it until the timeline jumps back.
+    bool    stopFired_[4] = { false, false, false, false };
     uint8_t grooveParam_[4] = { kGrooveNone, kGrooveNone, kGrooveNone, kGrooveNone };  ///< from a G slot
     uint8_t grooveCell_[4] = { kGrooveNone, kGrooveNone, kGrooveNone, kGrooveNone };   ///< from the last G cell
     // what the recorder last wrote on each channel: the slots in force, and

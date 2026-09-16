@@ -119,7 +119,8 @@ String commandArgText(const bank::Command& c)
         case bank::Cmd::E:    return "vol " + String(x) + dot + ((y & 7) == 0 ? String("hold") : ((y & 8) ? "up " : "down ") + String(y & 7));
         case bank::Cmd::F:    return "frame " + String(x);
         case bank::Cmd::G:    return x == 0 ? String("straight") : "groove " + String(x);
-        case bank::Cmd::H:    return (x == 0 ? String("forever") : String(x) + (x == 1 ? " time" : " times")) + dot + "row " + String(y);
+        case bank::Cmd::H:    if (x == 15 && y == 15) return "stop the song";   // section 214
+                              return (x == 0 ? String("forever") : String(x) + (x == 1 ? " time" : " times")) + dot + "row " + String(y);
         case bank::Cmd::K:    return "after " + String(x);
         case bank::Cmd::L:    return x == 0 ? String("instant") : "over " + String(x);
         case bank::Cmd::M:    return "L " + masterSideText(x) + dot + "R " + masterSideText(y);

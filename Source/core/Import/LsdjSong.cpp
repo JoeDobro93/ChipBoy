@@ -821,13 +821,15 @@ struct Reader {
                     continue;
                 }
                 if (x == 15 && y == 15) {
-                    // Section 80: `H F F` alone stops the channel outright --
-                    // measured again over 35 seconds, two note-ons and then
-                    // nothing, where every other `H x F` is an ordinary hop to
-                    // step 15. ChipBoy ends the phrase and the chain runs on.
-                    if (hopStep < 0) hopStep = st;
+                    // Section 214: `H F F` stops the **song** at this step, every
+                    // channel, before the step's notes. The cell keeps it and
+                    // means the same in ChipBoy; the phrase runs to this step
+                    // (its note dropped, never played) and the chain ends here.
+                    if (hopStep < 0) hopStep = st + 1;
+                    c.note = 0; c.vel = 0;
+                    c.cmd1 = { Cmd::H, 15, 15, 0 };
                     stopsHere = true;
-                    notes.add("HFF" + where + " stops the channel: ChipBoy ends the channel's chain there and the channel stops at its end, as the ROM does (sections 120 and 212)");
+                    notes.add("HFF" + where + " stops the song there, every channel, as the ROM does; the cell keeps it (section 214)");
                     continue;
                 }
                 if (hopStep < 0) {
@@ -845,7 +847,7 @@ struct Reader {
             }
             if (lsdjMidi > 0 && kind != 3) state.lastMidi = lsdjMidi;      // an L on a later row slides from here
         }
-        if (hopStep >= 0) { ph.steps = uint8_t(std::max(1, hopStep)); if (hopStep == 0) ph.cells[0] = tracker::Cell{}; }
+        if (hopStep >= 0) { ph.steps = uint8_t(std::clamp(hopStep, 1, 16)); if (hopStep == 0) ph.cells[0] = tracker::Cell{}; }
         phraseSlot[key] = PhraseOut{ slot, state, stopsHere };
         if (stops != nullptr) *stops = stopsHere;
         return slot;
@@ -878,11 +880,9 @@ struct Reader {
                         if (ch == 3 && !m.noiseChainTsp) notes.add("chain " + hex2(c) + " step " + std::to_string(st) + ": this version's chain transpose does nothing on the noise channel; dropped");
                         else { song.setTranspose(ch, int(chain.size()) - 1, int8_t(tsp)); if (ch == 3) noiseTsp = true; }
                     }
-                    // Section 120: the channel's timeline ends at the phrase
-                    // whose H F F the ROM stops on; nothing after it is laid out,
-                    // and the channel stops there rather than going round
-                    // (section 212).
-                    if (stops) { stopped[size_t(ch)] = true; song.chainEnd[size_t(ch)] = tracker::ChainEnd::Stop; break; }
+                    // Sections 120 and 214: the song stops at the phrase's H F F,
+                    // so nothing after it on this channel is laid out.
+                    if (stops) { stopped[size_t(ch)] = true; break; }
                 }
             }
         }

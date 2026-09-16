@@ -153,9 +153,10 @@ Each is a millisecond or a period unit; the probe names are `vs_sweep.py`'s.
    Kits tab's Custom table takes whatever a user puts in it (§194).
 9. **The song's end** -- settled (§212): each channel plays its chain round again from its own
    row 0 when it meets an empty song step, on its own clock (`songend.py` on 9.4.2 and 6.0.1),
-   and ChipBoy does the same (`chainEnd` per channel, a toggle in the chain view's head; an
-   `H F F` channel stops). What remains: the own transport loops the longest chain and starts
-   every channel over together, where the ROM lets them run apart for ever.
+   and ChipBoy does the same (`chainEnd` per channel, a toggle in the chain view's head). An
+   `H F F` stops the whole song at its step (§214, `songend_hff.py`; §120 had read it as the
+   channel's), and the cell keeps it. What remains: the own transport loops the longest chain
+   and starts every channel over together, where the ROM lets them run apart for ever.
 10. **Unmeasured ranges.** 7.7.6 - 8.0.0 take 8.5.1's laws (the changelog's 7.8.1 ladder; the
     8.3.4 table fix falls inside it, moot since §209); 7.5.4 - 7.7.5 take 7.0.2's; 8.8.6's
     vibrato ladder and its finetune are taken as 9.x's; 5.1 - 5.7.7 as 5.0.3's; 4.9.5 - 5.0.2

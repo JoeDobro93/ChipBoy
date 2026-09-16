@@ -35,8 +35,11 @@ on the four import fields that had no control:
   that meets an empty song step plays its chain round again from its own row 0, on its own
   clock, whatever the others do; nothing ever stops. ChipBoy laid rows past a chain's end as
   empty rows (§25), so a short channel fell silent. Now each channel loops its chain by
-  default (`Song::chainEnd`, Loop / Stop, a toggle per channel in the chain view's head); an
-  imported `H F F` channel stops (§120). Considered: keeping Stop as the default and setting
+  default (`Song::chainEnd`, Loop / Stop, a toggle per channel in the chain view's head).
+  Measuring it with two channels also showed **`H F F` stops the whole song** (§214), not the
+  channel §120 had read off a single-channel probe: the cell keeps its `H F F`, the song's
+  stop tick is built with the row tables, every channel gets a note-off there and nothing
+  after, and the own transport loops the song at its stop. Considered: keeping Stop as the default and setting
   Loop on import -- rejected, the ROM's rule is the better default for a tracker whose channels
   keep their own time, and Stop is one click. A file without the key loops; a song written
   before this that relied on a short channel going quiet wants Stop on that channel. The own

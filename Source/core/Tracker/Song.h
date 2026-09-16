@@ -185,6 +185,10 @@ struct Song {
     /// built beside `rowStartTicks` so the Player lays a row's steps on the
     /// same grid the table was measured from. Not part of the file.
     std::array<std::vector<GrooveWalk>, 4> rowWalk;
+    /// Section 214: the tick the song stops on, from the earliest `H F F` in
+    /// any channel; -1 when there is none. Built by buildRowTables(); not part
+    /// of the file.
+    int64_t stopTick = -1;
 
     const Phrase* phrase(int slot) const { return slot >= 1 && slot <= kPhraseSlots && phrases[size_t(slot - 1)].used ? &phrases[size_t(slot - 1)] : nullptr; }
     uint8_t phraseAt(int ch, int row) const { const auto& c = chain[size_t(ch & 3)]; return row >= 0 && size_t(row) < c.size() ? c[size_t(row)] : 0; }
@@ -293,8 +297,9 @@ void rowAtTickLaid(const Song& s, int ch, int64_t tick, int& row, int& inRow);
 /// Section 212: the ticks a looping channel's chain lasts, 0 when it does
 /// not loop or has no phrase.
 int64_t chainLoopTicks(const Song& s, int ch);
-/// The whole song's length: the longest channel's chain (section 25). This is
-/// what the plugin's own transport loops.
+/// The whole song's length: the longest channel's chain (section 25), or its
+/// `H F F` when that comes first (section 214). This is what the plugin's own
+/// transport loops.
 int64_t songTicks(const Song& s);
 /// The channel whose chain lasts longest, the lowest of them when two do: the
 /// one the own transport's loop counts its rows in (section 25).

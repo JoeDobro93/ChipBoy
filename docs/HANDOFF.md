@@ -24,7 +24,10 @@ design-log section the change touches. Update this file at the end of every chan
   it runs out, as the ROM does (`songend.py`, six probes on 9.4.2 and 6.0.1). `Song::chainEnd`
   per channel (Loop / Stop), `rowAtTick()` wraps by the chain's length with a pass number the
   Player fires rows on, the tempo map repeats a looping channel's `T`s, the chain view's head
-  has a toggle per channel, the importer sets Stop for an `H F F`. A file without the key loops.
+  has a toggle per channel. A file without the key loops. **`H F F` stops the song** (§214,
+  correcting §120's single-channel reading): every channel, at that step, the same-step notes
+  dropped; the cell keeps its `H F F`, `Song::stopTick` is built with the row tables,
+  `songTicks()` ends there, the Player fires a note-off per channel and nothing after.
 - **The four import-only fields** by the user's decisions: `retrigTableLate` removed (§209,
   every project takes 8.3.4's timing); `vibLadder` and `vibDouble` folded into one `vibScale`
   (§210: ½x / 1x / 2x, *V depth* on every type; the ladders, the one's complement and the unit

@@ -3483,7 +3483,7 @@ already builds a `NOI` variant that does exactly that, and its register stream m
 without a vibrato. LSDj simply does not consult an instrument's type when a channel plays it; the
 type only says which bytes the editor shows.
 
-## 120. `H F F` ends the channel's timeline
+## 120. `H F F` ends the channel's timeline (corrected by §214: it stops the song)
 
 §80 measured it and left it: `H F F` **stops the channel** on the ROM -- two note-ons over
 thirty-five seconds and then nothing at all, where `H 2 F` on the same phrase hops twice and runs
@@ -6255,9 +6255,9 @@ silent while the long one played on, and the own transport looped the longest ch
   the longest chain lasts. `rowStartTick()` and `songTicks()` are unchanged: the own transport
   still loops the longest chain, so a wrap of the transport starts every channel over
   together where the ROM lets them run apart.
-- The importer sets `Stop` on a channel an `H F F` switched off (§120: the rows before it
-  play once), and `Loop` on the rest -- a channel's chain ends at its first empty song step,
-  which is where the ROM goes round.
+- The importer leaves every channel on `Loop` -- a channel's chain ends at its first empty
+  song step, which is where the ROM goes round; an `H F F` is the song's stop (§214), not a
+  channel's.
 - The chain view's head carries one toggle per channel, a loop or a stop glyph in the
   channel's colour; a click switches it.
 
@@ -6271,3 +6271,25 @@ row's transpose is taken from the note's byte) / "Adds up" (each row's is added 
 byte, 3.x) -- enabled in shape mode. With §210's "V depth", §211's loop points and §212's
 channel end, nothing an import sets is out of the user's reach any more; `retrigTableLate`
 is gone (§209) rather than exposed.
+
+## 214. `H F F` stops the song, every channel, at that step: §120 corrected
+
+§80 and §120 measured `H F F` on a single-channel song and read "the channel stops". With two
+channels (`songend_hff.py` on 9.4.2: `hff_noi`, `hff_pu1`, `hff_row1`) the other channel stops
+at the same tick -- PU1's note on the very step NOI's `H F F` sits on is not played, and a
+three-row PU1 chain against an `H F F` in NOI's second row gets three note-ons and no more.
+The manual says it: "HFF: stop playing song (or channel, if in live mode)". §212's per-channel
+loop made the misreading audible: a song whose one `H F F` sits on NOI would have had the
+other three channels going round for ever where the ROM is silent (`EGOFLEX`, `CASTSHDW`,
+`SAMESONG` in the user's save all end that way).
+
+ChipBoy: the cell keeps its `H F F` -- it is the user's to see, move and delete -- and it
+means the same thing here: **the song stops before this step's notes, on every channel**. The
+play order treats `H F F` as a step of its own, not a counted hop (§102), so the step has a
+tick. `buildRowTables()` finds the earliest `H F F` over the four channels and sets
+`Song::stopTick` (not in the file; a channel's first pass, since the tick is absolute);
+`songTicks()` ends there, so the own transport loops the song at its stop and a run without
+loop stops there; the Player fires a note-off on every channel at that tick and nothing after
+it until the timeline jumps back. The importer keeps the phrase to the `H F F`'s step (its
+note dropped: the ROM never plays it), still ends that channel's chain there, and leaves
+`chainEnd` alone -- §212's Stop is ChipBoy's own toggle, not an import.

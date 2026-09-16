@@ -47,7 +47,8 @@ int phrasePlayOrder(const Phrase* p, uint8_t* order, int cap)
     int n = 0, at = 0;
     while (at >= 0 && at < steps && n < cap) {
         const bank::Command* h = cellHop(p->cells[size_t(at)]);
-        if (h != nullptr) {
+        // Section 214: `H F F` is the song's stop, a step of its own, not a hop.
+        if (h != nullptr && !(h->a == 15 && h->b == 15)) {
             const int times = std::clamp<int>(h->a, 0, 255);
             const int to = std::clamp<int>(h->b, 0, kMaxSteps - 1);
             if (times == 0) break;                       // section 80: the chain hop ends the order
@@ -130,6 +131,7 @@ int rowTicks(const Song& s, int ch, int row)
 
 void buildRowTables(Song& s)
 {
+    int64_t stop = -1;
     for (int ch = 0; ch < 4; ++ch) {
         const auto& chain = s.chain[size_t(ch)];
         auto& t = s.rowStartTicks[size_t(ch)];
@@ -145,7 +147,21 @@ void buildRowTables(Song& s)
         GrooveWalk w{};
         for (size_t r = 0; r < chain.size(); ++r) {
             walk.push_back(w);
-            acc = std::min<int64_t>(acc + phraseTicks(s, s.phrase(chain[r]), w), INT32_MAX / 2);
+            const Phrase* p = s.phrase(chain[r]);
+            // Section 214: the earliest `H F F` over the channels is the song's
+            // stop; the row is measured on its own grid as the tempo map does.
+            if (p != nullptr && (stop < 0 || acc < stop)) {
+                int start[kMaxPlaySteps + 1]; uint8_t step[kMaxPlaySteps + 1];
+                GrooveWalk probe = w;
+                const int n = stepStartTicks(s, p, probe, start, step);
+                for (int pos = 0; pos < n; ++pos) {
+                    if (start[pos] >= start[n]) break;
+                    const Cell& c = p->cells[size_t(step[pos])];
+                    const bool ff = (c.cmd1.cmd == bank::Cmd::H && c.cmd1.a == 15 && c.cmd1.b == 15) || (c.cmd2.cmd == bank::Cmd::H && c.cmd2.a == 15 && c.cmd2.b == 15);
+                    if (ff) { const int64_t at = acc + start[pos]; if (stop < 0 || at < stop) stop = at; break; }
+                }
+            }
+            acc = std::min<int64_t>(acc + phraseTicks(s, p, w), INT32_MAX / 2);
             t.push_back(int32_t(acc));
         }
         walk.push_back(w);
@@ -153,6 +169,7 @@ void buildRowTables(Song& s)
         auto& tsp = s.chainTranspose[size_t(ch)];
         if (tsp.size() > chain.size()) tsp.resize(chain.size());
     }
+    s.stopTick = stop;
 }
 
 int64_t rowStartTick(const Song& s, int ch, int row)
@@ -206,6 +223,9 @@ int64_t songTicks(const Song& s)
 {
     int64_t n = 0;
     for (int ch = 0; ch < 4; ++ch) n = std::max(n, rowStartTick(s, ch, s.rows(ch)));
+    // Section 214: an `H F F` ends the song where it stands. The stop's own
+    // tick is the song's length, so a transport loop comes round there.
+    if (s.stopTick >= 0 && s.stopTick < n) n = std::max<int64_t>(1, s.stopTick);
     return n;
 }
 
