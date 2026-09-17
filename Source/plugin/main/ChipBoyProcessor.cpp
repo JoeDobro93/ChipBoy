@@ -82,7 +82,7 @@ void ChipBoyProcessor::publishSong(std::shared_ptr<tracker::Song> s, bool fromFi
     // saved from here carries the tempo it was played at.
     if (fromFile) {
         if (auto* prm = apvts.getParameter(ids::songTempo))
-            prm->setValueNotifyingHost(prm->getNormalisableRange().convertTo0to1(float(std::clamp(s->tempoBpm, 40.0, 295.0))));
+            prm->setValueNotifyingHost(prm->getNormalisableRange().convertTo0to1(float(std::clamp(s->tempoBpm, driver::kMinSongBpm, driver::kMaxSongBpm))));
     }
     s->tempoBpm = songTempoParam();
     tempoBase_ = s->tempoBpm;
@@ -130,7 +130,7 @@ int ChipBoyProcessor::tabIndexOfId(int id) const
 void ChipBoyProcessor::setSongTempoParam(double bpm)
 {
     if (auto* prm = apvts.getParameter(ids::songTempo))
-        prm->setValueNotifyingHost(prm->getNormalisableRange().convertTo0to1(float(std::clamp(bpm, 40.0, 295.0))));
+        prm->setValueNotifyingHost(prm->getNormalisableRange().convertTo0to1(float(std::clamp(bpm, driver::kMinSongBpm, driver::kMaxSongBpm))));
 }
 
 /// The audio thread's two pointers, straight from a tab. Nothing is rebuilt:
@@ -189,7 +189,7 @@ int ChipBoyProcessor::addTab(std::shared_ptr<const tracker::Song> song, std::sha
     {
         auto built = std::make_shared<tracker::Song>();
         *built = *tabs_[size_t(index)].song;
-        tracker::buildTempoMap(*built, std::clamp(built->tempoBpm, 40.0, 295.0));
+        tracker::buildTempoMap(*built, std::clamp(built->tempoBpm, driver::kMinSongBpm, driver::kMaxSongBpm));
         tabs_[size_t(index)].song = std::move(built);
     }
     activeTab_ = index;
@@ -337,7 +337,7 @@ void ChipBoyProcessor::setBankNameEdit(const String& n)
 /// undo step (section 19). Everything else about a song edit is editSong's.
 void ChipBoyProcessor::setMasterTempo(double bpm)
 {
-    const double v = std::clamp(bpm, 40.0, 295.0);
+    const double v = std::clamp(bpm, driver::kMinSongBpm, driver::kMaxSongBpm);
     const double was = songShared_ ? songShared_->tempoBpm : 120.0;
     if (std::fabs(was - v) < 1e-9) return;
     auto before = songShared_;

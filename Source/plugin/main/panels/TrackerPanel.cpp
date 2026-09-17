@@ -1,3 +1,4 @@
+#include "core/Driver/Clock.h"
 #include "plugin/main/panels/TrackerPanel.h"
 
 #include "plugin/main/panels/LsdjImportDialog.h"
@@ -98,7 +99,7 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     // ticks follow is the header's Tempo group, which only reads the tempo
     // out now; the master tempo is typed here, because it belongs to the
     // song and the window can hold several.
-    tempo_.setRange(40, 295, 120);
+    tempo_.setRange(int(driver::kMinSongBpm), int(driver::kMaxSongBpm), 120);   // section 219: 299, 448, 896 are LSDj's 2x, 3x, 6x
     tempo_.setTyped(true);
     tempo_.setTooltip("This song's master tempo, 40-255 BPM: the base its T commands move from, and what the header reads in Song mode.");
     tempo_.onChange = [this](int v) { processor.setMasterTempo(double(v)); refreshViews(); contextChanged(); };
@@ -288,7 +289,7 @@ void TrackerPanel::syncSongTime()
 {
     const auto s = processor.song();
     if (!s) return;
-    tempo_.setValue(std::clamp(int(std::lround(s->tempoBpm)), 40, 295), dontSendNotification);
+    tempo_.setValue(std::clamp(int(std::lround(s->tempoBpm)), int(driver::kMinSongBpm), int(driver::kMaxSongBpm)), dontSendNotification);
     songStart_.setValue(std::clamp(int(std::lround(s->songStartSeconds * kStartSteps)), 0, kStartMax), dontSendNotification);
     transpose_.setValue(int(s->transpose), dontSendNotification);
 

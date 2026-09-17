@@ -368,6 +368,11 @@ TEST_CASE("a tick lands on the ROM's 358 Hz grid, whatever the block size", "[cl
     CHECK(std::fabs(tickSeconds(163.0, true) - 11257.0 / 2048.0 * 11704.0 / 4194304.0) < 1e-12);
     CHECK(std::fabs(tickSeconds(280.0, true) - 6553.0 / 2048.0 * 11704.0 / 4194304.0) < 1e-12);
     CHECK(std::fabs(tickSeconds(120.5, true) - 60.0 / (120.5 * 24.0)) < 1e-12);   // a fraction: the plain period
+    // Section 219: the high-speed tempi are whole interrupts -- 3, 2, 1.
+    CHECK(std::fabs(tickSeconds(299.0, true) - 6144.0 / 2048.0 * 11704.0 / 4194304.0) < 1e-12);
+    CHECK(std::fabs(tickSeconds(448.0, true) - 4096.0 / 2048.0 * 11704.0 / 4194304.0) < 1e-12);
+    CHECK(std::fabs(tickSeconds(896.0, true) - 2048.0 / 2048.0 * 11704.0 / 4194304.0) < 1e-12);
+    CHECK(std::fabs(tickSeconds(300.0, true) - 60.0 / (300.0 * 24.0)) < 1e-12);   // not one of them: the plain period
     CHECK(std::fabs(tickSeconds(120.0, false) - 1.0 / 48.0) < 1e-12);            // a song written here: exact
 
     // At 280 BPM the ticks are three or four instants apart and never

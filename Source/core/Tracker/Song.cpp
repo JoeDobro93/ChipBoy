@@ -6,6 +6,8 @@
 // when a song is published; the audio thread only reads it.
 #include "core/Tracker/Song.h"
 
+#include "core/Driver/Clock.h"
+
 namespace chipboy::tracker {
 
 Groove grooveFor(const Song& s, const Phrase* p, uint8_t slot)
@@ -250,7 +252,7 @@ void buildTempoMap(Song& s, double baseBpm)
     // and a T reverting is the base again from its tick.
     buildRowTables(s);
     s.tempoMap.clear();
-    const double base = std::clamp(baseBpm, 40.0, 295.0);   // section 161
+    const double base = std::clamp(baseBpm, driver::kMinSongBpm, driver::kMaxSongBpm);   // sections 161, 219
     std::vector<int> starts(size_t(kMaxPlaySteps) + 1, 0);
     std::vector<uint8_t> stepOf(size_t(kMaxPlaySteps) + 1, 0);
     for (int ch = 0; ch < 4; ++ch) {

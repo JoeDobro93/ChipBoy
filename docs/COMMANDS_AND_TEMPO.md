@@ -6406,3 +6406,31 @@ project lacks (an `.lsdsng`, or an `.lsdprj` missing a bank). The dialog's row s
 inside" or "n kits from the ROM", and the ROM line warns only when a chosen file needs one.
 Imported from the `.lsdprj` files against the save with its ROM, the eight songs differ only in
 the instruments' archived `lsdjBytes` (those numbers); every sample, name and cell is the same.
+
+## 219. The high-speed tempi: 2x, 3x, 6x the screen rate, a byte of their own
+
+`STELLAR` (the user's `BON-VOYAGE` save, 9.2.L) shows its tempo as `3x` and played on the
+ROM half again as fast as ChipBoy's import at 295 BPM: the same notes, every interval 1.51 times
+shorter, from the first phrase on. Its tempo byte is `27` (295), and the probe of that byte on
+the same ROM (`probe/tempo_probe.py`, a note every step at groove 1/1) gives 295.2 BPM, as
+`24` gives 292.6 and `00` 256.3 -- so the byte was not the answer.
+
+Read on the ROM (`watch_rom.py` on `$C952`-`$C953`, then the disassembly): the tick word (§160)
+is written at bank 7 `$5E04` by the routine at `$5D9A`. It reads `$C52B`: when it is 0 the word
+comes from a 256-entry table at 7:`$5E0B` indexed by the tempo byte less 40 (`$600B` on a Super
+Game Boy), whose last entries are `6262 6241 6220` -- 293, 294, 295 BPM; when it is 1, 2 or 3
+the word is `$0800 × (4 - mode)`: **6144, 4096, 2048**, a tick every third, second and every
+interrupt of the six a frame -- 2x, 3x and 6x the screen refresh, which the changelog names
+299, 448 and 896 BPM (9.2.I: "new project tempo values"; 9.2.J: "renamed new tempi to
+2x/3x/6x"). The loader at bank 1 `$7D2E`-`$7D35` fills `$C52A` from song byte `$3FB4` and
+`$C52B` from song byte **`$3FCC`**. `STELLAR` holds `27` and `02`. The `T` command (2:`$6631`)
+writes its byte to `$C52A` and zeroes `$C52B`: a `T` puts the song back on the byte's table,
+and no `T` value reaches the three tempi.
+
+ChipBoy: `LsdjModel::tempoModes` (the format-22 models: 9.2.J and later; 9.2.I is the first
+ROM with the byte, and the model "9.2.J - 9.3.3" reads every 9.2.x); the import takes byte
+`$3FCC` in 1..3 as 299, 448 or 896 BPM over the tempo byte, with a note. `tickSeconds()` gives
+those three whole-number tempi their exact words -- 6144, 4096, 2048 -- rather than the
+rounded quotient; the song tempo's ceiling is 896 (`driver::kMaxSongBpm`) in the parameter,
+the tracker head, the song file and the tools, and the parameter's readout says `(2x)`,
+`(3x)`, `(6x)` beside them. `T` stays 40-295: its byte has no room, as on the ROM.

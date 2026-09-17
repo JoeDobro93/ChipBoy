@@ -781,6 +781,32 @@ TEST_CASE("an H that ends a phrase becomes the phrase's length", "[lsdj]")
     CHECK(toldRow);
 }
 
+TEST_CASE("byte 0x3FCC is the tempo mode from 9.2.I: 2x, 3x, 6x over the tempo byte", "[lsdj]")
+{
+    // Section 219, read on the user's 9.2.L ROM (bank 7 $5D9A): mode 0 takes the
+    // byte's table, modes 1-3 the words 6144, 4096, 2048 -- 299, 448, 896 BPM.
+    // STELLAR is byte 27 (295) with mode 2 and plays at 448.
+    auto song = testSong(22);
+    song[kTempo] = 0x27;
+    auto run = [&](int mode, const LsdjModel& m) {
+        song[0x3FCC] = uint8_t(mode);
+        auto bank = std::make_unique<bank::Bank>(); auto out = std::make_unique<tracker::Song>();
+        ImportSummary sum; ImportNotes notes;
+        REQUIRE(importSong(song.data(), song.size(), m, *bank, *out, sum, notes));
+        return out->tempoBpm;
+    };
+    const auto& m22 = *lsdjModelForFormat(22);
+    CHECK(m22.tempoModes);
+    CHECK(run(0, m22) == 295.0);
+    CHECK(run(1, m22) == 299.0);
+    CHECK(run(2, m22) == 448.0);
+    CHECK(run(3, m22) == 896.0);
+    CHECK(run(4, m22) == 295.0);                     // not a mode
+    CHECK_FALSE(lsdjModelForFormat(15)->tempoModes);  // 8.8.6: the byte means nothing yet
+    song[kTempo] = 200;
+    CHECK(run(2, *lsdjModelForFormat(15)) == 200.0);
+}
+
 TEST_CASE("a project file decompresses to the song the save's file holds", "[lsdj]")
 {
     // Plan section 1a: name, version, the blocks in order; the jump codes

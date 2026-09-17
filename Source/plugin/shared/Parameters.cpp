@@ -1,3 +1,4 @@
+#include "core/Driver/Clock.h"
 #include "plugin/shared/Parameters.h"
 
 namespace chipboy::plugin {
@@ -344,7 +345,9 @@ void addGlobalParameters(AudioProcessorValueTreeState::ParameterLayout& L)
     // Tempo (docs/COMMANDS_AND_TEMPO.md section 4). Ticks are always 24 per
     // beat; what a tick is worth is the only choice left.
     L.add(choiceParam(ids::tempoSource, "Tempo Source", { "Host", "Song" }, 0));
-    L.add(intParam(ids::songTempo, "Song Tempo", 40, 295, 120, [](int v, int) { return String(v) + " BPM"; }));
+    // Section 219: 299, 448 and 896 are LSDj's high-speed tempi, 2x, 3x and 6x the screen rate.
+    L.add(intParam(ids::songTempo, "Song Tempo", int(driver::kMinSongBpm), int(driver::kMaxSongBpm), 120,
+                   [](int v, int) { return String(v) + " BPM" + (v == 299 ? " (2x)" : v == 448 ? " (3x)" : v == 896 ? " (6x)" : ""); }));
     L.add(boolParam(ids::notesOnTick, "Quantize Notes To Ticks", false));
     L.add(boolParam(ids::linkMode, "Link Mode", false));
     L.add(boolParam(ids::hexDisplay, "Hex Display", true));   // Hex by default: it counts like LSDj (section 52)

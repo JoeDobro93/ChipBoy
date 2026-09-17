@@ -29,6 +29,10 @@
 namespace chipboy::driver {
 
 constexpr int    kTicksPerBeat = 24;        ///< always, as LSDj (6 per sixteenth straight)
+/// A song's tempo: 40-295 BPM by the byte, and LSDj 9.2.I's three high-speed
+/// tempi above them -- 299, 448 and 896 BPM, a tick every 3, 2 and 1 of the
+/// 358 Hz interrupts (section 219). `T` stays 40-295: its byte has no room.
+constexpr double kMinSongBpm = 40.0, kMaxSongBpm = 896.0;
 constexpr size_t kMaxTicksPerBlock = 512;
 constexpr size_t kMaxTempoPoints = 64;      ///< T changes the clock integrates; the rest are ignored
 
@@ -74,14 +78,19 @@ inline uint64_t gridRomTickFrame(double nominalFrame, double periodFrames, doubl
 }
 /// The tick period at a tempo. With `rom` (section 160, `Song::lsdjTempo`) a
 /// whole-number BPM in 40..295 takes the ROM's tempo word, round(1834828.8 /
-/// BPM), and a tick is that many 2048ths of the grid's mean step. Otherwise,
-/// and for any other tempo -- the host's, a fraction -- it is 60 / (24 * BPM).
+/// BPM), and a tick is that many 2048ths of the grid's mean step; 299, 448 and
+/// 896 are the high-speed tempi, words 6144, 4096 and 2048 (section 219).
+/// Otherwise, and for any other tempo -- the host's, a fraction -- it is
+/// 60 / (24 * BPM).
 inline double tickSeconds(double bpm, bool rom)
 {
     if (bpm <= 0.0) bpm = 120.0;
     const double r = std::round(bpm);
-    if (!rom || std::fabs(bpm - r) > 1e-9 || r < 40.0 || r > 295.0) return 60.0 / (bpm * kTicksPerBeat);
-    const double word = std::floor(2048.0 * 2.5 * double(kGridCpuHz) / double(kGridMeanCycles) / r + 0.5);
+    const int ri = int(r);
+    const int interrupts = ri == 299 ? 3 : ri == 448 ? 2 : ri == 896 ? 1 : 0;   // the high-speed tempi: whole interrupts a tick
+    if (!rom || std::fabs(bpm - r) > 1e-9 || ri < 40 || (ri > 295 && interrupts == 0)) return 60.0 / (bpm * kTicksPerBeat);
+    const double word = interrupts > 0 ? 2048.0 * double(interrupts)
+                                       : std::floor(2048.0 * 2.5 * double(kGridCpuHz) / double(kGridMeanCycles) / r + 0.5);
     return word / 2048.0 * double(kGridMeanCycles) / double(kGridCpuHz);
 }
 

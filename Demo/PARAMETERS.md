@@ -34,7 +34,7 @@ and the plugin rounds to the nearest step when it reads it back.
 | 9 | `declick_ms` | De-click ms | 0.5-5 ms, continuous | 2 | 565664574 |
 | 10 | `soften` | Soften Master Pops | 0-1 (off, on) | 0 | 1250532947 |
 | 11 | `tempo_source` | Tempo Source | 0-1 (Host, Song) | 0 (Host) | 311560639 |
-| 12 | `song_tempo` | Song Tempo | 40-295 (BPM; the Song source's base tempo) | 120 | 448506737 |
+| 12 | `song_tempo` | Song Tempo | 40-896 (BPM; the Song source's base tempo; 299, 448, 896 are LSDj's 2x, 3x, 6x) | 120 | 448506737 |
 | 13 | `notes_on_tick` | Quantize Notes To Ticks | 0-1 (off, on) | 0 | 53834879 |
 | 14 | `link` | Link Mode | 0-1 (off, on) | 0 | 3321850 |
 | 15 | `hex` | Hex Display | 0-1 (off, on) | 1 | 103195 |

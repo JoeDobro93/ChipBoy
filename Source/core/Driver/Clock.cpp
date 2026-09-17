@@ -8,7 +8,7 @@ namespace chipboy::driver {
 namespace {
 constexpr double kEps = 1e-9;
 constexpr double kTickEps = 1e-6;   ///< a tick boundary is the same number in both blocks
-double clampBpm(double b) { return std::clamp(b, 1.0, 400.0); }
+double clampBpm(double b) { return std::clamp(b, 1.0, kMaxSongBpm); }   // section 219: up to the 6x tempo
 }
 
 void Clock::prepare(double sampleRate)

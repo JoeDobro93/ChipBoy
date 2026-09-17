@@ -171,7 +171,7 @@ def parameter_table():
     # Tempo (docs/COMMANDS_AND_TEMPO.md section 4): ticks are always 24 to the
     # beat, and the only choice left is where the beat comes from.
     choice("tempo_source", "Tempo Source", ["Host", "Song"], 0)
-    integer("song_tempo", "Song Tempo", 40, 295, 120, "BPM; the Song source's base tempo")
+    integer("song_tempo", "Song Tempo", 40, 896, 120, "BPM; the Song source's base tempo; 299, 448, 896 are LSDj's 2x, 3x, 6x")
     boolean("notes_on_tick", "Quantize Notes To Ticks", False)
     boolean("link", "Link Mode", False)
     boolean("hex", "Hex Display", True)

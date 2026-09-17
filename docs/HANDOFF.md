@@ -18,6 +18,25 @@ design-log section the change touches. Update this file at the end of every chan
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
 
+## Done (2026-09-17, later) -- the high-speed tempi 2x / 3x / 6x (§219)
+
+- **§219**: `STELLAR` (`/root/lsdj/bv/bon_voyage.{sav,gb}`, 9.2.L) plays at LSDj's `3x`, 448
+  BPM: song byte `$3FCC` (1, 2, 3) over the tempo byte, tick words 6144 / 4096 / 2048, found
+  by watching `$C952` on the ROM and disassembling bank 7 `$5D9A` and the loader at 1 `$7D2E`.
+  `LsdjModel::tempoModes` on the format-22 models; the import takes the byte; `tickSeconds()`
+  gives the three tempi their exact words; the song tempo's ceiling is `driver::kMaxSongBpm`
+  (896) everywhere it was 295 but the `T` command. `probe/tempo_probe.py VERSION BYTE...`
+  measures a ROM's step at a tempo byte; `probe/watch_rom.py` is `watch.py` with `WROM=` naming
+  the ROM. Tests: `[clock]` tickSeconds and the `[lsdj]` tempo-mode case.
+- The clock's own `clampBpm` sat at 400 and cut 448 to it (a 6.65 ms tick): it is
+  `kMaxSongBpm` now. With that, STELLAR's PU1 and PU2 note-ons trace within 10 ms of the ROM's
+  over its first six seconds (`stellar_rom.csv` / `stellar_cb.csv` in the scratchpad).
+- **Left**: the SGB table (`$600B`, 306/459/918 on a Super Game Boy) is not modelled -- ChipBoy
+  is a DMG/CGB. The `2x/3x/6x` naming is in the parameter's readout only; the tracker head
+  shows the BPM. At 3x the ROM's wave channel writes fewer frames than ChipBoy's (34 against 56
+  `$7E0` pre-triggers in six seconds, the note-ons themselves in step): the ROM's interrupt has
+  two ticks' work in the time of one and drops some -- its own timing, not modelled.
+
 ## Done (2026-09-17) -- project files: `.lsdsng` as the save's song, `.lsdprj` with its kits (§218)
 
 - **`.lsdsng`**: the user's eight Computer Savvy exports import byte for byte as the save's

@@ -26,6 +26,20 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-17 -- LSDj's high-speed tempi: 299, 448, 896 BPM (2x, 3x, 6x)
+
+`docs/COMMANDS_AND_TEMPO.md` §219. `STELLAR` (9.2.L) is marked `3x` and played half again as
+fast as its import: since 9.2.I song byte `$3FCC` picks a tempo over the byte -- the tick word
+is 6144, 4096 or 2048, a tick every third, second or every interrupt, 299, 448 or 896 BPM. The
+import reads it on the format-22 models; `tickSeconds()` gives the three their exact words; the
+song tempo's ceiling moves from 295 to 896 (`driver::kMaxSongBpm`) in the Song Tempo parameter
+(its range in `Demo/PARAMETERS.md` and the song-tempo `.rpp` regenerated), the tracker head,
+the song file and the tools, with `(2x)`, `(3x)`, `(6x)` in the parameter's readout. Spec 8's
+"40-295" is the `T` command's range still: its byte cannot name them, as on the ROM.
+Considered: a tempo-mode parameter beside the BPM (a 77th parameter for three values), and
+modelling them as 298.6/447.96/895.9 (the exact multiples; LSDj names them 299/448/896 and
+whole numbers are what the word law keys on).
+
 ### 2026-09-17 -- project files carry their kits (`.lsdprj`), an `.lsdsng` imports as the save's song
 
 `docs/COMMANDS_AND_TEMPO.md` §218, plan section 1a amended. Not a spec departure: the import

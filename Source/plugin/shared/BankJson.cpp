@@ -617,7 +617,7 @@ bool songFromVar(const var& v, tracker::Song& out)
     // before it) and perhaps a bar override, which become phrase lengths
     // below (section 25).
     const int fileSteps = std::clamp(o->hasProperty("steps") ? getOr(o, "steps", 16) : getOr(o, "stepsPerBar", 16), 1, tracker::kMaxSteps);
-    out.tempoBpm = std::clamp(o->hasProperty("tempoBpm") ? double(o->getProperty("tempoBpm")) : 120.0, 40.0, 295.0);
+    out.tempoBpm = std::clamp(o->hasProperty("tempoBpm") ? double(o->getProperty("tempoBpm")) : 120.0, driver::kMinSongBpm, driver::kMaxSongBpm);
     out.transpose = int8_t(std::clamp(o->hasProperty("transpose") ? int(o->getProperty("transpose")) : 0, -128, 127));
     out.songStartSeconds = std::max(0.0, o->hasProperty("songStartSeconds") ? double(o->getProperty("songStartSeconds")) : 0.0);
     out.lsdjTempo = o->hasProperty("lsdjTempo") && bool(o->getProperty("lsdjTempo"));

@@ -33,7 +33,7 @@ namespace {
 constexpr size_t kPhraseNotes = 0x0000, kGrooves = 0x1090, kSongRows = 0x1290, kTableEnv = 0x1690, kInstNames = 0x1E7A;
 constexpr size_t kTableAlloc = 0x2020, kInstAlloc = 0x2040, kChainPhrases = 0x2080, kChainTsp = 0x2880, kInstParams = 0x3080;
 constexpr size_t kTableTsp = 0x3480, kTableCmd1 = 0x3680, kTableCmd1V = 0x3880, kTableCmd2 = 0x3A80, kTableCmd2V = 0x3C80;
-constexpr size_t kPhraseAlloc = 0x3E82, kTempo = 0x3FB4, kSongTranspose = 0x3FB5, kPhraseCmd = 0x4000, kPhraseCmdV = 0x4FF0, kWaves = 0x6000, kPhraseInst = 0x7000;
+constexpr size_t kPhraseAlloc = 0x3E82, kTempo = 0x3FB4, kSongTranspose = 0x3FB5, kTempoMode = 0x3FCC, kPhraseCmd = 0x4000, kPhraseCmdV = 0x4FF0, kWaves = 0x6000, kPhraseInst = 0x7000;
 constexpr int kLsdjTables = 32, kLsdjInstruments = 64, kLsdjPhrases = 255, kLsdjChains = 128;
 
 double noiseClockHz(int shift, int divisor) { return 524288.0 / (divisor == 0 ? 0.5 : double(divisor)) / double(1u << (shift + 1)); }
@@ -1028,7 +1028,14 @@ bool importSong(const uint8_t* bytes, size_t size, const LsdjModel& model,
     r.kits = kits; r.rawPages = rawPages;
     // Section 158: the project tempo byte reads as a T byte does -- 0-39 are
     // 256-295 BPM on the formats whose T does that (REACTION is $24, 292 BPM).
-    const int tempo = model.tempoLowIsHigh ? bank::tempoBpmOfByte(bytes[kTempo]) : std::clamp<int>(bytes[kTempo], 40, 255);
+    int tempo = model.tempoLowIsHigh ? bank::tempoBpmOfByte(bytes[kTempo]) : std::clamp<int>(bytes[kTempo], 40, 255);
+    // Section 219: from 9.2.I byte 0x3FCC is the tempo mode -- 1, 2, 3 are the
+    // 2x, 3x, 6x screen-rate tempi (299, 448, 896 BPM), over the byte.
+    if (model.tempoModes && bytes[kTempoMode] >= 1 && bytes[kTempoMode] <= 3) {
+        const int mode = bytes[kTempoMode];
+        tempo = mode == 1 ? 299 : mode == 2 ? 448 : 896;
+        notes.add("the song's tempo is LSDj's " + std::string(mode == 1 ? "2x" : mode == 2 ? "3x" : "6x") + " (" + std::to_string(tempo) + " BPM); a T command puts it back on the byte");
+    }
     summary.tempoBpm = tempo;
     out.tempoBpm = tempo;
     out.lsdjTempo = true;                                            // the ROM's tempo word (section 160)
