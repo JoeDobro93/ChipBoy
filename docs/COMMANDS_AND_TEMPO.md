@@ -6498,3 +6498,56 @@ mappings rather than a level. So:
   one sample by it.
 - The factory songs (`make_songs.py`) drop their `vNN` accents: the token still parses, and
   writes nothing.
+
+## 222. Time signatures: a numbering the timeline reads, never the driver
+
+The chain is drawn in time now (`UI_DESIGN.md` D-UI-35, `docs/plan-chain-timeline.md`), and a
+timeline needs bars to count by. LSDj has none, the host's signature never reaches the tracker
+(§19), and a phrase lasts as long as its groove and its `H` hops make it (§25, §102), so the
+count is the song's own and means nothing to playback:
+
+- A **time signature** is `{tick, beats per bar, beat unit, ticks per beat unit}`, in force from
+  its tick to the next one's. Ticks per beat unit is what makes the numbers fit a song: `4/4`
+  with the quarter at 24 ticks is a 96-tick bar, the sixteen straight steps every tracker counts
+  as one; `11/8` with the eighth at 12 ticks is a 132-tick bar, which is what READROOM's sections
+  are (a 14-step PU1 phrase with one `H` replay, two WAV rows of 16 and 6 steps, an 11-step NOI
+  phrase on a 12-tick groove -- 132 each).
+- **The song holds a list** (`Song::signatures`), sorted by tick, the first always at tick 0
+  (`4/4`, 24 for a new song and for every song written before this). One per tick; a later one
+  typed at the same tick replaces it. The one at tick 0 can be changed, never deleted.
+- **Bars count through every signature**: a signature's span holds `ceil(span / bar)` bars, and
+  the next signature's first bar follows on. `barPositionAt(tick)` gives the bar and beat
+  (1-based) and the tick into the beat, which is what the gutter and the transport readout print.
+- **Nothing in the engine reads it**: not the Clock, not the Player, not the driver. The tempo map
+  (§4), the row tables (§25) and every trace are what they were. The song file carries a
+  `signatures` key only when the list is not the single default, so no file written before this
+  changes and an older reader ignores it.
+- **The timeline's grid** is derived from the *first* signature (D-UI-35): the divisions the zoom
+  can show are that signature's beat unit and its divisors, a few multiples, then bars. Under a
+  later signature the bars in force are drawn and numbered on their own layer, so `11/8` under a
+  24-tick grid still reads.
+
+## 223. The own transport locates: Play from the play head, Pause, Stop to the start (§16 revised)
+
+§16 had the plugin's own transport run "from the song start": Stop was a rewind, and there was
+no way to hear the middle of a song outside a DAW. The engine never needed that limit -- the
+Clock maps ticks to seconds both ways (§4), a locate in a host lands on the tick playing through
+would have reached, and the Player survives a jump in the tick stream (§47). So:
+
+- **The play head** is a tick the Tracker tab owns (`TrackerPanel::cursor_`). A click in the
+  chain's gutter, a drag there, a click on a block (its start), the keys of D-UI-35 and, while
+  Follow is on, the transport itself move it. In a host it moves the view only: the host's
+  transport rules, as before.
+- **Play** starts the own transport from the play head (`Clock::ownLocate` then `ownPlay`); a
+  play head outside an active loop region starts the region. **Pause** stops where it stands.
+  **Stop** stops and returns to tick 0. The one button reads Play or Pause by the transport's
+  state; Stop is its own. `chipboy_uishot` and `chipboy_recordtest --play-song` still start at
+  tick 0, because a fresh transport stands there.
+- **The loop** is a tick region: Shift-drag on the gutter sets it (`setLoopTicks`), the Loop
+  button turns it on and off, and with no region the whole song loops as before, tick 0 to
+  `songTicks` (§214's stop when that comes first). `setLoopRows` goes: rows of the longest chain
+  were a proxy for ticks, and the clock only ever took ticks.
+- **The published position** while the own transport is stopped is where it stands
+  (`Clock::ownTick`), so a locate shows at once; while playing it is the block's tick as before.
+- **Locating while playing** is a jump in the tick stream, which §47 already handles: nothing
+  is killed and the step landed in still fires.

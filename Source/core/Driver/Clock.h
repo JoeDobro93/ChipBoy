@@ -146,9 +146,15 @@ public:
     // does not). The tempo source is Song while it owns the transport.
     void setOwnsTransport(bool on);
     bool ownsTransport() const { return owns_; }
-    void ownPlay();                       ///< from the loop start, or tick 0
-    void ownStop();
+    void ownPlay();                       ///< from where it stands (section 223); outside an active loop, from the loop's start
+    void ownStop();                       ///< where it stands: a pause, or a stop once the caller locates tick 0
     bool ownPlaying() const { return ownPlaying_; }
+    /// Section 223: put the own transport at a tick, playing or stopped; the
+    /// next block starts there. A jump while playing is section 47's.
+    void    ownLocate(int64_t tick);
+    /// Where the own transport stands, in ticks: what the window shows while
+    /// it is stopped, so a locate shows at once.
+    int64_t ownTick() const;
     void setLoop(bool on, int64_t startTick, int64_t endTick);
     bool loopOn() const { return loop_; }
     int64_t loopStart() const { return loopStart_; }

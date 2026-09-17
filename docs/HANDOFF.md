@@ -3,30 +3,41 @@
 The state of ChipBoy for a fresh session. Read `CLAUDE.md`, this file, then only the
 design-log section the change touches. Update this file at the end of every change.
 
-## Read this first (2026-09-17) -- the engine is where the user wants it; the next chat is UI
+## Read this first (2026-09-17, UI round 1) -- the chain is a timeline, the play head goes anywhere
 
-**State.** The core (`Source/core/`) plays LSDj songs from 3.1.5 to 9.4.2 as the ROMs do,
-measured register for register through the harness (`tools/lsdjref/`, `build-ref/lsdjref/
-lsdjref_trace`) and the probe rig under `/root/lsdj/probe/` (outside the tree, with the ROMs,
-saves and `CHANGELOG.txt`). The design log `docs/COMMANDS_AND_TEMPO.md` runs to §221; every law
-in the driver names its section. The last rounds (this file's *Done* sections, newest first)
-closed the user's reports on their own saves: the transpose floor (§217), project files with
-their kits (§218), the 2x/3x/6x tempi (§219), the noise `P` at the command rate (§220), and the
-VEL column's removal (§221, `UI_DESIGN.md` D-UI-34). The gate is green (`tools/gate.sh all`:
-332 core tests, 11 plugin checks, the parameter table, the 1 MB-stack link test); `main` is
-pushed with every commit and the user builds Windows and macOS from it.
+**State.** The core (`Source/core/`) plays LSDj songs from 3.1.5 to 9.4.2 as the ROMs do (the
+parity campaign, `docs/COMMANDS_AND_TEMPO.md` §1-§221, is closed; every law in the driver names its
+section). The user's focus is now **UI and user interactions**. This round rebuilt the Tracker
+tab around a **tick**: the chain is drawn in time (D-UI-35, §222, §223, `docs/plan-chain-timeline.md`),
+the lanes show each channel's own row at the play head, the plugin's own transport locates, and
+the song carries time signatures. The gate is green (`tools/gate.sh all`: 334 core tests, 11
+plugin checks, the parameter table, the 1 MB-stack link test); `main` is pushed with every commit
+and the user builds Windows and macOS from it -- **this round's UI has only been seen through
+`chipboy_uishot` on Linux; the user has not clicked it yet.**
 
-**What the user said next.** "My next focus will be mainly UI and user interactions now that the
-core engine seems to be working as I want." Read `docs/UI_DESIGN.md` (the decisions table,
-D-UI-1 to D-UI-34, and section 7 for the Tracker tab) before touching `Source/plugin/`. The UI
-lives in `Source/plugin/ui/` (`Grids.cpp` is the phrase, chain, table and wave grids;
-`Widgets.h/.cpp` the fields, steppers, segments, scopes; `Undo`) and `Source/plugin/main/panels/`
-(one file a tab, plus `MixerRow`, `LsdjImportDialog`). Screenshots: `xvfb-run -a
-build-plugin/chipboy_uishot_artefacts/Release/chipboy_uishot DIR --song FILE.cbsong` writes
-every tab as a PNG and says which panes scroll; there is no image library in the container, so
-crop with a small pure-Python PNG reader if a detail matters (`scratchpad/pngcrop.py` this
-session). A UI change gets a D-UI row in `UI_DESIGN.md` first; anything that changes what a cell
-means gets a numbered section in `COMMANDS_AND_TEMPO.md` as well.
+**How the round was designed.** Four rounds of an interactive HTML mockup built from READROOM's
+real row tables (the user's `readtheroom_v92L.lsdprj` under 9.2.L: every 132-tick section is one
+14-step PU1 phrase with an `H` replay, two WAV rows of 16 and 6 steps, an 11-step NOI phrase on a
+12-tick groove). The mock's data came from a scratch tool linking `libchipboy_core.a`
+(`scratchpad/mock/dumprows.cpp`, not in the tree) that imports a project and dumps
+`rowStartTicks`, durations and play orders as JSON. Rules the user set: one change at a time, a
+D-UI row before the code, nothing audible may change, the importer stays as it is (it still
+truncates a phrase at an `H 0 y`; the lane dims steps an `H` never reaches so a hand-typed one
+still reads), no Go-to chips or markers, no Rows/Time toggle.
+
+**Where things are.** `Source/plugin/ui/Grids.cpp`: `ChainColumn` (the timeline, ~700 lines:
+geometry, the grid from the first signature, blocks with first-pass/replay bands, the `+` block,
+signature tags and the `SignatureEditor` CallOutBox, the play head, keys), `PhraseGrid` (per-channel
+rows, the chip row PHR · TSP · STEPS · TICKS, the dim overlay). `Source/plugin/main/panels/
+TrackerPanel.*`: `cursor_` (the play head), `rowOf(ch)`, `playPause()`, the transport strip over
+the chain (`ui::IconButton`, a `juce::Slider` for the zoom), the head regrouped (RECORD · SONG /
+FILE on the left, TRANSPORT right; 108 px, the gaps gave 4 px to the lane's 68 px head).
+`Source/core/Tracker/Song.*`: `TimeSignature`, `Song::signatures`, `normalizeSignatures`,
+`signatureAt`, `barPositionAt`, `barsBeforeSignature`. `Source/core/Driver/Clock.*`: `ownLocate`,
+`ownTick`; `ownPlay` starts where it stands. `ChipBoyProcessor`: `transportPause`, `transportStop`
+(locates 0), `transportLocate`, `setLoopTicks` (replaces `setLoopRows`). `BankJson.cpp`: the
+`signatures` key, written only when not the single default. `ui_view` keeps `tick`, `follow`,
+`zoom`.
 
 **Ideas the user has voiced for the UI round** (not designed yet; ask before building):
 - MIDI velocity as a *mapping* -- velocity zones choosing an instrument or a command -- rather
@@ -42,6 +53,9 @@ means gets a numbered section in `COMMANDS_AND_TEMPO.md` as well.
   (Cubase 300, FL 522) would need it.
 - An import that resets the hardware parameters to the model's console (the standalone kept a
   De-click from an earlier session and every import played under it).
+- Weighed and left open this round: "play every channel from row N together" (LSDj's Start
+  semantics; needs a per-channel tick offset in the Player and would not reproduce the song);
+  markers / an LSDj song-row marker from the importer (the user dropped the Go-to chips).
 
 **Engine items left open, for when they come up** (details in *Open issues* below):
 - The wave frame run's timing for two of STELLAR's instruments (frames streamed at twice the
@@ -54,9 +68,12 @@ means gets a numbered section in `COMMANDS_AND_TEMPO.md` as well.
 
 **Working here.** `tools/gate.sh core -t <tag>` while working, `tools/gate.sh all` before the
 push; `chipboy_recordtest --import-sav SAV NAME|working OUT.cbsong` (a `.lsdsng`/`.lsdprj` too)
-and `--trace-song FILE OUT.csv SECONDS` for a register CSV; `/root/lsdj/probe/*.py` for the ROM
-(`tsp_low.py`, `tempo_probe.py`, `noisep_probe.py`, `watch_rom.py` with `WROM=`, `chdump.py`,
-`wave_ons.py`). The user's saves and ROMs: `/root/lsdj/{cs,cg,lsm,bv,sng}/`. The standalone's
+and `--trace-song FILE OUT.csv SECONDS` for a register CSV; `xvfb-run -a build-plugin/
+chipboy_uishot_artefacts/Release/chipboy_uishot DIR --song FILE.cbsong` for the tab shots (view a
+PNG directly; a pure-Python cropper is a few lines if a detail matters). The plugin build needs
+the JUCE Linux packages; this container had none and apt only worked with the proxy's CA copied
+to `/etc/apt/ccr-ca.pem` (`Acquire::https::CAInfo`) and the sources on https. `/root/lsdj/probe/*.py`
+for the ROM; the user's saves and ROMs under `/root/lsdj/{cs,cg,lsm,bv,sng}/`. The standalone's
 state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` on Windows).
 
 ## Map
@@ -73,6 +90,40 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
   `UI_DESIGN.md`, `HARDWARE_DRIVER_AUDIT.md`, `LSDJ_PARITY.md`, `LICENSING.md`.
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
+
+## Done (2026-09-17, UI round 1) -- the chain in time, the play head, time signatures (D-UI-35..37, §222, §223)
+
+- **The chain is a timeline** (`ChainColumn` rewritten): ticks down, a block per row of each
+  channel as tall as the row lasts, phrase and transpose in the block, first-pass steps in the
+  channel's colour and an `H`'s replays dimmed, a border all round, a dashed `+` block after each
+  channel's last row (typing there grows the chain), a looping chain shorter than the song
+  repeating dimmed. The play head is one line; the transport's own line shows beside it while
+  Follow is off. Gutter: bar numbers left, beats right (`+ticks` off the beat), bars pruned to
+  every 2^n-th under 12 px, beat marks, signature tags above their bar line (double-click: the
+  editor; double-click empty gutter: a new one), the `H F F` stop line. Click or drag the gutter
+  to place the play head on the grid, Shift-drag for a loop region, click a block for its start
+  (the right 40 % of a block selects its transpose), the wheel or a drag on the blocks scrolls.
+  Keys: ↑ ↓ a tick, ← → a step boundary of any channel, PgUp PgDn a grid division, Home/End,
+  Tab across the eight cells, Space play/pause, then the §35 grammar on the block under the head.
+- **Zoom**: a slider over the chain, 0..1 log-mapped between four bars of the first signature per
+  22 px and a tick per 22 px; the grid is the finest candidate (the first signature's beat unit
+  and its divisors, 2x 3x 4x 8x below a bar, 1 2 4 bars) at 22 px or more; a readout beside the
+  slider says it. The play head keeps its screen place through a zoom.
+- **The lanes** show each channel's own row at the play head, its own step lit only when the
+  transport is in that row; the head has PHR · TSP (typed) · STEPS (typed, was LEN) · TICKS
+  (calculated) on a 20 px chip row (the head is 68 px); steps past the length or never reached
+  by the `H` hops are dimmed but stay cells.
+- **The own transport**: Play from the play head (`transportLocate` + `transportPlay`), Pause where
+  it stands, Stop to tick 0, a hand-moved play head relocates a running own transport, the loop
+  region in ticks. `[clock]` test for `ownLocate`; the transport tests revised for §223.
+- **Time signatures** in the song, the file and the gutter; `[tracker][signature]` test.
+- **The head**: RECORD · SONG / FILE left, TRANSPORT right over the chain (icons: play/pause,
+  stop, loop repeat glyph, follow arrow-into-bar; the LED; `bar·beat·tick`); 108 px.
+- Tools: `linktest` and `fuzz` moved to `setLoopTicks`; the fuzz also locates at random.
+- **Not done / to check by hand**: the SignatureEditor and every mouse gesture were only read,
+  never clicked (no interactive display here); Windows/macOS: `juce::Slider` under the theme's
+  `drawLinearSlider`, the CallOutBox; the `+` block of a looping channel sits over its dimmed
+  repeat; the docs screenshot of the Tracker tab is the demo song's.
 
 ## Done (2026-09-17, last) -- the VEL column goes (§221, D-UI-34)
 

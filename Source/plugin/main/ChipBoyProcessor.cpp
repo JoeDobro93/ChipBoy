@@ -855,18 +855,18 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     clock_.setConfig(cc);
     if (song && !song->tempoMap.empty()) clock_.setTempoMap(song->tempoMap.data(), song->tempoMap.size());
     else clock_.setTempoMap(nullptr, 0);
-    // The loop, in the rows of the longest chain, handed over as ticks: the
-    // clock knows ticks, the song knows where its rows are. The whole song is
-    // the longest channel, which is what the own transport loops (section 25).
+    // The loop region, in ticks (section 223): a region the window set, or
+    // the whole song -- the longest channel's chain, or its H F F (§214).
     {
-        const int ch = song ? tracker::longestChain(*song) : 0;
-        const int rows = song ? std::max(1, song->rows(ch)) : 1;
-        const int from = std::clamp(loopFrom_.load(), 0, rows - 1);
-        const int to = loopTo_.load() < 0 ? rows : std::clamp(loopTo_.load(), from + 1, rows);
-        if (song) clock_.setLoop(loopOn_.load(), tracker::rowStartTick(*song, ch, from),
-                                 loopTo_.load() < 0 ? tracker::songTicks(*song) : tracker::rowStartTick(*song, ch, to));
+        const int64_t end = song ? std::max<int64_t>(1, tracker::songTicks(*song)) : 1;
+        const int64_t from = std::clamp<int64_t>(loopFrom_.load(), 0, end - 1);
+        const int64_t to = loopTo_.load() < 0 ? end : std::clamp<int64_t>(loopTo_.load(), from + 1, end);
+        if (song) clock_.setLoop(loopOn_.load(), from, to);
         else clock_.setLoop(false, 0, 0);
     }
+    // A locate lands before the request that may follow it, so Play from a
+    // play head is one thing to the clock (section 223).
+    if (locatePending_.exchange(false) && clock_.ownsTransport()) clock_.ownLocate(locateTick_.load());
     if (const int req = transportRequest_.exchange(0)) { if (req == 1) clock_.ownPlay(); else clock_.ownStop(); }
     clock_.process(t, uint32_t(n), frames_);
     const bool songSource = cc.source == driver::TempoSource::Song;
@@ -880,7 +880,7 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     {
         int64_t at = trackerTick_.load();
         if (playing) at = clock_.tickAtBlockStart();
-        else if (clock_.ownsTransport()) { }                          // stopped: it stands where it stopped
+        else if (clock_.ownsTransport()) at = clock_.ownTick();        // stopped: where it stands, a locate included (section 223)
         else if (t.valid && !songSource) at = int64_t(std::floor(t.ppq * driver::kTicksPerBeat));
         else if (t.valid && t.timeValid) at = int64_t(std::floor(clock_.ticksAtSeconds(t.seconds)));
         trackerTick_.store(std::max<int64_t>(0, at));

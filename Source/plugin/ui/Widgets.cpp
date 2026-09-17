@@ -787,6 +787,76 @@ void Pill::paint(juce::Graphics& g)
 
 void Led::setOn(bool on) { if (on != on_) { on_ = on; repaint(); } }
 void Led::setColour(juce::Colour c) { colour_ = c; repaint(); }
+/* ------------------------------------------------------------ IconButton */
+
+IconButton::IconButton(Icon i) : juce::Button({}), icon_(i) {}
+
+void IconButton::setIcon(Icon i)
+{
+    if (i == icon_) return;
+    icon_ = i;
+    repaint();
+}
+
+void IconButton::paintButton(juce::Graphics& g, bool over, bool down)
+{
+    using namespace colours;
+    const float alpha = isEnabled() ? 1.0f : 0.45f;
+    const bool on = getToggleState();
+    const auto r = getLocalBounds().toFloat();
+    g.setColour((on ? accentSoft : down ? raisedHi : over ? raisedHi : raised).withMultipliedAlpha(alpha));
+    g.fillRoundedRectangle(r, 4.0f);
+    g.setColour((on ? accent : line).withMultipliedAlpha(alpha));
+    g.drawRoundedRectangle(r.reduced(0.5f), 4.0f, 1.0f);
+    // The glyph, in a 14 px box at the centre. Fills for the solid marks,
+    // 1.6 px strokes for the two arrows.
+    const auto box = juce::Rectangle<float>(14.0f, 14.0f).withCentre(r.getCentre());
+    const float x = box.getX(), y = box.getY();
+    juce::Path p;
+    g.setColour((on ? accentHi : colours::text).withMultipliedAlpha(alpha));
+    switch (icon_) {
+    case Icon::Play:
+        p.addTriangle(x + 3.0f, y + 1.5f, x + 12.5f, y + 7.0f, x + 3.0f, y + 12.5f);
+        g.fillPath(p);
+        break;
+    case Icon::Pause:
+        g.fillRoundedRectangle(x + 2.5f, y + 2.0f, 3.5f, 10.0f, 1.0f);
+        g.fillRoundedRectangle(x + 8.0f, y + 2.0f, 3.5f, 10.0f, 1.0f);
+        break;
+    case Icon::Stop:
+        g.fillRoundedRectangle(x + 2.5f, y + 2.5f, 9.0f, 9.0f, 1.5f);
+        break;
+    case Icon::Loop: {
+        // The repeat glyph: two arrows chasing round a rounded rectangle.
+        const juce::PathStrokeType stroke(1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+        juce::Path top, bottom;
+        top.startNewSubPath(x + 2.5f, y + 8.5f);
+        top.lineTo(x + 2.5f, y + 5.5f);
+        top.addArc(x + 2.5f, y + 3.5f, 4.0f, 4.0f, juce::MathConstants<float>::pi * 1.5f, juce::MathConstants<float>::pi * 2.0f, false);
+        top.lineTo(x + 11.0f, y + 3.5f);
+        g.strokePath(top, stroke);
+        juce::Path headR; headR.addTriangle(x + 9.0f, y + 1.0f, x + 12.5f, y + 3.5f, x + 9.0f, y + 6.0f); g.fillPath(headR);
+        bottom.startNewSubPath(x + 11.5f, y + 5.5f);
+        bottom.lineTo(x + 11.5f, y + 8.5f);
+        bottom.addArc(x + 7.5f, y + 6.5f, 4.0f, 4.0f, juce::MathConstants<float>::pi * 0.5f, juce::MathConstants<float>::pi, false);
+        bottom.lineTo(x + 3.0f, y + 10.5f);
+        g.strokePath(bottom, stroke);
+        juce::Path headL; headL.addTriangle(x + 5.0f, y + 8.0f, x + 1.5f, y + 10.5f, x + 5.0f, y + 13.0f); g.fillPath(headL);
+        break;
+    }
+    case Icon::Follow: {
+        // An arrow into a bar: the view goes where the play head goes.
+        const juce::PathStrokeType stroke(1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+        juce::Path line; line.startNewSubPath(x + 1.5f, y + 7.0f); line.lineTo(x + 8.0f, y + 7.0f);
+        g.strokePath(line, stroke);
+        juce::Path head; head.addTriangle(x + 6.5f, y + 3.5f, x + 10.5f, y + 7.0f, x + 6.5f, y + 10.5f); g.fillPath(head);
+        g.fillRoundedRectangle(x + 11.5f, y + 2.0f, 1.8f, 10.0f, 0.9f);
+        break;
+    }
+    }
+    if (hasKeyboardFocus(false)) { g.setColour(accentHi.withAlpha(0.9f)); g.drawRoundedRectangle(r.reduced(1.5f), 3.0f, 1.0f); }
+}
+
 void Led::paint(juce::Graphics& g)
 {
     const auto c = getLocalBounds().toFloat().getCentre();

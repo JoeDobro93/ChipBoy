@@ -221,6 +221,63 @@ void rowAtTickLaid(const Song& s, int ch, int64_t tick, int& row, int& inRow)
     inRow = int(at - rowStartTick(s, ch, row));
 }
 
+/* ------------------------------------------------ time signatures (222) */
+
+void normalizeSignatures(Song& s)
+{
+    auto& list = s.signatures;
+    for (auto& t : list) {
+        t.tick = std::max<int64_t>(0, t.tick);
+        t.beats = uint8_t(std::clamp<int>(t.beats, 1, kMaxSignatureBeats));
+        t.unit = uint8_t(std::clamp<int>(t.unit, 1, kMaxSignatureUnit));
+        t.ticksPerBeat = uint8_t(std::clamp<int>(t.ticksPerBeat, 1, kMaxTicksPerBeat));
+    }
+    // A stable sort keeps the order two at one tick were typed in, so the
+    // later one is the one that stays.
+    std::stable_sort(list.begin(), list.end(), [](const TimeSignature& a, const TimeSignature& b) { return a.tick < b.tick; });
+    std::vector<TimeSignature> out;
+    out.reserve(list.size() + 1);
+    for (const auto& t : list) {
+        if (!out.empty() && out.back().tick == t.tick) out.back() = t;
+        else out.push_back(t);
+    }
+    if (out.empty() || out.front().tick != 0) out.insert(out.begin(), TimeSignature{});
+    list = std::move(out);
+}
+
+int signatureAt(const Song& s, int64_t tick)
+{
+    int at = 0;
+    for (size_t i = 0; i < s.signatures.size(); ++i) if (s.signatures[i].tick <= tick) at = int(i);
+    return at;
+}
+
+int barsBeforeSignature(const Song& s, int index)
+{
+    int bars = 0;
+    for (int i = 0; i < index && i + 1 < int(s.signatures.size()); ++i) {
+        const auto& t = s.signatures[size_t(i)];
+        const int64_t span = s.signatures[size_t(i + 1)].tick - t.tick;
+        bars += int(std::min<int64_t>((span + t.barTicks() - 1) / t.barTicks(), 1 << 20));
+    }
+    return bars;
+}
+
+BarPosition barPositionAt(const Song& s, int64_t tick)
+{
+    BarPosition p;
+    if (s.signatures.empty()) { const TimeSignature d; const int64_t at = std::max<int64_t>(0, tick); p.bar = int(at / d.barTicks()) + 1; p.beat = int((at % d.barTicks()) / d.ticksPerBeat) + 1; p.tick = int(at % d.ticksPerBeat); return p; }
+    const int i = signatureAt(s, tick);
+    const auto& t = s.signatures[size_t(i)];
+    const int64_t into = std::max<int64_t>(0, tick - t.tick);
+    const int bar = t.barTicks(), beat = std::max(1, int(t.ticksPerBeat));
+    p.signature = i;
+    p.bar = barsBeforeSignature(s, i) + int(std::min<int64_t>(into / bar, 1 << 20)) + 1;
+    p.beat = int((into % bar) / beat) + 1;
+    p.tick = int(into % beat);
+    return p;
+}
+
 int64_t songTicks(const Song& s)
 {
     int64_t n = 0;

@@ -557,6 +557,22 @@ var songToVar(const tracker::Song& s)
     Array<var> names;
     for (const auto& g : s.grooves) names.add(String(CharPointer_UTF8(g.nameOf())));
     o->setProperty("grooveNames", names);
+    // Section 222: the time signatures, only when they are not the single
+    // default at tick 0, so no file written before them changes.
+    {
+        const bool plain = s.signatures.size() == 1 && s.signatures[0].tick == 0 && s.signatures[0].beats == 4
+                           && s.signatures[0].unit == 4 && s.signatures[0].ticksPerBeat == 24;
+        if (!plain) {
+            Array<var> sigs;
+            for (const auto& t : s.signatures) {
+                auto* so = new DynamicObject();
+                so->setProperty("tick", var(int64(t.tick))); so->setProperty("beats", int(t.beats));
+                so->setProperty("unit", int(t.unit)); so->setProperty("ticks", int(t.ticksPerBeat));
+                sigs.add(var(so));
+            }
+            o->setProperty("signatures", sigs);
+        }
+    }
     return var(o);
 }
 
@@ -677,6 +693,20 @@ bool songFromVar(const var& v, tracker::Song& out)
     if (auto* names = o->getProperty("grooveNames").getArray())
         for (int k = 0; k < std::min(int(out.grooves.size()), names->size()); ++k)
             out.grooves[size_t(k)].setName((*names)[k].toString().substring(0, 15).toRawUTF8());
+    // Section 222: absent reads as 4/4 with the quarter at 24 ticks at tick 0.
+    if (auto* sigs = o->getProperty("signatures").getArray()) {
+        out.signatures.clear();
+        for (const auto& sv : *sigs) {
+            auto* so = sv.getDynamicObject(); if (!so) continue;
+            tracker::TimeSignature t;
+            t.tick = std::max<int64_t>(0, int64_t(static_cast<juce::int64>(so->getProperty("tick"))));
+            t.beats = uint8_t(std::clamp(getOr(so, "beats", 4), 1, tracker::kMaxSignatureBeats));
+            t.unit = uint8_t(std::clamp(getOr(so, "unit", 4), 1, tracker::kMaxSignatureUnit));
+            t.ticksPerBeat = uint8_t(std::clamp(getOr(so, "ticks", 24), 1, tracker::kMaxTicksPerBeat));
+            out.signatures.push_back(t);
+        }
+    }
+    tracker::normalizeSignatures(out);
     tracker::buildRowTables(out);
     return true;
 }

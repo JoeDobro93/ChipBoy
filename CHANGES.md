@@ -26,6 +26,33 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-17 -- the chain is drawn in time; the own transport locates; time signatures
+
+`docs/UI_DESIGN.md` D-UI-35 to D-UI-37, `docs/COMMANDS_AND_TEMPO.md` §222 and §223,
+`docs/plan-chain-timeline.md`; spec 17's chain (rows down, a LEN column) and §16's own transport
+("from the song start") revised. The chain column drew row *N* of every channel on one line,
+but channels keep their own time (§25): under READROOM's grooves and `H` hops row 10 of each
+channel was a different moment, and the lane showed every channel's phrase at the *selected*
+row with the other three channels' steps lit from the selected channel's offset. Now the chain
+is a **timeline**: ticks down, a block per row of each channel as tall as the row really lasts
+(`rowStartTicks`), the phrase and its transpose in the block, an `H`'s replays dimmed, and the
+**play head** one line across the four channels; each lane shows the phrase *its* channel is in
+there with its own step lit. The plugin's own transport **locates**: Play runs from the play
+head, Pause stops where it stands, Stop returns to tick 0, the loop is a tick region
+(`setLoopTicks`; `setLoopRows` is gone). The song gains **time signatures** -- `{tick, beats,
+unit, ticks per beat unit}`, the first at tick 0, `4/4` at 24 by default -- a numbering the
+gutter and the readout print and nothing in the engine reads; a `signatures` key in the song
+file only when it is not the single default, so no file changes. The transport moved over the
+chain as icon buttons with a `bar·beat·tick` readout and the zoom slider; the lane's head grew
+a chip row (PHR, TSP, STEPS, TICKS -- LEN renamed STEPS, TICKS calculated) and the chain's LEN
+column went (D-UI-8 revised). Nothing audible changed: the row tables, the tempo map and every
+trace are as they were; `Clock::ownPlay` starts where it stands instead of at the loop start
+or tick 0, which every caller located first. Considered: LSDj-style chains (its channels drift
+the same way; only equal-length chains line its song rows up), a horizontal arrangement strip
+(no room at the minimum height), and a "play every channel from row N together" mode (LSDj's
+Start; it would not reproduce what the song does and needs a per-channel tick offset in the
+Player -- left open).
+
 ### 2026-09-17 -- the VEL column goes; WAV's second column is a kit's second sample by label
 
 `docs/UI_DESIGN.md` D-UI-34, `docs/COMMANDS_AND_TEMPO.md` §221; spec 9 (a cell carries a

@@ -123,7 +123,7 @@ twice.
 
 **Every number is typeable, and every value field speaks one grammar**
 ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §35). A **click** selects a field — a
-grid cell, a stepper's readout, the lane head's LEN or groove chip — and nothing else.
+grid cell, a stepper's readout, the lane head's STEPS, TSP or groove chip — and nothing else.
 **Typing** edits it in place, without a box: the first digit replaces what was there,
 further digits append, a digit that would push the value past the field's limit is
 refused and the value stays (`5`, `56`, and a third digit is not taken in a 0–127
@@ -498,10 +498,10 @@ transport — or with its own, when no DAW offers one — and it is the part of 
 that can later leave the DAW entirely (§10, D10).
 
 Per channel: a **note** column, **instrument**, **table** and two **command** columns,
-and on WAV a second **note** column for a kit's second sample (D-UI-34). **A phrase holds as many steps as its own LEN says**, one to sixty-four
+and on WAV a second **note** column for a kit's second sample (D-UI-34). **A phrase holds as many steps as its own STEPS says**, one to sixty-four
 ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §25) — bars have left the model, and
-with them *Steps / bar* and *Beats*. LEN is typed in the channel's head in the lane, or
-for a whole row in the chain's last column. Phrases are chained down the song a row at a
+with them *Steps / bar* and *Beats*. The length is typed as **STEPS** in the channel's head
+in the lane (D-UI-37). Phrases are chained down the song a row at a
 time, with a groove (6/6, 7/5, 8/4 ticks per step…) per phrase for swing, and each
 channel moves on when its own phrase ends. Cells fire at their step's tick; a cell's two
 commands are applied once, there, and the persistent letters then hold until the next
@@ -534,14 +534,16 @@ the way a lone dot could; it is ASCII, so it draws in the embedded fonts whateve
 platform. The cost is that `=` no longer doubles for `+` in a command column, where `+`
 still steps the argument.
 
-**The chain stands beside the lane, rotated**: rows down, channels across. One row per
-row of the song, numbered 1, 2, 3… at the left with the lowest at the top, four cells for
-the channels' phrase slots and a fifth, **LEN**, for the length of the phrases in that
-row — typed there, and typed per channel in the lane's head. Its rows keep the lane's
-22 px rhythm, so row 3's row sits beside step 3 of the lane; it scrolls with the song and
-grows it by a row when something is typed in the empty row under the last one.
-**Each channel's own playing row is lit in its own column** — the channels keep their own
-time (§25), so two of them can be a row apart and both show where they are.
+**The chain stands beside the lane, drawn in time** (D-UI-35): channels across, ticks down.
+A block per row of each channel, as tall as the row really lasts, labelled with its phrase
+slot and its transpose; the play head is one line across the four columns, because it is a
+time and not a row, and each lane shows the phrase its own channel is in at that line with
+its own step lit. The gutter counts bars and beats by the song's time signatures
+([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §222) and the zoom slider over the chain
+sets the grid the play head snaps to. Click a block to land on its start, click or drag the
+gutter to place the play head on the grid, Shift-drag the gutter for a loop region, type into
+the block under the play head as into any cell. A dashed `+` block after each channel's last
+row grows the chain when something is typed in it.
 
 **Per channel, in the lane's head**: a **record arm** — a red dot, on for a new song,
 saved with it — then the channel's name and the switch that says
@@ -559,23 +561,27 @@ the cells* where the resolved command reads, and every one of the four says the 
 thing in its tooltip: *the tracker's cells drive this channel*. Level, Pan, Transpose and
 the Velocity mode still apply.
 
-Then the phrase's **LEN** — a chip reading `LEN 16`, clicked and typed, 1–64 — and its
-**groove chip**, which closes the row; the groove itself is edited in the Grooves tab
+Then the **groove chip**, which closes the row, and under the name row a chip row of its
+own (D-UI-37): **PHRASE**, **TSP**, **STEPS** — the phrase's length, clicked and typed, 1–64 —
+and **TICKS**, what that length comes to under the groove and the `H` hops; the groove itself is edited in the Grooves tab
 (§7.1) and the chip follows the one selector convention of §2.1. The *PLAYS* caption
 went with the window's other spare words
-([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §30) and its 37 px are what LEN stands
+([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §30) and its 37 px are what LEN stood
 in; the switch's own tooltip says what the three choices are. The groove chip takes what
 is left, so it says as much as fits — the slot and its ticks (`2·7/5`) where there is
 room, the ticks alone at the demo's width, the slot number when a narrower window leaves
 only a chip — and the whole of it is in the tooltip and in the menu a right click opens.
 
-**The transport.** *Play*, *Stop* and *Loop* run the song when the plugin owns the
-transport — the Standalone, or a host that offers no play head — from the song start on
-the plugin's own clock at the Song tempo; *Loop* takes the whole song, row 1 to the last
-row of the longest chain (`setLoopRows`). In a host the host's transport rules: the buttons mirror it and are disabled, and
-the header's *Tempo source* is fixed on **Song** while the plugin owns the transport,
-with the tooltip saying why ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §16). The
-status bar says which of the two is running: *transport own* or *transport host*.
+**The transport** stands over the chain (D-UI-36): play, which reads pause while it plays;
+stop, which returns to the start; loop; follow; the LED and a `bar·beat·tick` readout; the
+zoom slider under them. When the plugin owns the transport — the Standalone, or a host that
+offers no play head — Play runs the song from the play head on the plugin's own clock at the
+Song tempo, Pause stops where it stands and Stop goes back to tick 0
+([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §223); *Loop* takes the region Shift-dragged
+on the gutter, or the whole song. In a host the host's transport rules: the buttons mirror it
+and are disabled, and the header's *Tempo source* is fixed on **Song** while the plugin owns
+the transport, with the tooltip saying why (§16). The status bar says which of the two is
+running: *transport own* or *transport host*.
 
 **Record.** With the transport running and **Rec** on, the MIDI arriving on an **armed**
 channel is written into its cells with the parameter values in force at each step —
@@ -610,39 +616,35 @@ bank has Organ"*. What a file did goes to the status bar, where every other file
 goes; the tab strip stands where that line used to.
 
 **Numbers.** At the minimum window height the tab has 1156 × 530 and asks for no
-scrolling: a 112 px head over 418 px of lane, which is a 48 px head and sixteen 22 px
-rows with room over. The head is **two rows of grouped tools under their captions, then
+scrolling: a 108 px head over 422 px of lane, which is a 68 px head and sixteen 22 px
+rows with 2 px over. The head is **two rows of grouped tools under their captions, then
 the tab strip** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §23): a 12 px caption
-line over a 26 px control row, 4 px, the same again, 6 px, and the 26 px strip where the
-summary line stood — 112 exactly, the same budget as before. Row one is **TRANSPORT**
-(*Play* 62, *Stop* 62, *Loop* 52, then the LED, *playing* and the 110 px readout) and
-**RECORD** (*Rec*, 62); row two is **SONG** (*Tempo* 84 — the song's master tempo, typed
-— and *Start* 84, each behind its own small caption; *Beats* and *Steps / bar* left with
-the bars, §25) and **FILE** (*Save song…* 104, *Load song…* 104, *Export .gb* 96). A
-16 px gap with a hairline down the middle of it stands between the two groups of a row,
-so the head reads as four things and not as nine controls. The **readout is the song's
-time and the selected channel's own row·step** — `2·13   7.2 b` — because the channels
-drift apart by design and only one of them can be shown. Across, the chain takes 164 px
-off the right with a 12 px gap, leaving 980 for the lane: a 34 px step column and four
-channel groups, each a note, ins, tbl and two commands -- WAV a second note column between its
-note and ins (D-UI-34) -- sharing the width by the columns' weights.
-The chain's own 264 is a 22 px gutter for the row number and, per channel, a 25 px phrase
-cell with an 18 px transpose cell 2 px from it ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md)
-§48) and an 8 px gap after the pair, then the 25 px LEN, under a 48 px head that lines up
-with the lane's.
-While *Follow* is off (D-UI-16) the row on show is the user's, not the transport's. **Past sixteen steps** the lane is
-taller than its pane and scrolls inside it — the tab's only scrollbar — following the
-cursor as it is typed down the phrase and the row the selected channel is playing; a
-phrase of 64 steps is 1456 px of lane. The playing row is highlighted per channel on the
-step that channel's own groove is really playing, so a swung phrase marks the row that is
-sounding.
+line over a 26 px control row, 2 px, the same again, 4 px, and the 26 px strip. On the left,
+row one is **RECORD** (*Rec*, 62) and **SONG** (*Tempo* 84, *Transpose* 70 and *Start* 84,
+each behind its own small caption), row two **FILE** (*Save song…* 104, *Load song…* 104,
+*Import .sav…* 108, *Export .gb* 96); a 16 px gap with a hairline down the middle of it
+stands between two groups of a row. The chain's own 264 px column of the head is
+**TRANSPORT** (D-UI-36): four 30 px icon buttons, the LED and the readout on row one, the
+zoom slider on row two. The **readout is the play head in the song's own bars** —
+`17·3·6` — because the channels drift apart by design and a row is one channel's.
+Across, the chain takes 264 px off the right with a 12 px gap, leaving 880 for the lane: a
+34 px step column and four channel groups, each a note, ins, tbl and two commands -- WAV a
+second note column between its note and ins (D-UI-34) -- sharing the width by the columns'
+weights. The chain's 264 is a 4 px pad, a 54 px gutter (bar numbers at its left, beats at its
+right) and four 50 px channel columns 2 px apart, under a 48 px head of its own.
+While *Follow* is off (D-UI-16) the play head is the user's, not the transport's. **Past
+sixteen steps** the lane is taller than its pane and scrolls inside it — the tab's only
+scrollbar — following the cursor as it is typed down the phrase and the step the selected
+channel is playing; a phrase of 64 steps is 1476 px of lane. The playing step is highlighted
+per channel on the step that channel's own groove is really playing, so a swung phrase marks
+the row that is sounding.
 
 ![The Tracker tab with the demo song in it](screenshots/main-tracker.png)
 *The demo song opened from `Demo/ChipBoy Demo.cbsong` into a tab of its own — the strip
 under the head holds it beside the empty song the plugin starts with — playing on the
-plugin's own transport: four channels of cells with their velocities, the arms lit beside
-each name, the three-way playback switch in each head with its LEN and groove chips, and
-the chain on the right with each channel's own playing row lit in its own column.*
+plugin's own transport: four channels of cells, the arms lit beside each name, the three-way
+playback switch and groove chip in each head with the PHRASE · TSP · STEPS · TICKS chips
+under them, and the chain on the right drawn in time with the play head across it.*
 
 **The clock is 24 ticks to the beat** and a straight step is six of them, as LSDj. Which
 tempo is in force — *Tempo source*, the tempo readout and *Quantize* — is the header's
@@ -779,3 +781,6 @@ recorded in `CHANGES.md`.
 | D-UI-32 | Why did a pulse or noise trace sit at the top of its scope? | **Level 0 is the top (D-UI-25) and a pulse at volume 11 walks 0 to 11.** The digital trace is now drawn with its own swing's midpoint at the DAC's zero, 7.5, which is where a full-range wave and the analog trace already sit; the grid, the levels and the off baseline are unchanged |
 | D-UI-33 | What happens when a save is imported without its ROM? | **The dialog says so in the warning colour and offers *Choose ROM…***: a `.gb` of any name, or a `.zip` holding one; among several the one whose version reads the songs' format wins, then the newest, and a ROM whose version cannot be read still gives its kits. A save carries no samples -- a kit instrument names a bank of the ROM -- so without one the kit instruments are skipped with a note, and a custom kit needs the ROM it was patched into (the .lsdsng and the .sav hold only the kit's number). An `.lsdprj` carries the kits its song names (§218), so with only such files chosen the line says no ROM is needed; a project's row says how many kits are inside, or that they come from the ROM |
 | D-UI-34 | Where did the VEL column go? | **Removed from PU1, PU2 and NOI; WAV keeps the column as the kit's second sample, headed `note`.** A cell's velocity was a start volume that `E` and `R` already give, and every LSDj import left it blank; MIDI velocity keeps its channel mode (start volume / bank / ignored) for live and Hybrid notes, and a recorded note no longer carries one. WAV's second `note` column is blank and inert on a row whose instrument in force is not a kit; on a kit row it names the sample summed with the note's (D-UI-27) by its **three-character label** -- the first three characters of the sample's name, kept unique within a kit -- and the note column reads by the same label there (the sample the note plays, the nearest by note), both in the channel's colour ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §221). Typed digits, Shift+arrows, a drag and the wheel move through the kit's samples, a double click takes a number or a label, a right click lists them by label and name. Old songs keep any VEL values in their files; on pulse and noise they do nothing and are not shown |
+| D-UI-35 | How does the chain show where the channels really are? | **Drawn in time** ([`plan-chain-timeline.md`](plan-chain-timeline.md), [`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §222, §223): the column's vertical axis is ticks, a block per row of each channel as tall as the row lasts under its groove and its `H` hops, the phrase and its transpose in the block, first-pass steps in the channel's colour and an `H`'s replays the same colour dimmed, a border all round. The **play head** is one line across the four channels because it is a time, not a row; each lane shows the phrase *its* channel is in there with its own step lit. The gutter counts the song's **time signatures**: bar numbers at its left, beats at its right, a tag above each signature's bar line (double-click to edit, double-click empty gutter to add). A **zoom** slider sets pixels per tick; the grid it draws is a division of the *first* signature, the finest that leaves 22 px between lines, and the play head snaps to it on a click or a drag in the gutter. A click on a block lands on the block's start. With the chain focused: ↑ ↓ one tick, ← → the previous or next step of any phrase under the play head, PgUp PgDn a grid division, Home and End the song's ends, Tab across the cells, Space play/pause. Every cell gesture (typed slot, Backspace, + and −, Shift+arrows, the box, the list) works on the block under the play head. The **LEN column goes** (D-UI-8 revised: the lane's head is where a phrase's length lives); the chain stays 264 px |
+| D-UI-36 | Where do the transport and the zoom live? | **Over the chain, in the chain's own column of the head**: icon buttons -- play, which reads pause while playing; stop, which returns to the start; loop, the repeat glyph; follow, an arrow into a bar -- with the LED and a `bar·beat·tick` readout on the first row, the zoom slider on the second. RECORD, SONG and FILE keep the head's left. The words moved into the tooltips |
+| D-UI-37 | What does the lane's head say about the row? | **A chip row of its own**: PHRASE (the slot, read-only), TSP (the row's transpose, typed like the chain's cell), STEPS (the phrase's length, typed; was LEN) and TICKS (calculated: what the groove and the `H` hops make of it, the block's height). The groove chip stays on the name row. Cells an `H` never reaches are dimmed but stay cells. The head is 68 px (was 48); the tool rows' gaps give up 4 px so sixteen steps still fit the minimum window |

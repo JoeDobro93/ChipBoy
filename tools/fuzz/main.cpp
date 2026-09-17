@@ -198,7 +198,8 @@ Result runSeed(uint64_t seed, int rows, const juce::File& dir)
         if (r.chance(4)) setParameter(p, ids::songTempo, double(r.range(40, 255)));
         if (r.chance(3)) setParameter(p, channelParamId(r.range(0, 3), ids::source), double(r.range(0, 2)));
         if (r.chance(2)) { p.transportStop(); p.transportPlay(); }        // a locate back to the start
-        if (r.chance(2)) p.setLoopRows(r.range(0, rows - 1), r.chance(50) ? -1 : r.range(1, rows));
+        if (r.chance(2)) p.transportLocate(int64_t(r.range(0, rows * 96)));   // a jump anywhere (sections 47 and 223)
+        if (r.chance(2)) p.setLoopTicks(int64_t(r.range(0, rows - 1)) * 96, r.chance(50) ? -1 : int64_t(r.range(1, rows)) * 96);
         if ((blocks % 32) == 0) pump(1);
     }
 

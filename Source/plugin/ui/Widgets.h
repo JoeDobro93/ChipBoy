@@ -178,6 +178,22 @@ private:
     bool on_ = false; juce::Colour colour_ = colours::ok;
 };
 
+/// A button that carries a glyph rather than a word (UI_DESIGN D-UI-36):
+/// the transport's play / pause, stop, loop and follow over the chain. On
+/// (its toggle state) it is filled like a TextButton that is on; the word
+/// is the tooltip's.
+class IconButton : public juce::Button {
+public:
+    enum class Icon { Play, Pause, Stop, Loop, Follow };
+    explicit IconButton(Icon i);
+    void setIcon(Icon i);
+    Icon icon() const { return icon_; }
+    static constexpr int kWidth = 30, kHeight = 24;
+    void paintButton(juce::Graphics&, bool over, bool down) override;
+private:
+    Icon icon_;
+};
+
 /// Which of the bank's lists a slot field names. Every selector in the
 /// window obeys one convention (UI_DESIGN section 2.1, COMMANDS_AND_TEMPO
 /// section 35): a click selects the field and types into it, a double click
@@ -307,12 +323,12 @@ class PhraseGrid : public juce::Component, public juce::TooltipClient {
 public:
     PhraseGrid();
     ~PhraseGrid() override;
-    /// The song, the bar to show, and how many steps that bar holds.
-    void setSong(std::shared_ptr<const tracker::Song> song, int bar);
+    /// The song and each channel's own row -- the one it is in at the play
+    /// head (D-UI-35, docs/COMMANDS_AND_TEMPO.md section 25).
+    void setSong(std::shared_ptr<const tracker::Song> song, const int rows[4]);
     /// The bank the right-click lists read: the instruments and tables a
     /// cell can name, by slot and name (UI_DESIGN section 2.1).
     void setBank(std::shared_ptr<const bank::Bank> bank);
-    int bar() const;
     int steps() const;                                         ///< rows on show, 1-64
     void setPlayingStep(int ch, int step);                     ///< -1 none
     void setRollNote(int ch, int midiNote);                    ///< the piano roll's current note, greyed; -1 none
@@ -322,16 +338,20 @@ public:
     std::function<void()> onEntryEnd;
     std::function<void(int ch, tracker::NoteSource)> onSourceChange;
     std::function<void(int ch, int groove)> onGrooveChange;    ///< per-phrase groove slot, 0 straight
-    /// The LEN in this channel's head: the length of the phrase it plays in
-    /// the row on show, 1-64 (docs/COMMANDS_AND_TEMPO.md section 25).
+    /// STEPS in this channel's head: the length of the phrase it plays in
+    /// its row, 1-64 (docs/COMMANDS_AND_TEMPO.md section 25, D-UI-37).
     std::function<void(int ch, int steps)> onLengthChange;
+    /// TSP in this channel's head: its row's transpose (section 48, D-UI-37).
+    std::function<void(int ch, int semis)> onTransposeChange;
     std::function<void(int ch, bool armed)> onArmChange;       ///< the channel's record arm (section 14)
     std::function<void(int row)> onCursorRow;                  ///< the cursor moved: keep this row in view
     /// The right-click list's first entry on a slot field: open that item's
     /// own tab with it selected (section 35).
     std::function<void(SlotKind, int slot)> onOpenSlot;
     juce::String getTooltip() override;   ///< the hovered cell: what the column is, and what the command says
-    static constexpr int kRowHeight = 22, kHeaderHeight = 48, kVisibleSteps = 16;
+    /// The head is the name row, the chip row (PHRASE, TSP, STEPS, TICKS --
+    /// D-UI-37) and the column captions: 26 + 20 + 22.
+    static constexpr int kRowHeight = 22, kHeaderHeight = 68, kVisibleSteps = 16;
     /// How tall the grid is for a bar of `steps` steps; sixteen is what the
     /// pane holds without scrolling.
     static constexpr int heightForSteps(int steps)
@@ -348,35 +368,52 @@ private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
 
-/// The chain, rotated (UI_DESIGN section 7): one row per row of the song,
-/// numbered 1, 2, 3 down the left with the lowest at the top, and five cells
-/// across -- the four channels' phrase slots and the row's LEN, the length
-/// of the phrases in it (section 25). It stands in the column right of the
-/// lane, row for row with the lane's steps, and scrolls with the song.
-/// Channels keep their own time, so each one's playing row is lit in its own
-/// column and two channels can be a row apart.
+/// The chain, drawn in time (UI_DESIGN D-UI-35, docs/plan-chain-timeline.md):
+/// channels across, ticks down, a block per row of each channel as tall as
+/// the row lasts under its groove and its H hops, the phrase and its
+/// transpose in the block. The play head is one line across the four
+/// columns (docs/COMMANDS_AND_TEMPO.md section 223); the gutter counts the
+/// song's time signatures (section 222) and the zoom's grid is what the
+/// play head snaps to. It stands in the column right of the lane.
 class ChainColumn : public juce::Component, public juce::TooltipClient {
 public:
     ChainColumn();
     ~ChainColumn() override;
-    /// `playingRow` is one row per channel, -1 where the channel is not
-    /// playing its cells (docs/COMMANDS_AND_TEMPO.md section 25).
-    void setSong(std::shared_ptr<const tracker::Song> song, int selectedRow, const int playingRow[4]);
-    std::function<void(int bar)> onSelectBar;
+    /// The song and the play head, a tick.
+    void setSong(std::shared_ptr<const tracker::Song> song, int64_t cursorTick);
+    /// The transport's own position: the moving line while it plays, kept
+    /// in view when the panel follows it (D-UI-16).
+    void setTransport(bool playing, int64_t tick, bool keepInView);
+    /// The zoom slider's value, 0..1; pixels per tick are derived from it
+    /// and the first time signature.
+    void setZoom(double t);
+    double zoom() const;
+    int64_t cursorTick() const;
+    /// The loop region to draw (section 223); `to` < 0 is none.
+    void setLoopRegion(bool on, int64_t from, int64_t to);
+    /// What the grid is at this zoom, for the readout beside the slider.
+    juce::String gridText() const;
+    /// The play head moved by a click, a drag or a key.
+    std::function<void(int64_t tick)> onSelectTick;
+    /// Shift-drag on the gutter set a loop region; `to` < 0 clears it.
+    std::function<void(int64_t from, int64_t to)> onLoopRegion;
+    /// The signature editor changed the list; the panel normalises it.
+    std::function<void(std::vector<tracker::TimeSignature>)> onSignaturesChange;
+    std::function<void()> onPlayPause;                                    ///< Space
     /// A run of edits the cursor keeps inside is one undo, so the panel is
     /// told when a typed value is finished with (a click, a cursor move).
     std::function<void()> onEntryEnd;
-    std::function<void(int ch, int bar, int phraseSlot)> onChainChange;   ///< 0 clears
-    std::function<void(int ch, int bar, int semis)> onChainTransposeChange;   ///< the row's transpose on that channel (section 48)
-    std::function<void(int row, int steps)> onRowLengthChange;            ///< the length of the phrases in that row (section 25)
+    std::function<void(int ch, int row, int phraseSlot)> onChainChange;   ///< 0 clears; a row past the chain's end grows it
+    std::function<void(int ch, int row, int semis)> onChainTransposeChange;   ///< the row's transpose on that channel (section 48)
     std::function<void(int ch, bool loop)> onChainEndChange;              ///< the channel plays its chain round again, or stops at its end (section 212)
     juce::String getTooltip() override;
-    /// 264 wide and the lane's rhythm: a 48 px head over 22 px rows.
-    static constexpr int kRowHeight = 22, kHeaderHeight = 48, kWidth = 264;
+    /// 264 wide, a 48 px head of its own.
+    static constexpr int kHeaderHeight = 48, kWidth = 264;
     void resized() override; void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override;
-    void mouseDrag(const juce::MouseEvent&) override; void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    void mouseDrag(const juce::MouseEvent&) override; void mouseUp(const juce::MouseEvent&) override;
+    void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     bool keyPressed(const juce::KeyPress&) override; void focusGained(FocusChangeType) override; void focusLost(FocusChangeType) override;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;

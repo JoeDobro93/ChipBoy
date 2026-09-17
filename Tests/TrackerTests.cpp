@@ -1086,3 +1086,49 @@ TEST_CASE("a G names any of the thirty-two grooves", "[tracker][groove][rom942]"
     stepStartTicks(s, &a, kGrooveNone, starts, step);
     CHECK(starts[1] == 9); CHECK(starts[2] == 12); CHECK(starts[3] == 21); CHECK(starts[9] == 50);
 }
+
+TEST_CASE("time signatures number the song's bars and nothing else", "[tracker][signature]")
+{
+    // Section 222: READROOM's sections are 132 ticks, 11/8 with the eighth at
+    // 12 ticks; the 96-tick phrases from tick 4752 read as 4/4 at 24.
+    auto owned = blankSong();
+    Song& s = *owned;
+    CHECK(s.signatures.size() == 1);
+    CHECK(s.signatures[0].tick == 0);
+    CHECK(int(s.signatures[0].beats) == 4);
+    CHECK(int(s.signatures[0].ticksPerBeat) == 24);
+    CHECK(s.signatures[0].barTicks() == 96);
+    // Typed out of order, twice at one tick, none at tick 0: normalised.
+    s.signatures = { TimeSignature{ 4752, 4, 4, 24 }, TimeSignature{ 4752, 3, 4, 24 }, TimeSignature{ 10, 11, 8, 12 } };
+    s.signatures[2].tick = 0;
+    s.signatures.push_back(TimeSignature{ 20000, 200, 0, 250 });
+    normalizeSignatures(s);
+    REQUIRE(s.signatures.size() == 3);
+    CHECK(s.signatures[0].tick == 0); CHECK(int(s.signatures[0].beats) == 11); CHECK(int(s.signatures[0].unit) == 8); CHECK(s.signatures[0].barTicks() == 132);
+    CHECK(s.signatures[1].tick == 4752); CHECK(int(s.signatures[1].beats) == 3);   // the later one at a tick wins
+    CHECK(int(s.signatures[2].beats) == 64); CHECK(int(s.signatures[2].unit) == 1); CHECK(int(s.signatures[2].ticksPerBeat) == 192);   // clamped
+    s.signatures[1].beats = 4;
+    CHECK(signatureAt(s, 0) == 0); CHECK(signatureAt(s, 4751) == 0); CHECK(signatureAt(s, 4752) == 1); CHECK(signatureAt(s, 30000) == 2);
+    auto at = [&s](int64_t t) { return barPositionAt(s, t); };
+    CHECK(at(0).bar == 1); CHECK(at(0).beat == 1); CHECK(at(0).tick == 0);
+    CHECK(at(131).bar == 1); CHECK(at(131).beat == 11); CHECK(at(131).tick == 11);
+    CHECK(at(132).bar == 2); CHECK(at(132).beat == 1); CHECK(at(132).tick == 0);
+    // 4752 / 132 = 36 bars of 11/8, so 4/4 opens bar 37.
+    CHECK(barsBeforeSignature(s, 1) == 36);
+    CHECK(at(4752).bar == 37); CHECK(at(4752).beat == 1); CHECK(at(4752).signature == 1);
+    CHECK(at(4752 + 25).bar == 37); CHECK(at(4752 + 25).beat == 2); CHECK(at(4752 + 25).tick == 1);
+    CHECK(at(4752 + 96).bar == 38);
+    // A span that is not a whole number of bars still counts the partial bar.
+    s.signatures = { TimeSignature{ 0, 4, 4, 24 }, TimeSignature{ 100, 4, 4, 24 } };
+    normalizeSignatures(s);
+    CHECK(barsBeforeSignature(s, 1) == 2);
+    CHECK(at(100).bar == 3);
+    // The default at tick 0 comes back when the list is emptied.
+    s.signatures.clear();
+    normalizeSignatures(s);
+    REQUIRE(s.signatures.size() == 1);
+    CHECK(s.signatures[0].barTicks() == 96);
+    // And none of it moves a row: the tables are the phrases' own.
+    buildRowTables(s);
+    CHECK(rowStartTick(s, 0, 1) == kEmptyRowTicks);
+}

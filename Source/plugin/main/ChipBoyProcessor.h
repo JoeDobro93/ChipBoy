@@ -205,16 +205,20 @@ public:
     // position -- the plugin runs the song itself, at the Song tempo, from
     // the song start. In a host the host's transport rules and these do
     // nothing but report it.
+    /// Section 223: Play runs from the play head, Pause stops where it
+    /// stands, Stop stops and returns to tick 0. A locate puts the own
+    /// transport at a tick, playing or stopped; the audio thread does it.
     void transportPlay() { transportRequest_.store(1); }
-    void transportStop() { transportRequest_.store(2); }
+    void transportPause() { transportRequest_.store(2); }
+    void transportStop() { transportLocate(0); transportRequest_.store(2); }
+    void transportLocate(int64_t tick) { locateTick_.store(std::max<int64_t>(0, tick)); locatePending_.store(true); }
     void setLoop(bool on) { loopOn_.store(on); }
     bool loopEnabled() const { return loopOn_.load(); }
-    /// The loop, in rows of the longest chain: from `first` up to but not
-    /// including `last`. A negative `last` loops to the end of the song --
-    /// the longest channel's, which is the song's length (section 25).
-    void setLoopRows(int first, int last) { loopFrom_.store(std::max(0, first)); loopTo_.store(last); }
-    int  loopFirstRow() const { return loopFrom_.load(); }
-    int  loopLastRow() const { return loopTo_.load(); }
+    /// The loop region in ticks, `from` up to but not including `to`; a
+    /// negative `to` loops to the song's end (section 223).
+    void setLoopTicks(int64_t from, int64_t to) { loopFrom_.store(std::max<int64_t>(0, from)); loopTo_.store(to); }
+    int64_t loopFromTick() const { return loopFrom_.load(); }
+    int64_t loopToTick() const { return loopTo_.load(); }
     /// Whether the plugin is running the transport rather than a host.
     bool ownsTransport() const { return ownsTransport_.load(); }
     bool transportPlaying() const { return playing_.load(); }
@@ -324,9 +328,11 @@ private:
     std::atomic<bool> playing_{ false };
     // The plugin's own transport (section 16): the buttons ask on the message
     // thread, the audio thread does it, so the clock has one owner.
-    std::atomic<int>  transportRequest_{ 0 };     ///< 1 play, 2 stop
+    std::atomic<int>  transportRequest_{ 0 };     ///< 1 play, 2 stop where it stands
     std::atomic<bool> loopOn_{ true }, ownsTransport_{ false };
-    std::atomic<int>  loopFrom_{ 0 }, loopTo_{ -1 };
+    std::atomic<int64_t> loopFrom_{ 0 }, loopTo_{ -1 };
+    std::atomic<int64_t> locateTick_{ 0 };
+    std::atomic<bool> locatePending_{ false };
     uint32_t prevRecMask_ = 0;
     std::atomic<bool> songTempo_{ false };
     std::atomic<double> ppq_{ 0.0 }, bpm_{ 120.0 }, tempo_{ 120.0 };

@@ -37,7 +37,7 @@ struct RichText {
 };
 
 /// One line of styled text (labels, values, headings).
-class TextLine : public juce::Component {
+class TextLine : public juce::Component, public juce::SettableTooltipClient {
 public:
     explicit TextLine(const juce::String& text = {}, juce::Font font = ui::Fonts::sans(12.0f), juce::Colour colour = ui::colours::text,
                       juce::Justification j = juce::Justification::centredLeft);

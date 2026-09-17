@@ -140,6 +140,21 @@ struct GrooveWalk {
     bool locked = false;
 };
 
+/// Section 222: a time signature is a numbering the timeline reads, never
+/// the driver. Ticks per beat unit is what makes 11/8 at 12 ticks a 132-tick
+/// bar and 4/4 at 24 a 96-tick one, the sixteen straight steps.
+struct TimeSignature {
+    int64_t tick = 0;            ///< where it takes effect
+    uint8_t beats = 4;           ///< beats per bar, 1-64
+    uint8_t unit = 4;            ///< the beat unit's name: 4 a quarter, 8 an eighth; 1-64
+    uint8_t ticksPerBeat = 24;   ///< ticks per beat unit, 1-192
+    int barTicks() const { return std::max(1, int(beats)) * std::max(1, int(ticksPerBeat)); }
+};
+constexpr int kMaxSignatureBeats = 64, kMaxSignatureUnit = 64, kMaxTicksPerBeat = 192;
+/// Where a tick falls in the song's bars (section 222): bar and beat count
+/// from 1, `tick` is the ticks into the beat, `signature` the index in force.
+struct BarPosition { int bar = 1; int beat = 1; int tick = 0; int signature = 0; };
+
 struct Song {
     std::array<Phrase, kPhraseSlots> phrases;         ///< slot n is phrases[n-1]
     std::array<std::vector<uint8_t>, 4> chain;        ///< per channel: row -> phrase slot (0 none)
@@ -160,6 +175,10 @@ struct Song {
     /// written before the arms existed records exactly as it used to.
     std::array<bool, 4> recordArm{ true, true, true, true };
     std::array<Groove, kGrooveSlots> grooves = factoryGrooves();
+    /// Section 222: the song's time signatures, sorted by tick, the first
+    /// always at tick 0 -- 4/4 with the quarter at 24 ticks for a new song
+    /// and for every song written before them. Not read by playback.
+    std::vector<TimeSignature> signatures{ TimeSignature{} };
     // The song's own timeline (docs/COMMANDS_AND_TEMPO.md section 4).
     /// The base tempo the file carries, written from the Song tempo
     /// parameter when the song is saved and read back into it when one is
@@ -304,6 +323,20 @@ int64_t songTicks(const Song& s);
 /// The channel whose chain lasts longest, the lowest of them when two do: the
 /// one the own transport's loop counts its rows in (section 25).
 int longestChain(const Song& s);
+
+/// Section 222: sort the signatures by tick, keep one per tick (the last
+/// typed wins), put the default at tick 0 when none is there, and clamp
+/// every field into its range. Run after an edit and after a file is read.
+void normalizeSignatures(Song& s);
+/// The index of the signature in force at a tick (section 222).
+int signatureAt(const Song& s, int64_t tick);
+/// Where a tick falls in the song's bars (section 222): bars count through
+/// every signature, each spanning ceil(span / bar) bars, and the next
+/// signature's first bar follows on.
+BarPosition barPositionAt(const Song& s, int64_t tick);
+/// The tick a signature's first bar starts on, and how many bars stand
+/// before it (section 222): what a gutter counts from.
+int barsBeforeSignature(const Song& s, int index);
 
 /// Scan the chains for T cells: the tempo map the clock integrates. Message
 /// thread, when a song is published; it builds the row tables first, since a

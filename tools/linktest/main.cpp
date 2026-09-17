@@ -625,7 +625,7 @@ int main()
         check(p.trackerTick() > 90, "the position follows the song's tempo");
         // It loops: two bars, and the position comes back round.
         p.setLoop(true);
-        p.setLoopRows(0, 2);
+        p.setLoopTicks(0, 192);            // two bars of sixteen straight steps (section 223)
         int64_t highest = 0;
         bool wrapped = false;
         for (int b = 0; b < 600; ++b) {

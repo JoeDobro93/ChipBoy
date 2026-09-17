@@ -154,15 +154,31 @@ void Clock::setOwnsTransport(bool on)
 
 void Clock::ownPlay()
 {
-    // From the loop's start, or the song's: a transport with no host behind it
-    // always starts where the song does (section 16).
-    ownSeconds_ = secondsAtTicks(loop_ && loopEnd_ > loopStart_ ? double(loopStart_) : 0.0);
+    // From where it stands (section 223): the play head the caller located,
+    // or where the last pause left it. A position outside an active loop
+    // region starts the region instead of running past it.
+    if (mapDirty_) { if (!baseIsCell_) map_[0].bpm = clampBpm(cfg_.songTempo); rebuild(); }
+    const double at = ticksAtSeconds(ownSeconds_);
+    if (loop_ && loopEnd_ > loopStart_ && (at < double(loopStart_) || at >= double(loopEnd_))) ownSeconds_ = secondsAtTicks(double(loopStart_));
     ownPlaying_ = true;
     running_ = false;                 // the next block anchors on this position
     haveFreeTick_ = false;
 }
 
 void Clock::ownStop() { ownPlaying_ = false; running_ = false; }
+
+void Clock::ownLocate(int64_t tick)
+{
+    if (mapDirty_) { if (!baseIsCell_) map_[0].bpm = clampBpm(cfg_.songTempo); rebuild(); }
+    ownSeconds_ = secondsAtTicks(double(std::max<int64_t>(0, tick)));
+    running_ = false;                 // re-anchor: the next block starts here
+    haveFreeTick_ = false;
+}
+
+int64_t Clock::ownTick() const
+{
+    return std::max<int64_t>(0, int64_t(std::floor(ticksAtSeconds(ownSeconds_) + kTickEps)));
+}
 
 void Clock::setLoop(bool on, int64_t startTick, int64_t endTick)
 {

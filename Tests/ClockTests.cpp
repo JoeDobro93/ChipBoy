@@ -293,15 +293,24 @@ TEST_CASE("the plugin's own transport runs the song at the Song tempo", "[clock]
     REQUIRE(a.size() == b.size());
     for (size_t i = 0; i < a.size(); ++i) { CHECK(a[i].frame == b[i].frame); CHECK(a[i].index == b[i].index); }
 
-    // Stopping leaves the position where it was; playing again starts over.
+    // Stopping leaves the position where it was, and playing again goes on
+    // from there (section 223: a pause); a locate to 0 is what starts over.
     c.ownStop();
     const auto stopped = runOwn(c, 0.5, 512);
     CHECK_FALSE(c.playing());
     CHECK(stopped.size() == 24);          // free-running, not the song
+    CHECK(c.ownTick() == 48);
     c.ownPlay();
     const auto again = runOwn(c, 0.25, 512);
     REQUIRE_FALSE(again.empty());
-    CHECK(again[0].index == 0);
+    CHECK(again[0].index == 48);
+    c.ownStop();
+    c.ownLocate(0);
+    CHECK(c.ownTick() == 0);
+    c.ownPlay();
+    const auto over = runOwn(c, 0.25, 512);
+    REQUIRE_FALSE(over.empty());
+    CHECK(over[0].index == 0);
 
     // A slower Song tempo is a slower transport.
     cfg.songTempo = 60.0;
@@ -339,12 +348,67 @@ TEST_CASE("the plugin's own transport loops, keeping its place", "[clock][transp
     REQUIRE(b.size() >= 120);
     CHECK(b[0].index == 96);
     CHECK(b[96].index == 96);             // round again
-    // Loop off: it plays straight on past the end.
+    // Loop off: it plays straight on past the end, from the start it is put at.
     d.setLoop(false, 96, 192);
+    d.ownLocate(0);
     d.ownPlay();
     const auto e = runOwn(d, 3.0, 512);
     REQUIRE(e.size() == 144);
     CHECK(e.back().index == 143);
+}
+
+TEST_CASE("the own transport locates: playing or stopped, and outside a loop it starts the loop", "[clock][transport]")
+{
+    // Section 223: the play head is a tick the window owns; Play runs from
+    // it, a locate while playing is a jump the Player already survives (47).
+    Clock c; c.prepare(48000.0);
+    ClockConfig cfg; cfg.source = TempoSource::Song; cfg.songTempo = 120.0;
+    c.setConfig(cfg);
+    c.setTempoMap(nullptr, 0);
+    c.setOwnsTransport(true);
+    // Stopped: a locate is where it stands, and Play starts there.
+    c.ownLocate(2112);
+    CHECK(c.ownTick() == 2112);
+    CHECK_FALSE(c.playing());
+    c.ownPlay();
+    const auto a = runOwn(c, 0.5, 512);
+    REQUIRE(a.size() == 24);
+    CHECK(a[0].index == 2112);
+    CHECK(a[23].index == 2135);
+    // Playing: a locate continues from the new tick on the next block.
+    c.ownLocate(100);
+    const auto b = runOwn(c, 0.5, 512);
+    REQUIRE(b.size() == 24);
+    CHECK(b[0].index == 100);
+    CHECK(c.playing());
+    // Paused: it stands where the locate put it plus what played.
+    c.ownStop();
+    CHECK(c.ownTick() == 124);
+    // A play head outside an active loop region starts the region.
+    c.setLoop(true, 480, 576);
+    c.ownPlay();
+    const auto d = runOwn(c, 0.5, 512);
+    REQUIRE(d.size() == 24);
+    CHECK(d[0].index == 480);
+    // Inside it, it plays from where it stands.
+    c.ownStop();
+    c.ownLocate(500);
+    c.ownPlay();
+    const auto e = runOwn(c, 0.25, 512);
+    REQUIRE_FALSE(e.empty());
+    CHECK(e[0].index == 500);
+    // Under a T-shaped tempo map the locate still lands on the tick asked
+    // for (the loop region off again, or it would start the region).
+    const TempoPoint pts[1] = { { 240, 60.0 } };
+    c.setTempoMap(pts, 1);
+    c.setLoop(false, 0, 0);
+    c.ownStop();
+    c.ownLocate(300);
+    CHECK(c.ownTick() == 300);
+    c.ownPlay();
+    const auto f = runOwn(c, 0.25, 512);
+    REQUIRE_FALSE(f.empty());
+    CHECK(f[0].index == 300);
 }
 
 /* ------------------------------------------------------- the grid (160) */
