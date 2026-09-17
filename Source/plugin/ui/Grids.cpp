@@ -1353,7 +1353,12 @@ struct PhraseGrid::Impl {
         }
         if (c.kind == Kind::Note) {
             blank = cell.note == 0;
-            if (cell.note != 0 && cell.note != tracker::kNoteOff) colour = colours::channel(c.ch);
+            if (cell.note != 0 && cell.note != tracker::kNoteOff) {
+                colour = colours::channel(c.ch);
+                // D-UI-34: on a kit row the note names a sample -- the one the driver
+                // picks, nearest by note -- so it reads by the sample's label.
+                if (const bank::Kit* k = kitAt(c.ch, row)) { const int i = sampleOfNote(k, int(cell.note)); if (i >= 0) return sampleLabel(k, i + 1); }
+            }
             return ValueFormat::noteValue(cell.note, c.ch == 3);       // section 85
         }
         if (c.kind == Kind::Vel) {
@@ -1362,6 +1367,7 @@ struct PhraseGrid::Impl {
             const bank::Kit* k = kitAt(c.ch, row);
             blank = k == nullptr || cell.vel == 0;
             if (k == nullptr) return {};
+            if (!blank) colour = colours::channel(c.ch);                // a sample name reads like a note
             return blank ? kBlank2 : sampleLabel(k, int(cell.vel));
         }
         if (c.kind == Kind::Inst) { blank = cell.inst == 0; return blank ? kBlank2 : ValueFormat::slot(cell.inst); }
@@ -1866,6 +1872,15 @@ struct PhraseGrid::Impl {
         if (k == nullptr || v < 1) return {};
         if (v > int(k->samples.size())) return ValueFormat::number(v);
         return juce::String(bank::kitSampleLabel(k->samples[size_t(v - 1)].name, v - 1));
+    }
+    /// The sample a kit note plays: the one mapped to the note, else the nearest
+    /// (what Driver::startVoice picks); -1 with no samples.
+    static int sampleOfNote(const bank::Kit* k, int note)
+    {
+        if (k == nullptr || k->samples.empty()) return -1;
+        int best = -1, bestDist = 1000;
+        for (int i = 0; i < int(k->samples.size()); ++i) { const int d = std::abs(int(k->samples[size_t(i)].note) - note); if (d < bestDist) { bestDist = d; best = i; } }
+        return best;
     }
     /// The sample (1-based) whose label is `text`, ignoring case; 0 for none.
     static int sampleByLabel(const bank::Kit* k, const juce::String& text)

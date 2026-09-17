@@ -91,6 +91,8 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
 - Checked in screenshots (`chipboy_uishot --song`, a crafted `.cbsong` with kit notes): the three
   lanes read `NOTE INS TBL CMD CMD`, WAV `NOTE NOTE INS TBL CMD CMD`; the second column is empty
   off a kit, `--` on a kit row with no second sample, and `SD-` / `LT-` / `TIM` where one is named.
+  On a kit row the note column reads by the label too (the sample the note plays, nearest by
+  note), both columns in the channel's colour.
 
 ## Done (2026-09-17, later still) -- a noise `P` at the command rate (§220)
 
