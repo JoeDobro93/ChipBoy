@@ -1140,7 +1140,10 @@ void TableGrid::focusLost(FocusChangeType) { impl_->core.entry.reset(); repaint(
 // PhraseGrid
 // ===========================================================================
 struct PhraseGrid::Impl {
-    static constexpr int kChannelCols = 6;   ///< note, vel, ins, tbl and the two commands
+    /// The columns a channel has: note, ins, tbl and the two commands; WAV a
+    /// second note column for a kit's second sample (D-UI-34, section 221).
+    static int channelCols(int ch) { return ch == 2 ? 6 : 5; }
+    static int firstCol(int ch) { int c = 1; for (int k = 0; k < ch; ++k) c += channelCols(k); return c; }
     static constexpr int kStepWidth = 34;
     /// The head, per channel: the record arm, the name, the playback switch,
     /// the phrase's LEN and its groove chip, all inside the 26 px name row.
@@ -1215,7 +1218,12 @@ struct PhraseGrid::Impl {
         }
     }
 
-    static const char* colTitle(int i) { static const char* t[kChannelCols] = { "note", "vel", "ins", "tbl", "cmd", "cmd" }; return t[i]; }
+    static const char* colTitle(int ch, int i)
+    {
+        static const char* wav[6] = { "note", "note", "ins", "tbl", "cmd", "cmd" };
+        static const char* other[5] = { "note", "ins", "tbl", "cmd", "cmd" };
+        return ch == 2 ? wav[i] : other[i];
+    }
 
     int steps() const { return core.rows; }
 
@@ -1228,19 +1236,23 @@ struct PhraseGrid::Impl {
         // and a three-digit velocity, instrument and table slots, and a
         // command with two arguments. The chain takes the rest of the pane
         // (UI_DESIGN section 7).
-        const float weights[kChannelCols] = { 1.12f, 0.88f, 0.88f, 0.82f, 1.50f, 1.50f };
+        // D-UI-34: WAV's second note column takes a velocity's old share.
+        const float wavWeights[6] = { 1.12f, 1.12f, 0.88f, 0.82f, 1.50f, 1.50f };   // the second note column as wide as the first: a three-character label
+        const float otherWeights[5] = { 1.12f, 0.88f, 0.82f, 1.50f, 1.50f };
         float total = 0.0f;
-        for (float w : weights) total += w;
-        const float unit = juce::jmax(30.0f, float(width - kStepWidth) / (4.0f * total));
+        for (int ch = 0; ch < 4; ++ch) for (int i = 0; i < channelCols(ch); ++i) total += (ch == 2 ? wavWeights : otherWeights)[i];
+        const float unit = juce::jmax(30.0f, float(width - kStepWidth) / total);
         float x = float(kStepWidth);
         core.dividers.clear();
         for (int ch = 0; ch < 4; ++ch) {
             const float groupX = x;
             if (ch > 0) core.dividers.push_back(int(cols.size()));
-            for (int i = 0; i < kChannelCols; ++i) {
-                const Kind kinds[kChannelCols] = { trackerSource[size_t(ch)] ? Kind::Note : Kind::Ghost, Kind::Vel, Kind::Inst, Kind::Table, Kind::Cmd, Kind::Cmd };
-                const float w = unit * weights[i];
-                cols.push_back({ kinds[i], ch, juce::roundToInt(x), juce::roundToInt(x + w) - juce::roundToInt(x), colTitle(i) });
+            const Kind noteKind = trackerSource[size_t(ch)] ? Kind::Note : Kind::Ghost;
+            const Kind wavKinds[6] = { noteKind, Kind::Vel, Kind::Inst, Kind::Table, Kind::Cmd, Kind::Cmd };
+            const Kind otherKinds[5] = { noteKind, Kind::Inst, Kind::Table, Kind::Cmd, Kind::Cmd };
+            for (int i = 0; i < channelCols(ch); ++i) {
+                const float w = unit * (ch == 2 ? wavWeights : otherWeights)[i];
+                cols.push_back({ (ch == 2 ? wavKinds : otherKinds)[i], ch, juce::roundToInt(x), juce::roundToInt(x + w) - juce::roundToInt(x), colTitle(ch, i) });
                 x += w;
             }
             layoutHeader(ch, juce::roundToInt(groupX), juce::roundToInt(x) - juce::roundToInt(groupX));
@@ -1344,7 +1356,14 @@ struct PhraseGrid::Impl {
             if (cell.note != 0 && cell.note != tracker::kNoteOff) colour = colours::channel(c.ch);
             return ValueFormat::noteValue(cell.note, c.ch == 3);       // section 85
         }
-        if (c.kind == Kind::Vel) { blank = cell.vel == 0; return blank ? kBlank2 : ValueFormat::number(cell.vel); }
+        if (c.kind == Kind::Vel) {
+            // D-UI-34: a kit's second sample by its label; nothing at all on a
+            // row whose instrument in force is not a kit.
+            const bank::Kit* k = kitAt(c.ch, row);
+            blank = k == nullptr || cell.vel == 0;
+            if (k == nullptr) return {};
+            return blank ? kBlank2 : sampleLabel(k, int(cell.vel));
+        }
         if (c.kind == Kind::Inst) { blank = cell.inst == 0; return blank ? kBlank2 : ValueFormat::slot(cell.inst); }
         if (c.kind == Kind::Table) { blank = cell.table == 0; return blank ? kBlank2 : ValueFormat::slot(cell.table); }
         // A command cell is drawn in two parts by paintCmdCell, not here.
@@ -1403,9 +1422,9 @@ struct PhraseGrid::Impl {
             cell.note = uint8_t(v ? v : juce::jlimit(1, 127, 12 * (octave + 1)));
             noteEntered(ch, row, before);
         } else if (c.kind == Kind::Vel) {
-            if (cell.vel != 0) return false;
+            if (cell.vel != 0 || kitAt(c.ch, row) == nullptr) return false;   // D-UI-34: inert off a kit
             const int v = r.vel ? r.vel : nearest([](const tracker::Cell& x) { return int(x.vel); });
-            cell.vel = uint8_t(v ? v : int(tracker::kDefaultVelocity));
+            cell.vel = uint8_t(juce::jlimit(1, velTop(c.ch, row), v ? v : 1));
         } else if (c.kind == Kind::Inst) {
             if (cell.inst != 0) return false;
             const int v = instrumentFor(ch, row);
@@ -1451,7 +1470,7 @@ struct PhraseGrid::Impl {
         auto& cell = cells[size_t(c.ch)][size_t(row)];
         const tracker::Cell before = cell;
         if (c.kind == Kind::Note) { if (cell.note == 0 || cell.note == tracker::kNoteOff) return; cell.note = uint8_t(juce::jlimit(1, 127, want)); }
-        else if (c.kind == Kind::Vel) cell.vel = uint8_t(wrapRange(want, 0, velTop(c.ch, row)));
+        else if (c.kind == Kind::Vel) { if (kitAt(c.ch, row) == nullptr) return; cell.vel = uint8_t(wrapRange(want, 0, velTop(c.ch, row))); }
         else if (c.kind == Kind::Inst) cell.inst = uint8_t(wrapRange(want, 0, bank::kInstrumentSlots));
         else if (c.kind == Kind::Table) cell.table = uint8_t(wrapRange(want, 0, bank::kTableSlots));
         else if (c.kind == Kind::Cmd) {
@@ -1470,7 +1489,7 @@ struct PhraseGrid::Impl {
         const tracker::Cell before = cell;
         bool done = false;
         if (col.kind == Kind::Note) { done = editNote(cell.note, k, octave); if (done) noteEntered(col.ch, core.curRow, before); }
-        else if (col.kind == Kind::Vel) done = editSlot(cell.vel, velTop(col.ch, core.curRow), k, core.entry);
+        else if (col.kind == Kind::Vel) done = kitAt(col.ch, core.curRow) != nullptr && editSlot(cell.vel, velTop(col.ch, core.curRow), k, core.entry);
         else if (col.kind == Kind::Inst) done = editSlot(cell.inst, bank::kInstrumentSlots, k, core.entry);
         else if (col.kind == Kind::Table) done = editSlot(cell.table, bank::kTableSlots, k, core.entry);
         else if (col.kind == Kind::Cmd) done = editCmd(cmdSlot(core.curCol) == 0 ? cell.cmd1 : cell.cmd2, k, core.entry);
@@ -1517,14 +1536,19 @@ struct PhraseGrid::Impl {
         const auto kind = c.kind;
         if (kind != Kind::Vel && kind != Kind::Inst && kind != Kind::Table) return;
         const int ch = c.ch;
+        if (kind == Kind::Vel && kitAt(ch, row) == nullptr) return;   // D-UI-34: inert off a kit
         const auto& cell = cells[size_t(ch)][size_t(row)];
         const int cur = kind == Kind::Vel ? int(cell.vel) : kind == Kind::Inst ? int(cell.inst) : int(cell.table);
         const int hi = kind == Kind::Vel ? velTop(ch, row) : kind == Kind::Inst ? bank::kInstrumentSlots : bank::kTableSlots;
         core.setCursor(row, col);
-        box.begin(owner, core.cellRect(row, col).reduced(1), cur == 0 ? juce::String() : ValueFormat::slot(cur), juce::Justification::centredLeft,
+        const juce::String shown = cur == 0 ? juce::String() : kind == Kind::Vel ? sampleLabel(kitAt(ch, row), cur) : ValueFormat::slot(cur);
+        box.begin(owner, core.cellRect(row, col).reduced(1), shown, juce::Justification::centredLeft,
                   [this, row, ch, kind, hi](const juce::String& text) {
                       int v = 0;
-                      if (!text.trim().isEmpty() && !detail::parseSlotTyped(text, hi, v)) { owner.repaint(); return; }
+                      // A kit's second sample takes its label as well as its number.
+                      const int byLabel = kind == Kind::Vel ? sampleByLabel(kitAt(ch, row), text) : 0;
+                      if (byLabel > 0) v = byLabel;
+                      else if (!text.trim().isEmpty() && !detail::parseSlotTyped(text, hi, v)) { owner.repaint(); return; }
                       auto& target = cells[size_t(ch)][size_t(row)];
                       uint8_t& field = kind == Kind::Vel ? target.vel : kind == Kind::Inst ? target.inst : target.table;
                       if (int(field) == v) { owner.repaint(); return; }
@@ -1543,7 +1567,7 @@ struct PhraseGrid::Impl {
         auto& cell = cells[size_t(c.ch)][size_t(row)];
         const tracker::Cell before = cell;
         core.entry.restart();
-        if (c.kind == Kind::Vel) cell.vel = uint8_t(wrapRange(int(cell.vel) + delta, 0, velTop(c.ch, row)));
+        if (c.kind == Kind::Vel) { if (kitAt(c.ch, row) == nullptr) return false; cell.vel = uint8_t(wrapRange(int(cell.vel) + delta, 0, velTop(c.ch, row))); }
         else if (c.kind == Kind::Inst) cell.inst = uint8_t(wrapRange(int(cell.inst) + delta, 0, bank::kInstrumentSlots));
         else if (c.kind == Kind::Table) cell.table = uint8_t(wrapRange(int(cell.table) + delta, 0, bank::kTableSlots));
         else if (c.kind == Kind::Cmd) nudgeCommand(cmdSlot(col) == 0 ? cell.cmd1 : cell.cmd2, core.entry.arg, delta);
@@ -1646,6 +1670,21 @@ struct PhraseGrid::Impl {
     {
         if (col < 0 || col >= int(core.cols.size())) return;
         const auto& c = core.cols[size_t(col)];
+        if (c.kind == Kind::Vel) {
+            // D-UI-34: the kit's samples, by label and name.
+            const bank::Kit* k = kitAt(c.ch, row);
+            if (k == nullptr) return;
+            std::vector<SlotRow> rows;
+            for (int i = 0; i < int(k->samples.size()); ++i) {
+                SlotRow sr; sr.slot = i + 1; sr.used = true;
+                sr.name = juce::String(bank::kitSampleLabel(k->samples[size_t(i)].name, i)) + juce::String(juce::CharPointer_UTF8("  \xc2\xb7  ")) + juce::String(k->samples[size_t(i)].name);
+                rows.push_back(sr);
+            }
+            const int ch = c.ch, current = int(cells[size_t(ch)][size_t(row)].vel);
+            showSlotMenu(owner, core.cellRect(row, col), "Second sample", rows, current,
+                         [this, row, ch](int slot) { cells[size_t(ch)][size_t(row)].vel = uint8_t(juce::jmax(0, slot)); core.entry.reset(); changed(ch, row); });
+            return;
+        }
         if (c.kind != Kind::Inst && c.kind != Kind::Table) return;
         const bool instruments = c.kind == Kind::Inst;
         const auto rows = instruments ? instrumentRows(c.ch) : tableRows();
@@ -1785,13 +1824,13 @@ struct PhraseGrid::Impl {
         if (c.kind == Kind::Note) return "The note this step plays. Shift+arrows move it (left/right a semitone, up/down an octave), a drag moves it, a double click types it; minus is a note off.";
         if (c.kind == Kind::Vel) {
             if (const bank::Kit* k = kitAt(c.ch, row)) {
-                juce::String t = "Second sample: 1-" + juce::String(int(k->samples.size())) + " names another of kit " + juce::String(k->name)
-                                 + "'s samples, summed with this note through the kit's Dist. Blank plays one sample.";
+                juce::String t = "Second sample: one of kit " + juce::String(k->name) + "'s " + juce::String(int(k->samples.size()))
+                                 + " samples, by its three-character label, summed with this note through the kit's Dist. Blank plays one sample; a right click lists them.";
                 const int v = int(cell.vel);
                 if (v >= 1 && v <= int(k->samples.size())) t += " Now: " + juce::String(k->samples[size_t(v - 1)].name) + ".";
                 return t;
             }
-            return "Velocity, 1-127; blank is " + juce::String(int(tracker::kDefaultVelocity)) + ". Type it, double-click for a box, Shift+arrows move it.";
+            return "A kit's second sample. Blank here: this row's instrument is not a kit.";
         }
         if (c.kind == Kind::Inst) return "Instrument at this step. Type it, double-click opens it in its tab, right-click lists the bank.";
         if (c.kind == Kind::Table) return "Table override at this step. Type it, double-click opens it in its tab, right-click lists the bank.";
@@ -1815,11 +1854,28 @@ struct PhraseGrid::Impl {
         }
         return nullptr;
     }
-    /// How far the VEL column counts on this row: a kit's sample list, else 127.
+    /// How far the second-sample column counts on this row: the kit's sample list.
     int velTop(int ch, int row) const
     {
         const bank::Kit* k = kitAt(ch, row);
-        return k != nullptr ? int(k->samples.size()) : 127;
+        return k != nullptr ? int(k->samples.size()) : 0;
+    }
+    /// D-UI-34: the label of a kit's sample `v` (1-based), the number past the list.
+    static juce::String sampleLabel(const bank::Kit* k, int v)
+    {
+        if (k == nullptr || v < 1) return {};
+        if (v > int(k->samples.size())) return ValueFormat::number(v);
+        return juce::String(bank::kitSampleLabel(k->samples[size_t(v - 1)].name, v - 1));
+    }
+    /// The sample (1-based) whose label is `text`, ignoring case; 0 for none.
+    static int sampleByLabel(const bank::Kit* k, const juce::String& text)
+    {
+        if (k == nullptr) return 0;
+        const juce::String want = text.trim();
+        if (want.isEmpty()) return 0;
+        for (int i = 0; i < int(k->samples.size()); ++i)
+            if (juce::String(bank::kitSampleLabel(k->samples[size_t(i)].name, i)).equalsIgnoreCase(want)) return i + 1;
+        return 0;
     }
 
     void openGrooveMenu(int ch)
@@ -1859,7 +1915,7 @@ struct PhraseGrid::Impl {
         g.setColour(lineSoft);
         g.fillRect(0, core.headerH - 1, width, 1);
         for (int ch = 0; ch < 4; ++ch) {
-            const int first = 1 + ch * kChannelCols;
+            const int first = firstCol(ch);
             const int x = core.cols[size_t(first)].x;
             g.setColour(ch > 0 ? line : lineSoft);
             g.fillRect(ch > 0 ? x - 1 : x, 0, ch > 0 ? 2 : 1, core.headerH);
@@ -1968,7 +2024,7 @@ void PhraseGrid::paint(juce::Graphics& g)
     for (int ch = 0; ch < 4; ++ch) {
         const int p = im.playing[size_t(ch)];
         if (p < 0 || p >= core.rows) continue;
-        const int first = 1 + ch * Impl::kChannelCols, last = first + Impl::kChannelCols - 1;
+        const int first = Impl::firstCol(ch), last = first + Impl::channelCols(ch) - 1;
         const int x = core.cols[size_t(first)].x, w = core.cols[size_t(last)].x + core.cols[size_t(last)].w - x;
         g.setColour(colours::playRow);
         g.fillRect(x, core.rowY(p), w, core.rowH);

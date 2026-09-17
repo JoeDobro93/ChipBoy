@@ -39,16 +39,16 @@ constexpr int kTicksPerStep = 6;
 /// (section 25): sixteen straight steps, the length of a 4/4 bar.
 constexpr int kEmptyRowTicks = kTicksPerStep * 16;
 constexpr uint8_t kNoteOff = 255;
-constexpr uint8_t kDefaultVelocity = 100;   ///< the velocity a blank VEL carries; the driver keeps the instrument's volume for it
+constexpr uint8_t kDefaultVelocity = 100;   ///< what a cell's note-on carries as `b` when its `vel` is 0; the driver keeps the instrument's level either way (section 221)
 
 struct Cell {
     uint8_t note = 0;            ///< 0 empty, 1-127 MIDI note, 255 note off
-    uint8_t vel = 0;             ///< 1-127 a start volume whatever the Velocity mode; 0 = the instrument's own volume
+    uint8_t vel = 0;             ///< on a kit row, the second sample's index + 1 (plan-kit-pairs); elsewhere nothing (section 221)
     uint8_t inst = 0;            ///< 0 blank (a bare note), else instrument slot
     uint8_t table = 0;           ///< 0 keep, else table slot
     bank::Command cmd1, cmd2;
 };
-/// What a cell's note sounds at (section 9.1): its VEL column, or the default.
+/// A cell's `b`: its `vel` (a kit's second sample) or the default; never a level (section 221).
 inline uint8_t velocityOf(const Cell& c) { return c.vel ? c.vel : kDefaultVelocity; }
 /// Nothing in the cell at all: the Player skips it and the writers leave it out.
 inline bool emptyCell(const Cell& c)

@@ -6471,3 +6471,30 @@ per-voice count from the note-on (`noiseRateCount`) and steps both noise domains
 expiries, the fresh flag of §150 cleared on an expiry rather than on the next tick. Rate 0 is
 every tick, exactly as before: a song whose noise instruments keep CMD/RATE at 0 -- the default
 -- plays as it did.
+
+## 221. The VEL column goes; a kit's second sample has a three-character label
+
+The user's decision (`UI_DESIGN.md` D-UI-34): a cell's velocity as a start volume duplicates
+what `E` (the envelope) and `R` with a level nibble (a zombie level change, no retrigger) already
+do, no LSDj import ever fills it, and MIDI velocity is going to mean instrument and command
+mappings rather than a level. So:
+
+- **A tracker cell has no velocity.** `Player` no longer marks a cell's velocity as set;
+  `Driver::noteOn` takes every tracker note at the instrument's own level (the old rule 1),
+  and `NoteEvent::velSet` is gone. A MIDI note (rule 0) still goes through the channel's
+  Velocity mode -- start volume, instrument bank or ignored -- live and in Hybrid, unchanged.
+  The recorder writes a blank VEL (section 9.4 amended): a recorded note keeps its instrument's
+  level. The demo song and its state are re-recorded.
+- **`Cell::vel` stays as the kit's second sample** (plan-kit-pairs, D-UI-27): on a row whose
+  instrument in force is a kit, `vel` is the index + 1 of the sample summed with the note's,
+  through the kit's Dist. The song file's `v` key is unchanged; an old file's pulse and noise
+  values load and do nothing. The importer's kit notes are as they were.
+- **A kit sample's label** is the first three characters of its name (`bank::kitSampleLabel`),
+  the number when the name is blank, and a kit keeps its labels unique
+  (`bank::uniqueKitSampleName`): a name whose label another sample already has gets its third
+  character replaced by a digit, `2` upward, then its second and third. The rule runs where a
+  sample is named -- the LSDj import (its three-character names can repeat inside a kit), a
+  WAV dropped on the Kits tab, and the tab's rename -- so the lane can show a label and mean
+  one sample by it.
+- The factory songs (`make_songs.py`) drop their `vNN` accents: the token still parses, and
+  writes nothing.

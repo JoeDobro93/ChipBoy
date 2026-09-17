@@ -497,8 +497,8 @@ and commands on a step. ChipBoy has that screen. It is a tracker with the DAW as
 transport — or with its own, when no DAW offers one — and it is the part of the product
 that can later leave the DAW entirely (§10, D10).
 
-Per channel: a **note** column, **vel**, **instrument**, **table** and two **command**
-columns. **A phrase holds as many steps as its own LEN says**, one to sixty-four
+Per channel: a **note** column, **instrument**, **table** and two **command** columns,
+and on WAV a second **note** column for a kit's second sample (D-UI-34). **A phrase holds as many steps as its own LEN says**, one to sixty-four
 ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §25) — bars have left the model, and
 with them *Steps / bar* and *Beats*. LEN is typed in the channel's head in the lane, or
 for a whole row in the chain's last column. Phrases are chained down the song a row at a
@@ -506,8 +506,7 @@ time, with a groove (6/6, 7/5, 8/4 ticks per step…) per phrase for swing, and 
 channel moves on when its own phrase ends. Cells fire at their step's tick; a cell's two
 commands are applied once, there, and the persistent letters then hold until the next
 plain note reloads the instrument (§12) — the lane and the automation lanes are one
-mechanism, not two. **Vel** is the note's velocity, 1–127, blank meaning the default 100;
-a recorded note keeps the velocity it arrived with, and every column takes the same
+mechanism, not two. Every column takes the same
 gestures — typed digits, + and −, Backspace to take a digit back and then blank, Shift
 with the arrows, a vertical drag, a double click for the box (§2.1: the wheel scrolls the
 pane, it never edits). The note column takes them as well, with Shift+←/→ a semitone and
@@ -625,7 +624,8 @@ so the head reads as four things and not as nine controls. The **readout is the 
 time and the selected channel's own row·step** — `2·13   7.2 b` — because the channels
 drift apart by design and only one of them can be shown. Across, the chain takes 164 px
 off the right with a 12 px gap, leaving 980 for the lane: a 34 px step column and four
-channel groups of 236, each a 39 px note, 31 vel, 31 ins, 29 tbl and two 53 px commands.
+channel groups, each a note, ins, tbl and two commands -- WAV a second note column between its
+note and ins (D-UI-34) -- sharing the width by the columns' weights.
 The chain's own 264 is a 22 px gutter for the row number and, per channel, a 25 px phrase
 cell with an 18 px transpose cell 2 px from it ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md)
 §48) and an 8 px gap after the pair, then the 25 px LEN, under a 48 px head that lines up
@@ -778,3 +778,4 @@ recorded in `CHANGES.md`.
 | D-UI-31 | How does a channel strip's scope show where the sound goes? | **Two monitors side by side, `L` and `R`, a bar between them**, each the channel's trace over the chosen periods (one by default): a channel is mono at its DAC, so a note panned both ways reads as one picture with a seam, and a half whose NR51 gate is off draws the off baseline, so an `O` shows at a glance. The visualizer and the Voice editor keep one picture across the width |
 | D-UI-32 | Why did a pulse or noise trace sit at the top of its scope? | **Level 0 is the top (D-UI-25) and a pulse at volume 11 walks 0 to 11.** The digital trace is now drawn with its own swing's midpoint at the DAC's zero, 7.5, which is where a full-range wave and the analog trace already sit; the grid, the levels and the off baseline are unchanged |
 | D-UI-33 | What happens when a save is imported without its ROM? | **The dialog says so in the warning colour and offers *Choose ROM…***: a `.gb` of any name, or a `.zip` holding one; among several the one whose version reads the songs' format wins, then the newest, and a ROM whose version cannot be read still gives its kits. A save carries no samples -- a kit instrument names a bank of the ROM -- so without one the kit instruments are skipped with a note, and a custom kit needs the ROM it was patched into (the .lsdsng and the .sav hold only the kit's number). An `.lsdprj` carries the kits its song names (§218), so with only such files chosen the line says no ROM is needed; a project's row says how many kits are inside, or that they come from the ROM |
+| D-UI-34 | Where did the VEL column go? | **Removed from PU1, PU2 and NOI; WAV keeps the column as the kit's second sample, headed `note`.** A cell's velocity was a start volume that `E` and `R` already give, and every LSDj import left it blank; MIDI velocity keeps its channel mode (start volume / bank / ignored) for live and Hybrid notes, and a recorded note no longer carries one. WAV's second `note` column is blank and inert on a row whose instrument in force is not a kit; on a kit row it names the sample summed with the note's (D-UI-27) by its **three-character label** -- the first three characters of the sample's name, kept unique within a kit ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §221). Typed digits, Shift+arrows, a drag and the wheel move through the kit's samples, a double click takes a number or a label, a right click lists them by label and name. Old songs keep any VEL values in their files; on pulse and noise they do nothing and are not shown |

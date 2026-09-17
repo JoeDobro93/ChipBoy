@@ -3,6 +3,62 @@
 The state of ChipBoy for a fresh session. Read `CLAUDE.md`, this file, then only the
 design-log section the change touches. Update this file at the end of every change.
 
+## Read this first (2026-09-17) -- the engine is where the user wants it; the next chat is UI
+
+**State.** The core (`Source/core/`) plays LSDj songs from 3.1.5 to 9.4.2 as the ROMs do,
+measured register for register through the harness (`tools/lsdjref/`, `build-ref/lsdjref/
+lsdjref_trace`) and the probe rig under `/root/lsdj/probe/` (outside the tree, with the ROMs,
+saves and `CHANGELOG.txt`). The design log `docs/COMMANDS_AND_TEMPO.md` runs to §221; every law
+in the driver names its section. The last rounds (this file's *Done* sections, newest first)
+closed the user's reports on their own saves: the transpose floor (§217), project files with
+their kits (§218), the 2x/3x/6x tempi (§219), the noise `P` at the command rate (§220), and the
+VEL column's removal (§221, `UI_DESIGN.md` D-UI-34). The gate is green (`tools/gate.sh all`:
+332 core tests, 11 plugin checks, the parameter table, the 1 MB-stack link test); `main` is
+pushed with every commit and the user builds Windows and macOS from it.
+
+**What the user said next.** "My next focus will be mainly UI and user interactions now that the
+core engine seems to be working as I want." Read `docs/UI_DESIGN.md` (the decisions table,
+D-UI-1 to D-UI-34, and section 7 for the Tracker tab) before touching `Source/plugin/`. The UI
+lives in `Source/plugin/ui/` (`Grids.cpp` is the phrase, chain, table and wave grids;
+`Widgets.h/.cpp` the fields, steppers, segments, scopes; `Undo`) and `Source/plugin/main/panels/`
+(one file a tab, plus `MixerRow`, `LsdjImportDialog`). Screenshots: `xvfb-run -a
+build-plugin/chipboy_uishot_artefacts/Release/chipboy_uishot DIR --song FILE.cbsong` writes
+every tab as a PNG and says which panes scroll; there is no image library in the container, so
+crop with a small pure-Python PNG reader if a detail matters (`scratchpad/pngcrop.py` this
+session). A UI change gets a D-UI row in `UI_DESIGN.md` first; anything that changes what a cell
+means gets a numbered section in `COMMANDS_AND_TEMPO.md` as well.
+
+**Ideas the user has voiced for the UI round** (not designed yet; ask before building):
+- MIDI velocity as a *mapping* -- velocity zones choosing an instrument or a command -- rather
+  than a level; the channel's Velocity mode parameter (start volume / bank / ignored) is what
+  exists today and is one of the 76 host parameters (do not change the table casually).
+- The second-sample column on WAV shows a kit sample's three-character label now (D-UI-34);
+  the Kits tab still shows full names -- the tab could show the label beside the name.
+- De-click (C8) crossfades every DAC turn-on, which wrecks kits (every frame write turns the
+  wave DAC off and on); the user said it "should improve fidelity, not make it worse" and
+  chose not to fix it yet. A DAC-off shorter than a frame could be exempt (`Renderer::applyDac`).
+- A per-song "host tick multiplier" for DAW sync of the high-speed tempi (§219): weighed in
+  chat, not wanted yet -- Song mode plays 448 and 896 exactly; only a DAW with a tempo ceiling
+  (Cubase 300, FL 522) would need it.
+- An import that resets the hardware parameters to the model's console (the standalone kept a
+  De-click from an earlier session and every import played under it).
+
+**Engine items left open, for when they come up** (details in *Open issues* below):
+- The wave frame run's timing for two of STELLAR's instruments (frames streamed at twice the
+  ROM's rate, an extra frame the ROM never writes) -- a probe of PLAY/SPEED against §200/§211.
+- A table transpose that leaves the note table writes odd periods on the ROM (§217's note);
+  ChipBoy clamps at the floor.
+- The sweep's gap list in `docs/LSDJ_VERSION_MAP.md` (user decisions), and the versions not in
+  the archive.
+- 5.8.8 and 7.0.2 did not move `NR43` for a noise `P` in the §220 probe; not pursued.
+
+**Working here.** `tools/gate.sh core -t <tag>` while working, `tools/gate.sh all` before the
+push; `chipboy_recordtest --import-sav SAV NAME|working OUT.cbsong` (a `.lsdsng`/`.lsdprj` too)
+and `--trace-song FILE OUT.csv SECONDS` for a register CSV; `/root/lsdj/probe/*.py` for the ROM
+(`tsp_low.py`, `tempo_probe.py`, `noisep_probe.py`, `watch_rom.py` with `WROM=`, `chdump.py`,
+`wave_ons.py`). The user's saves and ROMs: `/root/lsdj/{cs,cg,lsm,bv,sng}/`. The standalone's
+state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` on Windows).
+
 ## Map
 
 - `Source/core/`: `Apu` (the chip), `Render` (BLEP, coupling, noise floor, RAW), `Driver`
@@ -17,6 +73,24 @@ design-log section the change touches. Update this file at the end of every chan
   `UI_DESIGN.md`, `HARDWARE_DRIVER_AUDIT.md`, `LSDJ_PARITY.md`, `LICENSING.md`.
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
+
+## Done (2026-09-17, last) -- the VEL column goes (§221, D-UI-34)
+
+- The user's decision: a cell's velocity duplicated `E` and `R`, no LSDj import used it, and MIDI
+  velocity will become a mapping. A tracker cell carries no velocity (`NoteEvent::velSet`
+  removed, `Driver::noteOn` rule 1 for every cell, the recorder writes a blank); MIDI keeps the
+  channel's Velocity mode. PU1, PU2 and NOI lost the column; WAV keeps it as the kit's second
+  sample, headed `note`, blank and inert off a kit row, labels of three characters
+  (`bank::kitSampleLabel`, kept unique by `bank::uniqueKitSampleName` at the LSDj import, a
+  dropped WAV and the Kits tab's rename; a double click takes a label or a number, a right
+  click lists the samples). `Grids.cpp` builds the lanes per channel now (`channelCols`,
+  `firstCol`); the lane's width is shared by the columns' weights.
+- Regenerated: the demo song and state (the demo's melodic channels now ignore velocity live,
+  `make_demo.py` statics, so the record test holds), the three Reaper projects, the automation
+  JSON, `PARAMETERS.md`, the six factory songs (`make_songs.py`'s `vNN` writes nothing).
+- Checked in screenshots (`chipboy_uishot --song`, a crafted `.cbsong` with kit notes): the three
+  lanes read `NOTE INS TBL CMD CMD`, WAV `NOTE NOTE INS TBL CMD CMD`; the second column is empty
+  off a kit, `--` on a kit row with no second sample, and `SD-` / `LT-` / `TIM` where one is named.
 
 ## Done (2026-09-17, later still) -- a noise `P` at the command rate (§220)
 
@@ -1314,7 +1388,7 @@ design-log section the change touches. Update this file at the end of every chan
   form still fits the pane at the default height — check the Windows and macOS builds
   show no scrollbar there.
 
-## Next steps
+## Next steps (the engine side, as they stood before the UI focus)
 
 - **The sweep is done on the archive**; the gap list (`docs/LSDJ_VERSION_MAP.md`) goes to the
   user for decisions before any of it is built. A new ROM goes through *Adding a version* there.

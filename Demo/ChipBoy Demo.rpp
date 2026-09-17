@@ -78,6 +78,33 @@
         DEFSHAPE 1 -1 -1
         PT 0 0.058823529 1
       >
+      <PARMENV 29:1027974992 0 1 0.5 "PU1 Velocity / ChipBoy"
+        EGUID {368CEECD-C64A-53CF-A6AC-8886EE2B66F1}
+        ACT 1 -1
+        VIS 1 1 1
+        LANEHEIGHT 0 0
+        ARM 0
+        DEFSHAPE 1 -1 -1
+        PT 0 1 1
+      >
+      <PARMENV 44:831461487 0 1 0.5 "PU2 Velocity / ChipBoy"
+        EGUID {F89F59F6-E889-5DB5-A8D7-7D17B59C6B45}
+        ACT 1 -1
+        VIS 1 1 1
+        LANEHEIGHT 0 0
+        ARM 0
+        DEFSHAPE 1 -1 -1
+        PT 0 1 1
+      >
+      <PARMENV 59:634947982 0 1 0.5 "WAV Velocity / ChipBoy"
+        EGUID {D8B1DCC5-D9ED-57A4-9655-164BFB5B7249}
+        ACT 1 -1
+        VIS 1 1 1
+        LANEHEIGHT 0 0
+        ARM 0
+        DEFSHAPE 1 -1 -1
+        PT 0 1 1
+      >
       <PARMENV 60:1843796930 0 1 0.5 "WAV Keyswitches / ChipBoy"
         EGUID {171CC4EC-F79A-5B0E-8B04-8653DCF96A53}
         ACT 1 -1

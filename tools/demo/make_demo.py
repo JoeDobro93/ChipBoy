@@ -359,7 +359,7 @@ def build_song():
     s = Song()
 
     # --- PU1: the lead -----------------------------------------------------
-    lead = 100   # velocity -> envelope start volume 12 of 15
+    lead = 100   # the MIDI velocity; the channel ignores it (section 221), the level is the instrument's
     # Bars 1-4: the theme.
     theme = [
         (69, 0), (72, .5), (76, 1), (81, 1.5), (79, 2), (76, 3),
@@ -583,6 +583,12 @@ def static_parameters():
     """
     return [
         ("ch1_source", 1),          # PU1 stops being omni: MIDI 1
+        # Section 221: a recorded cell carries no velocity, so the melodic
+        # channels ignore it live as well -- the performance and its recording
+        # play at the instruments' own levels, and the record test still holds.
+        ("ch1_velocity", 2),
+        ("ch2_velocity", 2),
+        ("ch3_velocity", 2),
         ("ch3_keyswitch", 1),
         ("ch4_keyswitch", 1),
         ("ch4_velocity", 1),        # instrument bank: velocity picks the drum

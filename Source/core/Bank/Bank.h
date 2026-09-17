@@ -481,6 +481,14 @@ struct Kit {
     bool        halfSpeed = false;       ///< a frame every other instant (LSDj's SPEED half)
 };
 
+/// Section 221: a kit sample's label in the lane -- the first three characters
+/// of its name, or its number (1-based) when the name is blank.
+std::string kitSampleLabel(const std::string& name, int index);
+/// Section 221: `wanted` as the name of sample `index` of `kit`, changed where
+/// its label collides with another sample's -- the third character replaced by
+/// a digit from 2, then the second and third -- so a kit's labels stay unique.
+std::string uniqueKitSampleName(const Kit& kit, int index, std::string wanted);
+
 /// Section 172: one mixed byte of a kit's two live samples.
 inline uint8_t kitMixByte(const Kit& k, uint8_t a, uint8_t b)
 {

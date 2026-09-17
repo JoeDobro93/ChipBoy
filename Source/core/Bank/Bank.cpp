@@ -56,6 +56,31 @@ Instrument Instrument::defaults(InstrumentType t, const char* name)
     return i;
 }
 
+std::string kitSampleLabel(const std::string& name, int index)
+{
+    std::string t;
+    for (char c : name) { if (t.size() >= 3) break; if (c == ' ' && t.empty()) continue; t += c; }
+    while (!t.empty() && t.back() == ' ') t.pop_back();
+    return t.empty() ? std::to_string(index + 1) : t;
+}
+
+std::string uniqueKitSampleName(const Kit& kit, int index, std::string wanted)
+{
+    auto taken = [&](const std::string& n) {
+        const std::string label = kitSampleLabel(n, index);
+        for (int i = 0; i < int(kit.samples.size()); ++i)
+            if (i != index && kitSampleLabel(kit.samples[size_t(i)].name, i) == label) return true;
+        return false;
+    };
+    if (!taken(wanted)) return wanted;
+    std::string label = kitSampleLabel(wanted, index);
+    while (label.size() < 3) label += ' ';
+    const std::string tail = wanted.size() > 3 ? wanted.substr(3) : std::string();
+    for (int d = 2; d <= 9; ++d) { const std::string n = label.substr(0, 2) + char('0' + d) + tail; if (!taken(n)) return n; }
+    for (int d = 10; d <= 99; ++d) { const std::string n = label.substr(0, 1) + std::to_string(d) + tail; if (!taken(n)) return n; }
+    return wanted;
+}
+
 const Instrument* Bank::instrument(int slot) const { return slot >= 1 && slot <= kInstrumentSlots && instruments[size_t(slot - 1)].used ? &instruments[size_t(slot - 1)] : nullptr; }
 const Table*      Bank::table(int slot) const      { return slot >= 1 && slot <= kTableSlots && tables[size_t(slot - 1)].used ? &tables[size_t(slot - 1)] : nullptr; }
 const Wave*       Bank::wave(int slot) const       { return slot >= 1 && slot <= kWaveSlots && waves[size_t(slot - 1)].used ? &waves[size_t(slot - 1)] : nullptr; }

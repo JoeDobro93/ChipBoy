@@ -86,7 +86,7 @@ struct Rig {
 /// column, which is what makes a cell's note bare.
 NoteEvent cellOn(int ch, uint8_t note, uint8_t inst, uint8_t vel = 100, uint32_t off = 0)
 {
-    NoteEvent e; e.channel = uint8_t(ch); e.kind = NoteEvent::NoteOn; e.source = NoteEvent::Tracker; e.velSet = true;
+    NoteEvent e; e.channel = uint8_t(ch); e.kind = NoteEvent::NoteOn; e.source = NoteEvent::Tracker;
     e.a = note; e.b = vel; e.inst = inst; e.offset = off; return e;
 }
 /// A cell with no note: its columns are the slots from that step on.
@@ -262,22 +262,45 @@ TEST_CASE("a chain transpose under the channel's floor comes round by octaves", 
     }
 }
 
-TEST_CASE("a cell's VEL is a start volume in any instance and a blank VEL is the instrument's", "[driver]")
+TEST_CASE("a cell carries no velocity: its note takes the instrument's level in any instance", "[driver]")
 {
-    // Section 9.1: a song file must sound the same whatever the channel's
-    // Velocity mode -- the demo's drums are picked by velocity under the bank
-    // mode and must not turn quiet in an instance set to start volume.
+    // Section 221 (D-UI-34): the VEL column is gone. A cell's `b` is never a
+    // level, whatever the channel's Velocity mode, so a song file sounds the
+    // same in any instance; a MIDI note still goes through the mode.
     Rig r;
     r.song.noteSource[1] = tracker::NoteSource::Tracker;
-    ChannelParams p; p.instrument = 1; p.velocityMode = 1; r.drv.setParams(1, p);   // instrument bank
-    auto w = r.block({ cellOn(1, 60, 1, 64) }, 256);
-    CHECK(last(w, 0xFF17)->value == 0x88);     // VEL 64 -> level 8, the mode notwithstanding
+    ChannelParams p; p.instrument = 1; p.velocityMode = 0; r.drv.setParams(1, p);   // start volume, for MIDI
+    const auto nr22 = [&r] { return int(r.drv.view(1).regs[2]); };                 // the register as written, deduped or not
+    r.block({ cellOn(1, 60, 1, 64) }, 256);
+    const int own = r.drv.view(1).envVol;
+    CHECK((nr22() >> 4) == own);                   // a cell's 64 is not level 8
+    CHECK((nr22() >> 4) != 8);
     r.block({ Rig::off(1, 60) }, 256);
-    p.velocityMode = 0; r.drv.setParams(1, p);  // start volume
-    NoteEvent blank = cellOn(1, 60, 1, 100); blank.velSet = false;
-    w = r.block({ blank }, 256);
-    CHECK((last(w, 0xFF17)->value >> 4) == r.drv.view(1).envVol);   // blank VEL: the Square lead's own volume
-    CHECK((last(w, 0xFF17)->value >> 4) != 12);                       // not what velocity 100 would give
+    r.block({ cellOn(1, 60, 1, 100) }, 256);
+    CHECK((nr22() >> 4) == own);                   // nor is 100 level 12
+    r.block({ Rig::off(1, 60) }, 256);
+    r.song.noteSource[1] = tracker::NoteSource::PianoRoll;
+    r.block({ Rig::on(1, 60, 64) }, 256);          // MIDI: velocity 64 -> level 8 under start volume
+    CHECK(nr22() == 0x88);
+}
+
+TEST_CASE("a kit sample's label is three characters and unique within its kit", "[bank]")
+{
+    // Section 221: the lane names a kit's second sample by the first three
+    // characters of its name; the kit keeps those unique where a sample is named.
+    CHECK(bank::kitSampleLabel("KCK", 0) == "KCK");
+    CHECK(bank::kitSampleLabel("Snare 909", 3) == "Sna");
+    CHECK(bank::kitSampleLabel("  HH", 1) == "HH");
+    CHECK(bank::kitSampleLabel("", 4) == "5");
+    bank::Kit k;
+    k.samples.resize(3);
+    k.samples[0].name = "KCK"; k.samples[1].name = "SN "; k.samples[2].name = "SNARE";
+    CHECK(bank::uniqueKitSampleName(k, 3, "HAT") == "HAT");
+    CHECK(bank::uniqueKitSampleName(k, 3, "KCK") == "KC2");         // the third character becomes a digit
+    CHECK(bank::uniqueKitSampleName(k, 3, "SNAP") == "SN2P");       // the rest of the name stays
+    CHECK(bank::uniqueKitSampleName(k, 2, "SNARE") == "SNARE");     // its own slot does not collide with itself
+    k.samples[2].name = "KC2";
+    CHECK(bank::uniqueKitSampleName(k, 3, "KCK") == "KC3");
 }
 
 TEST_CASE("tables step once per tick and stop at the end when told", "[driver]")
@@ -607,9 +630,9 @@ TEST_CASE("a cell's command is applied once and never occupies a slot", "[driver
     CHECK(last(w, 0xFF12)->value == 0x58);                         // E's volume at this note
     CHECK(r.drv.slot(0, 0).cmd == Cmd::None);                      // the slot is the lane's alone
     w = r.block({ cellOn(0, 67, 1, 127) }, 480);
-    CHECK(last(w, 0xFF12)->value == 0xF8);                         // the next plain note is the instrument's
+    CHECK(last(w, 0xFF12)->value == 0xD8);                         // the next plain note is the instrument's: vol 13
     w = r.block({ cellOn(0, 64, 1, 64) }, 480);
-    CHECK(last(w, 0xFF12)->value == 0x88);                         // and velocity 64 gets through
+    CHECK(last(w, 0xFF12)->value == 0xD8);                         // a cell's 64 is no level (section 221): still vol 13
 
     // The revert form still says "put the letter back", once.
     e = cellOn(0, 69, 1, 127); e.cmd1 = { Cmd::E, 5, 0, 0 };
@@ -1379,18 +1402,6 @@ TEST_CASE("a bare cell leaves the table where it is", "[driver][notes]")
     CHECK(r.drv.view(0).tableStep <= 2);
 }
 
-TEST_CASE("a tracker cell's velocity is honoured like MIDI's", "[driver][notes]")
-{
-    Rig r;
-    r.song.noteSource[0] = tracker::NoteSource::Tracker;
-    auto w = r.block({ cellOn(0, 69, 1, 64) }, 512);
-    ChannelParams p; p.instrument = 1; r.drv.setParams(0, p);
-    w = r.block({ cellOn(0, 69, 1, 64) }, 512);
-    CHECK(last(w, 0xFF12)->value == 0x88);               // 64 of 127 is level 8
-    w = r.block({ cellOn(0, 71, 1, 127) }, 512);
-    CHECK(last(w, 0xFF12)->value == 0xF8);
-}
-
 TEST_CASE("Note-off Release lets the sound finish", "[driver][notes]")
 {
     SECTION("a held envelope gets a decrease written, without a trigger") {
@@ -1824,7 +1835,7 @@ TEST_CASE("a cell's instrument column is exact under the velocity bank", "[drive
     auto w = r.block({ Rig::on(3, 60, 20) }, 512);                 // 11 + 20/8 = 13, Hat closed
     CHECK(last(w, 0xFF21)->value == 0x98);                         // vol 9, the low nibble always 8
     r.block({ Rig::off(3, 60) }, 512);
-    NoteEvent c = cellOn(3, 60, 13, 100); c.velSet = false;        // as recorded under the bank: the slot, no VEL
+    NoteEvent c = cellOn(3, 60, 13, 100);        // as recorded under the bank: the slot
     w = r.block({ c }, 512);                                       // the cell names 13, and stays there
     CHECK(last(w, 0xFF21)->value == 0x98);
     CHECK(r.drv.view(3).envRate == 1);                              // Hat closed's own rate
@@ -2254,7 +2265,7 @@ TEST_CASE("a slide holds its aim through the table and stops at the bottom of th
     in.used = true; in.table = 1; in.transpose = true;
     r.song.noteSource[2] = tracker::NoteSource::Tracker;
     ChannelParams p; p.instrument = 1; r.drv.setParams(2, p);
-    NoteEvent e = cellOn(2, 72, 1); e.velSet = false;
+    NoteEvent e = cellOn(2, 72, 1);
     std::vector<int> periods;
     int lo = 0;
     for (int b = 0; b < 900 && periods.size() < 400; ++b)
@@ -2298,7 +2309,7 @@ TEST_CASE("an envelope's levels come at the rate LSDj gives them", "[driver][zom
         in.env.mode = EnvMode::Chip;
         r.song.noteSource[0] = tracker::NoteSource::Tracker;
         ChannelParams p; p.instrument = 1; r.drv.setParams(0, p);
-        NoteEvent e = cellOn(0, 60, 1); e.velSet = false;
+        NoteEvent e = cellOn(0, 60, 1);
         r.block({ e, levelCell(0, 15, rate) }, 512);
         std::vector<uint64_t> at;
         for (int b = 0; b < 400 && at.size() < 12; ++b)
@@ -4905,7 +4916,7 @@ TEST_CASE("R steps the level on the noise channel too", "[driver][commands][nois
         r.song.noteSource[3] = tracker::NoteSource::Tracker;
         auto& i = r.bank.instruments[1];
         i = bank::Instrument::defaults(bank::InstrumentType::Noise, "Roll");
-        i.used = true; i.env.mode = bank::EnvMode::Chip; i.envRate = 0;
+        i.used = true; i.env.mode = bank::EnvMode::Chip; i.envRate = 0; i.envVol = 12;   // section 221: the cell brings no level, so the instrument leaves room
         ChannelParams p; p.instrument = 2; p.velocityMode = 2; r.drv.setParams(3, p);
         NoteEvent e = cellOn(3, 60, 2);
         e.cmd1 = { Cmd::R, int16_t(x), 0, 0 };          // one retrigger

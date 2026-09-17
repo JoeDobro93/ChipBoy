@@ -1074,6 +1074,9 @@ project load order audible.
   the driver actually did: the instrument the note loaded (blank when the note was
   bare), the velocity, the table override, and the two command slots as they stood at
   that step — so a Trk playback of the recorded song reproduces the performance.
+  *Revised 2026-09-17: see [`docs/UI_DESIGN.md`](UI_DESIGN.md) D-UI-34 and
+  [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §221:* the VEL column is gone -- a cell
+  carries no velocity; WAV's second column names a kit's second sample by its label.
   *Revised 2026-09-08 (second): see [`docs/COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md)
   §§11 and 14–17:* the tab is renamed **Tracker**; a phrase's length is typed, 1–64
   steps, and one bar may take its own count instead in the chain's own **STP** column.

@@ -501,9 +501,10 @@ def parse_cell(token, channel, bank, where):
         if kind != wanted and not (channel == 2 and kind == KIT):
             raise ValueError("%s: instrument %r is not a %s instrument" % (where, name, CHANNEL_NAME[channel]))
     if vel:
-        cell.vel = int(vel[1:])
-        if not 1 <= cell.vel <= 127:
-            raise ValueError("%s: velocity %d is outside 1-127" % (where, cell.vel))
+        # Section 221: a cell carries no velocity any more; the token still parses
+        # (the songs were written with accents) and writes nothing.
+        if not 1 <= int(vel[1:]) <= 127:
+            raise ValueError("%s: velocity %d is outside 1-127" % (where, int(vel[1:])))
     if table:
         name = table[1:]
         if name not in bank.table_slot:

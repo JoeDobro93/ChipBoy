@@ -784,7 +784,7 @@ TEST_CASE("a plain note records its instrument, a bare note leaves the column bl
     REQUIRE(p.recordNote(0, 0.0, 60, 100, false, true, 5, 2, e, w, m));
     CHECK(m.row == 0); CHECK(m.step == 0);
     CHECK(m.cell.note == 60);
-    CHECK(m.cell.vel == 100);
+    CHECK(m.cell.vel == 0);                       // section 221: a recorded note carries no velocity
     CHECK(m.cell.inst == 5);
     CHECK(m.cell.table == 2);
     CHECK(m.cell.cmd1.cmd == bank::Cmd::E); CHECK(m.cell.cmd1.a == 12); CHECK(m.cell.cmd1.b == 3);
@@ -793,7 +793,7 @@ TEST_CASE("a plain note records its instrument, a bare note leaves the column bl
     REQUIRE(p.recordNote(0, 6.0, 62, 80, false, true, 5, 2, e, w, m));
     CHECK(m.step == 1);
     CHECK(m.cell.inst == 5);
-    CHECK(m.cell.vel == 80);
+    CHECK(m.cell.vel == 0);
     CHECK(m.cell.cmd1.cmd == bank::Cmd::E);      // a plain note carries the slots in force
     // A bare note (an overlap) records with the column blank and no slots.
     REQUIRE(p.recordNote(0, 12.0, 64, 70, false, false, 5, 0, e, w, m));

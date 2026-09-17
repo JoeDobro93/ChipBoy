@@ -97,7 +97,7 @@ void Player::fireStep(int ch, int row, int step, uint8_t slot, uint32_t offset, 
     e.transpose = song_->transposeAt(ch, row);       // the chain row's (section 48)
     if (!notes) { e.kind = NoteEvent::Command; e.hybrid = true; }
     else if (c.note == kNoteOff) { e.kind = NoteEvent::NoteOff; e.a = lastNote_[ch]; lastNote_[ch] = 0; }
-    else if (c.note) { e.kind = NoteEvent::NoteOn; e.a = c.note; e.b = velocityOf(c); e.velSet = c.vel != 0; lastNote_[ch] = c.note; }
+    else if (c.note) { e.kind = NoteEvent::NoteOn; e.a = c.note; e.b = velocityOf(c); lastNote_[ch] = c.note; }   // section 221: `b` is a kit's second sample, no level
     else e.kind = NoteEvent::Command;
     out.push_back(e);
 }
@@ -375,7 +375,9 @@ bool Player::recordNote(int ch, double tick, uint8_t note, uint8_t velocity, boo
     out.row = uint16_t(std::clamp(row, 0, 65535));
     out.step = uint8_t(std::clamp(step, 0, kMaxSteps - 1));
     out.cell.note = note;
-    out.cell.vel = uint8_t(std::clamp<int>(velocity, 0, 127));
+    // Section 221: a cell carries no velocity; the note keeps its instrument's level.
+    (void)velocity;
+    out.cell.vel = 0;
     // The instrument column is what the note loaded, and blank when the note
     // was bare -- so an overlap records as a bare cell and plays back bare.
     out.cell.inst = plain ? instrument : 0;

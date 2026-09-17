@@ -68,10 +68,6 @@ struct NoteEvent {
     bool     held = false;
     bool     plain = true;       ///< it loaded the instrument; false = a bare note
     uint8_t  loaded = 0;         ///< the slot it loaded, or the one sounding under a bare note
-    /// Tracker cells: the VEL column was filled, so `b` is a start volume
-    /// whatever the channel's Velocity mode; blank keeps the instrument's own
-    /// volume. A song file must sound the same in any instance (section 9.1).
-    bool     velSet = false;
     /// Tracker cells: the chain row's transpose (section 48), added at the
     /// note-on when the instrument's Transpose is on. MIDI notes carry 0.
     int8_t   transpose = 0;

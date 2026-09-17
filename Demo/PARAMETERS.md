@@ -152,9 +152,10 @@ quantised, and tracker cells are always on ticks.
 
 ## What the demo automates
 
-`ChipBoy Demo.rpp` draws `ch1_source`, `ch3_keyswitch`, `ch4_keyswitch`,
-`ch4_velocity`, `ch1_cmd1_type`, `ch1_cmd1_x`, `ch1_cmd2_type`, `ch1_cmd2_x`,
-`ch1_cmd2_y`, `ch2_instrument`, `ch2_cmd1_type`, `ch2_cmd1_x`, `ch2_cmd1_y`,
+`ChipBoy Demo.rpp` draws `ch1_source`, `ch1_velocity`, `ch2_velocity`,
+`ch3_velocity`, `ch3_keyswitch`, `ch4_keyswitch`, `ch4_velocity`,
+`ch1_cmd1_type`, `ch1_cmd1_x`, `ch1_cmd2_type`, `ch1_cmd2_x`, `ch1_cmd2_y`,
+`ch2_instrument`, `ch2_cmd1_type`, `ch2_cmd1_x`, `ch2_cmd1_y`,
 `ch3_cmd1_type`, `ch3_cmd1_x`, `ch3_cmd2_type`, `ch3_cmd2_x`, `ch4_cmd1_type`,
 `ch4_cmd1_x`, `ch4_cmd1_y`, `declick`, `model`.
 

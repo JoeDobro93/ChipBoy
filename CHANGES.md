@@ -26,6 +26,23 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-17 -- the VEL column goes; WAV's second column is a kit's second sample by label
+
+`docs/UI_DESIGN.md` D-UI-34, `docs/COMMANDS_AND_TEMPO.md` §221; spec 9 (a cell carries a
+velocity) and 10.2 (velocity as a start volume for cells) revised. The user's decision: a cell's
+velocity duplicated `E` and `R`, no LSDj import used it, and MIDI velocity is to become an
+instrument/command mapping. A tracker cell carries no velocity now -- its note takes the
+instrument's level in any instance; `NoteEvent::velSet` is gone; the recorder writes a blank.
+MIDI velocity keeps the channel's Velocity mode for live and Hybrid notes. The column is gone
+from PU1, PU2 and NOI; WAV keeps it, headed `note`, blank and inert unless the row's instrument
+in force is a kit, and there it names the second sample by a three-character label -- the
+first three characters of the sample's name, which a kit keeps unique
+(`bank::kitSampleLabel`, `bank::uniqueKitSampleName`, applied by the LSDj import, a dropped
+WAV and the Kits tab's rename). The demo's melodic channels ignore velocity live so the record
+test still holds; the demo song, its state, the Reaper projects and the six factory songs (their
+`vNN` accents write nothing) are regenerated. Old song files keep any `v` values; on pulse and
+noise they do nothing.
+
 ### 2026-09-17 -- a noise `P` moves at the instrument's command rate
 
 `docs/COMMANDS_AND_TEMPO.md` §220. `NOSTLGIA`'s opening noise sweeps (`P FF` on instruments with

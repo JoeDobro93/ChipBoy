@@ -721,7 +721,10 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
     // The cell's own D, whether it came with the note or was held for this
     // tick by a Hybrid cell; then a slot's.
     const int delay = delayFor(ch, &v.noteCmd[0], &v.noteCmd[1]);
-    const uint8_t velRule = cell ? (cell->velSet ? 2 : 1) : 0;
+    // Section 221: a tracker cell carries no velocity -- its note takes the
+    // instrument's own level (rule 1); a MIDI note goes through the channel's
+    // Velocity mode (rule 0). On a kit `b` is the second sample, not a level.
+    const uint8_t velRule = cell ? 1 : 0;
     if (delay >= 0) {
         v.pendingOn = true; v.pendingNote = note; v.pendingVel = vel; v.pendingPlain = plain; v.pendingVelRule = velRule;
         v.delay = int16_t(delay);
@@ -917,7 +920,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     restartPitchClock(ch);
     // volume from velocity: a MIDI note asks the Velocity mode, a cell's VEL is
     // a start volume in any instance and a blank VEL is the instrument's own
-    const bool velToVolume = v.velRule == 2 || (v.velRule == 0 && v.p.velocityMode == 0);
+    const bool velToVolume = v.velRule == 0 && v.p.velocityMode == 0;
     if (velToVolume && (core.type == InstrumentType::Pulse || core.type == InstrumentType::Noise)) v.envVol = levelFromVelocity(vel);
     applyLevelParam(ch);
     // A shaped envelope owns the level from here (section 27): the chip's own

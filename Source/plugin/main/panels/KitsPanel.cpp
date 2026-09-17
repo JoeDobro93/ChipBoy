@@ -234,7 +234,8 @@ void KitsPanel::rebuildContent()
     const int cur = sample_;
     {
         auto f = std::make_unique<NameField>();
-        f->onChange = [this, cur](const String& n) { editKit("sample " + String(cur + 1) + " named " + n, [cur, n](bank::Kit& k) { if (cur >= 0 && cur < int(k.samples.size())) k.samples[size_t(cur)].name = n.toStdString(); }); };
+        // Section 221: the lane shows a sample by the first three characters of its name, so a kit keeps those unique.
+        f->onChange = [this, cur](const String& n) { editKit("sample " + String(cur + 1) + " named " + n, [cur, n](bank::Kit& k) { if (cur >= 0 && cur < int(k.samples.size())) k.samples[size_t(cur)].name = bank::uniqueKitSampleName(k, cur, n.toStdString()); }); };
         f->setEnabled(have);
         name_ = grid->addField("Name", have ? String() : "select a sample", std::move(f), NameField::kHeight, 0, 2);
     }
@@ -438,6 +439,7 @@ void KitsPanel::appendSample(int slot, const bank::KitSample& sample)
         for (const auto& s : k.samples) note = std::max(note, int(s.note));
         bank::KitSample s = sample;
         s.note = uint8_t(std::min(127, note + 1));
+        s.name = bank::uniqueKitSampleName(k, int(k.samples.size()), s.name);   // section 221
         k.samples.push_back(std::move(s));
     });
     selfBank_ = processor.bank().get();

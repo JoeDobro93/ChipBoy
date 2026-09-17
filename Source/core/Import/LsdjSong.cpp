@@ -421,7 +421,7 @@ struct Reader {
             const size_t end = len > 0 ? std::min(src.size(), start + size_t(len) * 32) : src.size();
             const bool loops = loopOn || ((lk->loopBits >> (digit - 1)) & 1);
             bank::KitSample out;
-            out.name = src.empty() ? std::string() : ks[size_t(digit - 1)].name;
+            out.name = bank::uniqueKitSampleName(kit, int(kit.samples.size()), src.empty() ? std::string() : ks[size_t(digit - 1)].name);   // section 221
             if (atk) { out.data.assign(src.begin(), src.begin() + std::ptrdiff_t(end)); out.loopPoint = uint32_t(start); out.loop = loops ? bank::KitLoop::FromPoint : bank::KitLoop::Once; }
             else { out.data.assign(src.begin() + std::ptrdiff_t(start), src.begin() + std::ptrdiff_t(end)); out.loopPoint = 0; out.loop = loops ? bank::KitLoop::Loop : bank::KitLoop::Once; }
             out.note = uint8_t(36 + int(kit.samples.size()));
