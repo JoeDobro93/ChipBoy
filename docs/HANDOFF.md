@@ -40,7 +40,14 @@ design-log section the change touches. Update this file at the end of every chan
 - **`chipboy_recordtest`**: `--rate`, `--block`, `--console dmg|cgb|raw` for `--play-song`.
   Sample rate and block size do not change the WATER2 kit render (correlation >= 0.97 across
   44.1/96 kHz and 64/2048); the CGB model halves the kit's RMS and gives a crest of 8.6
-  against 3.8 -- the likeliest "standalone sounds bad" if its persisted Model is CGB.
+  against 3.8. **Settled (2026-09-17)**: deleting the standalone's state file
+  (`ChipBoy.settings` under the app-data folder: `%APPDATA%\ChipBoy`, `~/Library/Application
+  Support/ChipBoy`, `~/.config/ChipBoy`) fixed the standalone's kit sound. The file was gone
+  before it could be decoded, so which value it was (the Model, De-click, Soften, a master
+  volume, a channel parameter) is not known; a fresh import plays under whatever global and
+  channel parameters the state restored. If it recurs: keep the file, base64-decode its
+  `filterState` value and read the parameter tree. An import that resets the hardware
+  parameters to the model's console would close this by design; not done, a decision.
 
 ## Done (2026-09-16, later still) -- the strip scopes as left and right monitors
 
