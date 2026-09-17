@@ -1180,6 +1180,8 @@ struct PhraseGrid::Impl {
     std::array<int, 4> phraseSlot{}, tsp{}, tickCount{ { 96, 96, 96, 96 } };
     std::array<std::array<bool, kMax>, 4> reached{};
     Segmented source[4];
+    /// The lane's own follow (D-UI-38), over the STEP column.
+    IconButton follow{ IconButton::Icon::Follow };
     GridCore core;
     TypedEntry box;
     int octave = 4;
@@ -1204,6 +1206,12 @@ struct PhraseGrid::Impl {
     explicit Impl(PhraseGrid& o) : owner(o)
     {
         core.rows = PhraseGrid::kVisibleSteps; core.rowH = kRowHeight; core.headerH = kHeaderHeight;
+        follow.setClickingTogglesState(true);
+        follow.setToggleState(true, juce::dontSendNotification);
+        follow.setTooltip("Follow: the lanes move with the transport, each to the row its channel is playing. Off, they stay on the rows they show while the song plays. The chain has a follow of its own.");
+        follow.onClick = [this] { if (owner.onFollowChange) owner.onFollowChange(follow.getToggleState()); };
+        follow.setBounds(2, 3, IconButton::kWidth, IconButton::kHeight);
+        owner.addAndMakeVisible(follow);
         for (int ch = 0; ch < 4; ++ch) {
             // The switch is the playback source (sections 14 and 20): the
             // channel plays the incoming MIDI, its own cells, or both -- MIDI
@@ -2051,7 +2059,7 @@ struct PhraseGrid::Impl {
         const int capY = kHead1 + kHead2, capH = core.headerH - capY;
         for (size_t i = 1; i < core.cols.size(); ++i)
             draw::caption(g, core.cols[i].title, juce::Rectangle<int>(core.cols[i].x + 6, capY, core.cols[i].w - 6, capH), juce::Justification::centredLeft, textDim, 10.0f);
-        draw::caption(g, "Step", juce::Rectangle<int>(6, 0, 30, core.headerH), juce::Justification::centredLeft, textDim, 10.0f);
+        draw::caption(g, "Step", juce::Rectangle<int>(6, capY, 30, capH), juce::Justification::centredLeft, textDim, 10.0f);
     }
 };
 
@@ -2081,6 +2089,7 @@ void PhraseGrid::setBank(std::shared_ptr<const bank::Bank> bank)
 {
     impl_->bank = std::move(bank);
 }
+void PhraseGrid::setFollow(bool on) { impl_->follow.setToggleState(on, juce::dontSendNotification); }
 int PhraseGrid::steps() const { return impl_->steps(); }
 void PhraseGrid::setPlayingStep(int ch, int step)
 {

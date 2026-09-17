@@ -43,6 +43,7 @@ public:
     {
         v.setProperty("tick", juce::String(cursor_), nullptr);
         v.setProperty("follow", followOn_, nullptr);
+        v.setProperty("laneFollow", laneFollow_, nullptr);
         v.setProperty("zoom", chain_.zoom(), nullptr);
     }
     void restoreView(const juce::ValueTree& v) override;
@@ -107,9 +108,10 @@ private:
     std::array<int, 4> lastStep_{ { -2, -2, -2, -2 } };
     std::array<int, 4> shownRow_{ { -1, -1, -1, -1 } };
     bool songMode_ = false, owns_ = false, wasPlaying_ = false, loopOn_ = false;
-    /// The view follows the transport (UI_DESIGN D-UI-16); off, the play
-    /// head and the lanes are the user's while the song plays.
-    bool followOn_ = true;
+    /// Two follows (UI_DESIGN D-UI-16, D-UI-38): the chain's scrolls the
+    /// timeline with the play head; the lane's moves the play head -- and so
+    /// the lanes -- with the transport. Off, each stays where the user put it.
+    bool followOn_ = true, laneFollow_ = true;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TrackerPanel)
 };

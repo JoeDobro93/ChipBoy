@@ -76,8 +76,9 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     // phrase can be edited while this one is heard.
     follow_.setClickingTogglesState(true);
     follow_.setToggleState(true, dontSendNotification);
-    follow_.setTooltip("Follow the transport: the play head, the lanes and the chain's scroll track what is playing. Off, they stay where you put them while the song plays.");
+    follow_.setTooltip("Follow: the chain scrolls with the play head while the song plays. Off, it stays where you scrolled it. The lanes have a follow of their own, over the STEP column.");
     follow_.onClick = [this] { followOn_ = follow_.getToggleState(); };
+    grid_.onFollowChange = [this](bool on) { laneFollow_ = on; };
 
     // The zoom (D-UI-35): pixels per tick on the chain, the grid derived
     // from the first time signature; the readout beside it says the grid.
@@ -383,6 +384,7 @@ void TrackerPanel::songChanged()
 void TrackerPanel::restoreView(const juce::ValueTree& v)
 {
     if (v.hasProperty("follow")) { followOn_ = bool(v["follow"]); follow_.setToggleState(followOn_, dontSendNotification); }
+    if (v.hasProperty("laneFollow")) { laneFollow_ = bool(v["laneFollow"]); grid_.setFollow(laneFollow_); }
     if (v.hasProperty("zoom")) { chain_.setZoom(double(v["zoom"])); zoom_.setValue(chain_.zoom(), dontSendNotification); }
     const auto s = processor.song();
     if (v.hasProperty("tick")) cursor_ = std::max<int64_t>(0, v["tick"].toString().getLargeIntValue());
@@ -555,8 +557,8 @@ void TrackerPanel::tick()
     // Follow (D-UI-16): the play head is the transport's while it plays, and
     // a pause leaves it where it stopped. The chain redraws on every move;
     // the lanes only when a channel's row changed.
-    if ((playing || wasPlaying_) && followOn_ && at.tick != cursor_ && processor.ownsTransport()) { cursor_ = at.tick; chain_.setSong(s, cursor_); }
-    else if (playing && followOn_ && at.tick != cursor_) { cursor_ = at.tick; chain_.setSong(s, cursor_); }
+    if ((playing || wasPlaying_) && laneFollow_ && at.tick != cursor_ && processor.ownsTransport()) { cursor_ = at.tick; chain_.setSong(s, cursor_); }
+    else if (playing && laneFollow_ && at.tick != cursor_) { cursor_ = at.tick; chain_.setSong(s, cursor_); }
     chain_.setTransport(playing, at.tick, followOn_);
     // The readout: the play head in the song's own bars (section 222).
     if (s) {
@@ -589,7 +591,7 @@ void TrackerPanel::tick()
     }
     // Past sixteen steps the lane is taller than its pane, so it follows the
     // step the selected channel is playing.
-    if (playing && followOn_ && gridSteps_ > PhraseGrid::kVisibleSteps) {
+    if (playing && laneFollow_ && gridSteps_ > PhraseGrid::kVisibleSteps) {
         const int st = lastStep_[size_t(channel)];
         if (st >= 0) scroll_.scrollToKeepVisible(PhraseGrid::kHeaderHeight + st * PhraseGrid::kRowHeight, PhraseGrid::kRowHeight);
     }
@@ -606,8 +608,15 @@ void TrackerPanel::paint(Graphics& g)
     for (int i = 0; i < 4; ++i) {
         const auto r = groups_[size_t(i)];
         if (r.isEmpty()) continue;
+        if (i == 3) {
+            // The transport in a panel of its own, the chain's width and
+            // border, its captions inset as the chain's are (D-UI-36).
+            draw::panel(g, r, colours::panel2, colours::line, 4.0f);
+            draw::caption(g, kGroupNames[i], { r.getX() + 6, r.getY() + 2, r.getWidth() - 12, kCaption }, Justification::centredLeft, colours::textDim, 9.0f);
+            continue;
+        }
         draw::caption(g, kGroupNames[i], { r.getX(), r.getY(), r.getWidth(), kCaption }, Justification::centredLeft, colours::textDim, 9.0f);
-        if (i == 0 || i == 2) continue;                     // the hairline stands before the second group of a row, and before the transport's column
+        if (i != 1) continue;                               // the hairline stands before the second group of a row
         g.setColour(colours::lineSoft);
         g.fillRect(r.getX() - kGroupGap / 2, r.getY() + 2, 1, r.getHeight() - 4);
     }
@@ -671,9 +680,10 @@ void TrackerPanel::resized()
     // TRANSPORT, over the chain (D-UI-36): the four icons, the LED and the
     // readout on its first row, the zoom on its second.
     groups_[3] = right;
-    auto t1 = right.removeFromTop(kCaption + kToolRow);
-    right.removeFromTop(kRowGap);
-    auto t2 = right.removeFromTop(kCaption + kToolRow);
+    auto inner = right.reduced(4, 0).withTrimmedTop(2);
+    auto t1 = inner.removeFromTop(kCaption + kToolRow);
+    inner.removeFromTop(kRowGap);
+    auto t2 = inner.removeFromTop(kCaption + kToolRow - 2);
     from = t1.getX();
     for (auto* b : { &play_, &stop_, &loop_, &follow_ }) { place(t1, *b, IconButton::kWidth, IconButton::kHeight); t1.removeFromLeft(4); }
     t1.removeFromLeft(4);

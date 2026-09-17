@@ -26,6 +26,17 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-17 -- two follows; the transport boxed; the lit step follows an H loop
+
+`docs/UI_DESIGN.md` D-UI-38 (D-UI-16 revised), D-UI-36 amended. The user's first notes on the
+timeline: the lane gets a follow of its own over the STEP column, so the lanes can track the
+channels while the chain stays where it was scrolled, and the other way round; the transport
+sits in a bordered panel of the chain's exact width. A bug beside them: the lane's playing mark
+walked only as many positions as the phrase has steps, so under a counted `H` it ran to the
+bottom and stayed while the audio looped; it walks the whole play order now. The trace tool
+gains `--from TICK` to measure what a locate lands on against the same stretch played through
+(READROOM: within 0.17 ticks after the step landed in).
+
 ### 2026-09-17 -- the chain is drawn in time; the own transport locates; time signatures
 
 `docs/UI_DESIGN.md` D-UI-35 to D-UI-37, `docs/COMMANDS_AND_TEMPO.md` §222 and §223,

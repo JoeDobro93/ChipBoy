@@ -12,8 +12,8 @@ tab around a **tick**: the chain is drawn in time (D-UI-35, §222, §223, `docs/
 the lanes show each channel's own row at the play head, the plugin's own transport locates, and
 the song carries time signatures. The gate is green (`tools/gate.sh all`: 334 core tests, 11
 plugin checks, the parameter table, the 1 MB-stack link test); `main` is pushed with every commit
-and the user builds Windows and macOS from it -- **this round's UI has only been seen through
-`chipboy_uishot` on Linux; the user has not clicked it yet.**
+and the user builds Windows and macOS from it -- the user has clicked the first build
+and sent four notes, answered in the second pass below; the rest is still Linux-shot only.**
 
 **How the round was designed.** Four rounds of an interactive HTML mockup built from READROOM's
 real row tables (the user's `readtheroom_v92L.lsdprj` under 9.2.L: every 132-tick section is one
@@ -90,6 +90,35 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
   `UI_DESIGN.md`, `HARDWARE_DRIVER_AUDIT.md`, `LSDJ_PARITY.md`, `LICENSING.md`.
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
+
+## Done (2026-09-17, UI round 1, second pass) -- the user's first notes on the timeline
+
+- **The lit step follows an `H` loop.** `playingStepOf` walked only `steps` positions of the play
+  order, so under a counted hop (PU2's phrase 1C: 44 positions of 16 steps) the mark ran to the
+  bottom and stayed while the audio looped. It walks every position now and reports the step
+  that position plays, so the mark comes back up the phrase with the replay.
+- **Two follows** (D-UI-38, D-UI-16 revised): the chain's icon scrolls the timeline with the play
+  head; the lane's own icon, over the STEP column (`PhraseGrid::onFollowChange`), moves the play
+  head -- and so the lanes -- with the transport. Either can be off alone. `ui_view` keeps
+  `laneFollow` beside `follow`.
+- **The transport in a panel of its own** (D-UI-36 amended), the chain's exact width and border,
+  captions inset as the chain's.
+- **A locate lands where playing through would be** -- measured, not assumed: `chipboy_recordtest
+  --trace-song FILE OUT.csv SECONDS --from TICK` locates the own transport before playing
+  (`Clock::ownLocate`), and `scratchpad/cmp_trace.py` (not in the tree; a few lines) compares the
+  trigger writes per channel against the same stretch of a played-through trace, by nearest
+  match. READROOM over 600 ticks after each locate: at 2112, 4752 and 5904 (row boundaries)
+  every PU1, PU2 and NOI trigger matches within 0.24 ticks (the ROM word against the nominal
+  tick in the comparator) and WAV's thousands of frame writes within 0.93, the one unmatched
+  write being at the landing instant (the frame stream of a wave note that began before it);
+  at 2200 (88 ticks into PU1's row 16, an `H`-looped phrase) every later trigger matches within
+  0.17 ticks, the only differences the step landed in (fired on landing, section 47) and a
+  table retrigger of the note that began before the locate, which no locate can reproduce. So the grooves and `H` hops "up to that point in
+  that channel" are honoured (the row tables are measured from tick 0, section 135); what a
+  jump cannot carry is the driver's state from the cells before it -- the instrument's
+  persistent letters, a table mid-run -- which is LSDj's own limit too.
+- **Left open**: a "catch-up" locate that replays the cells before the landing step silently to
+  rebuild the driver's state (E, V, tables) -- a design question for the user, not a bug.
 
 ## Done (2026-09-17, UI round 1) -- the chain in time, the play head, time signatures (D-UI-35..37, §222, §223)
 

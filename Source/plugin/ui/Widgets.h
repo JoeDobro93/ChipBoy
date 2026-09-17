@@ -344,6 +344,10 @@ public:
     /// TSP in this channel's head: its row's transpose (section 48, D-UI-37).
     std::function<void(int ch, int semis)> onTransposeChange;
     std::function<void(int ch, bool armed)> onArmChange;       ///< the channel's record arm (section 14)
+    /// The lane's own follow, over the STEP column (D-UI-38): on, the lanes
+    /// move with the transport; off, they stay on the rows they show.
+    std::function<void(bool on)> onFollowChange;
+    void setFollow(bool on);
     std::function<void(int row)> onCursorRow;                  ///< the cursor moved: keep this row in view
     /// The right-click list's first entry on a slot field: open that item's
     /// own tab with it selected (section 35).

@@ -36,7 +36,7 @@
 //   chipboy_recordtest --write-state FILE    write the hybrid project's state
 //   chipboy_recordtest --check-state FILE    build it and compare against FILE
 //   chipboy_recordtest --play-song FILE [bars]   play a song file and hear it
-//   chipboy_recordtest --trace-song FILE OUT.csv [seconds] [--tempo BPM]
+//   chipboy_recordtest --trace-song FILE OUT.csv [seconds] [--tempo BPM] [--from TICK]
 //                                        the register writes a song file makes, in
 //                                        the lsdjref trace's CSV, to set beside an
 //                                        LSDj trace; --tempo plays it at another
@@ -473,7 +473,7 @@ bool buildHybridProject(ChipBoyProcessor& p, const juce::File& songFile, const A
 /// parity harness's compare tool drives a case -- and every register write is
 /// written as `cycle,addr,name,value`, the lsdjref trace's columns, so an
 /// imported song can be set beside the LSDj trace of the save it came from.
-int traceSong(const juce::File& file, const juce::File& out, double seconds, double bpm)
+int traceSong(const juce::File& file, const juce::File& out, double seconds, double bpm, int64_t fromTick)
 {
     auto bank = std::make_unique<bank::Bank>();
     auto song = std::make_unique<tracker::Song>();
@@ -496,6 +496,9 @@ int traceSong(const juce::File& file, const juce::File& out, double seconds, dou
     clock.setConfig(cc);
     if (!song->tempoMap.empty()) clock.setTempoMap(song->tempoMap.data(), song->tempoMap.size());
     clock.setOwnsTransport(true);
+    // `--from TICK` locates before playing (section 223): what a jump into
+    // the middle of a song lands on, against the same stretch played through.
+    if (fromTick > 0) clock.ownLocate(fromTick);
     clock.ownPlay();
     std::vector<driver::RegWrite> log;
     log.reserve(1u << 18);
@@ -750,6 +753,7 @@ int main(int argc, char** argv)
     juce::String importModel;                                    // --model NAME: read the song as that version rather than the format's default
     juce::File traceFile, traceOut; double traceSeconds = 20.0;  // --trace-song FILE OUT.csv [seconds]
     double traceBpm = 0.0;                                       // --tempo BPM: play it at this tempo instead
+    int64_t traceFrom = 0;                                       // --from TICK: locate there before playing (section 223)
     int playBars = 8;                                         // --play-song's default (section 24)
     bool dump = false;
     for (int i = 1; i < argc; ++i) {
@@ -768,6 +772,7 @@ int main(int argc, char** argv)
         else if (key == "--check-state") checkState = juce::File(juce::String(argv[++i]));
         else if (key == "--model") importModel = juce::String(argv[++i]);
         else if (key == "--tempo") traceBpm = std::clamp(juce::String(argv[++i]).getDoubleValue(), driver::kMinSongBpm, driver::kMaxSongBpm);
+        else if (key == "--from" && i + 1 < argc) traceFrom = std::max<int64_t>(0, juce::String(argv[++i]).getLargeIntValue());
         else if (key == "--import-sav" && i + 3 < argc) {
             importSav = juce::File(juce::String(argv[++i])); importWhich = juce::String(argv[++i]); importOut = juce::File(juce::String(argv[++i]));
         }
@@ -833,7 +838,7 @@ int main(int argc, char** argv)
     }
 
     /* ---- --trace-song: the register writes of a song file, as a CSV ---- */
-    if (traceFile != juce::File()) return traceSong(traceFile, traceOut, traceSeconds, traceBpm);
+    if (traceFile != juce::File()) return traceSong(traceFile, traceOut, traceSeconds, traceBpm, traceFrom);
 
     /* ---- --play-song: a song file plays, and is heard (section 24) ---- */
     // Nothing under Demo/ is needed for this, so it runs before the demo is
