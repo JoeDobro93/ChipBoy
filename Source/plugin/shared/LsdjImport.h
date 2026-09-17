@@ -19,6 +19,10 @@ struct ProjectSong {
     juce::String name;                   ///< the 8-character name inside the file
     int formatVersion = -1;
     std::vector<uint8_t> song;           ///< 32 KB
+    std::vector<lsdj::LsdjKit> kits;     ///< section 218: the kits an .lsdprj carries, by the song's own numbers; empty for an .lsdsng
+    std::vector<int> kitNumbers;         ///< the kit numbers its allocated kit instruments name
+    /// Whether every kit the song names is carried inside the file.
+    bool kitsInside() const;
 };
 
 /// What the import dialog lists: a save read into memory with its index, the

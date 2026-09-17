@@ -6383,3 +6383,26 @@ note whose own number is below the floor (a MIDI key, a tracker cell under C2) s
 as C4 says; only the transposes come round. The bend wheel and the pitch effects keep
 section 125's floor. Both note-on paths get it: the instrument's and the bare cell's
 (section 177).
+
+## 218. Project files: an `.lsdsng` is the save's song, an `.lsdprj` brings its kits
+
+The user's `.lsdsng` files (Computer Savvy, eight songs, LSDManager exports of the same save)
+import byte for byte as the save's files do -- the eight `.cbsong` pairs differ in nothing but
+the tab's name. The stream is the save's, one block after another (plan section 1a).
+
+An `.lsdprj` (LSDPatcher's export; the user's eight 9.2.L songs) appends the kits the song
+names after its last block: `usedKits()` in its `LSDSavFile` walks all 64 instrument slots,
+takes bytes 2 and 9 of every slot whose type byte is 2, masked `& 3F`, into a sorted set, and
+`writeKits()` writes each as the 16 KB bank `kit + 8`, plus 5 past bank 26 (the ROM's code
+banks 27-31). Its import maps the same sorted set, in order, onto the banks it places. All
+eight files fit the rule (the set's size is the count of trailing `60 40` banks). The bytes
+keep the exporting ROM's numbers: SPECIAL DELIVERY's second kit is `1D` in the file and `17`
+in the save the ROM beside it matches, both SNARES.
+
+ChipBoy: `projectKits()` reads the trailing banks back from the file's end (at most as many as
+the set has) into a list indexed by the song's own numbers, placeholders between, which
+`lsdjKitByNumber()` skips; a project's kits come first, the ROM beside the file serves what a
+project lacks (an `.lsdsng`, or an `.lsdprj` missing a bank). The dialog's row says "n kits
+inside" or "n kits from the ROM", and the ROM line warns only when a chosen file needs one.
+Imported from the `.lsdprj` files against the save with its ROM, the eight songs differ only in
+the instruments' archived `lsdjBytes` (those numbers); every sample, name and cell is the same.

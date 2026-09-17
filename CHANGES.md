@@ -26,6 +26,17 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-17 -- project files carry their kits (`.lsdprj`), an `.lsdsng` imports as the save's song
+
+`docs/COMMANDS_AND_TEMPO.md` §218, plan section 1a amended. Not a spec departure: the import
+reads the kits LSDPatcher appends to an `.lsdprj` (ascending by the numbers the song's kit
+instruments name, one 16 KB bank each) and resolves the song's own kit bytes against them,
+the ROM beside the file serving only what a project lacks. Checked on the user's files: eight
+`.lsdsng` imports are byte-identical to the save's, eight `.lsdprj` imports differ from the
+save-with-ROM route only in the instruments' archived bytes (the exporting ROM's numbering).
+Considered: renumbering the bytes as LSDPatcher's import does (it rewrites the song); the list
+with placeholders keeps the song untouched. The dialog says when no ROM is needed.
+
 ### 2026-09-16 -- a transpose under the channel's floor comes round by octaves
 
 `docs/COMMANDS_AND_TEMPO.md` §217, a departure from §8.5's "a note below it does not sound

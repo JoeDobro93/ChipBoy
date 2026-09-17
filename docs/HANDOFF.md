@@ -18,6 +18,23 @@ design-log section the change touches. Update this file at the end of every chan
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
 
+## Done (2026-09-17) -- project files: `.lsdsng` as the save's song, `.lsdprj` with its kits (§218)
+
+- **`.lsdsng`**: the user's eight Computer Savvy exports import byte for byte as the save's
+  files (`chipboy_recordtest --import-sav FILE.lsdsng x OUT` against `--import-sav SAV NAME`,
+  the `.cbsong` pairs equal but for the name). Nothing changed for them; kits still need the
+  ROM beside the file or *Choose ROM…*.
+- **`.lsdprj`**: LSDPatcher appends the kits the song names after the last block, ascending by
+  kit number (its `usedKits`/`writeKits`, read from the 1.12 jar with `javap`; the jar and the
+  files are under `/root/lsdj/sng/`, outside the tree). `lsdj::projectKits()` reads them into a
+  list indexed by the song's numbers (placeholders `bank = -1`, which `lsdjKitByNumber()`
+  skips); `ProjectSong::kits` / `kitNumbers` / `kitsInside()`; the dialog and the record tool
+  take a project's kits before the ROM's; the ROM line warns only when a chosen file needs one.
+  The eight 9.2.L songs import from their `.lsdprj` as from the save with its ROM, but for the
+  archived `lsdjBytes` (the exporting ROM's kit numbers). Test: the `[lsdj]` project-kits case.
+- **Not needed**: the DIST raw pages (§172) come from a ROM only; a project without one plays a
+  DIST byte outside LSDj's tables as the no-ROM save import does.
+
 ## Done (2026-09-16, last) -- a transpose under the floor comes round (§217)
 
 - **§217**: Cold Grenade's chain `28` wave steps were silent in ChipBoy where the note plus

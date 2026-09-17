@@ -10,7 +10,7 @@ namespace chipboy::lsdj {
 
 namespace {
 constexpr size_t kNamesAt = 0x8000, kActiveAt = 0x8140, kAllocAt = 0x8141, kBlock0 = 0x8000, kBlockSize = 0x200;
-constexpr size_t kInstAllocAt = 0x2040, kSongRowsAt = 0x1290;
+constexpr size_t kInstAllocAt = 0x2040, kSongRowsAt = 0x1290, kInstParamsAt = 0x3080, kKitBankSize = 0x4000;
 // What the two default codes expand to (liblsdj's constants, confirmed on the
 // user's save: every file decompresses to 32768 bytes with them).
 constexpr std::array<uint8_t, 16> kDefaultWave = { 0x8E, 0xCD, 0xCC, 0xBB, 0xAA, 0xA9, 0x99, 0x88, 0x87, 0x76, 0x66, 0x55, 0x54, 0x43, 0x32, 0x31 };
@@ -137,6 +137,49 @@ bool decompressProject(const uint8_t* data, size_t size, std::string& name, int&
     version = int(data[8]);
     const int blocks = int((size - kProjectHead) / kBlockSize);
     return decodeStream(data, size, 0, blocks - 1, true, [](int b) { return kProjectHead + size_t(b) * kBlockSize; }, song, error);
+}
+
+std::vector<int> songKitNumbers(const uint8_t* song, size_t size, bool allocatedOnly)
+{
+    std::vector<int> out;
+    if (song == nullptr || size < kSongSize) return out;
+    for (size_t i = 0; i < 64; ++i) {
+        if (allocatedOnly && !song[kInstAllocAt + i]) continue;
+        const uint8_t* b = song + kInstParamsAt + i * 16;
+        if (b[0] != 2) continue;
+        for (const int k : { int(b[2] & 0x3F), int(b[9] & 0x3F) })
+            if (std::find(out.begin(), out.end(), k) == out.end()) out.push_back(k);
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+std::vector<LsdjKit> projectKits(const uint8_t* data, size_t size, const std::vector<uint8_t>& song)
+{
+    std::vector<LsdjKit> out;
+    if (!looksLikeProject(data, size)) return out;
+    const std::vector<int> numbers = songKitNumbers(song.data(), song.size(), false);
+    if (numbers.empty()) return out;
+    // The banks sit at the file's end, one after another: count them back from
+    // there by the kit magic, at most as many as the song names.
+    int banks = 0;
+    while (banks < int(numbers.size())) {
+        const size_t at = size - size_t(banks + 1) * kKitBankSize;
+        if (at < kProjectHead + kBlockSize || data[at] != 0x60 || data[at + 1] != 0x40) break;
+        ++banks;
+    }
+    if (banks == 0) return out;
+    out.resize(size_t(numbers[size_t(banks - 1)]) + 1);
+    for (auto& k : out) k.bank = -1;                              // a placeholder: no kit of that number
+    for (int i = 0; i < banks; ++i) {
+        const size_t at = size - size_t(banks - i) * kKitBankSize;
+        std::vector<LsdjKit> one = readKits(data + at, kKitBankSize);
+        if (one.empty()) continue;
+        const int number = numbers[size_t(i)];
+        one.front().bank = number + 8 + (number + 8 > 26 ? 5 : 0);   // LSDPatcher's bank of it, for the record
+        out[size_t(number)] = std::move(one.front());
+    }
+    return out;
 }
 
 bool workingSong(const uint8_t* data, size_t size, std::vector<uint8_t>& song)

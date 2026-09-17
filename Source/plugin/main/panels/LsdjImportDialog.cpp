@@ -59,7 +59,10 @@ LsdjImportDialog::LsdjImportDialog(ChipBoyProcessor& processor, SavePreview prev
     }
     for (int k = 0; k < int(preview_.projects.size()); ++k) {
         const auto& pr = preview_.projects[size_t(k)];
-        addRow(-1, pr.name + " (" + pr.file.getFileName() + ")", pr.formatVersion, true, k);
+        // Section 218: an .lsdprj carries its kits; an .lsdsng names them and needs the ROM.
+        const String kitsNote = pr.kits.empty() ? (pr.kitNumbers.empty() ? String() : String(", ") + String(int(pr.kitNumbers.size())) + " kits from the ROM")
+                                                : String(", ") + String(int(pr.kitNumbers.size())) + (pr.kitsInside() ? " kits inside" : " kits, not all inside");
+        addRow(-1, pr.name + " (" + pr.file.getFileName() + kitsNote + ")", pr.formatVersion, true, k);
     }
 
     // The version: Auto, then every model, newest first.
@@ -151,7 +154,10 @@ void LsdjImportDialog::runImport()
         auto bank = std::make_shared<bank::Bank>();
         auto tune = std::make_shared<tracker::Song>();
         lsdj::ImportSummary sum; lsdj::ImportNotes notes;
-        if (!lsdj::importSong(song.data(), song.size(), model, *bank, *tune, sum, notes, preview_.kits.empty() ? nullptr : &preview_.kits, &preview_.rawPages)) { allNotes.add(r->name.toStdString() + ": the song could not be read"); continue; }
+        // Section 218: a project's own kits first, the ROM's for the rest.
+        const std::vector<lsdj::LsdjKit>* kits = r->project >= 0 && !preview_.projects[size_t(r->project)].kits.empty() ? &preview_.projects[size_t(r->project)].kits
+                                               : preview_.kits.empty() ? nullptr : &preview_.kits;
+        if (!lsdj::importSong(song.data(), song.size(), model, *bank, *tune, sum, notes, kits, &preview_.rawPages)) { allNotes.add(r->name.toStdString() + ": the song could not be read"); continue; }
         for (const auto& l : notes.lines) allNotes.add(r->name.toStdString() + ": " + l);
         lastTab = processor_.addTab(std::shared_ptr<const tracker::Song>(std::move(tune)), std::shared_ptr<const bank::Bank>(std::move(bank)),
                                     r->name, "LSDj " + String(CharPointer_UTF8(" \xc2\xb7 ")) + r->name);
@@ -172,9 +178,14 @@ void LsdjImportDialog::runImport()
 void LsdjImportDialog::refreshRomLine()
 {
     const bool have = !preview_.kits.empty() || preview_.romVersion.isNotEmpty();
-    romLine_.setColour(Label::textColourId, have ? colours::textDim : colours::warn);
+    // Section 218: only a song that names kits its file does not carry needs the ROM -- a
+    // save's songs may, and a project without its kits inside does.
+    bool need = !preview_.bytes.empty();
+    for (const auto& pr : preview_.projects) if (!pr.kitsInside()) need = true;
+    romLine_.setColour(Label::textColourId, have || !need ? colours::textDim : colours::warn);
     romLine_.setText(have ? "ROM: LSDj " + (preview_.romVersion.isEmpty() ? String("(version unknown)") : preview_.romVersion) + " (" + preview_.romFile.getFileName() + "), " + String(int(preview_.kits.size())) + " kits for the kit instruments"
-                          : "No LSDj ROM found: kit instruments will be skipped, their samples live in the ROM. Choose the ROM the songs were made with.", dontSendNotification);
+                          : need ? "No LSDj ROM found: kit instruments will be skipped, their samples live in the ROM. Choose the ROM the songs were made with."
+                                 : "No ROM needed: the project files carry the kits their songs use.", dontSendNotification);
     version_.onChange();   // the models an unknown format takes follow the ROM
 }
 

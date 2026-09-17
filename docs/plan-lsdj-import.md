@@ -60,6 +60,17 @@ code closes it; the last block is padded with `FF`. `decompressProject` reads on
 `readProject` on the plugin side adds it to a `SavePreview` as a project row, and the dialog
 lists projects and a save's files alike.
 
+**Kits inside an `.lsdprj`** (§218, read from LSDPatcher 1.12's export in its jar): after the
+last song block come the kits the song names, one 16 KB ROM bank each, in ascending order of
+kit number. The set is every instrument slot whose type byte is 2, allocated or not, bytes 2
+and 9 masked to six bits (the top two bits are ATK and half speed). LSDPatcher's import
+places each bank in the ROM and rewrites those bytes in the same order; ChipBoy's
+`projectKits()` instead builds a kit list in which the i-th bank sits under the i-th number,
+placeholders (`bank = -1`) between, so `lsdjKitByNumber()` resolves the song's own bytes. An
+`.lsdsng` carries nothing after the song and names the ROM's kits, as a save does. The numbers
+a project's bytes hold are the exporting ROM's, not the reader's: the same song exported from
+two ROMs differs in those bytes and imports the same.
+
 ## 2. The song, 32 KB
 
 Offsets shared by every format read so far (liblsdj's layout, confirmed on formats 3 and

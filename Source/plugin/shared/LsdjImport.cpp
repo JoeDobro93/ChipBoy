@@ -98,9 +98,17 @@ bool readProject(const juce::File& file, SavePreview& out, juce::String& error)
     if (!lsdj::decompressProject(static_cast<const uint8_t*>(block.getData()), block.getSize(), name, version, p.song, err)) { error = file.getFileName() + ": " + juce::String(err); return false; }
     p.name = name.empty() ? file.getFileNameWithoutExtension().toUpperCase() : juce::String(name);
     p.formatVersion = lsdj::formatVersionOf(p.song.data(), p.song.size());
+    p.kits = lsdj::projectKits(static_cast<const uint8_t*>(block.getData()), block.getSize(), p.song);   // section 218
+    p.kitNumbers = lsdj::songKitNumbers(p.song.data(), p.song.size(), true);
     const bool first = out.bytes.empty() && out.projects.empty();
     out.projects.push_back(std::move(p));
     if (first) { out.file = file; sniffRom(file, out.projects.back().formatVersion, out); }
+    return true;
+}
+
+bool ProjectSong::kitsInside() const
+{
+    for (const int k : kitNumbers) if (lsdj::lsdjKitByNumber(kits, k) == nullptr) return false;
     return true;
 }
 

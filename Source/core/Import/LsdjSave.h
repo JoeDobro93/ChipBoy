@@ -2,6 +2,8 @@
 // the working song (docs/plan-lsdj-import.md section 1). Core: <std> only.
 #pragma once
 
+#include "core/Import/LsdjKits.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -41,6 +43,17 @@ bool decompressFile(const uint8_t* data, size_t size, int file, std::vector<uint
 /// version byte, then the song's compressed blocks in order. Decompresses it
 /// into 32768 bytes; false, with a message, when the buffer is not one.
 bool decompressProject(const uint8_t* data, size_t size, std::string& name, int& version, std::vector<uint8_t>& song, std::string& error);
+/// Section 218: the kit banks an `.lsdprj` carries after the song's blocks --
+/// LSDPatcher writes the kits the song's kit instruments name (every slot
+/// whose type byte is 2, bytes 2 and 9 masked to six bits), ascending by
+/// number, 16 KB each. Returned so that `lsdjKitByNumber()` finds each under
+/// the number the song uses; the numbers between are placeholders it does not
+/// return. Empty when the file carries no kits (an `.lsdsng`).
+std::vector<LsdjKit> projectKits(const uint8_t* data, size_t size, const std::vector<uint8_t>& song);
+/// The kit numbers a song's kit instruments name, ascending, each once:
+/// every slot with LSDPatcher's rule (`allocatedOnly` false), or only the
+/// allocated ones (true), which is what a ROM has to supply.
+std::vector<int> songKitNumbers(const uint8_t* song, size_t size, bool allocatedOnly);
 /// Whether a buffer has a project file's shape: a name, a version, whole blocks.
 bool looksLikeProject(const uint8_t* data, size_t size);
 /// The working song: the save's first 32 KB, copied.

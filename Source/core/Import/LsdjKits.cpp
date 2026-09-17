@@ -51,7 +51,8 @@ const LsdjKit* lsdjKitByNumber(const std::vector<LsdjKit>& kits, int k)
     // Section 193: the k-th kit bank in ROM order, gaps skipped -- probed on
     // 9.2.L and 9.4.2 (kit byte 13 plays the twentieth kit, bank 20, over five
     // empty banks; a number past the count plays nothing).
-    return k >= 0 && size_t(k) < kits.size() ? &kits[size_t(k)] : nullptr;
+    // A project file's list has placeholders between the kits it carries (section 218).
+    return k >= 0 && size_t(k) < kits.size() && kits[size_t(k)].bank >= 0 ? &kits[size_t(k)] : nullptr;
 }
 
 uint16_t kitPeriodOfSpeed(uint8_t speedByte, bool halfSpeed)

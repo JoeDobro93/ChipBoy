@@ -18,7 +18,7 @@ struct LsdjKitSample {
 struct LsdjKit {
     std::string name;                ///< six characters
     std::vector<LsdjKitSample> samples;   ///< up to 15
-    int      bank = 0;               ///< the ROM bank it sits in: kit number + 8 (section 172)
+    int      bank = 0;               ///< the ROM bank it sits in: kit number + 8 (section 172); -1 marks a placeholder in a project file's list (section 218)
     uint16_t loopBits = 0;           ///< one loop bit a sample, from the bank header at $405C/$405D
 };
 

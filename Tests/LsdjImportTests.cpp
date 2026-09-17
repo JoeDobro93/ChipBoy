@@ -805,6 +805,57 @@ TEST_CASE("a project file decompresses to the song the save's file holds", "[lsd
     CHECK_FALSE(looksLikeProject(proj.data(), proj.size()));
 }
 
+TEST_CASE("an .lsdprj carries its kits after the song, ascending by the numbers the song names", "[lsdj]")
+{
+    // Section 218, LSDPatcher's export: every slot whose type byte is 2 names
+    // two kits (bytes 2 and 9, six bits), the set sorted, one 16 KB bank each
+    // after the last song block. A song naming kits 05 and 1D (with flag bits
+    // on top) gets two banks, found under those numbers and no other.
+    SaveWriter w;
+    auto song = testSong(22);
+    song[0x2040 + 4] = 1;                            // instrument 4: a kit naming 05 (ATK bit set) and 1D
+    song[0x3080 + 4 * 16 + 0] = 2; song[0x3080 + 4 * 16 + 2] = 0x85; song[0x3080 + 4 * 16 + 9] = 0x1D;
+    song[0x2040 + 9] = 0;                            // instrument 9: unallocated, type 2, kit 1D again -- counts for the file, not for the ROM
+    song[0x3080 + 9 * 16 + 0] = 2; song[0x3080 + 9 * 16 + 2] = 0x1D; song[0x3080 + 9 * 16 + 9] = 0x1D;
+    w.addFile(3, "KITTED", song, true);
+    const auto& save = w.save;
+    int first = -1, count = 0;
+    for (int b = 0; b < kBlockCount; ++b) if (save[0x8141 + size_t(b)] == 3) { if (first < 0) first = b + 1; ++count; }
+    REQUIRE(first > 0);
+    std::vector<uint8_t> proj(9, 0);
+    std::memcpy(proj.data(), "KITTED", 6); proj[8] = 1;
+    proj.insert(proj.end(), save.begin() + 0x8000 + first * 0x200, save.begin() + 0x8000 + (first + count) * 0x200);
+    auto kitBank = [](const char* name, uint8_t sampleValue) {
+        std::vector<uint8_t> b(0x4000, 0);
+        b[0] = 0x60; b[1] = 0x40; b[2] = 0x80; b[3] = 0x40;   // one sample, $4060-$4080
+        std::memcpy(b.data() + 0x52, name, 6);
+        std::memcpy(b.data() + 0x22, "S1 ", 3);
+        for (size_t i = 0x60; i < 0x80; ++i) b[i] = sampleValue;
+        return b;
+    };
+    const auto a = kitBank("FIRST ", 0x11), c = kitBank("SECOND", 0x22);
+    std::vector<uint8_t> withKits = proj;
+    withKits.insert(withKits.end(), a.begin(), a.end());
+    withKits.insert(withKits.end(), c.begin(), c.end());
+    CHECK(looksLikeProject(withKits.data(), withKits.size()));
+    std::string name, err; int version = -1; std::vector<uint8_t> out;
+    REQUIRE(decompressProject(withKits.data(), withKits.size(), name, version, out, err));   // the kits do not disturb the song
+    CHECK(out == song);
+    CHECK(songKitNumbers(song.data(), song.size(), false) == std::vector<int>{ 5, 0x1D });
+    CHECK(songKitNumbers(song.data(), song.size(), true) == std::vector<int>{ 5, 0x1D });
+    const auto kits = projectKits(withKits.data(), withKits.size(), out);
+    REQUIRE(kits.size() == 0x1E);
+    REQUIRE(lsdjKitByNumber(kits, 5) != nullptr);
+    CHECK(lsdjKitByNumber(kits, 5)->name == "FIRST");
+    CHECK(lsdjKitByNumber(kits, 5)->bank == 13);
+    REQUIRE(lsdjKitByNumber(kits, 0x1D) != nullptr);
+    CHECK(lsdjKitByNumber(kits, 0x1D)->name == "SECOND");
+    CHECK(lsdjKitByNumber(kits, 0x1D)->bank == 0x1D + 8 + 5);
+    CHECK(lsdjKitByNumber(kits, 6) == nullptr);
+    CHECK(lsdjKitByNumber(kits, 0) == nullptr);
+    CHECK(projectKits(proj.data(), proj.size(), out).empty());   // an .lsdsng: nothing after the song
+}
+
 TEST_CASE("a noise byte maps to the ChipBoy note with the same LFSR clock", "[lsdj]")
 {
     // NR43 20: shift 2, divisor 0 -> 131072 Hz; ChipBoy's pair (0, 2) has the same clock.

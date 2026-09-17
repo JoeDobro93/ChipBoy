@@ -819,11 +819,15 @@ int main(int argc, char** argv)
         const auto& model = forced != nullptr ? *forced : plugin::autoModel(format, preview.romVersion);
         auto bank = std::make_unique<bank::Bank>(); auto song = std::make_unique<tracker::Song>();
         lsdj::ImportSummary sum; lsdj::ImportNotes notes;
-        if (!lsdj::importSong(bytes.data(), bytes.size(), model, *bank, *song, sum, notes, preview.kits.empty() ? nullptr : &preview.kits, &preview.rawPages)) { std::printf("FAIL the song could not be read\n"); return 1; }
+        const std::vector<lsdj::LsdjKit>* kits = !preview.projects.empty() && !preview.projects.front().kits.empty() ? &preview.projects.front().kits   // section 218: the project's own kits first
+                                               : preview.kits.empty() ? nullptr : &preview.kits;
+        if (!lsdj::importSong(bytes.data(), bytes.size(), model, *bank, *song, sum, notes, kits, &preview.rawPages)) { std::printf("FAIL the song could not be read\n"); return 1; }
         if (!plugin::saveSong(*song, *bank, importOut, "LSDj " + juce::String(juce::CharPointer_UTF8("\xc2\xb7")) + " " + name)) { std::printf("FAIL cannot write %s\n", importOut.getFullPathName().toRawUTF8()); return 1; }
-        std::printf("wrote %s: %s, format %d read as %s, %d instruments, %d tables, %d waves, %d kits (ROM %s, %d kits in it), %d phrases, %d rows, tempo %.0f, %d notes\n",
+        const bool own = !preview.projects.empty() && !preview.projects.front().kits.empty();
+        std::printf("wrote %s: %s, format %d read as %s, %d instruments, %d tables, %d waves, %d kits (%s %s, %d kits in it), %d phrases, %d rows, tempo %.0f, %d notes\n",
                     importOut.getFullPathName().toRawUTF8(), name.toRawUTF8(), format, model.name, sum.instruments, sum.tables, sum.waves, sum.kits,
-                    preview.romFile == juce::File() ? "none" : preview.romFile.getFileName().toRawUTF8(), int(preview.kits.size()), sum.phrases, sum.rows, sum.tempoBpm, int(notes.lines.size()));
+                    own ? "project" : "ROM", own ? preview.projects.front().file.getFileName().toRawUTF8() : preview.romFile == juce::File() ? "none" : preview.romFile.getFileName().toRawUTF8(),
+                    own ? int(preview.projects.front().kitNumbers.size()) : int(preview.kits.size()), sum.phrases, sum.rows, sum.tempoBpm, int(notes.lines.size()));
         for (const auto& l : notes.lines) std::printf("  - %s\n", l.c_str());
         return 0;
     }
