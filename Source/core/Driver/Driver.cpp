@@ -891,7 +891,7 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     v.noiseTsp = 0; v.noiseReg = 0; v.noiseRegStep = 0; v.noiseBend256 = 0; v.noiseBend9 = 0; v.noiseTspReg = 0;   // S and P on NOI start over (sections 55 and 66)
     v.noiseTableTsp = 0;                                                                          // section 188
     v.instKey = instrumentKey(ch, vel);
-    v.ticks = 0; v.vibPhase = vibStartPhase(v.inst.vib.dir, v.inst.vib.shape); v.pitchCount = 0;
+    v.ticks = 0; v.vibPhase = vibStartPhase(v.inst.vib.dir, v.inst.vib.shape); v.pitchCount = 0; v.noiseRateCount = 0;
     // Section 112: a note starts on the instrument's own finetune, not on zero
     // -- down on PU1, up on PU2, so a pair of pulses beat. A cell's F writes
     // over it for the note in progress and the next note-on brings it back.
@@ -3203,10 +3203,17 @@ void Driver::tick(int ch)
     // noise sweep
     if (v.inst.type == InstrumentType::Noise && v.noiseSweep) { v.noiseShift = uint8_t(std::clamp<int>(int(v.noiseShift) + v.noiseSweep, 0, 13)); v.inst.noiseManual = true; }
     // Section 66: P on noise. Register takes its byte off NR43 every tick;
-    // Notes walks the map, its speed a fraction of an entry a tick.
-    if (v.inst.type == InstrumentType::Noise && v.noiseStepFresh) v.noiseStepFresh = false;   // section 150
-    else if (v.inst.type == InstrumentType::Noise && v.noiseRegStep) { v.noiseReg = bank::noiseNibbleAdd(v.noiseReg, v.noiseRegStep); writePeriod(ch, false); }
-    else if (v.inst.type == InstrumentType::Noise && v.noiseBend256) {
+    // Notes walks the map, its speed a fraction of an entry a tick. Section
+    // 220: at the instrument's command rate -- the walk moves on the ticks that
+    // are multiples of rate + 1 from the note-on, and a P's value is taken up
+    // at the first such tick at or after its row (section 150's wait) and
+    // moves from the next one. Rate 0 is every tick, as before.
+    const bool noiseVoice = v.inst.type == InstrumentType::Noise;
+    const bool noiseExpiry = noiseVoice && v.noiseRateCount == 0;
+    if (noiseVoice) v.noiseRateCount = uint8_t((int(v.noiseRateCount) + 1) % (int(v.inst.cmdRate) + 1));
+    if (noiseVoice && v.noiseStepFresh) { if (noiseExpiry) v.noiseStepFresh = false; }   // section 150
+    else if (noiseVoice && noiseExpiry && v.noiseRegStep) { v.noiseReg = bank::noiseNibbleAdd(v.noiseReg, v.noiseRegStep); writePeriod(ch, false); }
+    else if (noiseVoice && noiseExpiry && v.noiseBend256) {
         v.noiseBend9 += v.noiseBend256;
         const int whole = v.noiseBend9 / 256;
         if (whole != 0) { v.noiseBend9 -= whole * 256; v.noiseTsp = int16_t(std::clamp(int(v.noiseTsp) + whole, -30000, 30000)); writePeriod(ch, false); }   // section 156

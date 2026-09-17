@@ -3283,6 +3283,55 @@ TEST_CASE("F walks out of one wave slot into the next and wraps at the last", "[
     CHECK(half[4] == std::make_pair(3, 8));
 }
 
+TEST_CASE("a noise P moves at the instrument's command rate", "[driver][noise]")
+{
+    // Section 220, measured on 9.2.L (and 8.5.1 for the Register domain): with
+    // CMD/RATE r the walk moves on the ticks that are multiples of r + 1 from
+    // the note-on; a P's value is taken up at the first such tick at or after
+    // its row and moves from the next one. NOSTLGIA's rate-4 sweep (P FF, one
+    // entry every 20 ticks) ran five times too fast, off the end of the map.
+    // Ticks at 100 Hz, one a block; the P lands in block 6, as the ROM probe's
+    // phrase step 1 at groove 6 did.
+    const auto nr43 = [](Rig& r) { return int(r.drv.view(3).regs[3]); };
+    auto changesAt = [&](uint8_t rate, bank::NoiseSweepDomain domain, uint8_t pval) {
+        Rig r;
+        r.tickHz = 100.0;
+        auto& i = r.bank.instruments[0];
+        i = bank::Instrument::defaults(bank::InstrumentType::Noise, "Rate");
+        i.used = true; i.noiseDomain = domain; i.cmdRate = rate;
+        if (domain == bank::NoiseSweepDomain::Register) { i.noiseManual = true; i.noiseShift = 5; i.noiseDivisor = 0; i.lfsr7 = false; }   // a byte with room either way
+        else {   // Notes walks LSDj's map: an identity map here, so every entry is a new byte
+            for (int k = 0; k < 128; ++k) r.bank.noiseMap[size_t(k)] = uint8_t(k);
+            r.bank.noiseMapLen = 128; r.bank.noiseMapNote0 = 1; r.bank.noiseMapSet = true;
+            i.noiseLsdjMap = true; i.noiseShift = 5;
+        }
+        ChannelParams p; p.instrument = 1; p.velocityMode = 2; r.drv.setParams(3, p);
+        r.block({ Rig::on(3, 60, 100) }, 480);
+        std::vector<int> ticks; int last = nr43(r);
+        for (int k = 1; k <= 120; ++k) {
+            r.block(k == 6 ? std::vector<NoteEvent>{ cellCmd(3, Command{ Cmd::P, pval, 0, 0 }) } : std::vector<NoteEvent>{}, 480);
+            if (nr43(r) != last) { last = nr43(r); ticks.push_back(k); }
+        }
+        return ticks;
+    };
+    // Register: one byte-step an expiry. Rate 0 steps from the tick after the row.
+    CHECK(changesAt(0, bank::NoiseSweepDomain::Register, 0x01) == std::vector<int>{ 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120 });
+    {   // rate 3: taken up at 8, steps at 12, 16, 20 ...
+        const auto t = changesAt(3, bank::NoiseSweepDomain::Register, 0x01);
+        REQUIRE(t.size() >= 4);
+        CHECK(t[0] == 12); CHECK(t[1] == 16); CHECK(t[2] == 20); CHECK(t[3] == 24);
+    }
+    // Notes: P FF is a quarter entry an expiry -- the ROM's 10, 14, 18 at rate 0;
+    // 14, 22, 30 at rate 1; 24, 40, 56 at rate 3; 30, 50, 70 at rate 4; 40, 72, 104 at rate 7.
+    struct Case { uint8_t rate; std::vector<int> first; };
+    for (const Case& c : { Case{ 0, { 10, 14, 18 } }, Case{ 1, { 14, 22, 30 } }, Case{ 3, { 24, 40, 56 } }, Case{ 4, { 30, 50, 70 } }, Case{ 7, { 40, 72, 104 } } }) {
+        const auto t = changesAt(c.rate, bank::NoiseSweepDomain::Notes, 0xFF);
+        INFO("rate " << int(c.rate) << ": " << (t.size() > 2 ? std::to_string(t[0]) + " " + std::to_string(t[1]) + " " + std::to_string(t[2]) : std::string("fewer than three")));
+        REQUIRE(t.size() >= 3);
+        CHECK(std::vector<int>(t.begin(), t.begin() + 3) == c.first);
+    }
+}
+
 TEST_CASE("S and P on noise work on NR43 in the Register domain", "[driver][noise]")
 {
     // Section 66, measured on 8.4.4: each nibble less the matching nibble of the

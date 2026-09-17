@@ -6434,3 +6434,40 @@ those three whole-number tempi their exact words -- 6144, 4096, 2048 -- rather t
 rounded quotient; the song tempo's ceiling is 896 (`driver::kMaxSongBpm`) in the parameter,
 the tracker head, the song file and the tools, and the parameter's readout says `(2x)`,
 `(3x)`, `(6x)` beside them. `T` stays 40-295: its byte has no room, as on the ROM.
+
+## 220. A noise `P` moves at the instrument's command rate
+
+`NOSTLGIA` (the user's `BON-VOYAGE` save, 9.2.L, at the 3x tempo of §219) opens with noise
+sweeps -- a note, then `P FF` -- that "kept looping" in ChipBoy: the ROM writes `NR43` every
+111 ms (`13 07 40 15 23 17 50 ...`, one map entry a write) and ChipBoy the same entries every
+22 ms, five times as fast, so it ran off the map's end and came round (`D7` → `08` with a
+`NR44 = BF` retrigger, which is the ROM's own wrap too: `probe/noisep_probe.py … wrap`). Not the
+tempo's doing: the same instrument at 120 BPM steps every 20 ticks on the ROM as well.
+
+Measured with `probe/noisep_probe.py` on 9.2.L (a noise note at step 0, the `P` at step 1,
+groove 6/6, the instrument's byte 8 varied), ticks between `NR43` writes:
+
+| byte 8 (CMD/RATE) | `P FF` | `P FE` | `P 08` |
+|---|---|---|---|
+| 0 | 4 | 2 | 1 (two entries a write) |
+| 1 | 8 | 4 | 2 |
+| 3 | 16 | 8 | 4 |
+| 4 | 20 | 10 | 5 |
+| 7 | 32 | 16 | 8 |
+
+So §66's `value / 4` entries a tick is the rate-0 case of **`value / 4` entries every `rate + 1`
+ticks**, the same at 120, 255, 295 BPM and the 2x, 3x, 6x tempi (19.3 - 20.0 ticks for rate 4 in
+every case; the odd short interval is the probe chain looping). The phase: the walk moves on the
+ticks that are multiples of `rate + 1` counted from the note-on, and a `P` is taken up at the
+first such tick at or after its row and moves from the next one -- with the `P` at tick 6, the
+first entry lands at tick 10 (rate 0), 14 (rate 1), 24 (rate 3), 30 (rate 4), 40 (rate 7), which
+is §150's one-tick wait at rate 0. On 8.5.1 the Register domain's byte-step obeys the same
+rate (rate 3: one step every four ticks); 5.8.8 and 7.0.2 do not move `NR43` for a `P` at all in
+this probe (not pursued).
+
+ChipBoy: the importer already read byte 8 into `cmdRate` for every instrument type; the driver
+paced only a pulse's and a wave's Tick-mode `P`/`V` by it. `Driver::tick()` now keeps a
+per-voice count from the note-on (`noiseRateCount`) and steps both noise domains only on its
+expiries, the fresh flag of §150 cleared on an expiry rather than on the next tick. Rate 0 is
+every tick, exactly as before: a song whose noise instruments keep CMD/RATE at 0 -- the default
+-- plays as it did.

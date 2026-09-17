@@ -26,6 +26,16 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-17 -- a noise `P` moves at the instrument's command rate
+
+`docs/COMMANDS_AND_TEMPO.md` §220. `NOSTLGIA`'s opening noise sweeps (`P FF` on instruments with
+CMD/RATE 4) ran five times too fast in ChipBoy and off the end of the noise map. Measured on
+9.2.L at 120, 255, 295 BPM and the 2x/3x/6x tempi: the walk moves `value / 4` entries every
+`rate + 1` ticks, on the ticks that are multiples of `rate + 1` from the note-on, a `P` taken up
+at the first such tick at or after its row; 8.5.1's Register domain obeys the same rate. The
+driver paces both noise domains by `cmdRate` now, as it already paced a pulse's Tick-mode `P`.
+Rate 0 -- the default, and every noise instrument measured before -- plays exactly as before.
+
 ### 2026-09-17 -- LSDj's high-speed tempi: 299, 448, 896 BPM (2x, 3x, 6x)
 
 `docs/COMMANDS_AND_TEMPO.md` §219. `STELLAR` (9.2.L) is marked `3x` and played half again as

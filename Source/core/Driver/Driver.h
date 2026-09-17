@@ -297,6 +297,7 @@ private:
         bool     noiseStepFresh = false;  ///< section 150: a noise `P`'s first step is the next tick's
         int16_t  noiseBend256 = 0;    ///< Notes domain: P's map entries a tick, in 1/256
         int32_t  noiseBend9 = 0;      ///< and what it has accumulated between whole entries
+        uint8_t  noiseRateCount = 0;  ///< section 220: ticks since the last command-rate expiry, from the note-on
         int8_t   instTranspose = 0;   ///< the instrument's PU2 transpose, or what an F on PU2 set (section 49)
         uint8_t  chord[3] = { 0, 0, 0 }; uint8_t chordN = 0, chordIdx = 0, chordCount = 0;
         bool     chordFresh = false;  ///< section 149: a `C` on a running voice plays the root on its own tick

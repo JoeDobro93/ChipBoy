@@ -18,6 +18,28 @@ design-log section the change touches. Update this file at the end of every chan
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
 
+## Done (2026-09-17, later still) -- a noise `P` at the command rate (§220)
+
+- **§220**: `NOSTLGIA` (3x) opens with noise sweeps that "kept looping": `P FF` on instruments
+  with CMD/RATE 4 stepped every 4 ticks in ChipBoy and every 20 on the ROM, so ChipBoy's ran
+  off the map and came round (the ROM's own wrap, `noisep_probe.py … wrap`). Not the tempo:
+  `probe/noisep_probe.py` measures `value / 4` entries every `rate + 1` ticks at every tempo,
+  phase from the note-on. `Driver::tick()` paces both noise domains by `cmdRate`
+  (`noiseRateCount`); rate 0 unchanged. Through the importer, the probe saves and NOSTLGIA's
+  noise channel trace tick for tick as the ROM's (147 writes in seven seconds, same values).
+- **Seen, left**: 5.8.8 and 7.0.2 did not move `NR43` for a `P` in this probe (a format-9/10
+  noise instrument may keep its `P` elsewhere); not pursued.
+- **Seen, left -- the wave frame run, not the tempo**: STELLAR's wave channel had more frame
+  bursts in ChipBoy than on the ROM at 3x; the same song with byte `$3FCC` cleared
+  (`/root/lsdj/bv/stellar_295.sav`, 295 BPM) shows the same difference, so it is the frame
+  run's law, not §219. Row 1, chain `03`, phrase `0B`: instrument `00` (bytes
+  `01 a8 0e 00 ff 49 20 03 00 01 0e 14`, table `00` = `TSP 03 + P C7` / `H00`) -- ChipBoy
+  writes a second frame (`77 77 …`) 16 ticks after the note, the ROM never; instrument `0A`
+  (`01 20 0c 20 ff 01 07 03 00 02 04 1c`, no table) -- the ROM's first new frame (`6c cc d0 11`)
+  comes 34 ticks after the note, ChipBoy's 17, and ChipBoy writes another (`6c cd e0 11`) at 31.
+  Traces `st295_rom.csv` / `st295_cb.csv` (2.15 - 2.75 s) in the scratchpad. A probe of PLAY /
+  SPEED / the byte-11 value against §200 / §211 is the next step.
+
 ## Done (2026-09-17, later) -- the high-speed tempi 2x / 3x / 6x (§219)
 
 - **§219**: `STELLAR` (`/root/lsdj/bv/bon_voyage.{sav,gb}`, 9.2.L) plays at LSDj's `3x`, 448
