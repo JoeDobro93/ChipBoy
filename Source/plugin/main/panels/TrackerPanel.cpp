@@ -171,6 +171,22 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     auto lane = std::make_unique<Hold>(grid_, PhraseGrid::preferredHeight());
     laneHold_ = lane.get();
     scroll_.setContent(std::move(lane));
+    scroll_.setReserveScrollbar(true);                   // room for the low-profile bar whether or not it shows (D-UI-40)
+    // A click on a preview row (D-UI-40): the play head goes to that row of
+    // that channel, on the pass the play head is on.
+    grid_.onAdvance = [this](int ch, int row) {
+        const auto s = processor.song();
+        if (!s || row < 0) return;
+        int cur = 0, in = 0, pass = 0;
+        tracker::rowAtTick(*s, ch, cursor_, cur, in, &pass);
+        const int64_t loop = tracker::chainLoopTicks(*s, ch);
+        int64_t t = tracker::rowStartTick(*s, ch, row) + int64_t(pass) * loop;
+        if (t <= cursor_ && loop > 0) t += loop;
+        cursor_ = std::max<int64_t>(0, t);
+        if (processor.ownsTransport() && processor.transportPlaying()) processor.transportLocate(cursor_);
+        refreshViews();
+        contextChanged();
+    };
 
     // The play head moved by hand (D-UI-35): the lanes look there, and a
     // running own transport jumps there too (section 223).
@@ -337,7 +353,8 @@ void TrackerPanel::refreshViews()
     if (s) { spb = 1; for (int ch = 0; ch < 4; ++ch) { rows[ch] = rowOf(ch); spb = std::max(spb, s->stepsOfRow(ch, rows[ch])); } }
     grid_.setSong(s, rows);
     for (int ch = 0; ch < 4; ++ch) shownRow_[size_t(ch)] = rows[ch];
-    if (spb != gridSteps_) { gridSteps_ = spb; syncGridHeight(); }
+    gridSteps_ = spb;
+    syncGridHeight();
     syncSongTime();
     syncTabs();
 }
@@ -346,8 +363,15 @@ void TrackerPanel::refreshViews()
 /// the tab's pane scrolls (docs/COMMANDS_AND_TEMPO.md section 25).
 void TrackerPanel::syncGridHeight()
 {
+    // The lane runs to the pane's foot (D-UI-40): as many rows as the pane
+    // holds, the last one cut where it must, previewing the rows that follow
+    // each channel's phrase; only a phrase longer than the pane scrolls.
     if (laneHold_ == nullptr) return;
-    laneHold_->setHeight(PhraseGrid::heightForSteps(gridSteps_));
+    const int paneH = std::max(1, scroll_.getHeight());
+    const int paneRows = std::max(1, (paneH - PhraseGrid::kHeaderHeight + PhraseGrid::kRowHeight - 1) / PhraseGrid::kRowHeight);
+    grid_.setVisibleRows(paneRows);
+    const int own = PhraseGrid::heightForSteps(gridSteps_);
+    laneHold_->setHeight(own > paneH ? own : paneH);
     scroll_.relayout();
 }
 
@@ -685,6 +709,7 @@ void TrackerPanel::resized()
         place(r, songStart_, 84, Stepper::kHeight);
     }
     scroll_.setBounds(area);
+    syncGridHeight();
 
     // TRANSPORT, stuck to the chain (D-UI-36, D-UI-39): the five icons and
     // the readout on its first row, the zoom on its second.

@@ -1157,10 +1157,15 @@ struct PhraseGrid::Impl {
     std::shared_ptr<const bank::Bank> bank;
     /// Each channel's own row: the one it is in at the play head (D-UI-35).
     std::array<int, 4> chRow{};
-    /// A phrase holds sixty-four cells and the bar says how many of them play
-    /// (docs/COMMANDS_AND_TEMPO.md section 11); the grid is that many rows.
-    static constexpr int kMax = tracker::kMaxSteps;
+    /// A phrase holds sixty-four cells; the grid shows a channel's own, then
+    /// the rows that follow it as a preview down to the pane's foot (D-UI-40).
+    static constexpr int kMax = PhraseGrid::kMaxRows;
     std::array<std::array<tracker::Cell, kMax>, 4> cells{};
+    /// Per grid row and channel: the song row the cell belongs to, and
+    /// whether it is that row's first (a new phrase begins there).
+    std::array<std::array<int16_t, kMax>, 4> srcRow{};
+    std::array<std::array<bool, kMax>, 4> boundary{};
+    int visibleRows = PhraseGrid::kVisibleSteps;
     std::array<int, 4> playing { -1, -1, -1, -1 };
     std::array<int, 4> rollNote { -1, -1, -1, -1 };
     std::array<std::array<int, kMax>, 4> shadow{};   ///< the roll's notes as the bar played, greyed
@@ -1331,13 +1336,35 @@ struct PhraseGrid::Impl {
         // shows as many steps as the longest of the four in this row, so every
         // cell it holds can be reached, and each head's LEN says how far its
         // own channel really runs.
-        core.rows = PhraseGrid::kVisibleSteps;
-        if (song != nullptr) { int n = 1; for (int ch = 0; ch < 4; ++ch) n = juce::jmax(n, song->stepsOfRow(ch, chRow[size_t(ch)])); core.rows = n; }
-        core.curRow = juce::jlimit(0, core.rows - 1, core.curRow);
+        // As many rows as the longest of the four phrases, or as the pane
+        // holds, whichever is more (D-UI-40).
+        int longest = 1;
+        if (song != nullptr) for (int ch = 0; ch < 4; ++ch) longest = juce::jmax(longest, song->stepsOfRow(ch, chRow[size_t(ch)]));
+        else longest = PhraseGrid::kVisibleSteps;
+        core.rows = juce::jlimit(1, kMax, juce::jmax(longest, visibleRows));
         for (int ch = 0; ch < 4; ++ch) {
             const int r = chRow[size_t(ch)];
             const auto* p = song != nullptr ? song->phrase(song->phraseAt(ch, r)) : nullptr;
-            for (int i = 0; i < kMax; ++i) cells[size_t(ch)][size_t(i)] = p != nullptr ? p->cells[size_t(i)] : tracker::Cell{};
+            const int own = p != nullptr ? p->length() : (song != nullptr ? song->stepsOfRow(ch, r) : 16);
+            for (int i = 0; i < kMax; ++i) { cells[size_t(ch)][size_t(i)] = p != nullptr && i < own ? p->cells[size_t(i)] : tracker::Cell{}; srcRow[size_t(ch)][size_t(i)] = int16_t(r); boundary[size_t(ch)][size_t(i)] = false; }
+            // The preview: the rows that follow, as if the phrase ran on. A
+            // looping chain comes round (section 212); one that stops shows
+            // its empty rows.
+            if (song != nullptr) {
+                int at = r, gr = own;
+                while (gr < core.rows) {
+                    const int loopRows = song->loopRows(ch);
+                    const bool loops = song->chainEnd[size_t(ch)] == tracker::ChainEnd::Loop && loopRows > 0;
+                    at = loops && at + 1 >= loopRows ? 0 : at + 1;
+                    const auto* np = song->phrase(song->phraseAt(ch, at));
+                    const int len = np != nullptr ? np->length() : 16;
+                    for (int i = 0; i < len && gr < core.rows; ++i, ++gr) {
+                        cells[size_t(ch)][size_t(gr)] = np != nullptr ? np->cells[size_t(i)] : tracker::Cell{};
+                        srcRow[size_t(ch)][size_t(gr)] = int16_t(juce::jmin(at, 32767));
+                        boundary[size_t(ch)][size_t(gr)] = i == 0;
+                    }
+                }
+            }
             groove[size_t(ch)] = p != nullptr ? p->groove : 0;
             length[size_t(ch)] = p != nullptr ? p->length() : (song != nullptr ? song->stepsOfRow(ch, r) : 16);
             // The chip row (D-UI-37): the slot, the row's transpose, and what
@@ -1358,6 +1385,11 @@ struct PhraseGrid::Impl {
             armed[size_t(ch)] = song == nullptr || song->recordArm[size_t(ch)];
             source[ch].setSelected(plays[size_t(ch)] == tracker::NoteSource::Tracker ? 1
                                    : plays[size_t(ch)] == tracker::NoteSource::Hybrid ? 2 : 0, juce::dontSendNotification);
+        }
+        // The cursor never rests on a preview row (D-UI-40).
+        {
+            const int ch = core.curCol >= 0 && core.curCol < int(core.cols.size()) ? core.cols[size_t(core.curCol)].ch : 0;
+            core.curRow = juce::jlimit(0, juce::jmax(0, length[size_t(ch)] - 1), core.curRow);
         }
     }
 
@@ -1895,6 +1927,12 @@ struct PhraseGrid::Impl {
         const int row = core.hoverRow, col = core.hoverCol;
         if (row < 0 || row >= core.rows || col < 0 || col >= int(core.cols.size())) return {};
         const auto& c = core.cols[size_t(col)];
+        if (c.kind != Kind::Step && row >= length[size_t(c.ch)]) {
+            const int r = int(srcRow[size_t(c.ch)][size_t(row)]);
+            const int slot = song != nullptr ? song->phraseAt(c.ch, r) : 0;
+            return juce::String("A preview of ") + colours::channelName(c.ch) + "'s row " + ValueFormat::index(r) + (slot ? ", phrase " + ValueFormat::slot(slot) : juce::String(", no phrase"))
+                   + ", as if this phrase ran on. Not editable: click to put the play head there.";
+        }
         const auto& cell = cells[size_t(c.ch)][size_t(row)];
         if (c.kind == Kind::Ghost)
             return plays[size_t(c.ch)] == tracker::NoteSource::Hybrid
@@ -2081,6 +2119,16 @@ void PhraseGrid::setBank(std::shared_ptr<const bank::Bank> bank)
 {
     impl_->bank = std::move(bank);
 }
+void PhraseGrid::setVisibleRows(int rows)
+{
+    auto& im = *impl_;
+    rows = juce::jlimit(1, kMaxRows, rows);
+    if (rows == im.visibleRows) return;
+    im.visibleRows = rows;
+    im.refreshFromSong();
+    im.buildColumns(getWidth());
+    repaint();
+}
 
 int PhraseGrid::steps() const { return impl_->steps(); }
 void PhraseGrid::setPlayingStep(int ch, int step)
@@ -2140,15 +2188,19 @@ void PhraseGrid::paint(juce::Graphics& g)
             core.paintCell(g, r, c, text, blank, colour, focused);
         }
     }
-    // A step the row never plays -- past the phrase's length, or one its H
-    // hops never reach (section 102) -- is dimmed and stays a cell (D-UI-37).
+    // A step the row never plays -- one its H hops never reach (section
+    // 102) -- is dimmed and stays a cell (D-UI-37); past the phrase's length
+    // the rows that follow are previewed, dimmed alike, a line where each
+    // new row begins (D-UI-40).
     for (int ch = 0; ch < 4; ++ch) {
         const int first = Impl::firstCol(ch), last = first + Impl::channelCols(ch) - 1;
         const int x = core.cols[size_t(first)].x, w = core.cols[size_t(last)].x + core.cols[size_t(last)].w - x;
         for (int r = 0; r < core.rows; ++r) {
-            if (r < im.length[size_t(ch)] && im.reached[size_t(ch)][size_t(r)]) continue;
+            const bool own = r < im.length[size_t(ch)];
+            if (own && im.reached[size_t(ch)][size_t(r)]) continue;
             g.setColour(juce::Colours::black.withAlpha(0.42f));
             g.fillRect(x, core.rowY(r), w, core.rowH);
+            if (!own && im.boundary[size_t(ch)][size_t(r)]) { g.setColour(colours::line); g.fillRect(x, core.rowY(r), w, 1); }
         }
     }
 }
@@ -2205,6 +2257,13 @@ void PhraseGrid::mouseDown(const juce::MouseEvent& e)
     int r = 0, c = 0;
     if (!core.cellAt(e.getPosition(), r, c)) return;
     im.leaveHead();
+    // A preview row (D-UI-40): not a cell to edit; the play head goes to the
+    // row it previews on that channel.
+    if (c > 0 && r >= im.length[size_t(core.cols[size_t(c)].ch)]) {
+        const int ch = core.cols[size_t(c)].ch;
+        if (onAdvance) onAdvance(ch, int(im.srcRow[size_t(ch)][size_t(r)]));
+        return;
+    }
     if (core.editable(c)) {
         // A click ends whatever value was being typed: what follows is a
         // new undo (UI_DESIGN section 2.1).
@@ -2265,6 +2324,7 @@ void PhraseGrid::mouseDoubleClick(const juce::MouseEvent& e)
     }
     int r = 0, c = 0;
     if (!core.cellAt(e.getPosition(), r, c) || !core.editable(c)) return;
+    if (r >= im.length[size_t(core.cols[size_t(c)].ch)]) return;   // a preview row (D-UI-40)
     // A blank cell fills itself first (section 38).
     if (im.fillBlank(r, c)) return;
     const auto kind = core.cols[size_t(c)].kind;
@@ -2311,6 +2371,8 @@ bool PhraseGrid::keyPressed(const juce::KeyPress& k)
     }
     if (core.navigate(k)) {
         im.leaveHead();
+        // A preview row is never the cursor's (D-UI-40).
+        { const int ch = core.cols[size_t(core.curCol)].ch; core.curRow = juce::jlimit(0, juce::jmax(0, im.length[size_t(ch)] - 1), core.curRow); }
         repaint();
         if (onEntryEnd) onEntryEnd();
         // Past sixteen steps the grid is taller than its pane, so the tab
@@ -2406,8 +2468,9 @@ struct ChainColumn::Impl {
     int64_t cursor = 0;
     bool playing = false;
     int64_t transport = 0;
-    /// The zoom slider, 0..1, log-mapped to pixels per tick (D-UI-35).
-    double zoomT = 0.56;
+    /// The zoom slider, 0..1, log-mapped to pixels per tick (D-UI-35); it
+    /// opens where a grid line is 48 ticks, two quarters (D-UI-40).
+    double zoomT = 0.40;
     /// The rows area's scroll, in pixels down the timeline.
     double scrollPx = 0.0;
     /// The cell cursor: channel * 2, + 1 on the transpose (section 48). The

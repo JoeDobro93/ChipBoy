@@ -91,6 +91,19 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
 
+## Done (2026-09-18, later) -- the lane runs to the foot with preview rows (D-UI-40)
+
+- `PhraseGrid::setVisibleRows` (the pane's row capacity, from `TrackerPanel::syncGridHeight`
+  on every layout): the grid is as tall as the pane or the longest phrase, whichever is more,
+  and past each channel's `length` the cells are the next rows' (`srcRow`, `boundary`), a looping
+  chain coming round. Preview rows take the same dim overlay as unreached steps with a hairline
+  at each row's start; the cursor is clamped off them; a click calls `onAdvance(ch, row)` and the
+  panel moves the play head to that row on the current pass. `ScrollBlock::setReserveScrollbar`
+  keeps the 8 px free. `kMaxRows` 128 is the grid's storage; a phrase is still 64 cells.
+- The zoom's default is 0.40 on the slider: 48 ticks a grid line under 4/4·24.
+- Caught in the shot and fixed before the commit: the switch state after the preview block
+  updated only the cursor's channel (a brace closed the channel loop early).
+
 ## Done (2026-09-18) -- the Tracker head rearranged (D-UI-39)
 
 - Three rounds of a mock composed from the plugin's own screenshots (`scratchpad/mock3/`,

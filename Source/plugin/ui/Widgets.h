@@ -332,6 +332,12 @@ public:
     /// The song and each channel's own row -- the one it is in at the play
     /// head (D-UI-35, docs/COMMANDS_AND_TEMPO.md section 25).
     void setSong(std::shared_ptr<const tracker::Song> song, const int rows[4]);
+    /// How many rows the pane can show (D-UI-40): the grid is at least that
+    /// tall, and past each channel's own phrase it previews the rows that
+    /// follow, dimmed, as if the phrase ran on.
+    void setVisibleRows(int rows);
+    /// A click on a preview row: the play head goes to that channel's row.
+    std::function<void(int ch, int row)> onAdvance;
     /// The bank the right-click lists read: the instruments and tables a
     /// cell can name, by slot and name (UI_DESIGN section 2.1).
     void setBank(std::shared_ptr<const bank::Bank> bank);
@@ -357,12 +363,12 @@ public:
     juce::String getTooltip() override;   ///< the hovered cell: what the column is, and what the command says
     /// The head is the name row, the chip row (PHRASE, TSP, STEPS, TICKS --
     /// D-UI-37) and the column captions: 26 + 20 + 22.
-    static constexpr int kRowHeight = 22, kHeaderHeight = 68, kVisibleSteps = 16;
+    static constexpr int kRowHeight = 22, kHeaderHeight = 68, kVisibleSteps = 16, kMaxRows = 128;
     /// How tall the grid is for a bar of `steps` steps; sixteen is what the
     /// pane holds without scrolling.
     static constexpr int heightForSteps(int steps)
     {
-        return kHeaderHeight + (steps < 1 ? 1 : steps > tracker::kMaxSteps ? tracker::kMaxSteps : steps) * kRowHeight;
+        return kHeaderHeight + (steps < 1 ? 1 : steps > kMaxRows ? kMaxRows : steps) * kRowHeight;
     }
     static constexpr int preferredHeight() { return heightForSteps(kVisibleSteps); }
     void resized() override; void paint(juce::Graphics&) override;

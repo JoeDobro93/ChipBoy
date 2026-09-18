@@ -26,6 +26,15 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-18 -- the lane runs to the foot with preview rows; the zoom opens at 48 ticks
+
+`docs/UI_DESIGN.md` D-UI-40. The lane no longer stops at the longest phrase: it fills the pane
+like the chain does, and past each channel's own phrase it previews the rows that follow, dimmed,
+a hairline where each new row begins -- not cells (nothing types into them; a click puts the
+play head at that row). Only a phrase longer than the pane scrolls, and the scrollbar's 8 px
+stay free at the right whether or not it shows. The zoom slider opens where a grid line is 48
+ticks. Cells kept past a phrase's length are no longer shown until STEPS grows back over them.
+
 ### 2026-09-18 -- the Tracker head: a FILE card, tabs joined to a SONG bar, the transport on the chain
 
 `docs/UI_DESIGN.md` D-UI-39 (D-UI-36 and D-UI-38 amended); spec 17's head revised. The two

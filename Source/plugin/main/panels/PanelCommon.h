@@ -225,12 +225,15 @@ public:
     ~ScrollBlock() override;
     void setContent(std::unique_ptr<Block> b);
     Block* content() { return content_.get(); }
+    /// Keep the scrollbar's width free at the right whether or not it shows,
+    /// so the content's columns never re-lay when it appears (D-UI-40).
+    void setReserveScrollbar(bool on) { reserve_ = on; relayout(); }
     void relayout();
     /// Scroll the least that brings [y, y + height) of the content into view.
     void scrollToKeepVisible(int y, int height);
     void resized() override;
 private:
-    juce::Viewport viewport_; std::unique_ptr<Block> content_;
+    juce::Viewport viewport_; std::unique_ptr<Block> content_; bool reserve_ = false;
 };
 
 /// A container giving a tooltip (and a click) to a child that has neither.

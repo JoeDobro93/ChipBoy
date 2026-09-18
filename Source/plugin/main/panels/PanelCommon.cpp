@@ -396,9 +396,9 @@ void ScrollBlock::scrollToKeepVisible(int y, int height)
 void ScrollBlock::relayout()
 {
     if (!content_) return;
-    int w = std::max(1, getWidth());
+    int w = std::max(1, getWidth() - (reserve_ ? viewport_.getScrollBarThickness() : 0));
     int h = content_->preferredHeight(w);
-    if (h > getHeight()) { w = std::max(1, getWidth() - viewport_.getScrollBarThickness()); h = content_->preferredHeight(w); }
+    if (h > getHeight() && !reserve_) { w = std::max(1, getWidth() - viewport_.getScrollBarThickness()); h = content_->preferredHeight(w); }
     content_->setSize(w, std::max(h, 1));
     content_->resized();
 }
