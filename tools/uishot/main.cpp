@@ -381,6 +381,9 @@ int main(int argc, char** argv)
     play(proc, ph, 20); pump(200);
     save(*ed, outDir.getChildFile("main_instrument_tall.png"));
     reportPanes(*ed, "instrument tall");
+    // The Tracker tab at the same height: the lane and the chain take the
+    // extra rows (UI_DESIGN section 7), which a mockup of the tab can crop.
+    if (auto* tallBar = findChild<juce::TabbedButtonBar>(ed.get())) { tallBar->setCurrentTabIndex(5); pump(300); save(*ed, outDir.getChildFile("main_tracker_tall.png")); reportPanes(*ed, "tracker tall"); tallBar->setCurrentTabIndex(0); pump(100); }
 
     // The Voice window, linked to the main instance.
     proc.apvts.getParameter(ids::linkMode)->setValueNotifyingHost(1.0f);
