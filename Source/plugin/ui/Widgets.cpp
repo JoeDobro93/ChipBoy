@@ -797,6 +797,8 @@ void IconButton::setIcon(Icon i)
     icon_ = i;
     repaint();
 }
+void IconButton::setLabel(const juce::String& word) { label_ = word; repaint(); }
+void IconButton::setCaret(bool on) { caret_ = on; repaint(); }
 
 void IconButton::paintButton(juce::Graphics& g, bool over, bool down)
 {
@@ -808,13 +810,58 @@ void IconButton::paintButton(juce::Graphics& g, bool over, bool down)
     g.fillRoundedRectangle(r, 4.0f);
     g.setColour((on ? accent : line).withMultipliedAlpha(alpha));
     g.drawRoundedRectangle(r.reduced(0.5f), 4.0f, 1.0f);
-    // The glyph, in a 14 px box at the centre. Fills for the solid marks,
-    // 1.6 px strokes for the two arrows.
-    const auto box = juce::Rectangle<float>(14.0f, 14.0f).withCentre(r.getCentre());
+    // The glyph, in a 14 px box at the centre -- or at the left when a word
+    // follows it. Fills for the solid marks, 1.6 px strokes for the arrows.
+    const bool labelled = label_.isNotEmpty();
+    const auto box = labelled ? juce::Rectangle<float>(14.0f, 14.0f).withPosition(r.getX() + 6.0f, r.getCentreY() - 7.0f)
+                              : juce::Rectangle<float>(14.0f, 14.0f).withCentre(r.getCentre());
     const float x = box.getX(), y = box.getY();
+    if (labelled) {
+        g.setColour(colours::text.withMultipliedAlpha(alpha));
+        g.setFont(Fonts::sans(11.0f, true));
+        g.drawText(label_, juce::Rectangle<int>(int(box.getRight()) + 5, 0, getWidth() - int(box.getRight()) - 5 - (caret_ ? 16 : 4), getHeight()), juce::Justification::centredLeft, false);
+        if (caret_) {
+            juce::Path c; const float cx = float(getWidth()) - 11.0f, cy = r.getCentreY();
+            c.startNewSubPath(cx - 3.5f, cy - 1.5f); c.lineTo(cx, cy + 2.0f); c.lineTo(cx + 3.5f, cy - 1.5f);
+            g.setColour(colours::textMute.withMultipliedAlpha(alpha));
+            g.strokePath(c, juce::PathStrokeType(1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+    }
     juce::Path p;
+    const juce::PathStrokeType arrow(1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
     g.setColour((on ? accentHi : colours::text).withMultipliedAlpha(alpha));
     switch (icon_) {
+    case Icon::Record:
+        g.setColour((on ? accentHi : accent).withMultipliedAlpha(alpha));
+        g.fillEllipse(x + 3.0f, y + 3.0f, 8.0f, 8.0f);
+        break;
+    case Icon::Save: {
+        // an arrow down onto a line: the song goes to its file
+        juce::Path a; a.startNewSubPath(x + 7.0f, y + 1.5f); a.lineTo(x + 7.0f, y + 8.5f); g.strokePath(a, arrow);
+        juce::Path h; h.startNewSubPath(x + 4.0f, y + 6.0f); h.lineTo(x + 7.0f, y + 9.0f); h.lineTo(x + 10.0f, y + 6.0f); g.strokePath(h, arrow);
+        g.fillRoundedRectangle(x + 2.0f, y + 11.5f, 10.0f, 1.6f, 0.8f);
+        break;
+    }
+    case Icon::Load: {
+        // a folder
+        juce::Path f; f.startNewSubPath(x + 1.5f, y + 3.5f); f.lineTo(x + 5.5f, y + 3.5f); f.lineTo(x + 7.0f, y + 5.0f); f.lineTo(x + 12.5f, y + 5.0f);
+        f.lineTo(x + 12.5f, y + 11.5f); f.lineTo(x + 1.5f, y + 11.5f); f.closeSubPath(); g.strokePath(f, arrow);
+        break;
+    }
+    case Icon::Import: {
+        // an arrow into a bar: a save or a project comes in
+        juce::Path a; a.startNewSubPath(x + 1.5f, y + 7.0f); a.lineTo(x + 8.0f, y + 7.0f); g.strokePath(a, arrow);
+        juce::Path h; h.startNewSubPath(x + 5.5f, y + 4.0f); h.lineTo(x + 8.5f, y + 7.0f); h.lineTo(x + 5.5f, y + 10.0f); g.strokePath(h, arrow);
+        g.fillRoundedRectangle(x + 11.0f, y + 2.0f, 1.6f, 10.0f, 0.8f);
+        break;
+    }
+    case Icon::Export: {
+        // an arrow out from a bar
+        g.fillRoundedRectangle(x + 1.5f, y + 2.0f, 1.6f, 10.0f, 0.8f);
+        juce::Path a; a.startNewSubPath(x + 5.0f, y + 7.0f); a.lineTo(x + 11.5f, y + 7.0f); g.strokePath(a, arrow);
+        juce::Path h; h.startNewSubPath(x + 9.0f, y + 4.0f); h.lineTo(x + 12.0f, y + 7.0f); h.lineTo(x + 9.0f, y + 10.0f); g.strokePath(h, arrow);
+        break;
+    }
     case Icon::Play:
         p.addTriangle(x + 3.0f, y + 1.5f, x + 12.5f, y + 7.0f, x + 3.0f, y + 12.5f);
         g.fillPath(p);

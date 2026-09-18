@@ -13,24 +13,23 @@ using namespace juce;
 using namespace chipboy::ui;
 
 namespace {
-/// The head (docs/COMMANDS_AND_TEMPO.md section 23): two rows of grouped
-/// tools, each under its caption, over the song tab strip -- 12 caption +
-/// 26 controls, 2, 12 + 26, 4, and the 26 px strip: 108 px. The four px the
-/// gaps gave up went to the lane's head, which grew a chip row (D-UI-37),
-/// so the lane keeps its sixteen 22 px rows and the tab asks for no
-/// scrolling at the window's minimum height (UI_DESIGN sections 2 and 7).
-constexpr int kCaption = 12, kToolRow = 26, kRowGap = 2, kStripGap = 4;
-constexpr int kHeadHeight = 2 * (kCaption + kToolRow) + kRowGap + kStripGap + SongTabStrip::kHeight;
-static_assert(kHeadHeight == 108, "the head keeps its budget");
+/// The head (UI_DESIGN D-UI-39): on the left the 44 px FILE card (a 12 px
+/// caption over a 26 px control row, 6 under), a 6 px breath, the 26 px tab
+/// strip and the 32 px SONG bar the active tab joins -- 108 px, the budget
+/// the two tool rows had, so the lane keeps its sixteen 22 px rows and asks
+/// for no scrolling at the window's minimum height (sections 2 and 7). On
+/// the right the 76 px TRANSPORT card stands on the chain.
+constexpr int kCaption = 12, kToolRow = 26, kCard = 44, kTabGap = 6, kSongBar = 32, kTransportCard = 76;
+constexpr int kLeftHead = kCard + kTabGap + SongTabStrip::kHeight + kSongBar;
+static_assert(kLeftHead == 108, "the head keeps its budget");
 constexpr int kChainGap = 12;
 /// Between two groups of one row, with the hairline in the middle of it;
 /// then between two fields of a group, and between a caption and its field.
-constexpr int kGroupGap = 16, kFieldGap = 14, kLabelGap = 2;
+constexpr int kFieldGap = 14, kLabelGap = 2;
 /// Song start is held in tenths of a second so a stepper can reach it.
 constexpr int kStartSteps = 10, kStartMax = 600 * kStartSteps;
 constexpr int kOpenFlags = FileBrowserComponent::openMode | FileBrowserComponent::canSelectFiles;
 constexpr int kSaveFlags = FileBrowserComponent::saveMode | FileBrowserComponent::canSelectFiles | FileBrowserComponent::warnAboutOverwriting;
-const char* kGroupNames[4] = { "Record", "Song", "File", "Transport" };
 String middot() { return String(CharPointer_UTF8(" \xc2\xb7 ")); }
 String dash() { return String(CharPointer_UTF8(" \xe2\x80\x94 ")); }
 String ellipsis() { return String(CharPointer_UTF8("\xe2\x80\xa6")); }
@@ -45,14 +44,12 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
       zoomLabel_("Zoom", Fonts::caption(10.0f), colours::textDim),
       gridText_("", Fonts::mono(9.5f), colours::textDim),
       play_(IconButton::Icon::Play), stop_(IconButton::Icon::Stop), loop_(IconButton::Icon::Loop), follow_(IconButton::Icon::Follow),
-      rec_(String(CharPointer_UTF8("\xe2\x97\x8f Rec"))),
-      saveSong_("Save song" + ellipsis()), loadSong_("Load song" + ellipsis()), importSav_("Import .sav" + ellipsis()),
-      export_("Export .gb" + ellipsis())
+      rec_(IconButton::Icon::Record), laneFollowBtn_(IconButton::Icon::Follow),
+      saveSong_(IconButton::Icon::Save), loadSong_(IconButton::Icon::Load), importSav_(IconButton::Icon::Import), export_(IconButton::Icon::Export)
 {
     for (auto* l : { &startLabel_, &tempoLabel_, &transposeLabel_, &zoomLabel_ }) l->setUpperCase(true);
-    playLed_.setColour(colours::ok);
-    playLed_.setInterceptsMouseClicks(false, false);
-    for (auto* c : std::initializer_list<Component*>{ &play_, &stop_, &loop_, &follow_, &playLed_, &pos_, &rec_, &zoomLabel_, &zoom_, &gridText_,
+    chain_.setJoinedTop(true);
+    for (auto* c : std::initializer_list<Component*>{ &play_, &stop_, &loop_, &follow_, &pos_, &rec_, &laneFollowBtn_, &zoomLabel_, &zoom_, &gridText_,
                                                      &tempoLabel_, &tempo_, &transposeLabel_, &transpose_, &startLabel_, &songStart_,
                                                      &saveSong_, &loadSong_, &importSav_, &export_, &tabs_, &scroll_, &chain_ }) addAndMakeVisible(c);
 
@@ -78,7 +75,6 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     follow_.setToggleState(true, dontSendNotification);
     follow_.setTooltip("Follow: the chain scrolls with the play head while the song plays. Off, it stays where you scrolled it. The lanes have a follow of their own, over the STEP column.");
     follow_.onClick = [this] { followOn_ = follow_.getToggleState(); };
-    grid_.onFollowChange = [this](bool on) { laneFollow_ = on; };
 
     // The zoom (D-UI-35): pixels per tick on the chain, the grid derived
     // from the first time signature; the readout beside it says the grid.
@@ -93,20 +89,38 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
 
     rec_.setTooltip("Record: the MIDI arriving on an armed channel is written into its cells while the transport runs. The dot beside a channel's name is its arm.");
     rec_.setClickingTogglesState(true);
-    rec_.setColour(TextButton::textColourOnId, colours::accentHi);
-    rec_.setColour(TextButton::buttonOnColourId, colours::accentSoft);
     rec_.onClick = [this] { processor.setRecordArm(rec_.getToggleState()); };
 
+    // The lane's own follow (D-UI-38), in the SONG bar (D-UI-39).
+    laneFollowBtn_.setClickingTogglesState(true);
+    laneFollowBtn_.setToggleState(true, dontSendNotification);
+    laneFollowBtn_.setTooltip("Follow: the lanes move with the transport, each to the row its channel is playing. Off, they stay on the rows they show while the song plays. The chain has a follow of its own.");
+    laneFollowBtn_.onClick = [this] { laneFollow_ = laneFollowBtn_.getToggleState(); };
+
+    // The FILE card (D-UI-39): a glyph and a word each, Export a menu of
+    // the three targets to come.
+    saveSong_.setLabel("Save");
     saveSong_.setTooltip("Write this song -- chains, phrases, grooves, arms, its tempo and the bank it plays through -- to a .cbsong file.");
     saveSong_.onClick = [this] { saveSong(); };
+    loadSong_.setLabel("Load");
     loadSong_.setTooltip("Read a .cbsong file into a tab of its own, with the bank it was written with.");
     loadSong_.onClick = [this] { loadSong(); };
-
+    importSav_.setLabel("Import");
     importSav_.setTooltip("Read an LSDj .sav, or .lsdprj / .lsdsng project files: pick the songs -- the working song, every saved file, each project -- and open each in a tab with its own bank, read by the rules of its LSDj version.");
     importSav_.onClick = [this] { importSav(); };
-
-    export_.setEnabled(false);
-    export_.setTooltip("Later: compile this song into a playback ROM for real hardware.");
+    export_.setLabel("Export");
+    export_.setCaret(true);
+    export_.setTooltip("Export this song: as MIDI, as a player ROM for real hardware, or as an LSDj save. None of the three is built yet.");
+    export_.onClick = [this] {
+        PopupMenu m;
+        m.addItem(1, "Export MIDI" + ellipsis());
+        m.addItem(2, "Export player ROM (.gb)" + ellipsis());
+        m.addItem(3, "Export LSDj save (.sav)" + ellipsis());
+        m.showMenuAsync(PopupMenu::Options().withTargetComponent(&export_), [safe = Component::SafePointer<TrackerPanel>(this)](int r) {
+            if (safe == nullptr || r == 0) return;
+            safe->message(String(r == 1 ? "Export MIDI" : r == 2 ? "Export player ROM" : "Export LSDj save") + " is not built yet.");
+        });
+    };
 
     // The song's own tempo and timeline (sections 4 and 19). Whose beat the
     // ticks follow is the header's Tempo group, which only reads the tempo
@@ -384,7 +398,7 @@ void TrackerPanel::songChanged()
 void TrackerPanel::restoreView(const juce::ValueTree& v)
 {
     if (v.hasProperty("follow")) { followOn_ = bool(v["follow"]); follow_.setToggleState(followOn_, dontSendNotification); }
-    if (v.hasProperty("laneFollow")) { laneFollow_ = bool(v["laneFollow"]); grid_.setFollow(laneFollow_); }
+    if (v.hasProperty("laneFollow")) { laneFollow_ = bool(v["laneFollow"]); laneFollowBtn_.setToggleState(laneFollow_, dontSendNotification); }
     if (v.hasProperty("zoom")) { chain_.setZoom(double(v["zoom"])); zoom_.setValue(chain_.zoom(), dontSendNotification); }
     const auto s = processor.song();
     if (v.hasProperty("tick")) cursor_ = std::max<int64_t>(0, v["tick"].toString().getLargeIntValue());
@@ -565,7 +579,6 @@ void TrackerPanel::tick()
         const auto q = tracker::barPositionAt(*s, cursor_);
         pos_.setText(String(q.bar) + String(CharPointer_UTF8("\xc2\xb7")) + String(q.beat) + String(CharPointer_UTF8("\xc2\xb7")) + String(q.tick));
     }
-    playLed_.setOn(playing);
     if (playing != wasPlaying_) {
         wasPlaying_ = playing;
         play_.setToggleState(playing, dontSendNotification);
@@ -605,103 +618,91 @@ void TrackerPanel::tick()
 /// head reads as TRANSPORT | RECORD over SONG | FILE (section 23).
 void TrackerPanel::paint(Graphics& g)
 {
-    for (int i = 0; i < 4; ++i) {
-        const auto r = groups_[size_t(i)];
-        if (r.isEmpty()) continue;
-        if (i == 3) {
-            // The transport in a panel of its own, the chain's width and
-            // border, its captions inset as the chain's are (D-UI-36).
-            draw::panel(g, r, colours::panel2, colours::line, 4.0f);
-            draw::caption(g, kGroupNames[i], { r.getX() + 6, r.getY() + 2, r.getWidth() - 12, kCaption }, Justification::centredLeft, colours::textDim, 9.0f);
-            continue;
-        }
-        draw::caption(g, kGroupNames[i], { r.getX(), r.getY(), r.getWidth(), kCaption }, Justification::centredLeft, colours::textDim, 9.0f);
-        if (i != 1) continue;                               // the hairline stands before the second group of a row
-        g.setColour(colours::lineSoft);
-        g.fillRect(r.getX() - kGroupGap / 2, r.getY() + 2, 1, r.getHeight() - 4);
+    using namespace colours;
+    // The FILE card, its caption inset as the chain's is (D-UI-39).
+    draw::panel(g, fileCard_, panel2, line, 4.0f);
+    draw::caption(g, "File", { fileCard_.getX() + 6, fileCard_.getY() + 2, fileCard_.getWidth() - 12, kCaption }, Justification::centredLeft, textDim, 9.0f);
+    // The TRANSPORT card, stuck to the chain: only its top corners rounded
+    // and no bottom line of its own -- the chain's top hairline is the joint.
+    {
+        const auto r = transportCard_.toFloat();
+        Path shape;
+        shape.addRoundedRectangle(r.getX() + 0.5f, r.getY() + 0.5f, r.getWidth() - 1.0f, r.getHeight() + 4.0f, 4.0f, 4.0f, true, true, false, false);
+        g.saveState();
+        g.reduceClipRegion(transportCard_);
+        g.setColour(panel2); g.fillPath(shape);
+        g.setColour(line); g.strokePath(shape, PathStrokeType(1.0f));
+        g.restoreState();
+        draw::caption(g, "Transport", { transportCard_.getX() + 6, transportCard_.getY() + 2, transportCard_.getWidth() - 12, kCaption }, Justification::centredLeft, textDim, 9.0f);
     }
+    // The SONG bar: the first row of the active song's pane, in the lane
+    // head's fill so the active tab joins it, a hairline before the lanes.
+    g.setColour(panel); g.fillRect(songBar_);
+    g.setColour(lineSoft); g.fillRect(songBar_.getX(), songBar_.getBottom() - 1, songBar_.getWidth(), 1);
+    draw::caption(g, "Song", { songBar_.getX() + 40, songBar_.getY(), 40, songBar_.getHeight() }, Justification::centredLeft, textDim, 9.0f);
 }
 
 void TrackerPanel::resized()
 {
     auto area = getLocalBounds();
-    auto head = area.removeFromTop(kHeadHeight);
-    // the tab strip closes the head across the whole width; over it, the
-    // two tool rows on the left and the transport's column over the chain
-    tabs_.setBounds(head.removeFromBottom(SongTabStrip::kHeight));
-    head.removeFromBottom(kStripGap);
-    auto right = head.removeFromRight(ChainColumn::kWidth);
-    head.removeFromRight(kChainGap);
-    auto row1 = head.removeFromTop(kCaption + kToolRow);
-    head.removeFromTop(kRowGap);
-    auto row2 = head.removeFromTop(kCaption + kToolRow);
-
-    // A group is laid out left to right inside its row; `place` centres each
-    // control on the control line under the caption.
+    // Two columns: the lane's, with the FILE card, the tabs and the SONG
+    // bar over the lane; the chain's, with the TRANSPORT card on the chain.
+    auto right = area.removeFromRight(ChainColumn::kWidth);
+    area.removeFromRight(kChainGap);
     auto place = [](Rectangle<int>& row, Component& c, int w, int ch) {
-        c.setBounds(row.removeFromLeft(w).withTrimmedTop(kCaption).withSizeKeepingCentre(w, ch));
+        c.setBounds(row.removeFromLeft(w).withSizeKeepingCentre(w, ch));
     };
     auto label = [&place](Rectangle<int>& row, TextLine& t) { place(row, t, t.preferredWidth() + 4, kToolRow); };
-    auto close = [this](int i, const Rectangle<int>& row, int from) {
-        groups_[size_t(i)] = { from, row.getY(), row.getX() - from, kCaption + kToolRow };
-    };
 
-    // row 1: RECORD, then SONG -- its tempo, transpose and where it starts,
-    // the things that are still the song's own (sections 19 and 25)
-    int from = row1.getX();
-    place(row1, rec_, 62, 24);
-    close(0, row1, from);
-    row1.removeFromLeft(kGroupGap);
-    from = row1.getX();
-    label(row1, tempoLabel_);
-    row1.removeFromLeft(kLabelGap);
-    place(row1, tempo_, 84, Stepper::kHeight);
-    row1.removeFromLeft(kFieldGap);
-    label(row1, transposeLabel_);
-    row1.removeFromLeft(kLabelGap);
-    place(row1, transpose_, 70, Stepper::kHeight);
-    row1.removeFromLeft(kFieldGap);
-    label(row1, startLabel_);
-    row1.removeFromLeft(kLabelGap);
-    place(row1, songStart_, 84, Stepper::kHeight);
-    close(1, row1, from);
-
-    // row 2: FILE
-    from = row2.getX();
-    place(row2, saveSong_, 104, 24);
-    row2.removeFromLeft(6);
-    place(row2, loadSong_, 104, 24);
-    row2.removeFromLeft(6);
-    place(row2, importSav_, 108, 24);
-    row2.removeFromLeft(12);
-    place(row2, export_, 96, 24);
-    close(2, row2, from);
-
-    // TRANSPORT, over the chain (D-UI-36): the four icons, the LED and the
-    // readout on its first row, the zoom on its second.
-    groups_[3] = right;
-    auto inner = right.reduced(4, 0).withTrimmedTop(2);
-    auto t1 = inner.removeFromTop(kCaption + kToolRow);
-    inner.removeFromTop(kRowGap);
-    auto t2 = inner.removeFromTop(kCaption + kToolRow - 2);
-    from = t1.getX();
-    for (auto* b : { &play_, &stop_, &loop_, &follow_ }) { place(t1, *b, IconButton::kWidth, IconButton::kHeight); t1.removeFromLeft(4); }
-    t1.removeFromLeft(4);
-    place(t1, playLed_, 8, 8);
-    t1.removeFromLeft(4);
-    place(t1, pos_, t1.getWidth(), kToolRow);
-    t2 = t2.withTrimmedTop(kCaption);
-    zoomLabel_.setBounds(t2.removeFromLeft(zoomLabel_.preferredWidth() + 4));
-    t2.removeFromLeft(2);
-    gridText_.setBounds(t2.removeFromRight(112));
-    t2.removeFromRight(4);
-    zoom_.setBounds(t2.withSizeKeepingCentre(t2.getWidth(), 20));
-
-    // the chain takes the column to the right of the lane, the transport's
-    // own column of the head over it (UI_DESIGN section 7)
-    chain_.setBounds(area.removeFromRight(ChainColumn::kWidth));
-    area.removeFromRight(kChainGap);
+    // FILE: a card as wide as its four buttons, left-aligned.
+    {
+        auto row = area.removeFromTop(kCard);
+        fileCard_ = row.withWidth(4 + 64 + 4 + 64 + 4 + 72 + 4 + 86 + 4);
+        auto r = fileCard_.withTrimmedTop(kCaption + 2).withHeight(kToolRow).withTrimmedLeft(4);
+        place(r, saveSong_, 64, 24); r.removeFromLeft(4);
+        place(r, loadSong_, 64, 24); r.removeFromLeft(4);
+        place(r, importSav_, 72, 24); r.removeFromLeft(4);
+        place(r, export_, 86, 24);
+    }
+    area.removeFromTop(kTabGap);
+    tabs_.setBounds(area.removeFromTop(SongTabStrip::kHeight));
+    // SONG: the lane's follow, then the song's own tempo, transpose and start.
+    {
+        songBar_ = area.removeFromTop(kSongBar);
+        auto r = songBar_.withTrimmedLeft(4).withTrimmedRight(4);
+        place(r, laneFollowBtn_, IconButton::kWidth, IconButton::kHeight);
+        r.removeFromLeft(40 + 6);                     // the caption paint() draws
+        label(r, tempoLabel_);
+        r.removeFromLeft(kLabelGap);
+        place(r, tempo_, 84, Stepper::kHeight);
+        r.removeFromLeft(kFieldGap);
+        label(r, transposeLabel_);
+        r.removeFromLeft(kLabelGap);
+        place(r, transpose_, 70, Stepper::kHeight);
+        r.removeFromLeft(kFieldGap);
+        label(r, startLabel_);
+        r.removeFromLeft(kLabelGap);
+        place(r, songStart_, 84, Stepper::kHeight);
+    }
     scroll_.setBounds(area);
+
+    // TRANSPORT, stuck to the chain (D-UI-36, D-UI-39): the five icons and
+    // the readout on its first row, the zoom on its second.
+    transportCard_ = right.removeFromTop(kTransportCard);
+    {
+        auto inner = transportCard_.reduced(4, 0).withTrimmedTop(kCaption + 2);
+        auto t1 = inner.removeFromTop(kToolRow);
+        for (auto* b : { &play_, &stop_, &loop_, &follow_, &rec_ }) { place(t1, *b, IconButton::kWidth, IconButton::kHeight); t1.removeFromLeft(4); }
+        place(t1, pos_, t1.getWidth(), kToolRow);
+        inner.removeFromTop(6);
+        auto t2 = inner.removeFromTop(22);
+        zoomLabel_.setBounds(t2.removeFromLeft(zoomLabel_.preferredWidth() + 4));
+        t2.removeFromLeft(2);
+        gridText_.setBounds(t2.removeFromRight(112));
+        t2.removeFromRight(4);
+        zoom_.setBounds(t2.withSizeKeepingCentre(t2.getWidth(), 20));
+    }
+    chain_.setBounds(right);
 }
 
 } // namespace chipboy::plugin

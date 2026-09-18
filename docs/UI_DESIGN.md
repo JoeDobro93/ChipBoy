@@ -572,9 +572,9 @@ is left, so it says as much as fits — the slot and its ticks (`2·7/5`) where 
 room, the ticks alone at the demo's width, the slot number when a narrower window leaves
 only a chip — and the whole of it is in the tooltip and in the menu a right click opens.
 
-**The transport** stands over the chain (D-UI-36): play, which reads pause while it plays;
-stop, which returns to the start; loop; follow; the LED and a `bar·beat·tick` readout; the
-zoom slider under them. When the plugin owns the transport — the Standalone, or a host that
+**The transport** stands on the chain, in a card stuck to it (D-UI-36, D-UI-39): play,
+which reads pause while it plays; stop, which returns to the start; loop; follow; record;
+the `bar·beat·tick` readout; the zoom slider under them. When the plugin owns the transport — the Standalone, or a host that
 offers no play head — Play runs the song from the play head on the plugin's own clock at the
 Song tempo, Pause stops where it stands and Stop goes back to tick 0
 ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §223); *Loop* takes the region Shift-dragged
@@ -617,15 +617,12 @@ goes; the tab strip stands where that line used to.
 
 **Numbers.** At the minimum window height the tab has 1156 × 530 and asks for no
 scrolling: a 108 px head over 422 px of lane, which is a 68 px head and sixteen 22 px
-rows with 2 px over. The head is **two rows of grouped tools under their captions, then
-the tab strip** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §23): a 12 px caption
-line over a 26 px control row, 2 px, the same again, 4 px, and the 26 px strip. On the left,
-row one is **RECORD** (*Rec*, 62) and **SONG** (*Tempo* 84, *Transpose* 70 and *Start* 84,
-each behind its own small caption), row two **FILE** (*Save song…* 104, *Load song…* 104,
-*Import .sav…* 108, *Export .gb* 96); a 16 px gap with a hairline down the middle of it
-stands between two groups of a row. The chain's own 264 px column of the head is
-**TRANSPORT** (D-UI-36): four 30 px icon buttons, the LED and the readout on row one, the
-zoom slider on row two. The **readout is the play head in the song's own bars** —
+rows with 2 px over. The lane's head (D-UI-39) is the 44 px **FILE** card (a 12 px caption
+over 24 px buttons of 64, 64, 72 and 86), a 6 px breath, the 26 px tab strip and the 32 px
+**SONG** bar the active tab joins (the lane's follow, 30, then *Tempo* 84, *Transpose* 70
+and *Start* 84 behind their captions). The chain's own 264 px column is the 76 px
+**TRANSPORT** card stuck to it: five 30 px icon buttons and the readout on its first row,
+the zoom slider on its second. The **readout is the play head in the song's own bars** —
 `17·3·6` — because the channels drift apart by design and a row is one channel's.
 Across, the chain takes 264 px off the right with a 12 px gap, leaving 880 for the lane: a
 34 px step column and four channel groups, each a note, ins, tbl and two commands -- WAV a
@@ -785,3 +782,4 @@ recorded in `CHANGES.md`.
 | D-UI-36 | Where do the transport and the zoom live? | **Over the chain, in a bordered panel of the chain's exact width and column**, its captions inset as the chain's are: icon buttons -- play, which reads pause while playing; stop, which returns to the start; loop, the repeat glyph; follow, an arrow into a bar -- with the LED and a `bar·beat·tick` readout on the first row, the zoom slider on the second. RECORD, SONG and FILE keep the head's left. The words moved into the tooltips |
 | D-UI-37 | What does the lane's head say about the row? | **A chip row of its own**: PHRASE (the slot, read-only), TSP (the row's transpose, typed like the chain's cell), STEPS (the phrase's length, typed; was LEN) and TICKS (calculated: what the groove and the `H` hops make of it, the block's height). The groove chip stays on the name row. Cells an `H` never reaches are dimmed but stay cells. The head is 68 px (was 48); the tool rows' gaps give up 4 px so sixteen steps still fit the minimum window |
 | D-UI-38 | Does the lane follow the transport when the chain does not? | **Two follows** (D-UI-16 revised). The chain's, over the chain, scrolls the timeline with the play head; the lane's, an icon over the STEP column, moves the play head -- and so the lanes -- with the transport. Either can be off alone: the lanes stay on a phrase while the chain scrolls past, or the chain stays where it was scrolled while the lanes play through. Both are kept in `ui_view` |
+| D-UI-39 | How is the Tracker head arranged? | **Three surfaces, settled over three rounds of a mock built on the plugin's own pixels.** Top left, a **FILE card** as wide as its four glyph-and-word buttons -- Save, Load, Import, and **Export as a menu** (MIDI, player ROM `.gb`, LSDj save `.sav`; none built yet) -- so exports can multiply without clutter. A 6 px breath, then the **song tabs**, whose active tab shares the fill of the **SONG bar** under it and breaks the strip's bottom line, Chrome's way: tempo, transpose and start are the active song's own, so they open its pane as its first row, with the lane's own follow (D-UI-38) at the bar's left. On the right the **TRANSPORT card** stands on the chain with square corners at the joint and holds play/pause, stop, loop, the chain's follow, **record** (a red dot, where a DAW keeps it; the per-channel arms stay by the lane names) and the `bar·beat·tick` readout, the zoom under them; the LED went, play reads pause. Both columns' heads are 108 and 76 px, so the lane keeps its sixteen rows |

@@ -91,6 +91,20 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
 
+## Done (2026-09-18) -- the Tracker head rearranged (D-UI-39)
+
+- Three rounds of a mock composed from the plugin's own screenshots (`scratchpad/mock3/`,
+  the tool's new `main_tracker_tall.png` cropped for the taller panes), then the code: the
+  **FILE card** top left (`IconButton` gained glyphs Record, Save, Load, Import, Export, a label
+  and a caret; Export opens a `PopupMenu` whose three items say they are not built yet), the
+  **song tabs joined to the SONG bar** (`SongTabStrip` draws the active tab in the bar's fill
+  with only its top corners rounded and breaks the strip's line under it; the bar is the
+  panel's own paint, holding the lane's follow and the three steppers), the **TRANSPORT card
+  stuck to the chain** (`ChainColumn::setJoinedTop`: square top corners, its top hairline the
+  joint; record moved in as a red-dot icon; the LED went). The lane's follow left `PhraseGrid`.
+  The left column's head is still 108 px, the right's 76.
+- **To check by hand**: the export menu and its message, the joined tab on Windows/macOS.
+
 ## Done (2026-09-17, UI round 1, second pass) -- the user's first notes on the timeline
 
 - **The lit step follows an `H` loop.** `playingStepOf` walked only `steps` positions of the play

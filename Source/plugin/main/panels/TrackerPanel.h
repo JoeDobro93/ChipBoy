@@ -2,9 +2,10 @@
 // the host, or runs the song itself when no host offers a transport
 // (docs/COMMANDS_AND_TEMPO.md sections 16 and 223).
 //
-// The head is two rows of grouped tools under their captions -- RECORD and
-// SONG, then FILE, on the left; TRANSPORT over the chain's own column
-// (D-UI-36) -- over the song tab strip (section 18). The lane below shows,
+// The head (D-UI-39): the FILE card top left, then the song tabs joined to
+// the SONG bar that opens the lane pane -- the active song's own tempo,
+// transpose, start and the lane's follow -- and, over the chain's column,
+// the TRANSPORT card stuck to the chain (D-UI-36). The lane below shows,
 // per channel, the phrase that channel is in at the play head, with the
 // chain drawn in time beside it (D-UI-35): a block per row, as tall as the
 // row lasts, and the play head one line across the four channels.
@@ -75,12 +76,14 @@ private:
     void editSong(const juce::String& what, const std::function<void(tracker::Song&)>& fn);
     static uint8_t ensurePhrase(tracker::Song& s, int ch, int bar);
 
-    ui::Led playLed_;
     TextLine pos_, startLabel_, tempoLabel_, transposeLabel_, zoomLabel_, gridText_;
     /// The transport over the chain (D-UI-36): play reads pause while it
-    /// plays, stop returns to the start, loop and follow are toggles.
-    ui::IconButton play_, stop_, loop_, follow_;
-    juce::TextButton rec_, saveSong_, loadSong_, importSav_, export_;
+    /// plays, stop returns to the start, loop, follow and record are toggles.
+    ui::IconButton play_, stop_, loop_, follow_, rec_;
+    /// The lane's own follow, in the SONG bar (D-UI-38, D-UI-39).
+    ui::IconButton laneFollowBtn_;
+    /// The FILE card (D-UI-39): glyph-and-word buttons; Export opens a menu.
+    ui::IconButton saveSong_, loadSong_, importSav_, export_;
     juce::Slider zoom_;
     // the song's own timeline: its master tempo (section 19) and where its
     // tick 0 sits on the host's. Beats and Steps / bar went with the bars.
@@ -93,10 +96,10 @@ private:
     ui::PhraseGrid grid_;
     ui::ChainColumn chain_;
     std::unique_ptr<juce::FileChooser> chooser_;
-    /// The four head groups as resized() laid them out: their captions go
-    /// over them and a hairline stands before the second of a row and
-    /// before the transport's column (section 23).
-    std::array<juce::Rectangle<int>, 4> groups_{};
+    /// The head's three surfaces as resized() laid them out (D-UI-39): the
+    /// FILE card, the TRANSPORT card stuck to the chain, the SONG bar that
+    /// opens the lane pane under the tabs.
+    juce::Rectangle<int> fileCard_, transportCard_, songBar_;
     /// The play head, a tick (section 223): where the lanes look and where
     /// Play starts. Follow moves it with the transport (D-UI-16).
     int64_t cursor_ = 0;

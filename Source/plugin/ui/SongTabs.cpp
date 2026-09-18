@@ -101,18 +101,26 @@ void SongTabStrip::paint(juce::Graphics& g)
     auto& im = *impl_;
     if (im.rects.empty()) im.layout();
     const int n = int(im.tabs.size());
-    g.setColour(lineSoft);
+    // The strip's bottom line is the top edge of the bar under it; the active
+    // tab breaks it and shares the bar's fill, so the two join (D-UI-39).
+    g.setColour(line);
     g.fillRect(0, getHeight() - 1, getWidth(), 1);
 
     for (int i = 0; i < n && i < int(im.rects.size()); ++i) {
         const auto r = im.rects[size_t(i)];
         const bool on = i == im.active, hov = i == im.hover;
-        auto body = r.withTrimmedBottom(1).toFloat();
+        // Inactive tabs stand a pixel lower on the darker fill; the active
+        // one runs down into the bar with only its top corners rounded.
+        auto body = (on ? r : r.withTrimmedTop(1).withTrimmedBottom(1)).toFloat();
+        juce::Path shape;
+        shape.addRoundedRectangle(body.getX(), body.getY(), body.getWidth(), body.getHeight() + (on ? 4.0f : 0.0f), 4.0f, 4.0f, true, true, false, false);
+        g.saveState();
+        g.reduceClipRegion(r.withHeight(on ? r.getHeight() : r.getHeight() - 1));
         g.setColour(on ? panel : (hov ? raised : panel2));
-        g.fillRoundedRectangle(body, 4.0f);
-        g.setColour(on ? accent : lineSoft);
-        g.drawRoundedRectangle(body.reduced(0.5f), 4.0f, 1.0f);
-        if (on) g.fillRect(float(r.getX()) + 4.0f, float(r.getBottom()) - 2.0f, float(r.getWidth()) - 8.0f, 2.0f);
+        g.fillPath(shape);
+        g.setColour(on ? line : lineSoft);
+        g.strokePath(shape, juce::PathStrokeType(1.0f), juce::AffineTransform::translation(0.5f, 0.5f));
+        g.restoreState();
 
         int tx = r.getX() + kNamePad;
         if (im.tabs[size_t(i)].dirty) {                       // unsaved work
@@ -136,11 +144,13 @@ void SongTabStrip::paint(juce::Graphics& g)
     if (!im.rects.empty()) {
         const auto r = im.rects.back();
         const bool hov = im.hover == n;
-        auto body = r.withTrimmedBottom(1).toFloat();
+        auto body = r.withTrimmedTop(1).withTrimmedBottom(1).toFloat();
+        juce::Path shape;
+        shape.addRoundedRectangle(body.getX(), body.getY(), body.getWidth(), body.getHeight(), 4.0f, 4.0f, true, true, false, false);
         g.setColour(hov ? raised : panel2);
-        g.fillRoundedRectangle(body, 4.0f);
+        g.fillPath(shape);
         g.setColour(lineSoft);
-        g.drawRoundedRectangle(body.reduced(0.5f), 4.0f, 1.0f);
+        g.strokePath(shape, juce::PathStrokeType(1.0f), juce::AffineTransform::translation(0.5f, 0.5f));
         g.setColour(hov ? text : textMute);
         g.setFont(Fonts::sans(14.0f));
         g.drawText("+", r, juce::Justification::centred, false);

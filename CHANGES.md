@@ -26,6 +26,16 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-18 -- the Tracker head: a FILE card, tabs joined to a SONG bar, the transport on the chain
+
+`docs/UI_DESIGN.md` D-UI-39 (D-UI-36 and D-UI-38 amended); spec 17's head revised. The two
+tool rows went: the FILE card stands top left with glyph-and-word buttons and an Export menu
+for the three exports to come (MIDI, player ROM, LSDj save), the song tabs join a SONG bar
+that opens the active song's pane (tempo, transpose, start, and the lane's follow), and the
+TRANSPORT card -- play/pause, stop, loop, follow, record, the readout, the zoom -- stands on the
+chain with square corners at the joint; the LED went. Settled over three rounds of a mock
+composed from the plugin's own screenshots, so only the head was drawn.
+
 ### 2026-09-17 -- two follows; the transport boxed; the lit step follows an H loop
 
 `docs/UI_DESIGN.md` D-UI-38 (D-UI-16 revised), D-UI-36 amended. The user's first notes on the

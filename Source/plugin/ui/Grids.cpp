@@ -1180,8 +1180,6 @@ struct PhraseGrid::Impl {
     std::array<int, 4> phraseSlot{}, tsp{}, tickCount{ { 96, 96, 96, 96 } };
     std::array<std::array<bool, kMax>, 4> reached{};
     Segmented source[4];
-    /// The lane's own follow (D-UI-38), over the STEP column.
-    IconButton follow{ IconButton::Icon::Follow };
     GridCore core;
     TypedEntry box;
     int octave = 4;
@@ -1206,12 +1204,6 @@ struct PhraseGrid::Impl {
     explicit Impl(PhraseGrid& o) : owner(o)
     {
         core.rows = PhraseGrid::kVisibleSteps; core.rowH = kRowHeight; core.headerH = kHeaderHeight;
-        follow.setClickingTogglesState(true);
-        follow.setToggleState(true, juce::dontSendNotification);
-        follow.setTooltip("Follow: the lanes move with the transport, each to the row its channel is playing. Off, they stay on the rows they show while the song plays. The chain has a follow of its own.");
-        follow.onClick = [this] { if (owner.onFollowChange) owner.onFollowChange(follow.getToggleState()); };
-        follow.setBounds(2, 3, IconButton::kWidth, IconButton::kHeight);
-        owner.addAndMakeVisible(follow);
         for (int ch = 0; ch < 4; ++ch) {
             // The switch is the playback source (sections 14 and 20): the
             // channel plays the incoming MIDI, its own cells, or both -- MIDI
@@ -2089,7 +2081,7 @@ void PhraseGrid::setBank(std::shared_ptr<const bank::Bank> bank)
 {
     impl_->bank = std::move(bank);
 }
-void PhraseGrid::setFollow(bool on) { impl_->follow.setToggleState(on, juce::dontSendNotification); }
+
 int PhraseGrid::steps() const { return impl_->steps(); }
 void PhraseGrid::setPlayingStep(int ch, int step)
 {
@@ -2436,6 +2428,7 @@ struct ChainColumn::Impl {
     bool loopOn = false;
     int64_t loopA = 0, loopB = -1;
     float wheelAcc = 0.0f;
+    bool joinedTop = false;   ///< the transport card stands on this column (D-UI-39)
 
     /// 264 px across (UI_DESIGN section 7): a 4 px pad, a 54 px gutter --
     /// bar numbers at its left, beats at its right -- and four 50 px channel
@@ -3014,9 +3007,19 @@ juce::String ChainColumn::getTooltip()
            "With the keyboard: up and down a tick, left and right a step, PgUp and PgDn a grid line, Space plays.";
 }
 
+void ChainColumn::setJoinedTop(bool on) { impl_->joinedTop = on; repaint(); }
+
 void ChainColumn::paint(juce::Graphics& g)
 {
-    draw::panel(g, getLocalBounds(), colours::panel2, colours::line, 4.0f);
+    if (impl_->joinedTop) {
+        // Square top corners under the transport card, and no top line of
+        // its own: the card's bottom edge is the joint (D-UI-39).
+        juce::Path shape;
+        shape.addRoundedRectangle(0.5f, -4.5f, float(getWidth()) - 1.0f, float(getHeight()) + 4.0f, 4.0f, 4.0f, false, false, true, true);
+        g.setColour(colours::panel2); g.fillPath(shape);
+        g.setColour(colours::line); g.strokePath(shape, juce::PathStrokeType(1.0f));
+        g.setColour(colours::lineSoft); g.fillRect(1, 0, getWidth() - 2, 1);
+    } else draw::panel(g, getLocalBounds(), colours::panel2, colours::line, 4.0f);
     impl_->paintRows(g);
     g.setColour(colours::panel2);
     g.fillRect(1, 1, getWidth() - 2, kHeaderHeight - 2);

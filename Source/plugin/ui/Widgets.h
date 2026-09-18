@@ -184,14 +184,20 @@ private:
 /// is the tooltip's.
 class IconButton : public juce::Button {
 public:
-    enum class Icon { Play, Pause, Stop, Loop, Follow };
+    enum class Icon { Play, Pause, Stop, Loop, Follow, Record, Save, Load, Import, Export };
     explicit IconButton(Icon i);
     void setIcon(Icon i);
     Icon icon() const { return icon_; }
+    /// A word beside the glyph (the FILE toolbar's buttons, D-UI-39), and a
+    /// caret at the right where the button opens a menu.
+    void setLabel(const juce::String& text);
+    void setCaret(bool on);
     static constexpr int kWidth = 30, kHeight = 24;
     void paintButton(juce::Graphics&, bool over, bool down) override;
 private:
     Icon icon_;
+    juce::String label_;
+    bool caret_ = false;
 };
 
 /// Which of the bank's lists a slot field names. Every selector in the
@@ -344,10 +350,6 @@ public:
     /// TSP in this channel's head: its row's transpose (section 48, D-UI-37).
     std::function<void(int ch, int semis)> onTransposeChange;
     std::function<void(int ch, bool armed)> onArmChange;       ///< the channel's record arm (section 14)
-    /// The lane's own follow, over the STEP column (D-UI-38): on, the lanes
-    /// move with the transport; off, they stay on the rows they show.
-    std::function<void(bool on)> onFollowChange;
-    void setFollow(bool on);
     std::function<void(int row)> onCursorRow;                  ///< the cursor moved: keep this row in view
     /// The right-click list's first entry on a slot field: open that item's
     /// own tab with it selected (section 35).
@@ -397,6 +399,9 @@ public:
     void setLoopRegion(bool on, int64_t from, int64_t to);
     /// What the grid is at this zoom, for the readout beside the slider.
     juce::String gridText() const;
+    /// The transport card stands on this column (D-UI-39): square top corners,
+    /// so the two read as one panel.
+    void setJoinedTop(bool on);
     /// The play head moved by a click, a drag or a key.
     std::function<void(int64_t tick)> onSelectTick;
     /// Shift-drag on the gutter set a loop region; `to` < 0 clears it.
