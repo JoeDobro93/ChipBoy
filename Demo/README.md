@@ -296,12 +296,40 @@ Read the table it prints rather than only its verdict: a bass channel that goes 
 four bars is a bug in the song, and it shows up as a column of zeroes long before it
 shows up as a complaint.
 
+## The MIDI map demo
+
+`midi-map/` holds two files that go together (`../docs/COMMANDS_AND_TEMPO.md` §225,
+`../docs/UI_DESIGN.md` D-UI-43):
+
+| File | What it is |
+|---|---|
+| `midi-map/midi-map-demo.cbsong` | A song file with **no cells at all**: the bank the demo plays through (ten named instruments, three tables, three waves) and a **MIDI map**, switched on, that routes seven MIDI channels to the four voices. Load it in the Tracker tab (*Load song…*); the MIDI tab then shows the map. |
+| `midi-map/midi-map-demo.mid` | Eight bars at 120 BPM, one track per MIDI channel, named for what it demonstrates. Put it on the ChipBoy track and play. |
+
+What each MIDI channel shows, and where in the eight bars:
+
+| MIDI channel → voice | Regions | Bars | Hear |
+|---|---|---|---|
+| 1 → PU1 | 1–70 *bare*; 71–127 `lead` | 1–2, 5–6 | An accented note (100) reloads the lead and attacks; a soft note (50) only moves the pitch — legato by velocity. |
+| 2 → WAV | 1–64 *bare* + `V 4,6`; 65–127 `saw-pad` | 3–4 | Example B: a C at 100 for a whole note, a D at 40 halfway through it — the pad keeps sounding, the pitch moves, and the vibrato the soft region carries comes in. |
+| 3 → PU2 | 1–64 *bare* + `E 8,3`; 65–127 `bass25` | 5–6 | Example C: four quarters, the first at 100 loads the bass, the rest at 40 are still the bass with a decaying envelope on each. |
+| 4 → NOI | 1–40 `hat`; 41–90 `snare`; 91–127 `kick` | 1–8 | One MIDI channel, three drums: the velocity picks the instrument. |
+| 5 → PU1 | 1–127 `pluck` + `K 3` | 7–8 | A second MIDI channel on the same voice; every pluck is killed three ticks in, whatever the note length. |
+| 6 → PU2 | 1–127 `arp` (its own table `arp-minor`) | 7–8 | Held chords: the instrument's table arpeggiates, nothing in the MIDI does. |
+| 7 → WAV | 1–127 `tri-bass` + TBL `octave-drop` | 7–8 | A region's TBL column: the bass drops an octave every other tick. |
+
+Every note's end is a `K` at the next tick unless the next note follows at once (the lead's
+soft notes do), so the file's note lengths are exactly what you hear. `chipboy_recordtest
+--play-midi midi-map/midi-map-demo.cbsong midi-map/midi-map-demo.mid 8` plays the pair and
+measures every channel; CTest runs it as `demo_midimap_plays`.
+
 ## Regenerating
 
 ```
 python3 tools/demo/make_demo.py
 python3 tools/demo/make_demo.py --paramdump build-plugin/chipboy_paramdump_artefacts/Release/chipboy_paramdump   # cross-check the parameter table
 python3 tools/demo/make_songs.py            # the six songs under songs/
+python3 tools/demo/make_midimap.py          # the MIDI map demo under midi-map/
 python3 tools/demo/make_songs.py --list     # what they are, and which bars each channel plays in
 ```
 

@@ -26,6 +26,14 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-28, demo -- the MIDI map demo, and `--play-midi`
+
+`Demo/midi-map/midi-map-demo.cbsong` (the bank and the map, no cells) and
+`midi-map-demo.mid` (eight bars, seven MIDI channels, one feature each), written by
+`tools/demo/make_midimap.py` and described in `Demo/README.md`. `chipboy_recordtest --play-midi
+SONG.cbsong FILE.mid [bars]` plays a MIDI file through a song file's map under a host play head
+and measures every channel; CTest `demo_midimap_plays` runs the pair.
+
 ### 2026-09-28, last -- the MIDI map: sixteen channels, velocity regions as tracker rows (§225, D-UI-43)
 
 `docs/plan-midi-map.md`, `docs/COMMANDS_AND_TEMPO.md` §225, `docs/UI_DESIGN.md` D-UI-43; spec §12

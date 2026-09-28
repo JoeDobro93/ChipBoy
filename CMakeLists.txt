@@ -304,6 +304,12 @@ if(CHIPBOY_BUILD_PLUGIN)
     # a tab and plays eight bars on the plugin's own transport, and what comes
     # out is measured -- no NaN, not silent, and no channel that never moves.
     # One test per file, so a failure names the song.
+    # The MIDI map demo (section 225): the MIDI file plays through the song
+    # file's map and bank, and every channel has to sound.
+    add_test(NAME demo_midimap_plays COMMAND chipboy_recordtest
+             --out "${CMAKE_CURRENT_BINARY_DIR}/recordtest"
+             --play-midi "${CMAKE_CURRENT_SOURCE_DIR}/Demo/midi-map/midi-map-demo.cbsong"
+                         "${CMAKE_CURRENT_SOURCE_DIR}/Demo/midi-map/midi-map-demo.mid" 8)
     file(GLOB CHIPBOY_DEMO_SONGS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Demo/songs/*.cbsong")
     foreach(song ${CHIPBOY_DEMO_SONGS})
         get_filename_component(song_name "${song}" NAME_WE)

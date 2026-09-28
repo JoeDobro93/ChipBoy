@@ -104,6 +104,15 @@ badge); `tools/uishot` (the shot).
 - Keyswitches (the channel parameter) still select; a region's INS overrides what they chose.
 - The Voice plugin is untouched: its notes arrive already routed.
 
+## Open: `G` as a record grid (the user's pushback)
+
+A `G` in a region is dropped today. The user's point: while a groove is inaudible under MIDI
+playback, recording could use it to decide which step a note lands on. The recorder already
+quantises on the phrase's own groove (`Player::quantise`), so the gap is only *setting* that
+groove from the MIDI side. Proposed: a per-MIDI-channel **record groove** in the map, used as
+the quantise grid for that channel's notes and stamped on the phrase written into; not a
+command, not a cell. Not built; see the reply of 2026-09-28 and HANDOFF.
+
 ## Tests
 
 `Tests/MidiMapTests.cpp` `[midimap]`: normalise (order, the first at 1, duplicates, the cap);

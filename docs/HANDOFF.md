@@ -121,6 +121,20 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
   index and MIDI sits after Tracker).
 - Not done: a way to seed the map from the strips' Source choices (a "from the strips" button
   would be a few lines in the panel); MIDI learn for a region.
+- **The demo** (the user's ask): `Demo/midi-map/midi-map-demo.cbsong` + `.mid` from
+  `tools/demo/make_midimap.py` (it imports `make_songs.py`'s `Bank`); `chipboy_recordtest
+  --play-midi SONG MID [bars]` plays a MIDI file through a song's map under a fake host play
+  head and measures the channels; CTest `demo_midimap_plays`. The demo song lives outside
+  `Demo/songs/` because `demo_songs_load` plays a song's cells and this one has none.
+- **Open, the user's pushback on `G`** (2026-09-28): a region's `G` could serve recording --
+  the grid incoming notes quantise onto. Today the recorder already quantises on the phrase's
+  own groove (`Player::quantise` walks `walkFor(ch, row)`), so what is missing is a way to
+  *set* that groove from the MIDI side for a phrase that has none yet. The proposal put to
+  the user: a **record groove per MIDI channel** in the map (not per region -- a grid is a
+  phrase's, and two regions with different grooves would fight inside one row), which the
+  recorder quantises that channel's notes onto and stamps on the phrase it writes into when
+  its first note lands; never fired as a command, never written into a cell. Waiting on the
+  user's answer before anything is built.
 
 ## Done (2026-09-28, later) -- the chain's scrollbar (D-UI-42)
 

@@ -36,6 +36,7 @@
 //   chipboy_recordtest --write-state FILE    write the hybrid project's state
 //   chipboy_recordtest --check-state FILE    build it and compare against FILE
 //   chipboy_recordtest --play-song FILE [bars]   play a song file and hear it
+//   chipboy_recordtest --play-midi SONG.cbsong FILE.mid [bars]   a MIDI file through a song's map (section 225)
 //   chipboy_recordtest --trace-song FILE OUT.csv [seconds] [--tempo BPM] [--from TICK]
 //   chipboy_recordtest --export-midi FILE OUT.mid [--no-noise]     (section 224)
 //                                        the register writes a song file makes, in
@@ -742,6 +743,108 @@ int playSong(const juce::File& file, int bars)
     return ok ? 0 : 1;
 }
 
+/// `chipboy_recordtest --play-midi SONG.cbsong FILE.mid [bars]` (section 225):
+/// the song file opens in a tab -- its bank and its MIDI map -- and the MIDI
+/// file plays into the plugin under a host play head at the song's tempo, as
+/// a DAW would send it. What comes out is measured as --play-song measures a
+/// song: the mix and each soloed channel, a NaN, silence or a channel that
+/// never moves failing it. The demo's check, and a way to hear a map.
+int playMidi(const juce::File& songFile, const juce::File& midiFile, int bars)
+{
+    constexpr double kSilence = 1.0e-4;
+    if (!songFile.existsAsFile()) { std::printf("FAIL %s does not exist\n", songFile.getFullPathName().toRawUTF8()); return 1; }
+    if (!midiFile.existsAsFile()) { std::printf("FAIL %s does not exist\n", midiFile.getFullPathName().toRawUTF8()); return 1; }
+    double tempo = 120.0;
+    int mapped = 0;
+    bool on = false;
+    {
+        const auto pOwned = std::make_unique<ChipBoyProcessor>();
+        SongReport report;
+        if (!openForPlayback(*pOwned, songFile, -1, report)) return 1;
+        const auto song = pOwned->song();
+        if (song == nullptr) { std::printf("FAIL %s opened with no song\n", songFile.getFullPathName().toRawUTF8()); return 1; }
+        tempo = std::clamp(song->tempoBpm, driver::kMinSongBpm, driver::kMaxSongBpm);
+        on = song->midiMap.on;
+        for (const auto& c : song->midiMap.channels) if (c.target >= 0) ++mapped;
+        std::printf("%s: %.0f BPM, bank \"%s\", MIDI map %s with %d channels assigned\n", songFile.getFileNameWithoutExtension().toRawUTF8(),
+                    tempo, report.bankName.toRawUTF8(), on ? "on" : "off", mapped);
+    }
+    std::vector<TimedMessage> midi;
+    if (!loadMidi(midiFile, tempo, midi)) { std::printf("FAIL cannot read %s as a MIDI file\n", midiFile.getFullPathName().toRawUTF8()); return 1; }
+    std::printf("plays %s: %d events over %d bars at %.0f BPM\n", midiFile.getFileName().toRawUTF8(), int(midi.size()), bars, tempo);
+
+    const double samplesPerBar = 4.0 * 60.0 / tempo * kSampleRate;
+    const int64_t samples = int64_t(std::llround(double(bars) * samplesPerBar));
+    const int blocks = int((samples + kBlock - 1) / kBlock);
+    auto once = [&](int solo, SongRun& out) {
+        const auto pOwned = std::make_unique<ChipBoyProcessor>();
+        auto& p = *pOwned;
+        SongReport report;
+        if (!openForPlayback(p, songFile, solo, report)) return false;
+        p.prepareToPlay(kSampleRate, kBlock);
+        if (gConsole >= 0) setParameter(p, ids::model, double(gConsole));
+        FakePlayHead head;
+        head.bpm = tempo;
+        p.setPlayHead(&head);
+        juce::AudioBuffer<float> buffer(2, kBlock);
+        juce::MidiBuffer in;
+        std::vector<double> sum(size_t(bars), 0.0), count(size_t(bars), 0.0);
+        out.rms.assign(size_t(bars), 0.0);
+        size_t next = 0;
+        for (int b = 0; b < blocks; ++b) {
+            const int64_t f0 = int64_t(b) * kBlock;
+            head.frame = f0;
+            in.clear();
+            while (next < midi.size() && midi[next].sample < f0 + kBlock) { in.addEvent(midi[next].message, int(midi[next].sample - f0)); ++next; }
+            p.processBlock(buffer, in);
+            for (int i = 0; i < kBlock; ++i) {
+                const int64_t f = f0 + i;
+                if (f >= samples) break;
+                const size_t bar = size_t(std::min<int64_t>(int64_t(double(f) / samplesPerBar), int64_t(bars) - 1));
+                for (int c = 0; c < buffer.getNumChannels(); ++c) {
+                    const double v = double(buffer.getSample(c, i));
+                    if (!std::isfinite(v)) { if (!out.bad) out.badBlock = b; out.bad = true; continue; }
+                    sum[bar] += v * v; count[bar] += 1.0;
+                    out.lo = std::min(out.lo, v); out.hi = std::max(out.hi, v); out.peak = std::max(out.peak, std::fabs(v));
+                }
+            }
+            if (b % 16 == 0) pump(1);
+        }
+        p.setPlayHead(nullptr);
+        pump(50);
+        for (size_t i = 0; i < size_t(bars); ++i) out.rms[i] = count[i] > 0.0 ? std::sqrt(sum[i] / count[i]) : 0.0;
+        return true;
+    };
+    SongRun mix;
+    std::array<SongRun, 4> channels;
+    if (!once(-1, mix)) return 1;
+    for (int ch = 0; ch < 4; ++ch) if (!once(ch, channels[size_t(ch)])) return 1;
+
+    std::printf("\nRMS per bar\n  bar      PU1      PU2      WAV      NOI      mix\n");
+    for (int b = 0; b < bars; ++b) {
+        std::printf("  %3d", b + 1);
+        for (int ch = 0; ch < 4; ++ch) std::printf("  %7.5f", channels[size_t(ch)].rms[size_t(b)]);
+        std::printf("  %7.5f\n", mix.rms[size_t(b)]);
+    }
+    bool ok = true;
+    for (int ch = 0; ch < 5; ++ch) {
+        const SongRun& r = ch < 4 ? channels[size_t(ch)] : mix;
+        if (!r.bad) continue;
+        std::printf("FAIL %s: a block produced a NaN or an infinity (block %d)\n", kStreamName[ch], r.badBlock);
+        ok = false;
+    }
+    if (mix.peak < kSilence) { std::printf("FAIL the whole run is silent (peak %g)\n", mix.peak); ok = false; }
+    for (int ch = 0; ch < 4; ++ch) {
+        const SongRun& r = channels[size_t(ch)];
+        if (r.hi - r.lo >= kSilence) continue;
+        std::printf("FAIL %s never changes across the run: the map never reached it, or its DAC stood still (range %g)\n", kStreamName[ch], r.hi - r.lo);
+        ok = false;
+    }
+    if (!on || mapped == 0) { std::printf("FAIL the song's MIDI map is off or assigns nothing\n"); ok = false; }
+    std::printf("\n%s %s through %s over %d bars\n", ok ? "PASSED" : "FAILED", midiFile.getFileName().toRawUTF8(), songFile.getFileName().toRawUTF8(), bars);
+    return ok ? 0 : 1;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -757,6 +860,7 @@ int main(int argc, char** argv)
     double traceBpm = 0.0;                                       // --tempo BPM: play it at this tempo instead
     int64_t traceFrom = 0;                                       // --from TICK: locate there before playing (section 223)
     juce::File midiFile, midiOut; bool midiNoise = true;         // --export-midi FILE OUT.mid [--no-noise] (section 224)
+    juce::File playMidiSong, playMidiFile; int playMidiBars = 8;  // --play-midi SONG.cbsong FILE.mid [bars] (section 225)
     int playBars = 8;                                         // --play-song's default (section 24)
     bool dump = false;
     for (int i = 1; i < argc; ++i) {
@@ -777,6 +881,11 @@ int main(int argc, char** argv)
         else if (key == "--model") importModel = juce::String(argv[++i]);
         else if (key == "--tempo") traceBpm = std::clamp(juce::String(argv[++i]).getDoubleValue(), driver::kMinSongBpm, driver::kMaxSongBpm);
         else if (key == "--from" && i + 1 < argc) traceFrom = std::max<int64_t>(0, juce::String(argv[++i]).getLargeIntValue());
+        else if (key == "--play-midi" && i + 2 < argc) {
+            playMidiSong = juce::File::getCurrentWorkingDirectory().getChildFile(argv[++i]);
+            playMidiFile = juce::File::getCurrentWorkingDirectory().getChildFile(argv[++i]);
+            if (i + 1 < argc && argv[i + 1][0] != '-') playMidiBars = std::clamp(int(std::strtol(argv[++i], nullptr, 10)), 1, 64);
+        }
         else if (key == "--export-midi" && i + 2 < argc) { midiFile = juce::File::getCurrentWorkingDirectory().getChildFile(argv[++i]); midiOut = juce::File::getCurrentWorkingDirectory().getChildFile(argv[++i]); }
         else if (key == "--import-sav" && i + 3 < argc) {
             importSav = juce::File(juce::String(argv[++i])); importWhich = juce::String(argv[++i]); importOut = juce::File(juce::String(argv[++i]));
@@ -844,6 +953,8 @@ int main(int argc, char** argv)
 
     /* ---- --trace-song: the register writes of a song file, as a CSV ---- */
     if (traceFile != juce::File()) return traceSong(traceFile, traceOut, traceSeconds, traceBpm, traceFrom);
+    /* ---- --play-midi: a MIDI file through a song's map (section 225) ---- */
+    if (playMidiSong != juce::File()) return playMidi(playMidiSong, playMidiFile, playMidiBars);
     /* ---- --export-midi: the song file as a MIDI file (section 224) ---- */
     if (midiFile != juce::File()) {
         auto bank = std::make_unique<bank::Bank>();
