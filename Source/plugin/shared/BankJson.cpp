@@ -557,6 +557,29 @@ var songToVar(const tracker::Song& s)
     Array<var> names;
     for (const auto& g : s.grooves) names.add(String(CharPointer_UTF8(g.nameOf())));
     o->setProperty("grooveNames", names);
+    // Section 225: the MIDI map, only when it is not the default -- off and
+    // nothing assigned -- so no file written before it changes.
+    if (!tracker::midiMapIsDefault(s.midiMap)) {
+        auto* mo = new DynamicObject();
+        mo->setProperty("on", s.midiMap.on);
+        Array<var> chans;
+        for (const auto& c : s.midiMap.channels) {
+            auto* co = new DynamicObject();
+            co->setProperty("target", int(c.target));
+            Array<var> regs;
+            for (const auto& r : c.regions) {
+                auto* ro = new DynamicObject();
+                ro->setProperty("from", int(r.from)); ro->setProperty("inst", int(r.inst)); ro->setProperty("table", int(r.table));
+                if (r.cmd1.cmd != Cmd::None) ro->setProperty("cmd1", cmdToVar(r.cmd1));
+                if (r.cmd2.cmd != Cmd::None) ro->setProperty("cmd2", cmdToVar(r.cmd2));
+                regs.add(var(ro));
+            }
+            co->setProperty("regions", regs);
+            chans.add(var(co));
+        }
+        mo->setProperty("channels", chans);
+        o->setProperty("midiMap", var(mo));
+    }
     // Section 222: the time signatures, only when they are not the single
     // default at tick 0, so no file written before them changes.
     {
@@ -707,6 +730,30 @@ bool songFromVar(const var& v, tracker::Song& out)
         }
     }
     tracker::normalizeSignatures(out);
+    // Section 225: the MIDI map; absent reads as off with nothing assigned.
+    out.midiMap = tracker::MidiMap{};
+    if (auto* mo = o->getProperty("midiMap").getDynamicObject()) {
+        out.midiMap.on = bool(mo->getProperty("on"));
+        if (auto* chans = mo->getProperty("channels").getArray())
+            for (int k = 0; k < std::min(tracker::kMidiChannels, chans->size()); ++k) {
+                auto* co = (*chans)[k].getDynamicObject(); if (!co) continue;
+                auto& c = out.midiMap.channels[size_t(k)];
+                c.target = int8_t(std::clamp(getOr(co, "target", -1), -1, 3));
+                if (auto* regs = co->getProperty("regions").getArray()) {
+                    c.regions.clear();
+                    for (const auto& rv : *regs) {
+                        auto* ro = rv.getDynamicObject(); if (!ro) continue;
+                        tracker::MidiRegion r;
+                        r.from = uint8_t(std::clamp(getOr(ro, "from", 1), 1, 127));
+                        r.inst = uint8_t(std::clamp(getOr(ro, "inst", 0), 0, bank::kInstrumentSlots));
+                        r.table = uint8_t(std::clamp(getOr(ro, "table", 0), 0, bank::kTableSlots));
+                        r.cmd1 = cmdFromVar(ro->getProperty("cmd1")); r.cmd2 = cmdFromVar(ro->getProperty("cmd2"));
+                        c.regions.push_back(r);
+                    }
+                }
+            }
+    }
+    tracker::normalizeMidiMap(out.midiMap);
     tracker::buildRowTables(out);
     return true;
 }

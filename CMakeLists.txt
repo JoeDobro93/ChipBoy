@@ -38,6 +38,7 @@ add_library(chipboy_core STATIC
     Source/core/Driver/Driver.cpp
     Source/core/Tracker/Player.cpp
     Source/core/Tracker/Song.cpp
+    Source/core/Tracker/MidiMap.cpp
     Source/core/Import/LsdjSave.cpp
     Source/core/Import/LsdjModel.cpp
     Source/core/Import/LsdjKits.cpp
@@ -87,6 +88,7 @@ if(CHIPBOY_BUILD_TESTS)
         Tests/LsdjImportTests.cpp
         Tests/ClockTests.cpp
         Tests/TrackerTests.cpp
+        Tests/MidiMapTests.cpp
         Tests/PresetTests.cpp
         Tests/WaveSynthTests.cpp
         Tests/LinkTests.cpp

@@ -163,6 +163,7 @@ void ChannelStrip::showSourceMenu()
     bool owned = false;
     const String voice = channelSourceText(processor_, ch_, &owned);
     if (owned) { m.addItem(100, "Owned by a Voice plugin: " + voice.fromFirstOccurrenceOf(": ", false, false), false); m.addSeparator(); }
+    if (const auto s = processor_.song(); s && s->midiMap.on) { m.addItem(101, "The MIDI tab's map routes this channel; this is what routes with the map off", false); m.addSeparator(); }
     m.addSectionHeader("Where this voice's notes come from");
     m.addItem(1, "Omni", true, sourceValue_ == 0);
     PopupMenu midi;

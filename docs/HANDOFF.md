@@ -10,7 +10,7 @@ parity campaign, `docs/COMMANDS_AND_TEMPO.md` §1-§221, is closed; every law in
 section). The user's focus is now **UI and user interactions**. This round rebuilt the Tracker
 tab around a **tick**: the chain is drawn in time (D-UI-35, §222, §223, `docs/plan-chain-timeline.md`),
 the lanes show each channel's own row at the play head, the plugin's own transport locates, and
-the song carries time signatures. The gate is green (`tools/gate.sh all`: 342 core tests, 11
+the song carries time signatures. The gate is green (`tools/gate.sh all`: 351 core tests, 11
 plugin checks, the parameter table, the 1 MB-stack link test); `main` is pushed with every commit
 and the user builds Windows and macOS from it -- the user has clicked the first build
 and sent four notes, answered in the second pass below; the rest is still Linux-shot only.**
@@ -82,6 +82,7 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
   (notes, tables, commands, the 358 Hz pitch clock, zombie-mode levels, envelopes, the
   Clock), `Tracker` (Song, Player, recorder), `Bank` (instruments, tables, waves, kits,
   grooves, presets, the wave synth), `Link` (the shared-memory region), `Export` (MIDI).
+  `Tracker/MidiMap` is the MIDI map (§225).
 - `Source/plugin/`: `main` (ChipBoyProcessor, editor, panels), `voice`, `shared`
   (parameters, JSON, song and preset files), `ui` (widgets, grids, scopes, undo).
 - `tools/`: `gate.sh`, `demo` (make_demo.py, make_songs.py), `recordtest`, `linktest`,
@@ -90,6 +91,36 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
   `UI_DESIGN.md`, `HARDWARE_DRIVER_AUDIT.md`, `LSDJ_PARITY.md`, `LICENSING.md`.
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
+
+## Done (2026-09-28, last) -- the MIDI map (§225, D-UI-43)
+
+- The user's brief: sixteen MIDI channels, each to one ChipBoy channel, velocity regions that
+  are tracker rows without the note; note ends as `K`s. `docs/plan-midi-map.md` first, then:
+  `Source/core/Tracker/MidiMap.h/.cpp` (`MidiRegion` / `MidiChannelMap` / `MidiMap` on the
+  `Song`, `normalizeMidiMap`, `regionFor`, `midiMapIsDefault`, `midiCommandAllowed` -- not H, G,
+  T), `NoteEvent::mapped` and the driver: a mapped note-on takes the cell path (`plain = inst
+  != 0`, the instrument's own volume, the region's commands once), a mapped note-off sets
+  `killAt = tickCount_` -- the next tick boundary -- and a mapped note-on before it clears
+  that; the held stack stays a keyboard's for mapped notes (the §224 fix clears it for tracker
+  cells only). `ChipBoyProcessor::routeMidi` routes by the published song's map when it is on;
+  `recordNote` writes the region's table and commands and a blank VEL. `BankJson`: `"midiMap"`
+  written only when not default. The **MIDI tab** (`panels/MidiMapPanel`, `ui::RegionGrid` in
+  `Grids.cpp` on the shared grid core, a velocity bar with draggable boundaries, `+`/`-`
+  region); `kTabBarWidth` 720 for nine tabs; the strip's badge `MAP 1·5`
+  (`channelSourceText`); `flushAllChannels()` after a target edit. `LinkLayout::kVersion` 5.
+- Tests: `Tests/MidiMapTests.cpp` `[midimap]` (normalise, `regionFor`, the letters, the
+  default); `Tests/DriverTests.cpp` `[driver][midimap]` (examples A, B, C of the brief, the
+  kill at the next tick and its cancel, the keyboard's return to a held key); the map's song
+  file round trip in `chipboy_recordtest`'s record test. `docs/screenshots/main-midi.png` from
+  a READROOM copy with a demo map (`scratchpad/readroom-map.cbsong`).
+- **Decisions the user should confirm**: the velocity picks the region and nothing else (no
+  velocity-to-volume under the map; dynamics are regions with `E`); a mapped note-off ignores
+  the instrument's Note-off mode (always the `K`); the map is off for every song until switched
+  on in the tab, so nothing routes differently until then; the tab opens on the first assigned
+  channel; a stored per-tab view of Link and Hardware shifts one tab once (views are keyed by
+  index and MIDI sits after Tracker).
+- Not done: a way to seed the map from the strips' Source choices (a "from the strips" button
+  would be a few lines in the panel); MIDI learn for a region.
 
 ## Done (2026-09-28, later) -- the chain's scrollbar (D-UI-42)
 

@@ -86,8 +86,9 @@ TEST_CASE("packed channel state survives the trip", "[link]")
 TEST_CASE("the running state survives the second word", "[link]")
 {
     // docs/COMMANDS_AND_TEMPO.md section 3: what the slots did, next to the
-    // registers. A layout change here is what the version bump is for.
-    CHECK(kVersion == 4);
+    // registers. A layout change here is what the version bump is for:
+    // 5 since NoteEvent::mapped (section 225) grew the event the region carries.
+    CHECK(kVersion == 5);
     driver::VoiceView v;
     v.envVol = 11; v.envRate = 5; v.envDir = 1;
     v.vibSpeed = 3; v.vibDepth = 7;

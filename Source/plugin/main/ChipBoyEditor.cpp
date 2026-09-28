@@ -5,6 +5,7 @@
 #include "plugin/main/panels/GroovesPanel.h"
 #include "plugin/main/panels/KitsPanel.h"
 #include "plugin/main/panels/LinkPanel.h"
+#include "plugin/main/panels/MidiMapPanel.h"
 #include "plugin/main/panels/TablesPanel.h"
 #include "plugin/main/panels/TrackerPanel.h"
 #include "plugin/main/panels/WavesPanel.h"
@@ -18,9 +19,9 @@ using namespace juce;
 using namespace chipboy::ui;
 
 namespace {
-constexpr int kTabsHeight = 34, kEditorPad = 12, kTabBarWidth = 660;
+constexpr int kTabsHeight = 34, kEditorPad = 12, kTabBarWidth = 720;
 const Identifier kScaleProp("ui_scale"), kHeightProp("ui_height"), kViewNode("ui_view"), kTabProp("tab"), kChannelProp("channel");
-const char* kTabNames[] = { "Instrument", "Tables", "Grooves", "Waves", "Kits", "Tracker", "Link", "Hardware" };
+const char* kTabNames[] = { "Instrument", "Tables", "Grooves", "Waves", "Kits", "Tracker", "MIDI", "Link", "Hardware" };
 static_assert(int(std::size(kTabNames)) == int(ChipBoyEditor::kTabs), "a tab needs a name");
 }
 
@@ -74,6 +75,7 @@ ChipBoyEditor::ChipBoyEditor(ChipBoyProcessor& p)
     panels_[Waves] = std::make_unique<WavesPanel>(processor_);
     panels_[Kits] = std::make_unique<KitsPanel>(processor_);
     panels_[Tracker] = std::make_unique<TrackerPanel>(processor_);
+    panels_[Midi] = std::make_unique<MidiMapPanel>(processor_);
     panels_[Link] = std::make_unique<LinkPanel>(processor_);
     auto hardware = std::make_unique<HardwarePanel>(processor_);
     hardware->onDisplaySettings = [this](ScopeView::Trace t, int periods) { mixer_.setScopeSettings(t, periods); };

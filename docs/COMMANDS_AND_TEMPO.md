@@ -6593,3 +6593,33 @@ timeline. `docs/plan-midi-export.md` is the shape; this is the law.
 - **The file**: format 1; track 0 the name, the tempo and the signatures; then PU1, PU2, WAV and,
   unless the option drops it, NOI, on MIDI channels 1-4, note-on velocity 100, note-off as `0x80`;
   at one tick metas, then offs, then ons; no running status.
+
+## 225. The MIDI map: sixteen channels, velocity regions as tracker rows
+
+The user's brief (`docs/plan-midi-map.md`): every MIDI channel of the port assigned to one
+ChipBoy channel, and within each, velocity regions that are tracker rows without the note.
+
+- **The map** (`Song::midiMap`, saved with the song): for each of the sixteen MIDI channels a
+  target -- PU1, PU2, WAV, NOI or off -- and one to eight **regions**, each the lowest velocity
+  it takes (`from`; the first is 1, the next region's `from` ends it) and a row's other columns:
+  INS, TBL, CMD 1, CMD 2. With the map on it is the routing; off, the channels' Source
+  parameters route as before (§3). Two MIDI channels may share a target.
+- **A mapped note-on is the cell the region describes**, played by the cell path (§3, §8,
+  §12): with an INS it is a plain note (the instrument reloads, its table restarts, the
+  region's commands fire after it); without one it is a bare note -- the pitch moves, what
+  sounds keeps its instrument and its state, and the region's commands fire on it, a `V` or
+  an `E` included, as a bare row's do. The velocity chose the region and does nothing else:
+  the note takes the instrument's own volume (rule 1 of §221), and the channel's Velocity mode
+  is not read. `H`, `G` and `T` are dropped from a region: a hop, a groove and a tempo belong
+  to the timeline.
+- **A note end is a `K`.** A mapped note-off that ends the sounding note sets the kill for the
+  next tick boundary (`killAt = tickCount_`, what a `K 00` read between ticks does); the
+  instrument's Note-off mode is not read. A mapped note-on on the channel before that tick
+  clears the kill, so a note that follows at once continues the voice -- plain or bare by its
+  region. A note-off for a note already replaced by a later one does nothing, and one with
+  older keys still held returns to the newest of them bare (§8), as a keyboard's does.
+- **Hybrid** (§20) keeps its law: on a Hybrid channel a mapped note gives pitch and gate; the
+  song's cells choose the columns. The **command octave** (§13) fires the channel's slots and
+  then the region's commands on what sounds. **Recording** (§9.4) writes the region's table and
+  commands -- what the channel read -- and a blank VEL.
+

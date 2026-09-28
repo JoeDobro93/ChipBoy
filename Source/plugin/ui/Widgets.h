@@ -9,6 +9,7 @@
 
 #include "core/Bank/Bank.h"
 #include "core/Link/LinkLayout.h"
+#include "core/Tracker/MidiMap.h"
 #include "core/Tracker/Song.h"
 #include "plugin/shared/ScopeBuffers.h"
 #include "plugin/ui/EditHistory.h"
@@ -275,6 +276,35 @@ public:
     juce::String getTooltip() override;   ///< the hovered cell: what the column is, and what the command says
     static constexpr int kRowHeight = 22, kHeaderHeight = 22;
     static constexpr int preferredHeight() { return kHeaderHeight + bank::kTableSteps * kRowHeight; }
+    void resized() override; void paint(juce::Graphics&) override;
+    void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override; void mouseUp(const juce::MouseEvent&) override;
+    void mouseDoubleClick(const juce::MouseEvent&) override;
+    bool keyPressed(const juce::KeyPress&) override; void focusGained(FocusChangeType) override; void focusLost(FocusChangeType) override;
+private:
+    struct Impl; std::unique_ptr<Impl> impl_;
+};
+
+/// The MIDI map's velocity regions of one MIDI channel (UI_DESIGN D-UI-43,
+/// docs/COMMANDS_AND_TEMPO.md section 225): a row per region -- VEL (its
+/// lowest velocity), INS, TBL, CMD 1, CMD 2 -- typed, nudged, boxed and
+/// right-clicked as the lane's cells are. The first region's VEL is 1 and
+/// stays; the others are kept between their neighbours.
+class RegionGrid : public juce::Component, public juce::TooltipClient {
+public:
+    RegionGrid();
+    ~RegionGrid() override;
+    /// The regions on show, and the ChipBoy channel they play (-1 none):
+    /// the palette greys the letters that channel cannot use.
+    void setRegions(const std::vector<tracker::MidiRegion>& regions, int target);
+    const std::vector<tracker::MidiRegion>& regions() const;
+    void setBank(std::shared_ptr<const bank::Bank> bank);
+    std::function<void(const std::vector<tracker::MidiRegion>&)> onChange;
+    std::function<void(SlotKind, int slot)> onOpenSlot;
+    std::function<void()> onEntryEnd;    ///< a typed run ended: the next edit is a new undo
+    juce::String getTooltip() override;
+    static constexpr int kRowHeight = 24, kHeaderHeight = 22;
+    int preferredHeight() const;
     void resized() override; void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
     void mouseDrag(const juce::MouseEvent&) override; void mouseUp(const juce::MouseEvent&) override;

@@ -444,6 +444,25 @@ void ChipBoyProcessor::routeMidi(const MidiMessage& m, int offset, std::vector<d
     else if (m.isController()) { e.kind = driver::NoteEvent::Control; e.a = uint8_t(m.getControllerNumber()); e.b = uint8_t(m.getControllerValue()); }
     else if (m.isAllNotesOff() || m.isAllSoundOff()) { e.kind = driver::NoteEvent::AllNotesOff; }
     else return;
+    // Section 225: with the map on, a channel message goes to its MIDI
+    // channel's target, or nowhere; a note-on takes its velocity region's
+    // columns and plays as that cell, a note-off ends as a `K`.
+    if (const tracker::Song* s = songPtr_.load(std::memory_order_acquire); s != nullptr && s->midiMap.on) {
+        if (midiCh < 1 || midiCh > tracker::kMidiChannels) return;
+        const auto& map = s->midiMap.channels[size_t(midiCh - 1)];
+        if (map.target < 0) return;
+        e.channel = uint8_t(map.target & 3);
+        if (e.kind == driver::NoteEvent::NoteOn || e.kind == driver::NoteEvent::NoteOff) {
+            e.mapped = true;
+            if (e.kind == driver::NoteEvent::NoteOn && e.b > 0) {
+                const auto& r = tracker::regionFor(map, e.b);
+                e.inst = r.inst; e.table = r.table;
+                e.cmd1 = tracker::midiRegionCommand(r.cmd1); e.cmd2 = tracker::midiRegionCommand(r.cmd2);
+            }
+        }
+        dst.push_back(e);
+        return;
+    }
     for (int ch = 0; ch < 4; ++ch) {
         const SourceChoice src = decodeSource(paramInt(channelParams[size_t(ch)].source));
         if (src.off) continue;
@@ -567,8 +586,11 @@ void ChipBoyProcessor::recordNote(const driver::NoteEvent& e, double tickAtEvent
     // VEL is written only when the velocity set the volume: under the bank or
     // ignored modes it did not, and a blank VEL replays the instrument's volume
     // in any instance, whatever that instance's Velocity mode (section 9.1).
-    const uint8_t velCol = p.velocityMode == 0 ? e.b : uint8_t(0);
-    if (player_.recordNote(ch, tickAtEvent, e.a, velCol, off, e.plain, e.loaded, p.table, p.cmd[0], p.cmd[1], m))
+    // A mapped note (section 225) read its region's columns, and its velocity
+    // chose the region: those are what the cell carries, and a blank VEL.
+    const uint8_t velCol = e.mapped ? uint8_t(0) : p.velocityMode == 0 ? e.b : uint8_t(0);
+    if (player_.recordNote(ch, tickAtEvent, e.a, velCol, off, e.plain, e.loaded, e.mapped ? e.table : p.table,
+                           e.mapped ? e.cmd1 : p.cmd[0], e.mapped ? e.cmd2 : p.cmd[1], m))
         recordFifo_.push(m);
 }
 

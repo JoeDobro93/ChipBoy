@@ -359,7 +359,7 @@ int main(int argc, char** argv)
     reportPanes(*ed, "instrument");
 
     if (auto* bar = findChild<juce::TabbedButtonBar>(ed.get())) {
-        const char* names[] = { "instrument", "tables", "grooves", "waves", "kits", "tracker", "link", "hardware" };
+        const char* names[] = { "instrument", "tables", "grooves", "waves", "kits", "tracker", "midi", "link", "hardware" };
         for (int i = 1; i < bar->getNumTabs() && i < int(std::size(names)); ++i) {
             bar->setCurrentTabIndex(i);
             pump(300);

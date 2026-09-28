@@ -28,7 +28,7 @@ public:
     explicit ChipBoyEditor(ChipBoyProcessor& p);
     ~ChipBoyEditor() override;
 
-    enum Tab { Instrument = 0, Tables, Grooves, Waves, Kits, Tracker, Link, Hardware, kTabs };
+    enum Tab { Instrument = 0, Tables, Grooves, Waves, Kits, Tracker, Midi, Link, Hardware, kTabs };
 
     void selectChannel(int ch);      ///< the editing context: strip highlight, panels, context line
     void showTab(int tab);

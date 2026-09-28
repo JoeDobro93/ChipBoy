@@ -1844,6 +1844,107 @@ TEST_CASE("a cell's OFF after two notes ends the channel, not the note before", 
     CHECK_FALSE(r.drv.view(0).active);                           // and nothing comes back
 }
 
+/// A note the MIDI map routed (section 225): the cell its region describes,
+/// marked so the driver plays it by the cell path and ends it as a `K`.
+NoteEvent mappedOn(int ch, uint8_t note, uint8_t vel, uint8_t inst, const Command& c1 = {}, const Command& c2 = {}, uint32_t off = 0)
+{
+    NoteEvent e; e.channel = uint8_t(ch); e.kind = NoteEvent::NoteOn; e.source = NoteEvent::Midi; e.mapped = true;
+    e.a = note; e.b = vel; e.inst = inst; e.cmd1 = c1; e.cmd2 = c2; e.offset = off; return e;
+}
+NoteEvent mappedOff(int ch, uint8_t note, uint32_t off = 0)
+{
+    NoteEvent e; e.channel = uint8_t(ch); e.kind = NoteEvent::NoteOff; e.source = NoteEvent::Midi; e.mapped = true;
+    e.a = note; e.offset = off; return e;
+}
+
+TEST_CASE("MIDI map A: a region with an instrument plays it plain at any velocity", "[driver][midimap]")
+{
+    Rig r;
+    r.tickHz = 100.0;
+    r.block({ mappedOn(0, 60, 5, 1) }, 480);
+    REQUIRE(r.report(0) != nullptr);
+    CHECK(r.report(0)->plain);
+    CHECK(r.report(0)->loaded == 1);
+    CHECK(r.drv.view(0).instrument == 1);
+    CHECK(r.drv.view(0).note == 60);
+    CHECK(r.drv.view(0).volume == 13);                              // the instrument's own volume, not the velocity's
+    r.block({ mappedOn(0, 64, 127, 1) }, 480);
+    CHECK(r.report(0)->plain);
+    CHECK(r.drv.view(0).volume == 13);
+}
+
+TEST_CASE("MIDI map B: a bare region moves the pitch, keeps the instrument and applies its V", "[driver][midimap]")
+{
+    Rig r;
+    r.tickHz = 100.0;
+    r.block({ mappedOn(2, 48, 100, 7) }, 480);                     // Triangle bass on WAV
+    CHECK(r.drv.view(2).instrument == 7);
+    r.block({ mappedOn(2, 50, 30, 0, { Cmd::V, 4, 6, 0 }) }, 480);
+    REQUIRE(r.report(2) != nullptr);
+    CHECK_FALSE(r.report(2)->plain);
+    CHECK(r.report(2)->loaded == 7);
+    CHECK(r.drv.view(2).instrument == 7);
+    CHECK(r.drv.view(2).note == 50);
+    CHECK(r.drv.view(2).active);
+    r.block({ mappedOff(2, 48) }, 480);                             // the first note's end: it was replaced, nothing happens
+    CHECK(r.drv.view(2).active);
+    CHECK(r.drv.view(2).note == 50);
+}
+
+TEST_CASE("MIDI map C: a bare region's E shapes the note that follows a plain one", "[driver][midimap]")
+{
+    Rig r;
+    r.tickHz = 100.0;
+    r.block({ mappedOn(1, 60, 100, 3) }, 480);                     // Bass 25 on PU2
+    CHECK(r.drv.view(1).instrument == 3);
+    const uint8_t volWas = r.drv.view(1).volume;
+    // The next quarter: its off and the next note in one block, the note
+    // first in the driver's order, so the off's kill is cleared by it.
+    auto w = r.block({ mappedOff(1, 60, 0), mappedOn(1, 62, 30, 0, { Cmd::E, 8, 3, 0 }, {}, 1) }, 480);
+    CHECK(r.drv.view(1).active);
+    CHECK(r.drv.view(1).instrument == 3);
+    CHECK(r.drv.view(1).note == 62);
+    CHECK(r.drv.view(1).volume == 8);                               // the E's level, on the same instrument
+    CHECK(r.drv.view(1).volume != volWas);
+    CHECK(has(w, 0xFF17));                                          // NR22 written
+}
+
+TEST_CASE("MIDI map: a note's end is a K at the next tick, cleared by a note that follows at once", "[driver][midimap]")
+{
+    Rig r;
+    r.tickHz = 100.0;
+    r.block({ mappedOn(0, 60, 100, 1) }, 480);
+    REQUIRE(r.drv.view(0).active);
+    // No tick in this block: the off waits for the next tick boundary.
+    r.block({ mappedOff(0, 60) }, 100, {});
+    CHECK(r.drv.view(0).active);
+    r.block({}, 480);                                               // a tick: the kill
+    CHECK_FALSE(r.drv.view(0).active);
+    CHECK(r.drv.view(0).volume == 0);                               // the level walked to 0, the DAC left on, as a K does (section 176)
+
+    r.block({ mappedOn(0, 60, 100, 1) }, 480);
+    r.block({ mappedOff(0, 60) }, 100, {});
+    r.block({ mappedOn(0, 62, 100, 0) }, 100, {});                  // before the tick: the kill is cleared
+    r.block({}, 480);
+    CHECK(r.drv.view(0).active);
+    CHECK(r.drv.view(0).note == 62);
+    CHECK(r.drv.view(0).instrument == 1);
+}
+
+TEST_CASE("MIDI map: releasing over an older held key returns to it, as a keyboard does", "[driver][midimap]")
+{
+    Rig r;
+    r.tickHz = 100.0;
+    r.block({ mappedOn(0, 60, 100, 1) }, 480);
+    r.block({ mappedOn(0, 64, 100, 1) }, 480);
+    r.block({ mappedOff(0, 64) }, 480);
+    CHECK(r.drv.view(0).active);
+    CHECK(r.drv.view(0).note == 60);
+    r.block({ mappedOff(0, 60) }, 480);
+    r.block({}, 480);
+    CHECK_FALSE(r.drv.view(0).active);
+}
+
 TEST_CASE("a cell's instrument column is exact under the velocity bank", "[driver][notes]")
 {
     // Velocity picks an instrument around the channel's own choice; a cell has

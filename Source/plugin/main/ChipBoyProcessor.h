@@ -140,6 +140,10 @@ public:
     /// with the snapshots it already makes put on the history under `name`.
     void editBank(const juce::String& name, const std::function<void(bank::Bank&)>& fn);
     void editSong(const juce::String& name, const std::function<void(tracker::Song&)>& fn);
+    /// Section 225: the MIDI map's routing changed, so nothing may ring on
+    /// a channel that is no longer fed -- every channel is flushed in front
+    /// of the next block's events (section 9.1).
+    void flushAllChannels() { flushRequest_.store(15); }
     /// A whole bank arriving (a file, the factory reset): the bank and the
     /// name it goes under are one step.
     void loadBankEdit(const juce::String& name, const bank::Bank& b, const juce::String& bankName);

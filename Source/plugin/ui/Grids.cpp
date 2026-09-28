@@ -1136,6 +1136,416 @@ bool TableGrid::keyPressed(const juce::KeyPress& k)
 void TableGrid::focusGained(FocusChangeType) { repaint(); }
 void TableGrid::focusLost(FocusChangeType) { impl_->core.entry.reset(); repaint(); }
 
+
+// ===========================================================================
+// RegionGrid (D-UI-43, section 225)
+// ===========================================================================
+struct RegionGrid::Impl {
+    RegionGrid& owner;
+    std::vector<tracker::MidiRegion> regions{ tracker::MidiRegion{} };
+    std::shared_ptr<const bank::Bank> bank;
+    int target = -1;
+    GridCore core;
+    TypedEntry box;
+    static constexpr int kDragPixels = 6;
+    int dragRow = -1, dragCol = -1, dragFrom = 0;
+    bool dragging = false;
+
+    explicit Impl(RegionGrid& o) : owner(o)
+    {
+        core.rows = 1; core.rowH = kRowHeight; core.headerH = kHeaderHeight; core.curCol = 2;
+    }
+
+    void buildColumns(int width)
+    {
+        auto& cols = core.cols;
+        cols.clear();
+        const int widths[6] = { 64, 88, 58, 58, 76, 76 };
+        const Kind kinds[6] = { Kind::Step, Kind::Vel, Kind::Inst, Kind::Table, Kind::Cmd, Kind::Cmd };
+        const char* titles[6] = { "Region", "Velocity", "Ins", "Tbl", "Cmd 1", "Cmd 2" };
+        int x = 0;
+        for (int i = 0; i < 6; ++i) { cols.push_back({ kinds[i], i == 5 ? 1 : 0, x, widths[i], titles[i] }); x += widths[i]; }
+        if (width - x >= 90) cols.push_back({ Kind::Info, 0, x, width - x, juce::String::charToString(0x2192) + " the note is" });
+    }
+
+    int rows() const { return int(regions.size()); }
+    int top(int row) const { return row + 1 < rows() ? int(regions[size_t(row + 1)].from) - 1 : 127; }
+    /// The range a region's `from` may take: above the one below, below the
+    /// one above; the first is 1 and stays.
+    int fromLo(int row) const { return row == 0 ? 1 : int(regions[size_t(row - 1)].from) + 1; }
+    int fromHi(int row) const { return row == 0 ? 1 : (row + 1 < rows() ? int(regions[size_t(row + 1)].from) - 1 : 127); }
+
+    juce::String cellText(int row, int col, bool& blank) const
+    {
+        const auto& r = regions[size_t(row)];
+        const auto k = core.cols[size_t(col)].kind;
+        blank = false;
+        if (k == Kind::Vel) return ValueFormat::number(int(r.from)) + juce::String::charToString(0x2013) + ValueFormat::number(top(row));
+        if (k == Kind::Inst) { blank = r.inst == 0; return blank ? kBlank2 : ValueFormat::slot(r.inst); }
+        if (k == Kind::Table) { blank = r.table == 0; return blank ? kBlank2 : ValueFormat::slot(r.table); }
+        if (k == Kind::Info) {
+            blank = true;
+            juce::String t = r.inst ? "plain: loads " + ValueFormat::slot(r.inst) : "bare: keeps what sounds";
+            if (r.inst && bank) if (const auto* i = bank->instrument(r.inst)) t += " " + juce::String(i->name);
+            if (r.table) t += ", table " + ValueFormat::slot(r.table);
+            return t;
+        }
+        return {};
+    }
+
+    void changed(int row)
+    {
+        // A `from` typed out of its range is held between its neighbours.
+        if (row >= 0 && row < rows()) regions[size_t(row)].from = uint8_t(juce::jlimit(fromLo(row), fromHi(row), int(regions[size_t(row)].from)));
+        owner.repaint();
+        if (owner.onChange) owner.onChange(regions);
+    }
+
+    bool fillBlank(int row, int col)
+    {
+        if (row < 0 || row >= rows() || !core.editable(col)) return false;
+        const auto& c = core.cols[size_t(col)];
+        auto& r = regions[size_t(row)];
+        if (c.kind == Kind::Inst) { if (r.inst) return false; int v = 0; for (int i = row - 1; !v && i >= 0; --i) v = regions[size_t(i)].inst; r.inst = uint8_t(v ? v : 1); }
+        else if (c.kind == Kind::Table) { if (r.table) return false; int v = 0; for (int i = row - 1; !v && i >= 0; --i) v = regions[size_t(i)].table; if (!v) return true; r.table = uint8_t(v); }
+        else if (c.kind == Kind::Cmd) {
+            bank::Command& t = c.ch == 0 ? r.cmd1 : r.cmd2;
+            if (t.cmd != bank::Cmd::None) return false;
+            bank::Command src;
+            for (int i = row - 1; src.cmd == bank::Cmd::None && i >= 0; --i) src = c.ch == 0 ? regions[size_t(i)].cmd1 : regions[size_t(i)].cmd2;
+            if (src.cmd == bank::Cmd::None) return true;
+            t = src;
+        } else return false;
+        core.entry.restart();
+        changed(row);
+        return true;
+    }
+
+    int dragValue(int row, int col) const
+    {
+        const auto& c = core.cols[size_t(col)];
+        const auto& r = regions[size_t(row)];
+        if (c.kind == Kind::Vel) return int(r.from);
+        if (c.kind == Kind::Inst) return int(r.inst);
+        if (c.kind == Kind::Table) return int(r.table);
+        if (c.kind == Kind::Cmd) {
+            const auto& cmd = c.ch == 0 ? r.cmd1 : r.cmd2;
+            if (cmd.cmd == bank::Cmd::None) return 0;
+            return ValueFormat::hex() ? plugin::commandByte(cmd) : plugin::commandShownValue(cmd, juce::jlimit(0, commandInfo(cmd.cmd)->nargs - 1, core.entry.arg));
+        }
+        return 0;
+    }
+    void setDragValue(int row, int col, int want)
+    {
+        const auto& c = core.cols[size_t(col)];
+        auto& r = regions[size_t(row)];
+        if (c.kind == Kind::Vel) { const auto v = uint8_t(juce::jlimit(fromLo(row), fromHi(row), want)); if (r.from == v) return; r.from = v; }
+        else if (c.kind == Kind::Inst) { const auto v = uint8_t(wrapRange(want, 0, bank::kInstrumentSlots)); if (r.inst == v) return; r.inst = v; }
+        else if (c.kind == Kind::Table) { const auto v = uint8_t(wrapRange(want, 0, bank::kTableSlots)); if (r.table == v) return; r.table = v; }
+        else if (c.kind == Kind::Cmd) {
+            auto& cmd = c.ch == 0 ? r.cmd1 : r.cmd2;
+            if (cmd.cmd == bank::Cmd::None) return;
+            const int cur = dragValue(row, col);
+            if (cur == want || !nudgeCommand(cmd, core.entry.arg, want - cur)) return;
+        } else return;
+        changed(row);
+    }
+
+    bool edit(const juce::KeyPress& k)
+    {
+        auto& r = regions[size_t(core.curRow)];
+        const auto& col = core.cols[size_t(core.curCol)];
+        bool done = false;
+        if (col.kind == Kind::Vel) {
+            if (core.curRow == 0) return false;                 // the first region starts at 1, always
+            uint8_t v = r.from;
+            done = editSlot(v, 127, k, core.entry);
+            if (done) r.from = v ? v : uint8_t(fromLo(core.curRow));
+        }
+        else if (col.kind == Kind::Inst) done = editSlot(r.inst, bank::kInstrumentSlots, k, core.entry);
+        else if (col.kind == Kind::Table) done = editSlot(r.table, bank::kTableSlots, k, core.entry);
+        else if (col.kind == Kind::Cmd) {
+            done = editCmd(col.ch == 0 ? r.cmd1 : r.cmd2, k, core.entry);
+            // The letters a region cannot carry (section 225).
+            auto& cmd = col.ch == 0 ? r.cmd1 : r.cmd2;
+            if (done && !tracker::midiCommandAllowed(cmd.cmd)) cmd = {};
+        }
+        if (done) changed(core.curRow);
+        return done;
+    }
+
+    bank::Command* commandAt(int row, int col)
+    {
+        if (row < 0 || row >= rows() || col < 0 || col >= int(core.cols.size()) || core.cols[size_t(col)].kind != Kind::Cmd) return nullptr;
+        auto& r = regions[size_t(row)];
+        return core.cols[size_t(col)].ch == 0 ? &r.cmd1 : &r.cmd2;
+    }
+
+    bool openValueEntry(int row, int col, int arg)
+    {
+        bank::Command* c = commandAt(row, col);
+        if (c == nullptr || c->cmd == bank::Cmd::None) return false;
+        const auto* info = commandInfo(c->cmd);
+        const int a = juce::jlimit(0, info->nargs - 1, arg);
+        core.setCursor(row, col);
+        core.entry.arg = a;
+        box.begin(owner, core.cellRect(row, col).reduced(1), cmdEntryText(*c, a), juce::Justification::centredLeft,
+                  [this, row, col, a](const juce::String& text) {
+                      bank::Command* cmd = commandAt(row, col);
+                      if (cmd != nullptr && cmdEntryCommit(*cmd, a, text)) changed(row);
+                      else owner.repaint();
+                  });
+        if (!ValueFormat::hex() && info->nargs > 1) box.onTab = [this, row, col, a] { openValueEntry(row, col, (a + 1) % 2); };
+        return true;
+    }
+
+    void openNumberEntry(int row, int col)
+    {
+        if (row < 0 || row >= rows() || col < 0 || col >= int(core.cols.size())) return;
+        const auto kind = core.cols[size_t(col)].kind;
+        if (kind != Kind::Vel && kind != Kind::Inst && kind != Kind::Table) return;
+        if (kind == Kind::Vel && row == 0) return;
+        const auto& r = regions[size_t(row)];
+        const int cur = kind == Kind::Vel ? int(r.from) : kind == Kind::Inst ? int(r.inst) : int(r.table);
+        const int hi = kind == Kind::Vel ? 127 : kind == Kind::Inst ? bank::kInstrumentSlots : bank::kTableSlots;
+        core.setCursor(row, col);
+        const juce::String shown = cur == 0 ? juce::String() : kind == Kind::Vel ? ValueFormat::number(cur) : ValueFormat::slot(cur);
+        box.begin(owner, core.cellRect(row, col).reduced(1), shown, juce::Justification::centredLeft,
+                  [this, row, kind, hi](const juce::String& text) {
+                      int v = 0;
+                      const bool ok = kind == Kind::Vel ? detail::parseTypedInt(text, 1, hi, v) : text.trim().isEmpty() || detail::parseSlotTyped(text, hi, v);
+                      if (!ok) { owner.repaint(); return; }
+                      auto& t = regions[size_t(row)];
+                      uint8_t& field = kind == Kind::Vel ? t.from : kind == Kind::Inst ? t.inst : t.table;
+                      if (int(field) == v) { owner.repaint(); return; }
+                      field = uint8_t(v);
+                      changed(row);
+                  });
+    }
+
+    bool nudge(int row, int col, int delta)
+    {
+        if (delta == 0 || row < 0 || row >= rows() || !core.editable(col)) return false;
+        auto& r = regions[size_t(row)];
+        const auto& c = core.cols[size_t(col)];
+        core.entry.restart();
+        if (c.kind == Kind::Vel) { if (row == 0) return true; r.from = uint8_t(juce::jlimit(fromLo(row), fromHi(row), int(r.from) + delta)); }
+        else if (c.kind == Kind::Inst) r.inst = uint8_t(wrapRange(int(r.inst) + delta, 0, bank::kInstrumentSlots));
+        else if (c.kind == Kind::Table) r.table = uint8_t(wrapRange(int(r.table) + delta, 0, bank::kTableSlots));
+        else if (c.kind == Kind::Cmd) { if (!nudgeCommand(c.ch == 0 ? r.cmd1 : r.cmd2, core.entry.arg, delta)) return true; }
+        else return false;
+        changed(row);
+        return true;
+    }
+
+    void openPalette(int row, int col)
+    {
+        if (row < 0 || row >= rows() || col < 0 || col >= int(core.cols.size()) || core.cols[size_t(col)].kind != Kind::Cmd) return;
+        const int which = core.cols[size_t(col)].ch;
+        const auto& current = which == 0 ? regions[size_t(row)].cmd1 : regions[size_t(row)].cmd2;
+        showCommandPalette(owner, core.cellRect(row, col), current, target >= 0 ? kindOfChannel(target) : plugin::ChannelKind::Any,
+                           [this, row, which](int id, bank::Cmd cmd) {
+                               if (!tracker::midiCommandAllowed(cmd)) return;   // G and T are the timeline's (section 225)
+                               applyPalette(which == 0 ? regions[size_t(row)].cmd1 : regions[size_t(row)].cmd2, id, cmd);
+                               core.entry.reset();
+                               changed(row);
+                           });
+    }
+
+    std::vector<SlotRow> instrumentRows() const
+    {
+        std::vector<SlotRow> rows, others;
+        if (bank == nullptr) return rows;
+        static const char* kinds[] = { "pulse", "wave", "kit", "noise" };
+        const auto want = target == 2 ? bank::InstrumentType::Wave : target == 3 ? bank::InstrumentType::Noise : bank::InstrumentType::Pulse;
+        for (int slot = 1; slot <= bank::kInstrumentSlots; ++slot) {
+            const auto* inst = bank->instrument(slot);
+            if (inst == nullptr) continue;
+            SlotRow r; r.slot = slot; r.name = juce::String(inst->name); r.used = true; r.kind = int(inst->type);
+            const bool fits = target < 0 || inst->type == want || (want == bank::InstrumentType::Wave && inst->type == bank::InstrumentType::Kit);
+            if (!fits) r.note = kinds[std::clamp(int(inst->type), 0, 3)];
+            (fits ? rows : others).push_back(r);
+        }
+        rows.insert(rows.end(), others.begin(), others.end());
+        return rows;
+    }
+    std::vector<SlotRow> tableRows() const
+    {
+        std::vector<SlotRow> rows;
+        if (bank == nullptr) return rows;
+        for (int slot = 1; slot <= bank::kTableSlots; ++slot)
+            if (const auto* t = bank->table(slot)) rows.push_back({ slot, juce::String(t->name), true, -1, {} });
+        return rows;
+    }
+    void openSlotMenu(int row, int col)
+    {
+        if (row < 0 || row >= rows() || col < 0 || col >= int(core.cols.size())) return;
+        const auto& c = core.cols[size_t(col)];
+        if (c.kind != Kind::Inst && c.kind != Kind::Table) return;
+        const bool instruments = c.kind == Kind::Inst;
+        const auto slotRows = instruments ? instrumentRows() : tableRows();
+        if (slotRows.empty()) return;
+        const int current = instruments ? int(regions[size_t(row)].inst) : int(regions[size_t(row)].table);
+        showSlotMenu(owner, core.cellRect(row, col), instruments ? "Instrument" : "Table", slotRows, current,
+                     [this, row, instruments](int slot) {
+                         auto& r = regions[size_t(row)];
+                         (instruments ? r.inst : r.table) = uint8_t(juce::jmax(0, slot));
+                         core.entry.reset();
+                         changed(row);
+                     },
+                     [this, instruments, current] { if (owner.onOpenSlot && current > 0) owner.onOpenSlot(instruments ? SlotKind::Instrument : SlotKind::Table, current); });
+    }
+
+    juce::String tooltip() const
+    {
+        const int row = core.hoverRow, col = core.hoverCol;
+        if (row < 0 || row >= rows() || col < 0 || col >= int(core.cols.size())) return {};
+        const auto& c = core.cols[size_t(col)];
+        const auto& r = regions[size_t(row)];
+        if (c.kind == Kind::Vel) return row == 0 ? "The lowest region starts at velocity 1 and stays there; the region above it says where it ends."
+                                              : "The lowest velocity this region takes; the region below ends where this begins. Type it, double-click for a box, Shift+arrows move it.";
+        if (c.kind == Kind::Inst) return "The instrument a note in this region loads -- a plain note, as a cell with an INS. Blank is a bare note: the pitch moves and what sounds keeps its instrument. Right-click lists the bank.";
+        if (c.kind == Kind::Table) return "The table a plain note in this region starts; blank is the instrument's own. Right-click lists the bank.";
+        if (c.kind == Kind::Cmd) return cmdTooltip(c.ch == 0 ? r.cmd1 : r.cmd2) + " Fires once with each note in this region, as a cell's command does. H, G and T cannot be carried here.";
+        if (c.kind == Kind::Info) return "What a note in this region does: plain reloads the instrument, bare keeps what is sounding.";
+        return "Region " + juce::String(row + 1) + " of " + juce::String(rows()) + ".";
+    }
+};
+
+RegionGrid::RegionGrid() : impl_(std::make_unique<Impl>(*this))
+{
+    setWantsKeyboardFocus(true);
+    setSize(520, preferredHeight());
+}
+RegionGrid::~RegionGrid() = default;
+
+juce::String RegionGrid::getTooltip() { return impl_->tooltip(); }
+void RegionGrid::setRegions(const std::vector<tracker::MidiRegion>& regions, int target)
+{
+    auto& im = *impl_;
+    im.regions = regions.empty() ? std::vector<tracker::MidiRegion>{ tracker::MidiRegion{} } : regions;
+    im.target = target;
+    im.core.rows = im.rows();
+    im.core.curRow = juce::jlimit(0, im.rows() - 1, im.core.curRow);
+    repaint();
+}
+const std::vector<tracker::MidiRegion>& RegionGrid::regions() const { return impl_->regions; }
+void RegionGrid::setBank(std::shared_ptr<const bank::Bank> bank) { impl_->bank = std::move(bank); repaint(); }
+int RegionGrid::preferredHeight() const { return kHeaderHeight + impl_->rows() * kRowHeight; }
+void RegionGrid::resized() { impl_->buildColumns(getWidth()); impl_->core.ensureEditableCursor(); }
+
+void RegionGrid::paint(juce::Graphics& g)
+{
+    auto& im = *impl_;
+    auto& core = im.core;
+    if (core.cols.empty()) im.buildColumns(getWidth());
+    const bool focused = hasKeyboardFocus(false);
+    core.paintHeader(g, getWidth(), 0, core.headerH);
+    core.paintRowLines(g, getWidth());
+    g.setFont(Fonts::mono(12.0f));
+    for (int r = 0; r < core.rows; ++r) {
+        // The region's number, in the target channel's colour: the highest
+        // velocities sit at the bottom of the list, as the loudest row.
+        const auto sr = core.cellRect(r, 0);
+        g.setFont(Fonts::mono(12.0f));
+        g.setColour(im.target >= 0 ? colours::channel(im.target) : colours::textDim);
+        g.drawText(juce::String(r + 1), sr.withTrimmedLeft(8), juce::Justification::centredLeft, false);
+        for (int c = 1; c < int(core.cols.size()); ++c) {
+            const auto kind = core.cols[size_t(c)].kind;
+            if (kind == Kind::Cmd) {
+                const auto& region = im.regions[size_t(r)];
+                core.paintCmdCell(g, r, c, core.cols[size_t(c)].ch == 0 ? region.cmd1 : region.cmd2, focused);
+                continue;
+            }
+            bool blank = false;
+            const auto text = im.cellText(r, c, blank);
+            if (kind == Kind::Info) {
+                g.setFont(Fonts::mono(10.5f)); g.setColour(colours::textDim);
+                g.drawText(text, core.cellRect(r, c).withTrimmedLeft(8), juce::Justification::centredLeft, true);
+            }
+            else core.paintCell(g, r, c, text, blank, kind == Kind::Vel ? colours::textMute : colours::text, focused);
+        }
+    }
+}
+
+void RegionGrid::mouseMove(const juce::MouseEvent& e)
+{
+    auto& core = impl_->core;
+    int r = -1, c = -1;
+    if (!core.cellAt(e.getPosition(), r, c)) { r = -1; c = -1; }
+    const bool letter = c >= 0 && core.onLetter(c, e.x);
+    if (r != core.hoverRow || c != core.hoverCol || letter != core.hoverLetter) { core.hoverRow = r; core.hoverCol = c; core.hoverLetter = letter; repaint(); }
+}
+void RegionGrid::mouseExit(const juce::MouseEvent&) { impl_->core.hoverRow = impl_->core.hoverCol = -1; impl_->core.hoverLetter = false; repaint(); }
+void RegionGrid::mouseDown(const juce::MouseEvent& e)
+{
+    auto& im = *impl_;
+    auto& core = im.core;
+    grabKeyboardFocus();
+    im.dragging = false;
+    im.dragRow = im.dragCol = -1;
+    int r = 0, c = 0;
+    if (!core.cellAt(e.getPosition(), r, c)) return;
+    if (core.editable(c)) { if (onEntryEnd) onEntryEnd(); core.setCursor(r, c); repaint(); }
+    if (e.mods.isPopupMenu()) { im.openPalette(r, c); im.openSlotMenu(r, c); return; }
+    if (core.editable(c) && !core.onLetter(c, e.x)) { im.dragRow = r; im.dragCol = c; im.dragFrom = im.dragValue(r, c); }
+}
+void RegionGrid::mouseDrag(const juce::MouseEvent& e)
+{
+    auto& im = *impl_;
+    if (im.dragRow < 0 || im.dragCol < 0) return;
+    const int steps = -e.getDistanceFromDragStartY() / Impl::kDragPixels;
+    if (steps == 0 && !im.dragging) return;
+    im.dragging = true;
+    im.setDragValue(im.dragRow, im.dragCol, im.dragFrom + steps * (e.mods.isShiftDown() ? 16 : 1));
+}
+void RegionGrid::mouseUp(const juce::MouseEvent&)
+{
+    auto& im = *impl_;
+    if (im.dragging && onEntryEnd) onEntryEnd();
+    im.dragging = false;
+    im.dragRow = im.dragCol = -1;
+}
+void RegionGrid::mouseDoubleClick(const juce::MouseEvent& e)
+{
+    auto& im = *impl_;
+    auto& core = im.core;
+    int r = 0, c = 0;
+    if (!core.cellAt(e.getPosition(), r, c) || !core.editable(c)) return;
+    if (im.fillBlank(r, c)) return;
+    const auto kind = core.cols[size_t(c)].kind;
+    if (kind == Kind::Inst || kind == Kind::Table) {
+        const auto& region = im.regions[size_t(r)];
+        const int slot = kind == Kind::Inst ? int(region.inst) : int(region.table);
+        if (slot > 0) { if (onOpenSlot) onOpenSlot(kind == Kind::Inst ? SlotKind::Instrument : SlotKind::Table, slot); return; }
+    }
+    if (kind == Kind::Cmd) {
+        const bank::Command* cmd = im.commandAt(r, c);
+        if (core.onLetter(c, e.x) || cmd == nullptr || cmd->cmd == bank::Cmd::None) im.openPalette(r, c);
+        else im.openValueEntry(r, c, core.argAt(*cmd, r, c, e.x));
+        return;
+    }
+    im.openNumberEntry(r, c);
+}
+bool RegionGrid::keyPressed(const juce::KeyPress& k)
+{
+    auto& im = *impl_;
+    auto& core = im.core;
+    if (k.getKeyCode() == juce::KeyPress::escapeKey) { core.entry.reset(); return true; }
+    if (k.getKeyCode() == juce::KeyPress::returnKey) {
+        if (!k.getModifiers().isShiftDown() && im.fillBlank(core.curRow, core.curCol)) return true;
+        const auto kind = core.editable(core.curCol) ? core.cols[size_t(core.curCol)].kind : Kind::Step;
+        if (kind == Kind::Vel || kind == Kind::Inst || kind == Kind::Table) im.openNumberEntry(core.curRow, core.curCol);
+        else if (k.getModifiers().isShiftDown() || !im.openValueEntry(core.curRow, core.curCol, core.entry.arg)) im.openPalette(core.curRow, core.curCol);
+        return true;
+    }
+    if (const int d = shiftDelta(k); d != 0 && im.nudge(core.curRow, core.curCol, d)) return true;
+    if (core.navigate(k)) { repaint(); if (onEntryEnd) onEntryEnd(); return true; }
+    return im.edit(k);
+}
+void RegionGrid::focusGained(FocusChangeType) { repaint(); }
+void RegionGrid::focusLost(FocusChangeType) { impl_->core.entry.reset(); repaint(); }
+
 // ===========================================================================
 // PhraseGrid
 // ===========================================================================

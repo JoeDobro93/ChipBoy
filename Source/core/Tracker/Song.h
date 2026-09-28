@@ -14,6 +14,7 @@
 
 #include "core/Bank/Bank.h"
 #include "core/Driver/Clock.h"
+#include "core/Tracker/MidiMap.h"
 
 #include <algorithm>
 #include <array>
@@ -179,6 +180,9 @@ struct Song {
     /// always at tick 0 -- 4/4 with the quarter at 24 ticks for a new song
     /// and for every song written before them. Not read by playback.
     std::vector<TimeSignature> signatures{ TimeSignature{} };
+    /// Section 225: the MIDI map -- each MIDI channel's target and its
+    /// velocity regions. Off for a new song and for a file without the key.
+    MidiMap midiMap;
     // The song's own timeline (docs/COMMANDS_AND_TEMPO.md section 4).
     /// The base tempo the file carries, written from the Song tempo
     /// parameter when the song is saved and read back into it when one is

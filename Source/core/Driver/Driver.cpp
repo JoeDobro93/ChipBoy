@@ -632,6 +632,9 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
     // starts no table and leaves the channel exactly as it was -- which is what
     // the ROM does. The row still happens: the cell's other columns apply, so a
     // `B` beside another letter does not swallow it.
+    // Section 225: a mapped note that follows a mapped note-off at once
+    // continues the voice -- the kill the note-off asked for is cleared.
+    if (cell != nullptr && cell->mapped) v.killAt = -1;
     if (cell != nullptr && (cell->cmd1.cmd == Cmd::B || cell->cmd2.cmd == Cmd::B)) {
         const Command& b = cell->cmd1.cmd == Cmd::B ? cell->cmd1 : cell->cmd2;
         if (!isRevert(b) && !chanceGate(ch, b)) { applyCellColumns(ch, *cell); return; }
@@ -673,7 +676,8 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
     // A cell's note replaces the cell's before it -- a phrase is not a
     // keyboard with the earlier keys still down -- so an OFF after it ends
     // the channel rather than returning to the note before (section 224).
-    if (cell) v.heldCount = 0;
+    // A mapped note *is* a keyboard's (section 225): its keys stay held.
+    if (cell && !cell->mapped) v.heldCount = 0;
     if (v.heldCount < v.held.size()) v.held[v.heldCount++] = note;
     // The parameters' slots are in force from here; the cell's own commands
     // fire once, after them, when the note starts (section 12).
@@ -754,7 +758,7 @@ int Driver::delayFor(int ch, const Command* c1, const Command* c2) const
     return -1;
 }
 
-void Driver::noteOff(int ch, uint8_t note)
+void Driver::noteOff(int ch, uint8_t note, bool mapped)
 {
     Voice& v = v_[size_t(ch)];
     // remove from the held stack
@@ -766,6 +770,10 @@ void Driver::noteOff(int ch, uint8_t note)
         startVoice(ch, v.held[v.heldCount - 1], v.vel, false);
         return;
     }
+    // Section 225: a mapped note's end is a `K` read between ticks -- the
+    // voice dies at the next tick boundary unless a mapped note-on on this
+    // channel arrives first and clears it. The Note-off mode is not read.
+    if (mapped) { v.killAt = int64_t(tickCount_); return; }
     switch (v.inst.noteOff) {
         case NoteOff::Kill:    stopVoice(ch, true); break;
         case NoteOff::Release: beginRelease(ch); break;
@@ -3529,8 +3537,11 @@ void Driver::handleEvent(NoteEvent& e)
     }
     switch (e.kind) {
         case NoteEvent::NoteOn:
-            if (e.b == 0) { noteOff(ch, e.a); break; }
-            noteOn(ch, e.a, e.b, e.source == NoteEvent::Tracker ? &e : nullptr);
+            if (e.b == 0) { noteOff(ch, e.a, e.mapped); break; }
+            // Section 225: a mapped note is the cell its region describes --
+            // unless the channel is Hybrid, where the song's cells choose the
+            // columns and MIDI gives pitch and gate alone (section 20).
+            noteOn(ch, e.a, e.b, e.source == NoteEvent::Tracker || (e.mapped && !hybrid(ch)) ? &e : nullptr);
             // Stamped on the event itself, so the recorder reads what *this*
             // note did rather than the channel's latest (section 9.4).
             e.plain = v.notePlain; e.loaded = v.noteInst;
@@ -3539,7 +3550,7 @@ void Driver::handleEvent(NoteEvent& e)
             // A cell's OFF ends the note; its instrument, table and command
             // columns are still the cell's, and apply from this step on
             // (section 3: cells and slots are one code path).
-            noteOff(ch, e.a);
+            noteOff(ch, e.a, e.mapped);
             if (e.source == NoteEvent::Tracker) applyCellColumns(ch, e);
             break;
         case NoteEvent::PitchBend: v.bend = double(e.value) / 8192.0 * 2.0; if (v.active) writePeriod(ch, false); break;

@@ -915,6 +915,30 @@ int main(int argc, char** argv)
         return 0;
     }
 
+    /* ---- the MIDI map's round trip through the song file (section 225) -- */
+    {
+        auto a = std::make_unique<tracker::Song>();
+        a->midiMap.on = true;
+        a->midiMap.channels[0].target = 0;
+        a->midiMap.channels[1].target = 2;
+        a->midiMap.channels[1].regions = { tracker::MidiRegion{ 1, 0, 0, { bank::Cmd::V, 4, 6, 0 }, {} }, tracker::MidiRegion{ 65, 7, 2, {}, { bank::Cmd::K, 3, 0, 0 } } };
+        a->midiMap.channels[9].regions = { tracker::MidiRegion{ 1, 12, 0, {}, {} }, tracker::MidiRegion{ 90, 15, 0, {}, {} } };   // regions without a target survive too
+        auto b = std::make_unique<tracker::Song>();
+        if (!songFromJson(songToJson(*a), *b)) { std::printf("FAIL the MIDI map's song does not read back\n"); return 1; }
+        bool same = b->midiMap.on == a->midiMap.on;
+        for (int m = 0; same && m < tracker::kMidiChannels; ++m) {
+            const auto& x = a->midiMap.channels[size_t(m)]; const auto& y = b->midiMap.channels[size_t(m)];
+            same = x.target == y.target && x.regions.size() == y.regions.size();
+            for (size_t i = 0; same && i < x.regions.size(); ++i)
+                same = x.regions[i].from == y.regions[i].from && x.regions[i].inst == y.regions[i].inst && x.regions[i].table == y.regions[i].table
+                       && bank::sameCmd(x.regions[i].cmd1, y.regions[i].cmd1) && bank::sameCmd(x.regions[i].cmd2, y.regions[i].cmd2);
+        }
+        if (!same) { std::printf("FAIL the MIDI map does not survive the song file\n"); return 1; }
+        auto c = std::make_unique<tracker::Song>();
+        if (!songFromJson(songToJson(*c), *c) || !tracker::midiMapIsDefault(c->midiMap)) { std::printf("FAIL a song without a map reads back with one\n"); return 1; }
+        std::printf("PASSED the MIDI map round trip through the song file\n");
+    }
+
     /* ---- pass 1: play the demo in, record it ------------------------- */
     juce::String recorded, songFile;
     Capture recordPass;

@@ -576,6 +576,13 @@ String channelSourceText(ChipBoyProcessor& p, int ch, bool* voiceOwned)
         if (n.isEmpty()) n = "Voice";
         return "Voice: " + n;
     }
+    // Section 225: with the map on, the MIDI channels that reach this one.
+    if (const auto s = p.song(); s && s->midiMap.on) {
+        String t;
+        for (int m = 0; m < tracker::kMidiChannels; ++m)
+            if (s->midiMap.channels[size_t(m)].target == ch) t += (t.isEmpty() ? "" : String(CharPointer_UTF8("\xc2\xb7"))) + String(m + 1);
+        return "MAP " + (t.isEmpty() ? String(CharPointer_UTF8("\xe2\x80\x94")) : t);
+    }
     return paramText(p, channelParamId(ch, ids::source));
 }
 

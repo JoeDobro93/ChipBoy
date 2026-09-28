@@ -67,6 +67,9 @@ struct NoteEvent {
     /// fires, not on this event.
     bool     held = false;
     bool     plain = true;       ///< it loaded the instrument; false = a bare note
+    /// Section 225: the MIDI map made this note the cell its region
+    /// describes -- a note-on plays by the cell path, a note-off is a `K`.
+    bool     mapped = false;
     uint8_t  loaded = 0;         ///< the slot it loaded, or the one sounding under a bare note
     /// Tracker cells: the chain row's transpose (section 48), added at the
     /// note-on when the instrument's Transpose is on. MIDI notes carry 0.
@@ -509,7 +512,7 @@ private:
     /// reloaded -- and the commands wait for the rest of the tick.
     void applyHybridCell(int ch, const NoteEvent& e);
     void noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell);
-    void noteOff(int ch, uint8_t note);
+    void noteOff(int ch, uint8_t note, bool mapped = false);
     /// A plain note loads the instrument and triggers; a bare note writes the
     /// period and nothing else (section 8).
     void startVoice(int ch, uint8_t note, uint8_t vel, bool plain);

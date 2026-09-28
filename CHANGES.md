@@ -26,6 +26,21 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-28, last -- the MIDI map: sixteen channels, velocity regions as tracker rows (§225, D-UI-43)
+
+`docs/plan-midi-map.md`, `docs/COMMANDS_AND_TEMPO.md` §225, `docs/UI_DESIGN.md` D-UI-43; spec §12
+and UI_DESIGN §4's one-Source-per-channel routing are superseded while the map is on. Each of a
+port's sixteen MIDI channels is assigned to one ChipBoy channel (two may share one), and within
+each, velocity regions that are tracker rows without the note -- INS, TBL, CMD 1, CMD 2. A mapped
+note-on is the cell its region describes, played by the driver's cell path: with an INS a plain
+note, without one a bare note that keeps what sounds and fires its commands on it; the velocity
+chose the region and does nothing else, so the channel's Velocity mode is not read. A note's end
+is a `K` at the next tick unless a note follows before it; `H`, `G` and `T` are dropped from a
+region. The map is the song's (`Song::midiMap`, the file's `midiMap` key, written only when not
+default); with it off the strips' Source menus route as before. A **MIDI tab** after Tracker edits
+it; the strip's source badge reads `MAP 1·5` while it is on. `NoteEvent` gained `mapped`, so the
+link region's version is 5.
+
 ### 2026-09-28, later -- the chain gets a scrollbar (D-UI-42)
 
 `docs/UI_DESIGN.md` D-UI-42. The chain scrolled on the wheel alone; the user found no bar. It
