@@ -670,6 +670,10 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
     // Whether a note is still held under this one decides, with the
     // instrument's Overlap, if the new note is plain or bare (section 8).
     const bool over = v.active && v.haveInst && v.heldCount > 0;
+    // A cell's note replaces the cell's before it -- a phrase is not a
+    // keyboard with the earlier keys still down -- so an OFF after it ends
+    // the channel rather than returning to the note before (section 224).
+    if (cell) v.heldCount = 0;
     if (v.heldCount < v.held.size()) v.held[v.heldCount++] = note;
     // The parameters' slots are in force from here; the cell's own commands
     // fire once, after them, when the note starts (section 12).
@@ -1316,6 +1320,23 @@ double Driver::noteOfVoice(int ch) const
     if (!v.drumSlideHold) note += double(tableTransposeOf(v));
     const int32_t fine = v.fineOffset + (v.fineTunePending ? 0 : v.fineTune) + slideResidual(v);
     return note + double(fine) / 256.0;
+}
+
+int Driver::soundingNote(int ch) const
+{
+    const Voice& v = v_[size_t(ch & 3)];
+    if (!v.active || v.killed || v.releasing || v.note == 0) return 0;
+    // The noise channel's note is a map index (section 85): the number and
+    // the chord's step, nothing else.
+    if (v.inst.type == InstrumentType::Noise) {
+        int n = int(v.note);
+        if (v.chordN) n += v.chord[v.chordIdx % v.chordN];
+        return std::clamp(n, 1, 127);
+    }
+    double note = double(v.note) + double(v.noteTsp) + double(v.instTranspose) + double(v.p.transpose);
+    if (v.chordN) note += v.chord[v.chordIdx % v.chordN];
+    if (!v.drumSlideHold) note += double(tableTransposeOf(v));
+    return std::clamp(int(std::lround(note)), 1, 127);
 }
 
 /// The table row's transpose column, whenever the table runs: the instrument's

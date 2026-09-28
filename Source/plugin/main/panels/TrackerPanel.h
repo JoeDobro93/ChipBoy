@@ -69,6 +69,8 @@ private:
     /// Import .sav... (docs/plan-lsdj-import.md): a chooser, then the dialog
     /// listing the save's songs; each chosen one opens in a tab of its own.
     void importSav();
+    /// Export MIDI (section 224, D-UI-41): the notes each channel sounds.
+    void exportMidi(bool withNoise);
     void closeTab(int index);
     /// One edit of the song; `what` names it on the undo history, and a run
     /// of edits under the same name -- the digits of one typed value -- is

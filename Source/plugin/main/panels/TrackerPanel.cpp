@@ -1,4 +1,5 @@
 #include "core/Driver/Clock.h"
+#include "core/Export/MidiExport.h"
 #include "plugin/main/panels/TrackerPanel.h"
 
 #include "plugin/main/panels/LsdjImportDialog.h"
@@ -110,15 +111,19 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     importSav_.onClick = [this] { importSav(); };
     export_.setLabel("Export");
     export_.setCaret(true);
-    export_.setTooltip("Export this song: as MIDI, as a player ROM for real hardware, or as an LSDj save. None of the three is built yet.");
+    export_.setTooltip("Export this song: as MIDI -- the notes each channel sounds, on the song's own time (section 224) -- or, later, as a player ROM for real hardware or an LSDj save.");
     export_.onClick = [this] {
+        PopupMenu midiMenu;
+        midiMenu.addItem(1, "All four channels" + ellipsis());
+        midiMenu.addItem(2, "Without the noise channel" + ellipsis());
         PopupMenu m;
-        m.addItem(1, "Export MIDI" + ellipsis());
-        m.addItem(2, "Export player ROM (.gb)" + ellipsis());
-        m.addItem(3, "Export LSDj save (.sav)" + ellipsis());
+        m.addSubMenu("Export MIDI", midiMenu);
+        m.addItem(3, "Export player ROM (.gb)" + ellipsis());
+        m.addItem(4, "Export LSDj save (.sav)" + ellipsis());
         m.showMenuAsync(PopupMenu::Options().withTargetComponent(&export_), [safe = Component::SafePointer<TrackerPanel>(this)](int r) {
             if (safe == nullptr || r == 0) return;
-            safe->message(String(r == 1 ? "Export MIDI" : r == 2 ? "Export player ROM" : "Export LSDj save") + " is not built yet.");
+            if (r == 1 || r == 2) { safe->exportMidi(r == 1); return; }
+            safe->message(String(r == 3 ? "Export player ROM" : "Export LSDj save") + " is not built yet.");
         });
     };
 
@@ -494,6 +499,33 @@ void TrackerPanel::saveSong()
         safe->report(r);
         safe->refreshViews();
         safe->contextChanged();
+    });
+}
+
+/// Export MIDI (section 224, D-UI-41): a chooser in the songs folder, then
+/// the engine renders the active tab's song on its bank and the notes go to
+/// the file; the status line counts them.
+void TrackerPanel::exportMidi(bool withNoise)
+{
+    const int tab = processor.activeTab();
+    const String name = File::createLegalFileName(processor.tabName(tab));
+    chooser_ = std::make_unique<FileChooser>("Export MIDI", songsFolder().getChildFile((name.isEmpty() ? String("Song") : name) + ".mid"), "*.mid", true, false, this);
+    chooser_->launchAsync(kSaveFlags, [safe = Component::SafePointer<TrackerPanel>(this), withNoise](const FileChooser& fc) {
+        if (safe == nullptr) return;
+        File file = fc.getResult();
+        if (file == File()) return;
+        if (!file.hasFileExtension(".mid")) file = file.withFileExtension(".mid");
+        const auto song = safe->processor.song();
+        const auto bank = safe->processor.bank();
+        RichText r;
+        if (!song || !bank) { r.plain("Nothing to export."); safe->report(r); return; }
+        midi::Options opt; opt.noise = withNoise;
+        midi::Report rep;
+        const auto bytes = midi::exportSong(*song, *bank, opt, &rep);
+        if (bytes.empty() || !file.replaceWithData(bytes.data(), bytes.size())) { r.plain("Could not write ").bold(file.getFileName()); safe->report(r); return; }
+        r.plain("Exported ").bold(file.getFileName()).plain(middot() + "notes PU1 " + String(rep.notes[0]) + ", PU2 " + String(rep.notes[1]) + ", WAV " + String(rep.notes[2]) + (withNoise ? ", NOI " + String(rep.notes[3]) : String(", noise left out")));
+        if (!rep.notes_.empty()) r.plain(middot() + String(rep.notes_.front()));
+        safe->report(r);
     });
 }
 

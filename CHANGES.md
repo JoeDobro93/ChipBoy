@@ -26,6 +26,22 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-28 -- MIDI export (§224, D-UI-41), and a tracker OFF that came back to the note before
+
+`docs/plan-midi-export.md`, `docs/COMMANDS_AND_TEMPO.md` §224, `docs/UI_DESIGN.md` D-UI-41. The
+song is rendered through the engine offline and the note each channel sounds after every tick is
+written as a format-1 MIDI file: PPQ from the first signature's beat unit, the tempo from
+`tickSeconds` with the `T` cells' map as tempo events, one time-signature event per signature,
+PU1 / PU2 / WAV / NOI as named tracks on channels 1-4 at velocity 100, the noise track optional.
+Nothing about a command is re-implemented, so `K`, `C`, a table's transpose and an `H` are what
+the driver does with them. Export ▸ MIDI in the FILE card, `chipboy_recordtest --export-midi`.
+
+The export's own test found an **engine defect**, fixed with a driver test: a tracker cell's note
+joined the held stack (last-note priority for a keyboard) and was never taken off it, so a phrase's
+`OFF` after two or more notes returned to the earlier note, bare, instead of ending the channel --
+audible wherever the earlier note's instrument still sounded (the wave channel, a held envelope).
+A cell's note now replaces the one before it; a MIDI keyboard's held keys are as they were.
+
 ### 2026-09-18 -- the lane runs to the foot with preview rows; the zoom opens at 48 ticks
 
 `docs/UI_DESIGN.md` D-UI-40. The lane no longer stops at the longest phrase: it fills the pane

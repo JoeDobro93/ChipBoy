@@ -6551,3 +6551,45 @@ would have reached, and the Player survives a jump in the tick stream (§47). So
   (`Clock::ownTick`), so a locate shows at once; while playing it is the block's tick as before.
 - **Locating while playing** is a jump in the tick stream, which §47 already handles: nothing
   is killed and the step landed in still fires.
+
+## 224. MIDI export: the note each channel sounds, after every tick
+
+The user's brief: each channel's notes and nothing else, the noise channel optional, the time
+signatures from the chain, the project tempo with its `T` changes, `K` ending a note, a `C` in a
+cell or a table writing the notes that actually sound, an `H` rendered to what it does on the
+timeline. `docs/plan-midi-export.md` is the shape; this is the law.
+
+- **The song is rendered through the engine**, not read: the Clock, the Player and the Driver
+  run it offline exactly as the plugin plays it (the recipe of `chipboy_recordtest
+  --trace-song`), in sub-blocks that end on each tick, and after every tick the exporter asks
+  the driver which note each channel sounds. So an `H` hop is the play order (§102), a groove is
+  the row's grid (§135), a table's `C` or transpose column is what the driver did with it, a `K`
+  is the kill it caused (§9), and nothing is re-implemented.
+- **The sounding note** (`Driver::soundingNote`) is the base note, the chain's and the song's
+  transpose, the instrument's own and the channel parameter's, the chord's current step and the
+  table's transpose column, rounded to an integer; 0 while the voice is silent, killed or
+  releasing. The 1/256-semitone offsets of `P`, `L` and `V` are left out: a vibrato or a slide is
+  not a new note. On the noise channel it is the map index plus the chord step, as a number.
+- **A change of the sounding note is a note-off and a note-on** at that tick; silence is a
+  note-off. A retrigger of the same note (`R`, a plain note repeated) writes nothing: the file's
+  note simply continues. A note still sounding at the song's end ends there.
+- **Time.** The file's PPQ is the first signature's beat unit as quarters -- `ticksPerBeat * unit
+  / 4`, 24 for `4/4` at 24 and for `11/8` at 12; another number is written as it is, the tempo
+  scaled to keep real time, and noted. The tempo at tick 0 is the song's, as microseconds per
+  quarter from `tickSeconds(bpm, lsdjTempo) * ppq`, so the ROM word's rounding and the 2x/3x/6x
+  tempi (§219) carry; then one tempo event per point of the tempo map (§4). One time-signature
+  event per signature (§222): the beats, the unit as a power of two (rounded to the nearest and
+  noted where it is not one), `96 / unit` MIDI clocks per click, eight 32nds per quarter.
+- **Length**: one pass of the song, tick 0 to `songTicks` -- the longest chain, or the `H F F`
+  (§214). A shorter chain that comes round within it (§212) is written as it plays; nothing after
+  the song's end is.
+- **Every channel plays its tracker** in the render, whatever the tab's note source says: the
+  file is the song's chains, not what the piano roll would have had.
+- **Found by the export's test, fixed in the driver**: a cell's note joined the held stack -- the
+  keyboard's last-note priority (§8) -- and was never taken off it, so an `OFF` after two or more
+  notes in a phrase started the note before it again, bare, instead of ending the channel. A
+  cell's note now replaces the one before it (`Driver::noteOn`, the held stack cleared for a
+  cell); a keyboard's held keys are as they were.
+- **The file**: format 1; track 0 the name, the tempo and the signatures; then PU1, PU2, WAV and,
+  unless the option drops it, NOI, on MIDI channels 1-4, note-on velocity 100, note-off as `0x80`;
+  at one tick metas, then offs, then ons; no running status.

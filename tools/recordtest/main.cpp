@@ -37,6 +37,7 @@
 //   chipboy_recordtest --check-state FILE    build it and compare against FILE
 //   chipboy_recordtest --play-song FILE [bars]   play a song file and hear it
 //   chipboy_recordtest --trace-song FILE OUT.csv [seconds] [--tempo BPM] [--from TICK]
+//   chipboy_recordtest --export-midi FILE OUT.mid [--no-noise]     (section 224)
 //                                        the register writes a song file makes, in
 //                                        the lsdjref trace's CSV, to set beside an
 //                                        LSDj trace; --tempo plays it at another
@@ -46,6 +47,7 @@
 #include "core/Apu/Apu.h"
 #include "core/Console.h"
 #include "core/Driver/Clock.h"
+#include "core/Export/MidiExport.h"
 #include "core/Driver/Driver.h"
 #include "core/Import/LsdjSong.h"
 #include "core/Tracker/Player.h"
@@ -754,11 +756,13 @@ int main(int argc, char** argv)
     juce::File traceFile, traceOut; double traceSeconds = 20.0;  // --trace-song FILE OUT.csv [seconds]
     double traceBpm = 0.0;                                       // --tempo BPM: play it at this tempo instead
     int64_t traceFrom = 0;                                       // --from TICK: locate there before playing (section 223)
+    juce::File midiFile, midiOut; bool midiNoise = true;         // --export-midi FILE OUT.mid [--no-noise] (section 224)
     int playBars = 8;                                         // --play-song's default (section 24)
     bool dump = false;
     for (int i = 1; i < argc; ++i) {
         const juce::String key(argv[i]);
         if (key == "--dump") dump = true;                     // every write, to diff by hand
+        else if (key == "--no-noise") midiNoise = false;      // --export-midi's option (section 224)
         else if (i + 1 >= argc) continue;
         else if (key == "--demo") demoDir = juce::File(juce::String(argv[++i]));
         else if (key == "--out") outDir = juce::File(juce::String(argv[++i]));
@@ -773,6 +777,7 @@ int main(int argc, char** argv)
         else if (key == "--model") importModel = juce::String(argv[++i]);
         else if (key == "--tempo") traceBpm = std::clamp(juce::String(argv[++i]).getDoubleValue(), driver::kMinSongBpm, driver::kMaxSongBpm);
         else if (key == "--from" && i + 1 < argc) traceFrom = std::max<int64_t>(0, juce::String(argv[++i]).getLargeIntValue());
+        else if (key == "--export-midi" && i + 2 < argc) { midiFile = juce::File::getCurrentWorkingDirectory().getChildFile(argv[++i]); midiOut = juce::File::getCurrentWorkingDirectory().getChildFile(argv[++i]); }
         else if (key == "--import-sav" && i + 3 < argc) {
             importSav = juce::File(juce::String(argv[++i])); importWhich = juce::String(argv[++i]); importOut = juce::File(juce::String(argv[++i]));
         }
@@ -839,6 +844,21 @@ int main(int argc, char** argv)
 
     /* ---- --trace-song: the register writes of a song file, as a CSV ---- */
     if (traceFile != juce::File()) return traceSong(traceFile, traceOut, traceSeconds, traceBpm, traceFrom);
+    /* ---- --export-midi: the song file as a MIDI file (section 224) ---- */
+    if (midiFile != juce::File()) {
+        auto bank = std::make_unique<bank::Bank>();
+        auto song = std::make_unique<tracker::Song>();
+        SongReport report;
+        if (!plugin::loadSong(midiFile, *song, report, nullptr, bank.get())) { std::printf("FAIL cannot open %s as a song file\n", midiFile.getFullPathName().toRawUTF8()); return 1; }
+        midi::Options opt; opt.noise = midiNoise;
+        midi::Report rep;
+        const auto bytes = midi::exportSong(*song, *bank, opt, &rep);
+        if (bytes.empty() || !midiOut.replaceWithData(bytes.data(), bytes.size())) { std::printf("FAIL nothing to write for %s\n", midiFile.getFileName().toRawUTF8()); return 1; }
+        std::printf("wrote %s: %d bytes, %lld ticks at %d a quarter, notes PU1 %d PU2 %d WAV %d NOI %d\n", midiOut.getFullPathName().toRawUTF8(), int(bytes.size()),
+                    (long long) rep.ticks, rep.ppq, rep.notes[0], rep.notes[1], rep.notes[2], midiNoise ? rep.notes[3] : 0);
+        for (const auto& l : rep.notes_) std::printf("  - %s\n", l.c_str());
+        return 0;
+    }
 
     /* ---- --play-song: a song file plays, and is heard (section 24) ---- */
     // Nothing under Demo/ is needed for this, so it runs before the demo is

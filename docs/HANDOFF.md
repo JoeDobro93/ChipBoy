@@ -10,7 +10,7 @@ parity campaign, `docs/COMMANDS_AND_TEMPO.md` §1-§221, is closed; every law in
 section). The user's focus is now **UI and user interactions**. This round rebuilt the Tracker
 tab around a **tick**: the chain is drawn in time (D-UI-35, §222, §223, `docs/plan-chain-timeline.md`),
 the lanes show each channel's own row at the play head, the plugin's own transport locates, and
-the song carries time signatures. The gate is green (`tools/gate.sh all`: 334 core tests, 11
+the song carries time signatures. The gate is green (`tools/gate.sh all`: 342 core tests, 11
 plugin checks, the parameter table, the 1 MB-stack link test); `main` is pushed with every commit
 and the user builds Windows and macOS from it -- the user has clicked the first build
 and sent four notes, answered in the second pass below; the rest is still Linux-shot only.**
@@ -81,7 +81,7 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
 - `Source/core/`: `Apu` (the chip), `Render` (BLEP, coupling, noise floor, RAW), `Driver`
   (notes, tables, commands, the 358 Hz pitch clock, zombie-mode levels, envelopes, the
   Clock), `Tracker` (Song, Player, recorder), `Bank` (instruments, tables, waves, kits,
-  grooves, presets, the wave synth), `Link` (the shared-memory region).
+  grooves, presets, the wave synth), `Link` (the shared-memory region), `Export` (MIDI).
 - `Source/plugin/`: `main` (ChipBoyProcessor, editor, panels), `voice`, `shared`
   (parameters, JSON, song and preset files), `ui` (widgets, grids, scopes, undo).
 - `tools/`: `gate.sh`, `demo` (make_demo.py, make_songs.py), `recordtest`, `linktest`,
@@ -90,6 +90,32 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
   `UI_DESIGN.md`, `HARDWARE_DRIVER_AUDIT.md`, `LSDJ_PARITY.md`, `LICENSING.md`.
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
+
+## Done (2026-09-28) -- MIDI export (§224, D-UI-41), and a driver fix it found
+
+- `docs/plan-midi-export.md` first, then `Source/core/Export/MidiExport.h/.cpp`
+  (`midi::exportSong(song, bank, options, report)`): the song is rendered offline through the
+  Clock, the Player and the Driver in sub-blocks that end on each tick, and after every tick
+  `Driver::soundingNote(ch)` -- the integer note with the transposes, the chord step and the
+  table's transpose column, 0 while silent, killed or releasing -- is compared with the last:
+  a change is a note-off and a note-on. Format 1, PPQ from the first signature
+  (`ticksPerBeat * unit / 4`), the tempo at 0 from `tickSeconds(bpm, lsdjTempo)` and one tempo
+  event per point of the tempo map, one signature event per signature, tracks PU1 / PU2 / WAV /
+  NOI on channels 1-4 at velocity 100, NOI dropped by `Options::noise`. The tab's Export button
+  has the MIDI submenu (*All four channels…*, *Without the noise channel…*), a chooser in the
+  songs folder, the counts on the status line; `chipboy_recordtest --export-midi FILE OUT.mid
+  [--no-noise]` from the shell. READROOM exports 12276 ticks at 163 BPM, 4146 notes.
+- `Tests/MidiExportTests.cpp` `[midi]` builds a song by hand and parses the file back: the
+  frame, the tempo and the `T`, the two signatures, an `OFF`, a `K 02`, a `C 47`, an `H 1 0`,
+  the noise option, an empty song.
+- **The driver fix the test found** (§224, `CHANGES.md`): a tracker cell's note joined the held
+  stack (the keyboard's last-note priority, §8) and stayed there, so an `OFF` after two or more
+  notes in a phrase returned to the earlier note, bare, instead of silencing the channel --
+  audible on the wave channel and under a held envelope. `Driver::noteOn` clears the stack for
+  a cell now; `Tests/DriverTests.cpp` "a cell's OFF after two notes ends the channel" keeps it.
+  **The user should confirm** this is what they hear as right: it is the one audible change of
+  the round.
+- The other two exports (the player ROM, the LSDj save) still say they are not built yet.
 
 ## Done (2026-09-18, later) -- the lane runs to the foot with preview rows (D-UI-40)
 

@@ -42,7 +42,8 @@ add_library(chipboy_core STATIC
     Source/core/Import/LsdjModel.cpp
     Source/core/Import/LsdjKits.cpp
     Source/core/Import/LsdjInstrument.cpp
-    Source/core/Import/LsdjSong.cpp)
+    Source/core/Import/LsdjSong.cpp
+    Source/core/Export/MidiExport.cpp)
 target_include_directories(chipboy_core PUBLIC Source)
 target_compile_features(chipboy_core PUBLIC cxx_std_20)
 if(MSVC)
@@ -89,7 +90,8 @@ if(CHIPBOY_BUILD_TESTS)
         Tests/PresetTests.cpp
         Tests/WaveSynthTests.cpp
         Tests/LinkTests.cpp
-        Tests/HardwareTests.cpp)
+        Tests/HardwareTests.cpp
+        Tests/MidiExportTests.cpp)
     target_link_libraries(chipboy_tests PRIVATE chipboy_core chipboy_harness Catch2::Catch2WithMain)
     target_compile_definitions(chipboy_tests PRIVATE
         CHIPBOY_TEST_ROM_DIR="${CHIPBOY_TEST_ROM_DIR}"

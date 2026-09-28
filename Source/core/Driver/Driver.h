@@ -162,6 +162,11 @@ public:
                  std::vector<RegWrite>& out);
 
     const VoiceView& view(int ch) const { return view_[size_t(ch & 3)]; }
+    /// Section 224: the note the channel sounds, for the MIDI export -- the
+    /// base note, the transposes, the chord's step and the table's column,
+    /// as an integer; 0 while the voice is silent, killed or releasing. Not
+    /// the 1/256-semitone offsets of P, L and V: a slide is not a new note.
+    int soundingNote(int ch) const;
 
     /// A G inside a running table sets that table run's row lengths from the
     /// song's groove. The driver does not know the song, so the Player reads

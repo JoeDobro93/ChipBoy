@@ -1823,6 +1823,27 @@ TEST_CASE("an OFF cell's command columns still apply", "[driver][notes]")
     CHECK(last(w, 0xFF11)->value == 0x80);
 }
 
+TEST_CASE("a cell's OFF after two notes ends the channel, not the note before", "[driver][notes]")
+{
+    // A cell's note replaces the one before it; nothing is held under it, so
+    // the OFF silences the channel instead of returning to the earlier note
+    // bare, as a released key over a held one would (section 224).
+    Rig r;
+    r.tickHz = 100.0;
+    r.song.noteSource[0] = tracker::NoteSource::Tracker;
+    ChannelParams p; p.instrument = 1; r.drv.setParams(0, p);
+    r.block({ cellOn(0, 60, 1) }, 480);
+    r.block({ cellOn(0, 62, 0) }, 480);                          // a bare note over it
+    r.block({ cellOn(0, 64, 0) }, 480);
+    CHECK(r.drv.view(0).note == 64);
+    NoteEvent e; e.channel = 0; e.kind = NoteEvent::NoteOff; e.source = NoteEvent::Tracker; e.a = 64;
+    r.block({ e }, 480);
+    CHECK_FALSE(r.drv.view(0).active);
+    CHECK(r.drv.soundingNote(0) == 0);
+    r.block({}, 480 * 4);
+    CHECK_FALSE(r.drv.view(0).active);                           // and nothing comes back
+}
+
 TEST_CASE("a cell's instrument column is exact under the velocity bank", "[driver][notes]")
 {
     // Velocity picks an instrument around the channel's own choice; a cell has
