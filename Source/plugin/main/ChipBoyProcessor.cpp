@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "plugin/main/ChipBoyProcessor.h"
 
 #include "plugin/main/ChipBoyEditor.h"
@@ -458,10 +459,18 @@ void ChipBoyProcessor::routeMidi(const MidiMessage& m, int offset, std::vector<d
                 const auto& r = tracker::regionFor(map, e.b);
                 e.inst = r.inst; e.table = r.table; e.transpose = r.transpose;
                 e.cmd1 = tracker::midiRegionCommand(r.cmd1); e.cmd2 = tracker::midiRegionCommand(r.cmd2);
-                // The velocity chose the region; what the note carries as `b`
-                // is the row's VEL -- a kit's second sample, else the default
-                // the instrument's own volume stands behind (section 221).
-                e.b = r.sample ? r.sample : tracker::kDefaultVelocity;
+                // The velocity chose the region. On a kit the region's two
+                // samples are the note -- the one place the MIDI note is not
+                // read (section 225): the first sample's own note goes in as
+                // the note, the second rides as `b`, the row's VEL (D-UI-34).
+                // Elsewhere `b` is the default the instrument's volume stands
+                // behind (section 221).
+                e.b = r.kitB ? r.kitB : tracker::kDefaultVelocity;
+                if (r.kitA)
+                    if (const bank::Bank* bk = bankPtr_.load(std::memory_order_acquire))
+                        if (const auto* inst = bk->instrument(r.inst); inst != nullptr && inst->type == bank::InstrumentType::Kit)
+                            if (const auto* kit = bk->kit(inst->kit); kit != nullptr && r.kitA <= kit->samples.size())
+                                e.a = kit->samples[size_t(r.kitA - 1)].note;
             }
         }
         dst.push_back(e);
@@ -605,12 +614,89 @@ void ChipBoyProcessor::recordSlots(int ch, double tick)
     if (player_.recordSlots(ch, tick, p.cmd[0], p.cmd[1], m)) recordFifo_.push(m);
 }
 
+namespace {
+/// The row a tick lies in on a channel's own time, rows past the chain's end
+/// counted on as empty rows (section 25).
+int rowOfTick(const tracker::Song& s, int ch, int64_t tick)
+{
+    int row = 0, inRow = 0;
+    tracker::rowAtTickLaid(s, ch, tick, row, inRow);
+    const int64_t end = tracker::rowStartTick(s, ch, row + 1);
+    if (tick >= end) row += 1 + int((tick - end) / tracker::kEmptyRowTicks);
+    return row;
+}
+/// A groove's slot in the song: the same one if it is there, else the first
+/// slot nothing uses, else -1. Straight as the phrase's chip is 0 (none); a
+/// straight segment after a `G` needs a slot that is straight, since `G 0`
+/// is the revert to the chip (section 135).
+int grooveSlotFor(tracker::Song& s, const tracker::FitSegment& seg, bool chip, bool& allocated)
+{
+    allocated = false;
+    const tracker::Groove g = seg.groove();
+    if (seg.order == 0 && chip) return 0;
+    for (int k = 1; k <= tracker::kGrooveSlots; ++k) if (tracker::sameGroove(s.grooves[size_t(k - 1)], g)) return k;
+    std::array<bool, tracker::kGrooveSlots + 1> used{};
+    for (const auto& p : s.phrases) if (p.used && p.groove >= 1 && p.groove <= tracker::kGrooveSlots) {
+        used[size_t(p.groove)] = true;
+        for (const auto& c : p.cells) for (const auto* cmd : { &c.cmd1, &c.cmd2 })
+            if (cmd->cmd == bank::Cmd::G && !bank::isRevert(*cmd) && cmd->a >= 1 && cmd->a <= tracker::kGrooveSlots) used[size_t(cmd->a)] = true;
+    }
+    const tracker::Groove straight{};
+    for (int k = 1; k <= tracker::kGrooveSlots; ++k) {
+        auto& slot = s.grooves[size_t(k - 1)];
+        if (used[size_t(k)] || !tracker::sameGroove(slot, straight) || slot.named()) continue;
+        slot = g;
+        std::string name = "auto";
+        for (int i = 0; i < seg.length && name.size() < 13; ++i) name += " " + std::to_string(int(seg.ticks[size_t(i)]));
+        slot.setName(name.c_str());
+        allocated = true;
+        return k;
+    }
+    return -1;
+}
+bool putCommand(tracker::Cell& c, const bank::Command& cmd)
+{
+    if (c.cmd2.cmd == bank::Cmd::None) { c.cmd2 = cmd; return true; }
+    if (c.cmd1.cmd == bank::Cmd::None) { c.cmd1 = cmd; return true; }
+    return false;
+}
+} // namespace
+
 void ChipBoyProcessor::applyRecordMessages()
 {
     tracker::RecordMessage m;
     std::shared_ptr<tracker::Song> copy;
+    auto ensureCopy = [&] { if (!copy) { copy = std::make_shared<tracker::Song>(); if (songShared_) *copy = *songShared_; } };
     while (recordFifo_.pop(m)) {
-        if (!copy) { copy = std::make_shared<tracker::Song>(); if (songShared_) *copy = *songShared_; }
+        ensureCopy();
+        // Section 226: the take a message belongs to is the row its tick lies
+        // in -- the quantiser may have sent a late note to the next row's first
+        // step. A message for another row ends this channel's take; the first
+        // message of a row opens one.
+        {
+            const int ch = m.channel & 3;
+            auto& take = takes_[size_t(ch)];
+            const int tickRow = rowOfTick(*copy, ch, int64_t(std::floor(m.tick)));
+            if (take.row != tickRow) {
+                if (take.row >= 0) finishTake(ch, *copy);
+                take = RowTake{};
+                take.row = tickRow;
+                take.rowStart = tracker::rowStartTick(*copy, ch, tickRow);
+                const int64_t next = tracker::rowStartTick(*copy, ch, tickRow + 1);
+                take.rowTicks = int(std::clamp<int64_t>(next - take.rowStart, 1, 64 * 48));
+                // The groove in force before this row: the one the last fitted
+                // row ended under, else the one a `G` carries into it, else
+                // the phrase's own chip.
+                if (lastFitRow_[size_t(ch)] != tickRow - 1) {
+                    const tracker::GrooveWalk w = copy->walkAt(ch, tickRow);
+                    const uint8_t slot = tickRow < int(copy->chain[size_t(ch)].size()) ? copy->chain[size_t(ch)][size_t(tickRow)] : uint8_t(0);
+                    const auto* ph = copy->phrase(slot);
+                    const uint8_t g = w.slot != tracker::kGrooveNone ? w.slot : ph != nullptr ? ph->groove : uint8_t(0);
+                    grooveBefore_[size_t(ch)] = g >= 1 && g <= tracker::kGrooveSlots ? copy->grooves[size_t(g - 1)] : tracker::Groove{};
+                }
+            }
+            take.msgs.push_back(m);
+        }
         auto& chain = copy->chain[size_t(m.channel & 3)];
         if (chain.size() <= m.row) chain.resize(size_t(m.row) + 1, 0);
         uint8_t slot = chain[m.row];
@@ -632,7 +718,170 @@ void ChipBoyProcessor::applyRecordMessages()
         if (m.cell.cmd1.cmd != bank::Cmd::None) cell.cmd1 = m.cell.cmd1;
         if (m.cell.cmd2.cmd != bank::Cmd::None) cell.cmd2 = m.cell.cmd2;
     }
+    // A take whose row the play head has left, or every take when recording
+    // has stopped, is fitted now (section 226). The row is read from the
+    // tick: a channel playing MIDI has no position of its own in the Player.
+    const bool recording = recordArm_.load() && transportPlaying();
+    const int64_t tickNow = trackerTick_.load();
+    for (int ch = 0; ch < 4; ++ch) {
+        const auto& take = takes_[size_t(ch)];
+        if (take.row < 0) continue;
+        const auto s = copy ? std::shared_ptr<const tracker::Song>(copy) : songShared_;
+        const int rowNow = s ? rowOfTick(*s, ch, tickNow) : take.row;
+        if (!recording || rowNow != take.row) { ensureCopy(); finishTake(ch, *copy); }
+    }
     if (copy) publishSong(std::move(copy));
+}
+
+
+void ChipBoyProcessor::finishTake(int ch, tracker::Song& song)
+{
+    auto& take = takes_[size_t(ch & 3)];
+    const int row = take.row;
+    take.row = -1;
+    if (row < 0 || !song.autoGroove) { take.msgs.clear(); return; }
+    auto& chainOf = song.chain[size_t(ch & 3)];
+    if (row >= int(chainOf.size())) chainOf.resize(size_t(row) + 1, 0);
+    uint8_t slot = chainOf[size_t(row)];
+    if (slot == 0) {
+        for (int i = 0; i < tracker::kPhraseSlots; ++i) if (!song.phrases[size_t(i)].used) { slot = uint8_t(i + 1); break; }
+        if (slot == 0) { take.msgs.clear(); return; }
+        song.phrases[size_t(slot - 1)].used = true;
+        chainOf[size_t(row)] = slot;
+    }
+    auto& ph = song.phrases[size_t(slot - 1)];
+    // A note the quantiser sent to another row's step is taken back from there.
+    for (const auto& m : take.msgs) {
+        if (int(m.row) == row || m.slotsOnly || int(m.row) >= int(chainOf.size())) continue;
+        const uint8_t other = chainOf[size_t(m.row)];
+        if (other == 0 || other == slot) continue;
+        auto& c = song.phrases[size_t(other - 1)].cells[size_t(m.step) % size_t(tracker::kMaxSteps)];
+        if (c.note == m.cell.note) { c.note = 0; c.vel = 0; c.inst = 0; c.table = 0; }
+    }
+    std::vector<int> onsets;
+    for (const auto& m : take.msgs)
+        if (!m.slotsOnly && m.cell.note >= 1 && m.cell.note <= 127) onsets.push_back(int(std::lround(m.tick - double(take.rowStart))));
+    tracker::FitOptions o;
+    o.rowTicks = take.rowTicks;
+    o.tolerance = int(song.grooveTolerance);
+    o.sticky = &grooveBefore_[size_t(ch & 3)];
+    o.slots = &song.grooves;
+    const tracker::FitResult fit = tracker::fitRow(onsets, o);
+    if (std::getenv("CHIPBOY_FIT_DEBUG") != nullptr) {
+        std::string line = "fit ch " + std::to_string(ch) + " row " + std::to_string(row + 1) + " onsets";
+        for (int t : onsets) line += " " + std::to_string(t);
+        for (const auto& seg : fit.segments) { line += " | " + std::to_string(seg.start) + ":"; for (int i = 0; i < seg.length; ++i) line += " " + std::to_string(int(seg.ticks[size_t(i)])); line += " x" + std::to_string(seg.steps); }
+        std::printf("%s\n", line.c_str());
+    }
+    if (fit.segments.empty()) { take.msgs.clear(); return; }
+    // The slots, then the phrase: its chip is the first segment's groove,
+    // its steps the layout's, its cells laid again from the take.
+    std::vector<int> slots;
+    bool anyAllocated = false, noSlot = false;
+    for (size_t i = 0; i < fit.segments.size(); ++i) { bool a = false; const int k = grooveSlotFor(song, fit.segments[i], i == 0, a); anyAllocated = anyAllocated || a; if (k < 0) noSlot = true; slots.push_back(std::max(0, k)); }
+    for (auto& c : ph.cells) c = tracker::Cell{};
+    ph.groove = uint8_t(slots.front());
+    ph.steps = uint8_t(std::clamp(fit.totalSteps(), 1, tracker::kMaxSteps));
+    const auto steps = tracker::layoutSteps(fit);
+    auto stepOf = [&](double tick) {
+        int st = 0; const int k = tracker::stepNearTick(fit, int(std::lround(tick - double(take.rowStart))), &st);
+        return std::clamp(k, 0, int(steps.size()) - 1);
+    };
+    // The notes first, taking steps closest pair first as the fitter did, so
+    // a note a little off never pushes an exact one off its step. Two notes
+    // on one tick are one cell: the later message wins, as the quantiser had it.
+    {
+        std::vector<const tracker::RecordMessage*> notes;
+        for (const auto& m : take.msgs) {
+            if (m.slotsOnly || m.cell.note < 1 || m.cell.note > 127) continue;
+            const int t = int(std::lround(m.tick));
+            bool dup = false;
+            for (auto& n : notes) if (int(std::lround(n->tick)) == t) { n = &m; dup = true; break; }
+            if (!dup) notes.push_back(&m);
+        }
+        std::vector<char> placed(notes.size(), 0);
+        for (size_t n = 0; n < notes.size(); ++n) {
+            int bestNote = -1, bestStep = -1, bestD = 1 << 30;
+            for (size_t i = 0; i < notes.size(); ++i) {
+                if (placed[i]) continue;
+                const int t = int(std::lround(notes[i]->tick - double(take.rowStart)));
+                for (size_t k = 0; k < steps.size(); ++k) {
+                    if (ph.cells[k].note >= 1 && ph.cells[k].note <= 127) continue;
+                    const int d = std::abs(steps[k] - t);
+                    if (d < bestD) { bestD = d; bestNote = int(i); bestStep = int(k); }
+                }
+            }
+            if (bestNote < 0) break;                     // more notes than steps: the rest are lost
+            placed[size_t(bestNote)] = 1;
+            const auto& m = *notes[size_t(bestNote)];
+            auto& c = ph.cells[size_t(bestStep)];
+            c.note = m.cell.note; c.vel = m.cell.vel; c.inst = m.cell.inst; c.table = m.cell.table;
+            if (m.cell.cmd1.cmd != bank::Cmd::None) c.cmd1 = m.cell.cmd1;
+            if (m.cell.cmd2.cmd != bank::Cmd::None) c.cmd2 = m.cell.cmd2;
+        }
+    }
+    for (const auto& m : take.msgs) {
+        int k = stepOf(m.tick);
+        if (!m.slotsOnly && m.cell.note >= 1 && m.cell.note <= 127) continue;
+        if (!m.slotsOnly && m.cell.note == tracker::kNoteOff) {
+            // An OFF never displaces a note; on a note's own step it goes to the
+            // next (section 9.4), and a note there ends the last one anyway.
+            if (ph.cells[size_t(k)].note >= 1 && ph.cells[size_t(k)].note <= 127 && k + 1 < int(steps.size())) ++k;
+            auto& c = ph.cells[size_t(k)];
+            if (c.note == 0) c.note = tracker::kNoteOff;
+        } else {
+            auto& c = ph.cells[size_t(k)];
+            if (m.cell.cmd1.cmd != bank::Cmd::None) c.cmd1 = m.cell.cmd1;
+            if (m.cell.cmd2.cmd != bank::Cmd::None) c.cmd2 = m.cell.cmd2;
+        }
+    }
+    // A later segment begins with its G; a row after one that ended under a
+    // G begins with the revert form, unless it carries that groove on.
+    int stepAt = 0;
+    bool lostG = false;
+    for (size_t i = 0; i < fit.segments.size(); ++i) {
+        if (i > 0 && !putCommand(ph.cells[size_t(std::min(stepAt, int(steps.size()) - 1))], bank::Command{ bank::Cmd::G, int16_t(slots[i]), 0, 0 })) lostG = true;
+        stepAt += fit.segments[i].steps;
+    }
+    // A `G` carried into this row from the row before (the tables' walk as
+    // the row begins) is reverted in its first cell: the row's grid is its
+    // phrase chip, whatever that `G` was, and the rows after it read their
+    // own chips again.
+    if (song.walkAt(ch & 3, row).slot != tracker::kGrooveNone)
+        if (!putCommand(ph.cells[0], bank::revertOf(bank::Cmd::G))) lostG = true;
+    grooveBefore_[size_t(ch & 3)] = fit.segments.back().groove();
+    lastFitRow_[size_t(ch & 3)] = row;
+    // A row that ends under a `G` leaves it in force over the rows after it,
+    // which would lay them on that grid before they are played: the next row
+    // gets its `G=` now, in a phrase of its own if it has none. Its own fit
+    // clears the cell and writes it again.
+    if (fit.segments.size() > 1) {
+        if (row + 1 >= int(chainOf.size())) chainOf.resize(size_t(row) + 2, 0);
+        uint8_t nextSlot = chainOf[size_t(row) + 1];
+        if (nextSlot == 0)
+            for (int i = 0; i < tracker::kPhraseSlots; ++i) if (!song.phrases[size_t(i)].used) { nextSlot = uint8_t(i + 1); song.phrases[size_t(i)].used = true; chainOf[size_t(row) + 1] = nextSlot; break; }
+        if (nextSlot != 0) {
+            auto& head = song.phrases[size_t(nextSlot - 1)].cells[0];
+            if (head.cmd1.cmd != bank::Cmd::G && head.cmd2.cmd != bank::Cmd::G && !putCommand(head, bank::revertOf(bank::Cmd::G))) lostG = true;
+        }
+    }
+    tracker::buildRowTables(song);   // the rows after this one are read from the tables
+    // What happened, for the status line.
+    juce::String r = juce::String(ui::colours::channelName(ch & 3)) + " row " + juce::String(row + 1) + ": ";
+    for (size_t i = 0; i < fit.segments.size(); ++i) {
+        const auto& seg = fit.segments[i];
+        if (i) r += " then G ";
+        juce::String g;
+        for (int k = 0; k < seg.length; ++k) g += (k ? " " : "") + juce::String(int(seg.ticks[size_t(k)]));
+        r += g + " (" + juce::String(seg.steps) + " steps)";
+    }
+    if (fit.moved) r += " " + juce::String(juce::CharPointer_UTF8("\xc2\xb7")) + " " + juce::String(fit.moved) + (fit.moved == 1 ? " note moved " : " notes moved, up to ") + juce::String(fit.maxMove) + " ticks";
+    if (anyAllocated) r += " " + juce::String(juce::CharPointer_UTF8("\xc2\xb7")) + " new groove slot";
+    if (noSlot) r += " " + juce::String(juce::CharPointer_UTF8("\xc2\xb7")) + " no free groove slot, straight kept";
+    if (lostG) r += " " + juce::String(juce::CharPointer_UTF8("\xc2\xb7")) + " no free column for a G";
+    grooveReport_ = r;
+    ++grooveReportSerial_;
+    take.msgs.clear();
 }
 
 /* ----------------------------------------------------------- song files */
@@ -1069,9 +1318,31 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     if (rec) {
         const double tickPerFrame = clock_.bpm() * driver::kTicksPerBeat / 60.0 / sampleRate_;
         const double tick0 = double(clock_.tickAtBlockStart());
+        // The tick an event sits on, exactly where the block's tick points
+        // say so (section 226): a note held to a tick fires on that tick's
+        // own offset, and the row's groove fit needs its number, not an
+        // estimate a fraction of a tick out.
+        const bool onTick = paramInt(pNotesOnTick_) != 0;
+        auto tickOf = [&](const driver::NoteEvent& e) {
+            const auto* tp = clock_.ticks();
+            const size_t count = clock_.tickCount();
+            for (size_t k = 0; k < count; ++k) {
+                if (tp[k].offset == e.offset) return double(tp[k].tick);
+                if (tp[k].offset > e.offset) {
+                    // Under Quantize a MIDI note waits for this tick and fires on
+                    // it; otherwise it sits between the ticks either side.
+                    if (onTick && e.source == driver::NoteEvent::Midi) return double(tp[k].tick);
+                    if (k == 0) return double(tp[0].tick) - double(tp[0].offset - e.offset) * tickPerFrame;
+                    const double span = double(tp[k].offset - tp[k - 1].offset);
+                    return double(tp[k - 1].tick) + (span > 0.0 ? double(e.offset - tp[k - 1].offset) / span * double(tp[k].tick - tp[k - 1].tick) : 0.0);
+                }
+            }
+            if (count > 0) return double(tp[count - 1].tick) + double(e.offset - tp[count - 1].offset) * tickPerFrame;
+            return tick0 + e.offset * tickPerFrame;
+        };
         auto take = [&](const driver::NoteEvent& e) {
             if (e.source == driver::NoteEvent::Midi && !e.held && (recMask & (1u << (e.channel & 3))) && (e.kind == driver::NoteEvent::NoteOn || e.kind == driver::NoteEvent::NoteOff))
-                recordNote(e, tick0 + e.offset * tickPerFrame, bankNow);
+                recordNote(e, tickOf(e), bankNow);
         };
         // A note the driver held for a tick in a later block is recorded when
         // it fires, from the driver's own list, not from the event it came on

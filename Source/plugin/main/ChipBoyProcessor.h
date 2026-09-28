@@ -13,6 +13,7 @@
 #include "core/Driver/Driver.h"
 #include "core/Link/LinkLayout.h"
 #include "core/Render/Renderer.h"
+#include "core/Tracker/GrooveFit.h"
 #include "core/Tracker/Player.h"
 #include "core/Tracker/Song.h"
 #include "plugin/shared/LinkTransport.h"
@@ -248,6 +249,10 @@ public:
     /// not playing its cells.
     int64_t trackerTick() const { return trackerTick_.load(); }
     int channelRow(int ch) const { return channelRow_[size_t(ch & 3)].load(); }
+    /// Section 226: what the last row's groove fit did, for the status line,
+    /// and a count that moves when it changes.
+    juce::String grooveReport() const { return grooveReport_; }
+    int grooveReportSerial() const { return grooveReportSerial_; }
     int channelStep(int ch) const { return channelStep_[size_t(ch & 3)].load(); }
 
     /// 4-bit levels per channel as last rendered (-1 = DAC off), for meters.
@@ -266,6 +271,14 @@ private:
     void recordNote(const driver::NoteEvent& e, double tickAtEvent, const bank::Bank* bank);
     void recordSlots(int ch, double tick);
     void applyRecordMessages();
+    /// Section 226: a row's recorded notes, kept with their ticks until the
+    /// row ends; then its groove is fitted and the row re-laid.
+    struct RowTake { int row = -1; int64_t rowStart = 0; int rowTicks = 96; std::vector<tracker::RecordMessage> msgs; };
+    void finishTake(int ch, tracker::Song& song);
+    void finishOpenTakes(tracker::Song& song, bool all);
+    std::array<RowTake, 4> takes_;
+    std::array<tracker::Groove, 4> grooveBefore_{};   ///< the groove in force when the take began (stickiness)
+    std::array<int, 4> lastFitRow_{ { -2, -2, -2, -2 } };   ///< the row last fitted, so the one after it inherits its groove
     /// Notes in a channel's keyswitch octave select an instrument and never
     /// sound, so the recorder never writes them as cells (section 9.4).
     bool keyswitchNote(int ch, const bank::Bank* bank, uint8_t note) const;
@@ -329,6 +342,7 @@ private:
     // tracker / record
     link::Spsc<tracker::RecordMessage, 1024> recordFifo_;
     std::atomic<bool> recordArm_{ false };
+    juce::String grooveReport_; int grooveReportSerial_ = 0;
     std::atomic<bool> playing_{ false };
     // The plugin's own transport (section 16): the buttons ask on the message
     // thread, the audio thread does it, so the clock has one owner.

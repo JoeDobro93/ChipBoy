@@ -26,6 +26,19 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-28, last -- the MIDI tab's five notes; grooves inferred from what is played
+
+`docs/COMMANDS_AND_TEMPO.md` §225 amendments (last) and §226, `docs/UI_DESIGN.md` D-UI-43b and
+D-UI-44. Regions lose the TSP column (transposes are baked into the notes; the model keeps the
+field for kit rows) and the second CMD column (kept free for the recorder's `G`s), gain Smp 1 /
+Smp 2 on the WAV target that play a kit's samples whatever the key, keep `G`, and the help pane
+goes. **Auto groove** (§226): the recorder keeps a take per row and fits it at the row's end
+against a simplest-first list of grooves within a tick, at most two segments joined by a `G`,
+the row's length kept, slots reused and named `auto …`; a `G` carried into a row is always
+reverted at its first cell, and a row ending under a `G` writes the next row's `G=` at once.
+One engine change: `Z` / `B` rolls are seeded with the sounding note (number plus transpose),
+so a transposed song with them rolls a different random sequence than before.
+
 ### 2026-09-28, later still -- a region is the whole row but its note; a song's cells as MIDI, proven
 
 `docs/COMMANDS_AND_TEMPO.md` §225 amendments, `docs/UI_DESIGN.md` D-UI-43a. Regions gain TSP

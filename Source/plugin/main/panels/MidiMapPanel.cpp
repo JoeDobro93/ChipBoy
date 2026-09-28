@@ -6,7 +6,7 @@ using namespace juce;
 using namespace chipboy::ui;
 
 namespace {
-constexpr int kListWidth = 220, kGap = 14, kListHeader = 28, kPaneWidth = 640, kHelpGap = 20;
+constexpr int kListWidth = 220, kGap = 14, kListHeader = 28;
 constexpr int kBarHeight = 30, kRowGap = 10;
 String middot() { return String(CharPointer_UTF8(" \xc2\xb7 ")); }
 const char* targetName(int t) { return t < 0 ? "\xe2\x80\x94" : colours::channelName(t); }
@@ -92,7 +92,6 @@ MidiMapPanel::MidiMapPanel(ChipBoyProcessor& p)
     gridView_.setScrollBarsShown(true, false, true, false);
     gridView_.setScrollBarThickness(8);
     addAndMakeVisible(gridView_);
-    addAndMakeVisible(help_);
 
     list_.setRenameable(false);
     list_.setKindColours([](int kind) { return targetColour(kind); });
@@ -144,11 +143,6 @@ MidiMapPanel::MidiMapPanel(ChipBoyProcessor& p)
     grid_.onEntryEnd = [this] { processor.history().endGesture(); };
     grid_.setBank(processor.bank());
 
-    RichText h;
-    h.bold("A region is a tracker row without the note").plain(": a note whose velocity lands in it plays that row at its pitch -- with an INS it loads the instrument, without one it moves the pitch of what sounds and fires the commands on it, as a bare row does.\n\n")
-     .plain("A note's end is a ").bold("K").plain(" at the next tick, unless another note follows at once; ").bold("H").plain(", ").bold("G").plain(" and ").bold("T").plain(" cannot be carried here.\n\n")
-     .plain("Two MIDI channels may play one ChipBoy channel; a Hybrid channel keeps taking its columns from the song's cells.");
-    help_.setText(h);
 
     rebuildList();
     // The tab opens on the first channel the map assigns, else the first.
@@ -251,7 +245,7 @@ void MidiMapPanel::resized()
     list_.setBounds(left.withTrimmedTop(4));
     area.removeFromLeft(kGap);
 
-    auto col = area.removeFromLeft(std::min<int>(kPaneWidth, area.getWidth()));
+    auto col = area;                      // the pane runs to the right edge: the "the note is" column needs the room (D-UI-43a)
     on_.setBounds(col.removeFromTop(on_.preferredHeight(col.getWidth())));
     col.removeFromTop(kRowGap);
     pane_ = col;
@@ -270,9 +264,6 @@ void MidiMapPanel::resized()
     gridView_.setBounds(inner.removeFromTop(gh));
     grid_.setSize(gridView_.getMaximumVisibleWidth(), grid_.preferredHeight());
     pane_ = pane_.withBottom(gridView_.getBottom() + 12);
-
-    area.removeFromLeft(kHelpGap);
-    help_.setBounds(area.withHeight(std::min<int>(area.getHeight(), help_.preferredHeight(area.getWidth()))));
 }
 
 } // namespace chipboy::plugin

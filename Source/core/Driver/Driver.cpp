@@ -933,7 +933,10 @@ void Driver::startVoice(int ch, uint8_t note, uint8_t vel, bool plain)
     // even a different instrument, and clearing it made every `Z` after the
     // first note inert.
     v.dutyIdx = 0; v.killAt = -1; v.panQueued = 0; v.retrigEvery = 0; v.retrigStep = 0; v.retrigCount = 0; v.shapedStartOffset = 0; v.retrigOn = false; v.retrigPending = 0; v.retrigFast = false; v.retrigFastCount = 0; v.envCount = 0; v.frameStep = 0; v.frameIdx = v.inst.type == InstrumentType::Wave ? v.inst.frameStart : uint8_t(0);   // the run starts at its first step, the instrument's start frame (sections 65, 171)
-    v.rng = v.rng * 1664525u + 1013904223u + note;
+    // Section 225: seeded with the note as it sounds -- the cell's number and
+    // the chain row's transpose -- so a song's cells and the same song played
+    // through the MIDI map, where the transpose is in the number, roll alike.
+    v.rng = v.rng * 1664525u + 1013904223u + uint32_t(int(note) + int(transposeIntoRange(ch, core.transpose ? v.cellTranspose : int8_t(0))));
     restartPitchClock(ch);
     // volume from velocity: a MIDI note asks the Velocity mode, a cell's VEL is
     // a start volume in any instance and a blank VEL is the instrument's own
@@ -3805,7 +3808,7 @@ void Driver::refreshView(int ch)
 {
     const Voice& v = v_[size_t(ch)];
     VoiceView& w = view_[size_t(ch)];
-    w.active = v.active; w.dacOn = v.dacOn; w.note = v.note; w.velocity = v.vel;
+    w.active = v.active; w.dacOn = v.dacOn; w.note = v.note; w.velocity = v.vel; w.rng = v.rng;
     w.instrument = v.ksInstrument ? v.ksInstrument : v.p.instrument;
     w.period = uint16_t(std::max<int16_t>(0, v.lastPeriod));
     w.volume = (v.inst.type == InstrumentType::Wave || v.inst.type == InstrumentType::Kit) ? v.waveLevel : v.volume;

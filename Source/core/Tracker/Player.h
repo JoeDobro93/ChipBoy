@@ -22,6 +22,7 @@ namespace chipboy::tracker {
 /// command column is written only when it carries a letter, so two messages
 /// for one step (a note and a slot change) merge whichever order they arrive.
 struct RecordMessage {
+    double  tick = 0.0;          ///< the note's own tick, kept for the row's groove fit (section 226)
     uint8_t channel = 0;
     uint16_t phraseSlot = 0;     ///< 0 = allocate the next free phrase and chain it
     uint16_t row = 0;            ///< the channel's own row (section 25)

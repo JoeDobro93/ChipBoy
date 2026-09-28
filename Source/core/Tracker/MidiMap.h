@@ -19,8 +19,17 @@ constexpr int kMidiChannels = 16, kMaxRegions = 127;   ///< at most one region p
 struct MidiRegion {
     uint8_t from = 1;
     uint8_t inst = 0, table = 0;          ///< 0 keep, as a cell's columns
-    int8_t  transpose = 0;                ///< semitones, as a chain row's TSP (section 48): under the instrument's flag
-    uint8_t sample = 0;                   ///< on a kit, the second sample's index + 1 -- the row's VEL column (D-UI-34); 0 none
+    /// On a kit (the region's INS names one): the two samples a note in this
+    /// region plays, 1-based, 0 none -- the row's NOTE and VEL columns
+    /// (D-UI-34). The MIDI note is not read then: the one exception to the
+    /// note coming from MIDI (section 225).
+    uint8_t kitA = 0, kitB = 0;
+    /// A kit row's chain transpose (section 48), which a note number cannot
+    /// carry -- the number picks the sample, the transpose shifts its rate.
+    /// Set by a song remade as MIDI; the tab does not show it.
+    int8_t  transpose = 0;
+    /// The tab shows one command; the second is kept for a song remade as
+    /// MIDI whose cells carry two (section 225), and recording leaves it free.
     bank::Command cmd1, cmd2;
 };
 
@@ -40,8 +49,8 @@ void normalizeMidiMap(MidiMap& m);
 const MidiRegion& regionFor(const MidiChannelMap& c, uint8_t velocity);
 /// Off with nothing assigned and every region blank: the file leaves it out.
 bool midiMapIsDefault(const MidiMap& m);
-/// The letters a region may carry: not H, G or T -- a hop, a groove and a
-/// tempo belong to the timeline.
+/// The letters a region may carry: not H or T -- a hop and a tempo belong
+/// to the timeline. G stays: it also sets the groove a running table walks.
 bool midiCommandAllowed(bank::Cmd c);
 /// The region's columns as a cell's, the disallowed letters dropped.
 bank::Command midiRegionCommand(const bank::Command& c);

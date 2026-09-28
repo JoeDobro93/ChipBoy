@@ -99,9 +99,12 @@ phrase on that channel alone, which the model allows (§25). The user sees a sho
 chain; the timeline draws it as long as it lasts.
 
 **`G` placement.** The first segment's groove is the phrase's chip (no `G`). Each later
-segment writes `G n` into its first cell's free command column. If the row ends under a `G`,
-the next row's first cell gets `G=` -- unless that row's own first segment wants the same
-groove, in which case nothing is written and the `G` simply carries (the stickiness again).
+segment writes `G n` into its first cell's free command column (a straight segment names a
+slot that is straight: `G 0` is the revert to the chip). If the row ends under a `G`, the
+next row's first cell gets `G=` -- *always*, as built (§226): a `G` left to carry overrides
+every later row's chip, which the first build found when a `4` chip four rows on was laid
+as straight; and it is written at once, since until the next row is fitted the tables would
+lay the rows after it on the `G`'s grid.
 
 ## The cases
 

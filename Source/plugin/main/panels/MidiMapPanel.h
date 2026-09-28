@@ -48,7 +48,6 @@ private:
     std::unique_ptr<VelocityBar> bar_;
     juce::Viewport gridView_;         ///< the grid scrolls: a region a velocity at most (section 225)
     ui::RegionGrid grid_;
-    HelpText help_;
     int midiCh_ = 1;
     std::vector<ui::SlotRow> lastRows_;
     juce::Rectangle<int> pane_;

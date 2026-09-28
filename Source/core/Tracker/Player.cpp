@@ -358,6 +358,7 @@ bool Player::recordNote(int ch, double tick, uint8_t note, uint8_t velocity, boo
     int row = 0, step = 0; int64_t at = 0;
     if (!quantise(ch, tick, row, step, at)) return false;
     out = RecordMessage{};
+    out.tick = tick;
     out.channel = uint8_t(c);
     if (noteOff) {
         if (at == recNoteStep_[c]) {
@@ -402,6 +403,7 @@ bool Player::recordSlots(int ch, double tick, const bank::Command& c1, const ban
     slotCells(int(c), c1, c2, force ? SlotWrite::All : SlotWrite::Changed, o1, o2);
     if (o1.cmd == bank::Cmd::None && o2.cmd == bank::Cmd::None) return false;
     out = RecordMessage{};
+    out.tick = tick;
     out.channel = uint8_t(c);
     out.row = uint16_t(std::clamp(row, 0, 65535));
     out.step = uint8_t(std::clamp(step, 0, kMaxSteps - 1));

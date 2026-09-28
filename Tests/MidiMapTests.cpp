@@ -12,7 +12,7 @@ TEST_CASE("MIDI map: normalising orders the regions, pins the first at 1 and cap
     MidiMap m;
     auto& c = m.channels[1];
     c.target = 2;
-    c.regions = { MidiRegion{ 65, 2, 0, 0, 0, {}, {} }, MidiRegion{ 30, 0, 0, 0, 0, { bank::Cmd::V, 4, 6, 0 }, {} } };
+    c.regions = { MidiRegion{ 65, 2, 0, 0, 0, 0, {}, {} }, MidiRegion{ 30, 0, 0, 0, 0, 0, { bank::Cmd::V, 4, 6, 0 }, {} } };
     normalizeMidiMap(m);
     REQUIRE(c.regions.size() == 2);
     CHECK(c.regions[0].from == 1);                 // the lowest region starts at 1 whatever it said
@@ -52,10 +52,10 @@ TEST_CASE("MIDI map: a velocity lands in the last region at or below it", "[midi
     CHECK(regionFor(c, 127).inst == 3);
 }
 
-TEST_CASE("MIDI map: H, G and T are not a region's to carry", "[midimap]")
+TEST_CASE("MIDI map: H and T are not a region's to carry", "[midimap]")
 {
     CHECK_FALSE(midiCommandAllowed(bank::Cmd::H));
-    CHECK_FALSE(midiCommandAllowed(bank::Cmd::G));
+    CHECK(midiCommandAllowed(bank::Cmd::G));                 // a G sets a running table's groove too (section 9.2)
     CHECK_FALSE(midiCommandAllowed(bank::Cmd::T));
     CHECK(midiCommandAllowed(bank::Cmd::E));
     CHECK(midiCommandAllowed(bank::Cmd::K));
@@ -78,6 +78,6 @@ TEST_CASE("MIDI map: a fresh map is the default the file leaves out", "[midimap]
     CHECK_FALSE(midiMapIsDefault(m));
     m.channels[3].target = -1; m.channels[3].regions.front().inst = 4;
     CHECK_FALSE(midiMapIsDefault(m));
-    m.channels[3].regions.front().inst = 0; m.channels[3].regions.front().transpose = -12;
+    m.channels[3].regions.front().inst = 0; m.channels[3].regions.front().kitB = 2;
     CHECK_FALSE(midiMapIsDefault(m));
 }

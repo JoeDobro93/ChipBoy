@@ -92,6 +92,44 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
 
+## Done (2026-09-28, the round's end) -- the MIDI tab's five notes; Auto groove (§226, D-UI-44)
+
+- **The five notes** (§225 amendments, last; D-UI-43b): Smp 1 / Smp 2 on the WAV target only,
+  labels not numbers, editable only for a kit, and with Smp 1 set the region plays those
+  samples whatever the key (`routeMidi` swaps the note for the sample's own); no TSP column
+  (the remake bakes transposes into the notes; `MidiRegion::transpose` stays in the model for
+  kit rows, hidden); one CMD column (`cmd2` kept free for the recorder's `G`s; a file's `cmd2`
+  still loads and shows in the info text); `G` kept in a region (it sets the table groove);
+  no help pane, the grid in a viewport to the right edge. `Grids.cpp` `RegionGrid` was
+  rewritten for it (`Kind::From`, `Kind::KitA`, the columns rebuilt on a target change).
+- **Auto groove** (§226): `Source/core/Tracker/GrooveFit.*` is the pure fitter (candidates,
+  the score, splits, the snap and the custom fallback; `Tests/GrooveFitTests.cpp`, twelve
+  cases). The processor keeps a `RowTake` per channel keyed by the tick's row, fits it in
+  `finishTake` when the head leaves the row, allocates `auto …` slots, re-lays the cells
+  closest pair first, writes the `G`s (a straight later segment names a straight slot, since
+  `G 0` is the revert), reverts a carried `G` at every fitted row's first cell and writes the
+  next row's `G=` at once when a row ends under one, then rebuilds the row tables.
+  `RecordMessage::tick` is the note's own tick from the block's tick points (under Quantize the
+  next one). The Tracker's SONG bar has the **Auto groove** toggle; the status line reads each
+  fit. `Song::autoGroove` / `grooveTolerance` are in the file (`autoGroove` written when off,
+  `grooveTolerance` when not 1).
+- **The cases**: `tools/demo/make_groovecases.py` → `Demo/midi-map/groove-cases.{cbsong,mid,
+  expect}`, sixteen bars, every one read as designed; `chipboy_recordtest --record-midi … 
+  --expect` checks them and CTest runs it as `demo_groovecases_record`. Tuning that got there:
+  empty steps 0.45 each, deviation ×5 over the notes within tolerance (a moved note pays once),
+  what is in force is never fresh, `10 2` / `11 1` demoted to the `4 2` rank, the custom
+  offered for two moved notes when they are a quarter of the row.
+- **Engine change to confirm**: the `Z` / `B` seed is the sounding note (number + transpose),
+  so a song with a chain transpose and `Z` or `B` rolls a different random sequence than
+  before (the distribution is the same). Needed so the cells and the baked MIDI roll alike.
+  `VoiceView::rng` is exposed for the check.
+- The READROOM remake was regenerated after the region changes and still matches write for
+  write (`scratchpad/remake/readroom-remake.{cbsong,mid}`, sent to the user).
+- Open from this round: no control for the tolerance; a grid needing more than 64 steps is
+  not offered (the plan's early row end is not built); an empty bar gets no phrase; the
+  `killAt` clear on a mapped note-0 row (a command row cancels a pending `K`) is as the
+  remake proved it and was left.
+
 ## Done (2026-09-28, last of all) -- a region is the whole row; READROOM as MIDI, write for write
 
 - The user's three asks after the demo. **Decimal velocities** in the region grid and the

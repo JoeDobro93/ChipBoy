@@ -42,12 +42,14 @@ bool midiMapIsDefault(const MidiMap& m)
     for (const auto& c : m.channels) {
         if (c.target >= 0 || c.regions.size() != 1) return false;
         const auto& r = c.regions.front();
-        if (r.from != 1 || r.inst || r.table || r.transpose || r.sample || r.cmd1.cmd != bank::Cmd::None || r.cmd2.cmd != bank::Cmd::None) return false;
+        if (r.from != 1 || r.inst || r.table || r.kitA || r.kitB || r.transpose || r.cmd1.cmd != bank::Cmd::None || r.cmd2.cmd != bank::Cmd::None) return false;
     }
     return true;
 }
 
-bool midiCommandAllowed(bank::Cmd c) { return c != bank::Cmd::H && c != bank::Cmd::G && c != bank::Cmd::T; }
+// G stays: beyond the timeline it sets the groove a running table walks
+// (section 9.2), which the driver reads from the cell.
+bool midiCommandAllowed(bank::Cmd c) { return c != bank::Cmd::H && c != bank::Cmd::T; }
 
 bank::Command midiRegionCommand(const bank::Command& c) { return midiCommandAllowed(c.cmd) ? c : bank::Command{}; }
 

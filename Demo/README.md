@@ -305,6 +305,9 @@ shows up as a complaint.
 |---|---|
 | `midi-map/midi-map-demo.cbsong` | A song file with **no cells at all**: the bank the demo plays through (ten named instruments, three tables, three waves) and a **MIDI map**, switched on, that routes seven MIDI channels to the four voices. Load it in the Tracker tab (*Load song…*); the MIDI tab then shows the map. |
 | `midi-map/midi-map-demo.mid` | Eight bars at 120 BPM, one track per MIDI channel, named for what it demonstrates. Put it on the ChipBoy track and play. |
+| `midi-map/groove-cases.cbsong` | The **groove-fit cases** (`../docs/COMMANDS_AND_TEMPO.md` §226): a bank with one pulse lead, MIDI channel 1 → PU1, Auto groove on. Load it, arm PU1, press record and play the file in with **Tempo source Host** at 120 BPM and **Quantize** on. |
+| `midi-map/groove-cases.mid` | Sixteen bars, a case a bar, each named in the file: straight, a shuffle with rests, downbeats only, drifting swing, triplets, thirty-seconds over two bars, twelve straight then eight fast, a run spilling into the next bar, one note late, an empty bar, a single note, sixteenth triplets, swung thirty-seconds. |
+| `midi-map/groove-cases.expect` | What every recorded row must read as (steps, groove, notes, `G`s); `chipboy_recordtest --record-midi groove-cases.cbsong groove-cases.mid OUT.cbsong 18 --expect groove-cases.expect` checks it, and CTest runs that as `demo_groovecases_record`. |
 
 What each MIDI channel shows, and where in the eight bars:
 
@@ -337,6 +340,7 @@ python3 tools/demo/make_demo.py
 python3 tools/demo/make_demo.py --paramdump build-plugin/chipboy_paramdump_artefacts/Release/chipboy_paramdump   # cross-check the parameter table
 python3 tools/demo/make_songs.py            # the six songs under songs/
 python3 tools/demo/make_midimap.py          # the MIDI map demo under midi-map/
+python3 tools/demo/make_groovecases.py      # the groove-fit cases under midi-map/
 python3 tools/demo/make_songs.py --list     # what they are, and which bars each channel plays in
 ```
 

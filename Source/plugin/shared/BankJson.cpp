@@ -557,6 +557,9 @@ var songToVar(const tracker::Song& s)
     Array<var> names;
     for (const auto& g : s.grooves) names.add(String(CharPointer_UTF8(g.nameOf())));
     o->setProperty("grooveNames", names);
+    // Section 226: the groove fit's switch and tolerance, only off the defaults.
+    if (!s.autoGroove) o->setProperty("autoGroove", false);
+    if (s.grooveTolerance != 1) o->setProperty("grooveTolerance", int(s.grooveTolerance));
     // Section 225: the MIDI map, only when it is not the default -- off and
     // nothing assigned -- so no file written before it changes.
     if (!tracker::midiMapIsDefault(s.midiMap)) {
@@ -570,8 +573,9 @@ var songToVar(const tracker::Song& s)
             for (const auto& r : c.regions) {
                 auto* ro = new DynamicObject();
                 ro->setProperty("from", int(r.from)); ro->setProperty("inst", int(r.inst)); ro->setProperty("table", int(r.table));
+                if (r.kitA) ro->setProperty("kitA", int(r.kitA));
+                if (r.kitB) ro->setProperty("kitB", int(r.kitB));
                 if (r.transpose) ro->setProperty("tsp", int(r.transpose));
-                if (r.sample) ro->setProperty("smp", int(r.sample));
                 if (r.cmd1.cmd != Cmd::None) ro->setProperty("cmd1", cmdToVar(r.cmd1));
                 if (r.cmd2.cmd != Cmd::None) ro->setProperty("cmd2", cmdToVar(r.cmd2));
                 regs.add(var(ro));
@@ -749,8 +753,9 @@ bool songFromVar(const var& v, tracker::Song& out)
                         r.from = uint8_t(std::clamp(getOr(ro, "from", 1), 1, 127));
                         r.inst = uint8_t(std::clamp(getOr(ro, "inst", 0), 0, bank::kInstrumentSlots));
                         r.table = uint8_t(std::clamp(getOr(ro, "table", 0), 0, bank::kTableSlots));
+                        r.kitA = uint8_t(std::clamp(getOr(ro, "kitA", 0), 0, 127));
+                        r.kitB = uint8_t(std::clamp(getOr(ro, "kitB", 0), 0, 127));
                         r.transpose = int8_t(std::clamp(getOr(ro, "tsp", 0), -128, 127));
-                        r.sample = uint8_t(std::clamp(getOr(ro, "smp", 0), 0, 127));
                         r.cmd1 = cmdFromVar(ro->getProperty("cmd1")); r.cmd2 = cmdFromVar(ro->getProperty("cmd2"));
                         c.regions.push_back(r);
                     }
@@ -758,6 +763,8 @@ bool songFromVar(const var& v, tracker::Song& out)
             }
     }
     tracker::normalizeMidiMap(out.midiMap);
+    out.autoGroove = o->hasProperty("autoGroove") ? bool(o->getProperty("autoGroove")) : true;
+    out.grooveTolerance = uint8_t(std::clamp(getOr(o, "grooveTolerance", 1), 0, 6));
     tracker::buildRowTables(out);
     return true;
 }

@@ -6650,3 +6650,94 @@ map and the cells sound the same write for write (`chipboy_recordtest --remake-m
   write for write (§9.5). READROOM: 1.24 million writes, identical over its 127 bars; past the
   song's end the cells come round (§212) and the file has stopped, which is not the map's.
 
+**Amendments, 2026-09-28 (last).** The user's five notes on the tab, and what they changed in
+the model (D-UI-43b):
+- **A kit's samples, not the note.** On the WAV target only, a region shows **Smp 1** and
+  **Smp 2** (`MidiRegion::kitA`, `kitB`, the samples by their three-letter labels, D-UI-34),
+  editable only when the region's INS is a kit. With Smp 1 set the mapped note's number is
+  **replaced by that sample's own** (`NoteEvent::a`), so the region plays those samples
+  whatever key was struck -- the one exception to "the note comes from MIDI"; Smp 2 rides as
+  the row's second sample (`b`) as before. Without Smp 1 the note picks the sample by number,
+  as a cell's does.
+- **No TSP column.** A transpose is baked into the MIDI note by whoever writes the file
+  (`--remake-midi` does: the chain row's and the PU2 transpose through the floor law, §217),
+  which is what a keyboard player means anyway and halves the regions a song needs. The model
+  keeps `MidiRegion::transpose` (file key `tsp`) for the one case a number cannot carry --
+  a kit row under a chain transpose, where the number is the sample and the transpose is the
+  rate -- and the tab does not show it.
+- **One CMD column.** A region's second command was never needed (the TBL carries more) and
+  its column is what the recorder writes its `G`s into (§226); a cell recorded through the
+  map therefore always has a free column. A file may still carry `cmd2`; the row's info text
+  shows it.
+- **`G` is kept in a region** -- only `H` and `T` are dropped -- because a cell's `G` also
+  sets the table groove (§60), which the remake needed.
+- **The `Z` / `B` roll is seeded with the note as it sounds** -- the number plus the
+  transpose in force (`transposeIntoRange`) -- not the number alone, so a song's cells and
+  the same song through the map, transpose baked, roll alike. An engine change: a song with a
+  chain transpose and `Z` or `B` rolls a different (equally random) sequence than before.
+
+## 226. Grooves inferred from what is played: the row's-end fit
+
+`docs/plan-groove-inference.md` is the design; this is what was built (`Source/core/Tracker/
+GrooveFit.*`, the takes in `ChipBoyProcessor::applyRecordMessages` / `finishTake`,
+`Tests/GrooveFitTests.cpp`, the cases under `Demo/midi-map/groove-cases.*`). With **Auto
+groove** on (`Song::autoGroove`, D-UI-44, on for a new song) the recorder no longer writes
+notes to the phrase's grid as they come: it keeps a **take** per channel -- every message with
+the row its tick lies in, the row read from the tables (`rowOfTick`, rows past the chain's end
+counted on in 96-tick rows) -- and when the play head leaves the row, or recording stops, the
+take is **fitted** and the row laid again from it.
+
+- **The fit** (`fitRow`) takes the note-on ticks relative to the row's start and the row's
+  length, which it never changes. Candidates, simplest first with a rank: `6` (0); the swing
+  pairs summing to 12 up to `9 3` and their reverses (1); `8` (2); `4` (3); `3` (4); `4 2`,
+  `2 4`, `5 1`, `1 5` and the flam-like `10 2`, `11 1` and reverses (5); `12`, `24` (6); `2`,
+  `1` (7); the onsets' own gaps (8). A candidate is laid over the row -- cyclic when its sum
+  divides the length, else written out with the last step taking the remainder -- and the notes
+  take its steps **closest pair first**, so a note a little off never pushes an exact one off
+  its step. A layout fits when every note is within the **tolerance** (`Song::grooveTolerance`,
+  file key `grooveTolerance`, one tick; no control yet) of its step and no two share one.
+- **The score**, lower wins: the rank, plus five times the mean distance of the notes within
+  tolerance from their steps, plus 1 for a groove the song's slots do not hold, plus 1.5 for a
+  groove other than the one **in force** before the row (the last fitted row's last groove,
+  else the one a `G` carries in, else the phrase's chip; what is in force is never "fresh"),
+  plus 0.45 an **empty step** (a finer grid that fits by being fine is not simpler than a
+  coarser one that fits by being right), plus, for a note moved beyond the tolerance, its
+  distance and a half. A **split** -- one candidate up to a step boundary, any candidate after
+  it, joined by a `G` -- competes at its two scores plus 2. The nearest grid with its moves
+  counted always competes, and the onsets' own gaps when three notes would move, or two that
+  are a quarter of the row; one clumsy note is moved, never given a groove. The weights were
+  settled on the sixteen cases below and the unit tests; a change to them re-runs both.
+- **The re-lay.** The phrase's cells are cleared; its chip is the first segment's groove
+  (straight is 0, none), its STEPS the layout's; the notes take steps closest pair first as
+  the fit did (two notes on one tick are one cell, the later message winning, as the quantiser
+  had it; notes beyond the steps are lost); an OFF goes to its nearest step, or the next when
+  that is a note's own; a note the quantiser had sent to another row's step is taken back.
+  A later segment writes `G n` into its first cell's free column (the second first), `n` the
+  groove's slot: the same slot if the song has it, else the first unused unnamed straight slot,
+  named `auto 8 4` and so on; a straight later segment names a slot that is straight, since
+  `G 0` is the revert to the chip (§135). **A `G` carried into a row** (the tables' walk as the
+  row begins) is reverted in its first cell, always, so the rows after it read their own chips
+  again; and a row that ends under a `G` writes that `G=` into the next row at once -- in a
+  phrase of its own if it has none -- since until then the tables would lay the rows after it
+  on the wrong grid. The next row's fit clears the cell and writes it again.
+- **Ticks.** `RecordMessage::tick` is the note's own tick, taken from the block's tick points
+  (`tickOf`); under Quantize a MIDI note's tick is the next tick point, which is where the
+  driver's hold puts it. Without that the onsets jittered by up to a tick and no grid fitted.
+- **What the user sees.** The Tracker's status line reads the fit as it happens (`PU1 row 9:
+  6 (12 steps) then G 3 (8 steps) · new groove slot`, `… 1 note moved 4 ticks`, `no free
+  groove slot, straight kept`, `no free column for a G`). Auto groove off is the recorder as
+  it was: cells at the phrase's own steps.
+- **The cases** (`tools/demo/make_groovecases.py` → `Demo/midi-map/groove-cases.{cbsong,mid,
+  expect}`): sixteen bars at 120 BPM on channel 1 -- straight; a shuffle with rests (`8 4`);
+  downbeats only (stays `8 4`); swing drifting 7 8 8 9 (`8 4`); eighth triplets (`8`); straight
+  again; thirty-seconds over two bars (`3`, one slot reused); twelve straight then eight fast
+  (`6` then `G 3`); a fast run from mid-bar into the next bar (`6` then `G 3` | `3` then `G`
+  straight); one note four ticks late (straight, one moved); an empty bar (no phrase); a single
+  note; sixteenth triplets (`4`); swung thirty-seconds (`4 2`). `chipboy_recordtest
+  --record-midi SONG MID OUT [bars] [--expect FILE]` records a file into a song and lists what
+  every row became; the CTest `demo_groovecases_record` holds every row to the expect file.
+  `CHIPBOY_FIT_DEBUG=1` prints each fit's onsets and segments.
+- **Left for later.** A grid that would need more than 64 steps (a `1` over a 96-tick row) is
+  not offered rather than ending the row early as the plan had it; the tolerance has no
+  control; a mid-song recording over rows that already hold hand-written `G`s reads the groove
+  in force from the tables but does not look for a `G` inside the row.

@@ -39,6 +39,7 @@ add_library(chipboy_core STATIC
     Source/core/Tracker/Player.cpp
     Source/core/Tracker/Song.cpp
     Source/core/Tracker/MidiMap.cpp
+    Source/core/Tracker/GrooveFit.cpp
     Source/core/Import/LsdjSave.cpp
     Source/core/Import/LsdjModel.cpp
     Source/core/Import/LsdjKits.cpp
@@ -89,6 +90,7 @@ if(CHIPBOY_BUILD_TESTS)
         Tests/ClockTests.cpp
         Tests/TrackerTests.cpp
         Tests/MidiMapTests.cpp
+        Tests/GrooveFitTests.cpp
         Tests/PresetTests.cpp
         Tests/WaveSynthTests.cpp
         Tests/LinkTests.cpp
@@ -310,6 +312,14 @@ if(CHIPBOY_BUILD_PLUGIN)
              --out "${CMAKE_CURRENT_BINARY_DIR}/recordtest"
              --play-midi "${CMAKE_CURRENT_SOURCE_DIR}/Demo/midi-map/midi-map-demo.cbsong"
                          "${CMAKE_CURRENT_SOURCE_DIR}/Demo/midi-map/midi-map-demo.mid" 8)
+    # The groove-fit cases (section 226): the MIDI file recorded into the song
+    # through the map with Auto groove on, every row read as the expect file says.
+    add_test(NAME demo_groovecases_record COMMAND chipboy_recordtest
+             --out "${CMAKE_CURRENT_BINARY_DIR}/recordtest"
+             --record-midi "${CMAKE_CURRENT_SOURCE_DIR}/Demo/midi-map/groove-cases.cbsong"
+                           "${CMAKE_CURRENT_SOURCE_DIR}/Demo/midi-map/groove-cases.mid"
+                           "${CMAKE_CURRENT_BINARY_DIR}/recordtest/groove-cases-recorded.cbsong" 18
+             --expect "${CMAKE_CURRENT_SOURCE_DIR}/Demo/midi-map/groove-cases.expect")
     file(GLOB CHIPBOY_DEMO_SONGS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Demo/songs/*.cbsong")
     foreach(song ${CHIPBOY_DEMO_SONGS})
         get_filename_component(song_name "${song}" NAME_WE)

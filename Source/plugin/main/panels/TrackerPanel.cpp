@@ -109,6 +109,10 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
     importSav_.setLabel("Import");
     importSav_.setTooltip("Read an LSDj .sav, or .lsdprj / .lsdsng project files: pick the songs -- the working song, every saved file, each project -- and open each in a tab with its own bank, read by the rules of its LSDj version.");
     importSav_.onClick = [this] { importSav(); };
+    autoGroove_.setText("Auto groove");
+    autoGroove_.setTooltip("Recording fits each row's groove to what you played (section 226): straight, a swing, triplets, thirty-seconds, or two grids joined by a G -- within a tick. Off, notes land on the phrase's own grid.");
+    autoGroove_.onChange = [this](bool on) { editSong(on ? "Auto groove on" : "Auto groove off", [on](tracker::Song& s) { s.autoGroove = on; }); };
+    addAndMakeVisible(autoGroove_);
     export_.setLabel("Export");
     export_.setCaret(true);
     export_.setTooltip("Export this song: as MIDI -- the notes each channel sounds, on the song's own time (section 224) -- or, later, as a player ROM for real hardware or an LSDj save.");
@@ -345,6 +349,7 @@ RichText TrackerPanel::contextLine() const
 void TrackerPanel::refreshViews()
 {
     const auto s = processor.song();
+    autoGroove_.setToggled(s && s->autoGroove, dontSendNotification);
     if (s) cursor_ = std::clamp<int64_t>(cursor_, 0, std::max<int64_t>(tracker::kEmptyRowTicks, tracker::songTicks(*s)));
     chain_.setSong(s, cursor_);
     chain_.setLoopRegion(processor.loopEnabled() && loopTo_ >= 0, loopFrom_, loopTo_);
@@ -623,6 +628,8 @@ void TrackerPanel::tick()
     const auto s = processor.song();
     const auto at = trackerPosition(processor);
     const bool playing = at.playing;
+    // Section 226: what the last row's groove fit did, on the status line.
+    if (processor.grooveReportSerial() != grooveReportShown_) { grooveReportShown_ = processor.grooveReportSerial(); message(processor.grooveReport()); }
     bool views = false;
     // Follow (D-UI-16): the play head is the transport's while it plays, and
     // a pause leaves it where it stopped. The chain redraws on every move;
@@ -727,6 +734,8 @@ void TrackerPanel::resized()
         songBar_ = area.removeFromTop(kSongBar);
         auto r = songBar_.withTrimmedLeft(4).withTrimmedRight(4);
         place(r, laneFollowBtn_, IconButton::kWidth, IconButton::kHeight);
+        autoGroove_.setBounds(r.removeFromRight(118).withSizeKeepingCentre(118, Toggle::kHeight));
+        r.removeFromRight(8);
         r.removeFromLeft(40 + 6);                     // the caption paint() draws
         label(r, tempoLabel_);
         r.removeFromLeft(kLabelGap);

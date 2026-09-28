@@ -534,13 +534,13 @@ const juce::String kBlank2 = "--", kBlank3 = "---";
 // ---------------------------------------------------------------------------
 // the grid core: columns, cursor, hover, navigation, painting
 // ---------------------------------------------------------------------------
-enum class Kind { Step, Vol, VolLen, Transpose, Cmd, Note, Vel, Inst, Table, Ghost, Info, From };   // From: a MIDI region's lowest velocity (D-UI-43)
+enum class Kind { Step, Vol, VolLen, Transpose, Cmd, Note, Vel, Inst, Table, Ghost, Info, From, KitA };   // From, KitA: a MIDI region's lowest velocity and its first kit sample (D-UI-43)
 
 struct Column { Kind kind = Kind::Step; int ch = 0; int x = 0, w = 0; juce::String title; };
 
 bool editableKind(Kind k)
 {
-    return k == Kind::Vol || k == Kind::VolLen || k == Kind::Transpose || k == Kind::Cmd || k == Kind::Note || k == Kind::Vel || k == Kind::Inst || k == Kind::Table || k == Kind::From;
+    return k == Kind::Vol || k == Kind::VolLen || k == Kind::Transpose || k == Kind::Cmd || k == Kind::Note || k == Kind::Vel || k == Kind::Inst || k == Kind::Table || k == Kind::From || k == Kind::KitA;
 }
 
 struct GridCore {
@@ -1156,24 +1156,48 @@ struct RegionGrid::Impl {
         core.rows = 1; core.rowH = kRowHeight; core.headerH = kHeaderHeight; core.curCol = 2;
     }
 
+    /// Region, Velocity, Ins, Tbl, then on the wave channel the kit's two
+    /// samples, one Cmd, and what the note is (D-UI-43a).
     void buildColumns(int width)
     {
         auto& cols = core.cols;
         cols.clear();
-        const int widths[8] = { 60, 84, 50, 50, 50, 50, 74, 74 };
-        const Kind kinds[8] = { Kind::Step, Kind::From, Kind::Inst, Kind::Table, Kind::Transpose, Kind::Vel, Kind::Cmd, Kind::Cmd };
-        const char* titles[8] = { "Region", "Velocity", "Ins", "Tbl", "Tsp", "Smp", "Cmd 1", "Cmd 2" };
+        std::vector<std::tuple<Kind, int, const char*>> spec = { { Kind::Step, 60, "Region" }, { Kind::From, 84, "Velocity" }, { Kind::Inst, 50, "Ins" }, { Kind::Table, 50, "Tbl" } };
+        if (target == 2) { spec.push_back({ Kind::KitA, 58, "Smp 1" }); spec.push_back({ Kind::Vel, 58, "Smp 2" }); }
+        spec.push_back({ Kind::Cmd, 80, "Cmd" });
         int x = 0;
-        for (int i = 0; i < 8; ++i) { cols.push_back({ kinds[i], i == 7 ? 1 : 0, x, widths[i], titles[i] }); x += widths[i]; }
+        for (const auto& [kind, w, title] : spec) { cols.push_back({ kind, 0, x, w, title }); x += w; }
         if (width - x >= 90) cols.push_back({ Kind::Info, 0, x, width - x, juce::String::charToString(0x2192) + " the note is" });
     }
 
     int rows() const { return int(regions.size()); }
     int top(int row) const { return row + 1 < rows() ? int(regions[size_t(row + 1)].from) - 1 : 127; }
-    /// The range a region's `from` may take: above the one below, below the
-    /// one above; the first is 1 and stays.
     int fromLo(int row) const { return row == 0 ? 1 : int(regions[size_t(row - 1)].from) + 1; }
     int fromHi(int row) const { return row == 0 ? 1 : (row + 1 < rows() ? int(regions[size_t(row + 1)].from) - 1 : 127); }
+    /// The kit a region's INS names, else null: the sample columns are its.
+    const bank::Kit* kitOf(int row) const
+    {
+        if (bank == nullptr || row < 0 || row >= rows()) return nullptr;
+        const auto* inst = bank->instrument(regions[size_t(row)].inst);
+        return inst != nullptr && inst->type == bank::InstrumentType::Kit ? bank->kit(inst->kit) : nullptr;
+    }
+    static juce::String sampleLabel(const bank::Kit* k, int v)
+    {
+        if (k == nullptr || v < 1) return {};
+        if (v > int(k->samples.size())) return juce::String(v);
+        return juce::String(bank::kitSampleLabel(k->samples[size_t(v - 1)].name, v - 1));
+    }
+    static int sampleByLabel(const bank::Kit* k, const juce::String& text)
+    {
+        if (k == nullptr) return 0;
+        const juce::String want = text.trim();
+        if (want.isEmpty()) return 0;
+        for (int i = 0; i < int(k->samples.size()); ++i)
+            if (juce::String(bank::kitSampleLabel(k->samples[size_t(i)].name, i)).equalsIgnoreCase(want)) return i + 1;
+        return 0;
+    }
+    bool kitCol(Kind k) const { return k == Kind::KitA || k == Kind::Vel; }
+    uint8_t& kitField(tracker::MidiRegion& r, Kind k) const { return k == Kind::KitA ? r.kitA : r.kitB; }
 
     juce::String cellText(int row, int col, bool& blank) const
     {
@@ -1184,14 +1208,24 @@ struct RegionGrid::Impl {
         if (k == Kind::From) return juce::String(int(r.from)) + juce::String::charToString(0x2013) + juce::String(top(row));
         if (k == Kind::Inst) { blank = r.inst == 0; return blank ? kBlank2 : ValueFormat::slot(r.inst); }
         if (k == Kind::Table) { blank = r.table == 0; return blank ? kBlank2 : ValueFormat::slot(r.table); }
-        if (k == Kind::Transpose) { blank = r.transpose == 0; return blank ? kBlank2 : ValueFormat::transpose(r.transpose); }
-        if (k == Kind::Vel) { blank = r.sample == 0; return blank ? kBlank2 : ValueFormat::slot(r.sample); }
+        if (kitCol(k)) {
+            const bank::Kit* kit = kitOf(row);
+            const int v = k == Kind::KitA ? int(r.kitA) : int(r.kitB);
+            blank = kit == nullptr || v == 0;
+            return kit == nullptr ? juce::String() : blank ? kBlank2 : sampleLabel(kit, v);
+        }
         if (k == Kind::Info) {
             blank = true;
-            juce::String t = r.inst ? "plain: loads " + ValueFormat::slot(r.inst) : "bare: keeps what sounds";
-            if (r.inst && bank) if (const auto* i = bank->instrument(r.inst)) t += " " + juce::String(i->name);
+            juce::String t;
+            if (const bank::Kit* kit = kitOf(row)) {
+                t = "kit " + ValueFormat::slot(r.inst) + ": " + (r.kitA ? sampleLabel(kit, int(r.kitA)) : juce::String("the note's sample"));
+                if (r.kitB) t += " + " + sampleLabel(kit, int(r.kitB));
+            } else {
+                t = r.inst ? "plain: loads " + ValueFormat::slot(r.inst) : "bare: keeps what sounds";
+                if (r.inst && bank) if (const auto* i = bank->instrument(r.inst)) t += " " + juce::String(i->name);
+            }
             if (r.table) t += ", table " + ValueFormat::slot(r.table);
-            if (r.transpose) t += ", " + juce::String(r.transpose > 0 ? "+" : "") + juce::String(int(r.transpose)) + " st";
+            if (r.cmd2.cmd != bank::Cmd::None) t += ", + " + cmdLetterText(r.cmd2) + " " + cmdValueText(r.cmd2);
             return t;
         }
         return {};
@@ -1199,7 +1233,6 @@ struct RegionGrid::Impl {
 
     void changed(int row)
     {
-        // A `from` typed out of its range is held between its neighbours.
         if (row >= 0 && row < rows()) regions[size_t(row)].from = uint8_t(juce::jlimit(fromLo(row), fromHi(row), int(regions[size_t(row)].from)));
         owner.repaint();
         if (owner.onChange) owner.onChange(regions);
@@ -1212,13 +1245,13 @@ struct RegionGrid::Impl {
         auto& r = regions[size_t(row)];
         if (c.kind == Kind::Inst) { if (r.inst) return false; int v = 0; for (int i = row - 1; !v && i >= 0; --i) v = regions[size_t(i)].inst; r.inst = uint8_t(v ? v : 1); }
         else if (c.kind == Kind::Table) { if (r.table) return false; int v = 0; for (int i = row - 1; !v && i >= 0; --i) v = regions[size_t(i)].table; if (!v) return true; r.table = uint8_t(v); }
+        else if (kitCol(c.kind)) { if (kitOf(row) == nullptr || kitField(r, c.kind)) return false; kitField(r, c.kind) = 1; }
         else if (c.kind == Kind::Cmd) {
-            bank::Command& t = c.ch == 0 ? r.cmd1 : r.cmd2;
-            if (t.cmd != bank::Cmd::None) return false;
+            if (r.cmd1.cmd != bank::Cmd::None) return false;
             bank::Command src;
-            for (int i = row - 1; src.cmd == bank::Cmd::None && i >= 0; --i) src = c.ch == 0 ? regions[size_t(i)].cmd1 : regions[size_t(i)].cmd2;
+            for (int i = row - 1; src.cmd == bank::Cmd::None && i >= 0; --i) src = regions[size_t(i)].cmd1;
             if (src.cmd == bank::Cmd::None) return true;
-            t = src;
+            r.cmd1 = src;
         } else return false;
         core.entry.restart();
         changed(row);
@@ -1232,12 +1265,11 @@ struct RegionGrid::Impl {
         if (c.kind == Kind::From) return int(r.from);
         if (c.kind == Kind::Inst) return int(r.inst);
         if (c.kind == Kind::Table) return int(r.table);
-        if (c.kind == Kind::Transpose) return int(r.transpose);
-        if (c.kind == Kind::Vel) return int(r.sample);
+        if (c.kind == Kind::KitA) return int(r.kitA);
+        if (c.kind == Kind::Vel) return int(r.kitB);
         if (c.kind == Kind::Cmd) {
-            const auto& cmd = c.ch == 0 ? r.cmd1 : r.cmd2;
-            if (cmd.cmd == bank::Cmd::None) return 0;
-            return ValueFormat::hex() ? plugin::commandByte(cmd) : plugin::commandShownValue(cmd, juce::jlimit(0, commandInfo(cmd.cmd)->nargs - 1, core.entry.arg));
+            if (r.cmd1.cmd == bank::Cmd::None) return 0;
+            return ValueFormat::hex() ? plugin::commandByte(r.cmd1) : plugin::commandShownValue(r.cmd1, juce::jlimit(0, commandInfo(r.cmd1.cmd)->nargs - 1, core.entry.arg));
         }
         return 0;
     }
@@ -1248,13 +1280,17 @@ struct RegionGrid::Impl {
         if (c.kind == Kind::From) { const auto v = uint8_t(juce::jlimit(fromLo(row), fromHi(row), want)); if (r.from == v) return; r.from = v; }
         else if (c.kind == Kind::Inst) { const auto v = uint8_t(wrapRange(want, 0, bank::kInstrumentSlots)); if (r.inst == v) return; r.inst = v; }
         else if (c.kind == Kind::Table) { const auto v = uint8_t(wrapRange(want, 0, bank::kTableSlots)); if (r.table == v) return; r.table = v; }
-        else if (c.kind == Kind::Transpose) { const auto v = int8_t(wrapRange(want, -128, 127)); if (r.transpose == v) return; r.transpose = v; }
-        else if (c.kind == Kind::Vel) { const auto v = uint8_t(wrapRange(want, 0, 127)); if (r.sample == v) return; r.sample = v; }
+        else if (kitCol(c.kind)) {
+            const bank::Kit* kit = kitOf(row);
+            if (kit == nullptr) return;
+            const auto v = uint8_t(wrapRange(want, 0, int(kit->samples.size())));
+            if (kitField(r, c.kind) == v) return;
+            kitField(r, c.kind) = v;
+        }
         else if (c.kind == Kind::Cmd) {
-            auto& cmd = c.ch == 0 ? r.cmd1 : r.cmd2;
-            if (cmd.cmd == bank::Cmd::None) return;
+            if (r.cmd1.cmd == bank::Cmd::None) return;
             const int cur = dragValue(row, col);
-            if (cur == want || !nudgeCommand(cmd, core.entry.arg, want - cur)) return;
+            if (cur == want || !nudgeCommand(r.cmd1, core.entry.arg, want - cur)) return;
         } else return;
         changed(row);
     }
@@ -1266,8 +1302,7 @@ struct RegionGrid::Impl {
         bool done = false;
         if (col.kind == Kind::From) {
             if (core.curRow == 0) return false;                 // the first region starts at 1, always
-            // Typed in decimal whatever the display's base (D-UI-43): digits
-            // build the number, Backspace takes one back.
+            // Typed in decimal whatever the display's base (D-UI-43).
             const juce::juce_wchar ch = k.getTextCharacter();
             if (ch >= '0' && ch <= '9') {
                 const int v = core.entry.count == 0 ? int(ch - '0') : core.entry.acc * 10 + int(ch - '0');
@@ -1283,13 +1318,10 @@ struct RegionGrid::Impl {
         }
         else if (col.kind == Kind::Inst) done = editSlot(r.inst, bank::kInstrumentSlots, k, core.entry);
         else if (col.kind == Kind::Table) done = editSlot(r.table, bank::kTableSlots, k, core.entry);
-        else if (col.kind == Kind::Transpose) { bool has = true; done = editTranspose(has, r.transpose, k, core.entry); if (done && !has) r.transpose = 0; }
-        else if (col.kind == Kind::Vel) done = editSlot(r.sample, 127, k, core.entry);
+        else if (kitCol(col.kind)) { const bank::Kit* kit = kitOf(core.curRow); done = kit != nullptr && editSlot(kitField(r, col.kind), int(kit->samples.size()), k, core.entry); }
         else if (col.kind == Kind::Cmd) {
-            done = editCmd(col.ch == 0 ? r.cmd1 : r.cmd2, k, core.entry);
-            // The letters a region cannot carry (section 225).
-            auto& cmd = col.ch == 0 ? r.cmd1 : r.cmd2;
-            if (done && !tracker::midiCommandAllowed(cmd.cmd)) cmd = {};
+            done = editCmd(r.cmd1, k, core.entry);
+            if (done && !tracker::midiCommandAllowed(r.cmd1.cmd)) r.cmd1 = {};   // the letters a region cannot carry (section 225)
         }
         if (done) changed(core.curRow);
         return done;
@@ -1298,8 +1330,7 @@ struct RegionGrid::Impl {
     bank::Command* commandAt(int row, int col)
     {
         if (row < 0 || row >= rows() || col < 0 || col >= int(core.cols.size()) || core.cols[size_t(col)].kind != Kind::Cmd) return nullptr;
-        auto& r = regions[size_t(row)];
-        return core.cols[size_t(col)].ch == 0 ? &r.cmd1 : &r.cmd2;
+        return &regions[size_t(row)].cmd1;
     }
 
     bool openValueEntry(int row, int col, int arg)
@@ -1324,24 +1355,26 @@ struct RegionGrid::Impl {
     {
         if (row < 0 || row >= rows() || col < 0 || col >= int(core.cols.size())) return;
         const auto kind = core.cols[size_t(col)].kind;
-        if (kind != Kind::From && kind != Kind::Inst && kind != Kind::Table && kind != Kind::Transpose && kind != Kind::Vel) return;
+        if (kind != Kind::From && kind != Kind::Inst && kind != Kind::Table && !kitCol(kind)) return;
         if (kind == Kind::From && row == 0) return;
+        const bank::Kit* kit = kitCol(kind) ? kitOf(row) : nullptr;
+        if (kitCol(kind) && kit == nullptr) return;
         const auto& r = regions[size_t(row)];
-        const int cur = kind == Kind::From ? int(r.from) : kind == Kind::Inst ? int(r.inst) : kind == Kind::Table ? int(r.table) : kind == Kind::Vel ? int(r.sample) : int(r.transpose);
-        const int hi = kind == Kind::From ? 127 : kind == Kind::Inst ? bank::kInstrumentSlots : kind == Kind::Table ? bank::kTableSlots : 127;
+        const int cur = kind == Kind::From ? int(r.from) : kind == Kind::Inst ? int(r.inst) : kind == Kind::Table ? int(r.table) : kind == Kind::KitA ? int(r.kitA) : int(r.kitB);
+        const int hi = kind == Kind::From ? 127 : kind == Kind::Inst ? bank::kInstrumentSlots : kind == Kind::Table ? bank::kTableSlots : int(kit->samples.size());
         core.setCursor(row, col);
-        const juce::String shown = cur == 0 ? juce::String() : kind == Kind::From ? juce::String(cur) : kind == Kind::Transpose ? ValueFormat::transpose(cur) : ValueFormat::slot(cur);
+        const juce::String shown = cur == 0 ? juce::String() : kind == Kind::From ? juce::String(cur) : kitCol(kind) ? sampleLabel(kit, cur) : ValueFormat::slot(cur);
         box.begin(owner, core.cellRect(row, col).reduced(1), shown, juce::Justification::centredLeft,
                   [this, row, kind, hi](const juce::String& text) {
                       int v = 0;
-                      // A velocity is typed in decimal in either display base (D-UI-43).
-                      const bool ok = kind == Kind::From ? (text.trim().containsOnly("0123456789") && text.trim().isNotEmpty() && (v = text.trim().getIntValue()) >= 1 && v <= hi)
-                                    : kind == Kind::Transpose ? (text.trim().isEmpty() || detail::parseTransposeTyped(text, -128, 127, v))
-                                    : text.trim().isEmpty() || detail::parseSlotTyped(text, hi, v);
+                      bool ok = false;
+                      // A velocity is typed in decimal in either display base (D-UI-43); a sample takes its label too.
+                      if (kind == Kind::From) ok = text.trim().containsOnly("0123456789") && text.trim().isNotEmpty() && (v = text.trim().getIntValue()) >= 1 && v <= hi;
+                      else if (kitCol(kind)) { const int byLabel = sampleByLabel(kitOf(row), text); if (byLabel > 0) { v = byLabel; ok = true; } else ok = text.trim().isEmpty() || detail::parseSlotTyped(text, hi, v); }
+                      else ok = text.trim().isEmpty() || detail::parseSlotTyped(text, hi, v);
                       if (!ok) { owner.repaint(); return; }
                       auto& t = regions[size_t(row)];
-                      if (kind == Kind::Transpose) { if (int(t.transpose) == v) { owner.repaint(); return; } t.transpose = int8_t(v); changed(row); return; }
-                      uint8_t& field = kind == Kind::From ? t.from : kind == Kind::Inst ? t.inst : kind == Kind::Table ? t.table : t.sample;
+                      uint8_t& field = kind == Kind::From ? t.from : kind == Kind::Inst ? t.inst : kind == Kind::Table ? t.table : kind == Kind::KitA ? t.kitA : t.kitB;
                       if (int(field) == v) { owner.repaint(); return; }
                       field = uint8_t(v);
                       changed(row);
@@ -1357,9 +1390,8 @@ struct RegionGrid::Impl {
         if (c.kind == Kind::From) { if (row == 0) return true; r.from = uint8_t(juce::jlimit(fromLo(row), fromHi(row), int(r.from) + delta)); }
         else if (c.kind == Kind::Inst) r.inst = uint8_t(wrapRange(int(r.inst) + delta, 0, bank::kInstrumentSlots));
         else if (c.kind == Kind::Table) r.table = uint8_t(wrapRange(int(r.table) + delta, 0, bank::kTableSlots));
-        else if (c.kind == Kind::Transpose) r.transpose = int8_t(wrapRange(int(r.transpose) + delta, -128, 127));
-        else if (c.kind == Kind::Vel) r.sample = uint8_t(wrapRange(int(r.sample) + delta, 0, 127));
-        else if (c.kind == Kind::Cmd) { if (!nudgeCommand(c.ch == 0 ? r.cmd1 : r.cmd2, core.entry.arg, delta)) return true; }
+        else if (kitCol(c.kind)) { const bank::Kit* kit = kitOf(row); if (kit == nullptr) return true; kitField(r, c.kind) = uint8_t(wrapRange(int(kitField(r, c.kind)) + delta, 0, int(kit->samples.size()))); }
+        else if (c.kind == Kind::Cmd) { if (!nudgeCommand(r.cmd1, core.entry.arg, delta)) return true; }
         else return false;
         changed(row);
         return true;
@@ -1368,12 +1400,10 @@ struct RegionGrid::Impl {
     void openPalette(int row, int col)
     {
         if (row < 0 || row >= rows() || col < 0 || col >= int(core.cols.size()) || core.cols[size_t(col)].kind != Kind::Cmd) return;
-        const int which = core.cols[size_t(col)].ch;
-        const auto& current = which == 0 ? regions[size_t(row)].cmd1 : regions[size_t(row)].cmd2;
-        showCommandPalette(owner, core.cellRect(row, col), current, target >= 0 ? kindOfChannel(target) : plugin::ChannelKind::Any,
-                           [this, row, which](int id, bank::Cmd cmd) {
-                               if (!tracker::midiCommandAllowed(cmd)) return;   // G and T are the timeline's (section 225)
-                               applyPalette(which == 0 ? regions[size_t(row)].cmd1 : regions[size_t(row)].cmd2, id, cmd);
+        showCommandPalette(owner, core.cellRect(row, col), regions[size_t(row)].cmd1, target >= 0 ? kindOfChannel(target) : plugin::ChannelKind::Any,
+                           [this, row](int id, bank::Cmd cmd) {
+                               if (!tracker::midiCommandAllowed(cmd)) return;   // T is the timeline's (section 225)
+                               applyPalette(regions[size_t(row)].cmd1, id, cmd);
                                core.entry.reset();
                                changed(row);
                            });
@@ -1408,6 +1438,20 @@ struct RegionGrid::Impl {
     {
         if (row < 0 || row >= rows() || col < 0 || col >= int(core.cols.size())) return;
         const auto& c = core.cols[size_t(col)];
+        if (kitCol(c.kind)) {
+            const bank::Kit* kit = kitOf(row);
+            if (kit == nullptr) return;
+            std::vector<SlotRow> slotRows;
+            for (int i = 0; i < int(kit->samples.size()); ++i) {
+                SlotRow sr; sr.slot = i + 1; sr.used = true;
+                sr.name = juce::String(bank::kitSampleLabel(kit->samples[size_t(i)].name, i)) + juce::String(juce::CharPointer_UTF8("  \xc2\xb7  ")) + juce::String(kit->samples[size_t(i)].name);
+                slotRows.push_back(sr);
+            }
+            const Kind kind = c.kind;
+            showSlotMenu(owner, core.cellRect(row, col), kind == Kind::KitA ? "First sample" : "Second sample", slotRows, int(kitField(regions[size_t(row)], kind)),
+                         [this, row, kind](int slot) { kitField(regions[size_t(row)], kind) = uint8_t(juce::jmax(0, slot)); core.entry.reset(); changed(row); });
+            return;
+        }
         if (c.kind != Kind::Inst && c.kind != Kind::Table) return;
         const bool instruments = c.kind == Kind::Inst;
         const auto slotRows = instruments ? instrumentRows() : tableRows();
@@ -1430,13 +1474,13 @@ struct RegionGrid::Impl {
         const auto& c = core.cols[size_t(col)];
         const auto& r = regions[size_t(row)];
         if (c.kind == Kind::From) return row == 0 ? "The lowest region starts at velocity 1 and stays there; the region above it says where it ends."
-                                              : "The lowest velocity this region takes; the region below ends where this begins. Type it, double-click for a box, Shift+arrows move it.";
+                                               : "The lowest velocity this region takes; the region below ends where this begins. Type it, double-click for a box, Shift+arrows move it.";
         if (c.kind == Kind::Inst) return "The instrument a note in this region loads -- a plain note, as a cell with an INS. Blank is a bare note: the pitch moves and what sounds keeps its instrument. Right-click lists the bank.";
         if (c.kind == Kind::Table) return "The table a plain note in this region starts; blank is the instrument's own. Right-click lists the bank.";
-        if (c.kind == Kind::Vel) return "On a kit, the second sample a note in this region plays with -- the row's VEL column (D-UI-34); blank is none. Nothing on any other instrument.";
-        if (c.kind == Kind::Transpose) return "Semitones added to a note in this region, as a chain row's TSP: under the instrument's Transpose flag, and on the noise channel a step along the map. Type it, double-click for a box, Shift+arrows move it.";
-        if (c.kind == Kind::Cmd) return cmdTooltip(c.ch == 0 ? r.cmd1 : r.cmd2) + " Fires once with each note in this region, as a cell's command does. H, G and T cannot be carried here.";
-        if (c.kind == Kind::Info) return "What a note in this region does: plain reloads the instrument, bare keeps what is sounding.";
+        if (c.kind == Kind::KitA) return kitOf(row) ? "The sample a note in this region plays -- the MIDI note is not read on a kit. Blank: the note picks the sample. Right-click lists the kit." : "The first sample, when the INS names a kit.";
+        if (c.kind == Kind::Vel) return kitOf(row) ? "The kit's second sample, played with the first -- the row's VEL column (D-UI-34). Right-click lists the kit." : "The second sample, when the INS names a kit.";
+        if (c.kind == Kind::Cmd) return cmdTooltip(r.cmd1) + " Fires once with each note in this region, as a cell's command does. H and T cannot be carried here; the row's second column stays free for recording.";
+        if (c.kind == Kind::Info) return "What a note in this region does: plain reloads the instrument, bare keeps what is sounding; a kit plays its samples.";
         return "Region " + juce::String(row + 1) + " of " + juce::String(rows()) + ".";
     }
 };
@@ -1453,7 +1497,7 @@ void RegionGrid::setRegions(const std::vector<tracker::MidiRegion>& regions, int
 {
     auto& im = *impl_;
     im.regions = regions.empty() ? std::vector<tracker::MidiRegion>{ tracker::MidiRegion{} } : regions;
-    im.target = target;
+    if (target != im.target) { im.target = target; im.buildColumns(getWidth()); im.core.ensureEditableCursor(); }
     im.core.rows = im.rows();
     im.core.curRow = juce::jlimit(0, im.rows() - 1, im.core.curRow);
     repaint();
@@ -1493,6 +1537,8 @@ void RegionGrid::paint(juce::Graphics& g)
                 g.drawText(text, core.cellRect(r, c).withTrimmedLeft(8), juce::Justification::centredLeft, true);
             }
             else core.paintCell(g, r, c, text, blank, kind == Kind::From ? colours::textMute : colours::text, focused);
+            // A sample column on a region whose INS is not a kit: nothing to edit, washed.
+            if (im.kitCol(kind) && im.kitOf(r) == nullptr) { g.setColour(juce::Colours::black.withAlpha(0.35f)); g.fillRect(core.cellRect(r, c)); }
         }
     }
 }
@@ -1564,7 +1610,7 @@ bool RegionGrid::keyPressed(const juce::KeyPress& k)
     if (k.getKeyCode() == juce::KeyPress::returnKey) {
         if (!k.getModifiers().isShiftDown() && im.fillBlank(core.curRow, core.curCol)) return true;
         const auto kind = core.editable(core.curCol) ? core.cols[size_t(core.curCol)].kind : Kind::Step;
-        if (kind == Kind::From || kind == Kind::Inst || kind == Kind::Table || kind == Kind::Transpose || kind == Kind::Vel) im.openNumberEntry(core.curRow, core.curCol);
+        if (kind == Kind::From || kind == Kind::Inst || kind == Kind::Table || im.kitCol(kind)) im.openNumberEntry(core.curRow, core.curCol);
         else if (k.getModifiers().isShiftDown() || !im.openValueEntry(core.curRow, core.curCol, core.entry.arg)) im.openPalette(core.curRow, core.curCol);
         return true;
     }

@@ -84,6 +84,9 @@ private:
     ui::IconButton play_, stop_, loop_, follow_, rec_;
     /// The lane's own follow, in the SONG bar (D-UI-38, D-UI-39).
     ui::IconButton laneFollowBtn_;
+    /// Section 226, D-UI-44: recording fits each row's groove to what was played.
+    ui::Toggle autoGroove_;
+    int grooveReportShown_ = 0;
     /// The FILE card (D-UI-39): glyph-and-word buttons; Export opens a menu.
     ui::IconButton saveSong_, loadSong_, importSav_, export_;
     juce::Slider zoom_;

@@ -83,6 +83,7 @@ struct RegWrite { uint64_t cycle; uint16_t addr; uint8_t value; };
 struct VoiceView {
     bool     active = false, dacOn = false, outOfRange = false;
     uint8_t  note = 0, velocity = 0, instrument = 0;
+    uint32_t rng = 0;            ///< the voice's random state (Z, B), for a harness comparing two runs
     uint16_t period = 0;
     uint8_t  volume = 0, duty = 0, frame = 0;
     uint8_t  tableSlot = 0, tableStep = 0;
