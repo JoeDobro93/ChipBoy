@@ -91,6 +91,14 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
 
+## Done (2026-09-28, later) -- the chain's scrollbar (D-UI-42)
+
+- The user's note after the export: the chain had no vertical scrollbar. `ChainColumn::Impl`
+  owns a `juce::ScrollBar` now (a `ScrollBar::Listener`), 8 px at the right of the rows under
+  the head, auto-hidden, the width kept; `clampScroll()` keeps its range and position in step
+  with `scrollPx`, so the wheel, the follow and the bar all move one scroll. `kWidth` 264 -> 272
+  (`kBarWidth` 8); the lane is 872 wide in a 1280 window. Screenshot regenerated.
+
 ## Done (2026-09-28) -- MIDI export (§224, D-UI-41), and a driver fix it found
 
 - `docs/plan-midi-export.md` first, then `Source/core/Export/MidiExport.h/.cpp`

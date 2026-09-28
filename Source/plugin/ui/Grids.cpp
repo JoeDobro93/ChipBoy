@@ -2460,8 +2460,12 @@ private:
     juce::TextButton ok_, cancel_, remove_btn_;
 };
 
-struct ChainColumn::Impl {
+struct ChainColumn::Impl : juce::ScrollBar::Listener {
     ChainColumn& owner;
+    /// The rows' own scrollbar (D-UI-42): the lane's 8 px bar, at the right
+    /// of the rows under the head, shown while the song outruns the pane. It
+    /// and the wheel move the same `scrollPx`.
+    juce::ScrollBar scrollBar{ true };
     std::shared_ptr<const tracker::Song> song;
     /// The play head, a tick (section 223); the transport's own tick while
     /// it plays, which is the same line while Follow is on.
@@ -2493,14 +2497,23 @@ struct ChainColumn::Impl {
     float wheelAcc = 0.0f;
     bool joinedTop = false;   ///< the transport card stands on this column (D-UI-39)
 
-    /// 264 px across (UI_DESIGN section 7): a 4 px pad, a 54 px gutter --
+    /// 272 px across (UI_DESIGN section 7, D-UI-42): a 4 px pad, a 54 px gutter --
     /// bar numbers at its left, beats at its right -- and four 50 px channel
     /// columns 2 px apart. The rows area starts under the 48 px head with an
     /// 18 px pad so the tick 0 signature's tag has room above its line.
     static constexpr int kPad = 4, kGutter = 54, kColW = 50, kGap = 2, kTopPad = 18, kPlusH = 20, kMinRow = 22;
     static constexpr double kTickEps = 1e-9;
 
-    explicit Impl(ChainColumn& o) : owner(o) {}
+    explicit Impl(ChainColumn& o) : owner(o)
+    {
+        scrollBar.setAutoHide(true);
+        scrollBar.setWantsKeyboardFocus(false);
+        scrollBar.setColour(juce::ScrollBar::backgroundColourId, juce::Colours::transparentBlack);
+        scrollBar.addListener(this);
+        owner.addAndMakeVisible(scrollBar);
+    }
+    ~Impl() override { scrollBar.removeListener(this); }
+    void scrollBarMoved(juce::ScrollBar*, double start) override { scrollPx = start; owner.repaint(); }
 
     /* ---------------------------------------------------- the geometry */
 
@@ -2547,7 +2560,12 @@ struct ChainColumn::Impl {
     double yOfTick(double t) const { return kHeaderHeight + kTopPad + t * ppt() - scrollPx; }
     double tickOfY(double y) const { return (y - kHeaderHeight - kTopPad + scrollPx) / ppt(); }
     int64_t tickAt(juce::Point<int> p) const { return juce::jlimit<int64_t>(0, songEnd(), int64_t(std::floor(tickOfY(double(p.y)) + kTickEps))); }
-    void clampScroll() { scrollPx = juce::jlimit(0.0, juce::jmax(0.0, totalH() - double(rowsH())), scrollPx); }
+    void clampScroll()
+    {
+        scrollPx = juce::jlimit(0.0, juce::jmax(0.0, totalH() - double(rowsH())), scrollPx);
+        scrollBar.setRangeLimits(0.0, juce::jmax(totalH(), double(rowsH())), juce::dontSendNotification);
+        scrollBar.setCurrentRange(scrollPx, double(rowsH()), juce::dontSendNotification);
+    }
     void keepInView(int64_t t)
     {
         const double y = yOfTick(double(t));
@@ -3023,7 +3041,11 @@ juce::String ChainColumn::gridText() const
     const int d = impl_->division();
     return "grid " + juce::String(d) + " t " + juce::String(juce::CharPointer_UTF8("\xc2\xb7")) + " " + impl_->divisionName(d);
 }
-void ChainColumn::resized() { impl_->clampScroll(); }
+void ChainColumn::resized()
+{
+    impl_->scrollBar.setBounds(getWidth() - kBarWidth - 1, kHeaderHeight, kBarWidth, juce::jmax(0, getHeight() - kHeaderHeight - 1));
+    impl_->clampScroll();
+}
 
 juce::String ChainColumn::getTooltip()
 {

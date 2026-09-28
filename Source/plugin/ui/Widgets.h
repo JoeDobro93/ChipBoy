@@ -422,8 +422,9 @@ public:
     std::function<void(int ch, int row, int semis)> onChainTransposeChange;   ///< the row's transpose on that channel (section 48)
     std::function<void(int ch, bool loop)> onChainEndChange;              ///< the channel plays its chain round again, or stops at its end (section 212)
     juce::String getTooltip() override;
-    /// 264 wide, a 48 px head of its own.
-    static constexpr int kHeaderHeight = 48, kWidth = 264;
+    /// 272 wide -- the columns and an 8 px scrollbar at the right (D-UI-42)
+    /// -- under a 48 px head of its own.
+    static constexpr int kHeaderHeight = 48, kWidth = 272, kBarWidth = 8;
     void resized() override; void paint(juce::Graphics&) override;
     void mouseMove(const juce::MouseEvent&) override; void mouseExit(const juce::MouseEvent&) override; void mouseDown(const juce::MouseEvent&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override;

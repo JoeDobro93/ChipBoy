@@ -26,6 +26,12 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-28, later -- the chain gets a scrollbar (D-UI-42)
+
+`docs/UI_DESIGN.md` D-UI-42. The chain scrolled on the wheel alone; the user found no bar. It
+has the lane's 8 px bar now, at the right of the rows under its head, auto-hidden when the song
+fits, its width kept either way; the column is 272 px, the lane 872.
+
 ### 2026-09-28 -- MIDI export (§224, D-UI-41), and a tracker OFF that came back to the note before
 
 `docs/plan-midi-export.md`, `docs/COMMANDS_AND_TEMPO.md` §224, `docs/UI_DESIGN.md` D-UI-41. The

@@ -620,15 +620,16 @@ scrolling: a 108 px head over 422 px of lane, which is a 68 px head and sixteen 
 rows with 2 px over. The lane's head (D-UI-39) is the 44 px **FILE** card (a 12 px caption
 over 24 px buttons of 64, 64, 72 and 86), a 6 px breath, the 26 px tab strip and the 32 px
 **SONG** bar the active tab joins (the lane's follow, 30, then *Tempo* 84, *Transpose* 70
-and *Start* 84 behind their captions). The chain's own 264 px column is the 76 px
+and *Start* 84 behind their captions). The chain's own 272 px column is the 76 px
 **TRANSPORT** card stuck to it: five 30 px icon buttons and the readout on its first row,
 the zoom slider on its second. The **readout is the play head in the song's own bars** —
 `17·3·6` — because the channels drift apart by design and a row is one channel's.
-Across, the chain takes 264 px off the right with a 12 px gap, leaving 880 for the lane: a
+Across, the chain takes 272 px off the right with a 12 px gap, leaving 872 for the lane: a
 34 px step column and four channel groups, each a note, ins, tbl and two commands -- WAV a
 second note column between its note and ins (D-UI-34) -- sharing the width by the columns'
-weights. The chain's 264 is a 4 px pad, a 54 px gutter (bar numbers at its left, beats at its
-right) and four 50 px channel columns 2 px apart, under a 48 px head of its own.
+weights. The chain's 272 is a 4 px pad, a 54 px gutter (bar numbers at its left, beats at its
+right), four 50 px channel columns 2 px apart and the lane's 8 px scrollbar at the right
+(D-UI-42), under a 48 px head of its own.
 While the lane's *Follow* is off (D-UI-16, D-UI-38) the play head is the user's, not the transport's; the chain's own *Follow* only says whether the timeline scrolls. The lane runs to
 the pane's foot, previewing the rows that follow each phrase (D-UI-40); **past the pane's
 rows** a phrase scrolls inside it — the tab's only scrollbar — following the cursor as it is
@@ -786,3 +787,4 @@ recorded in `CHANGES.md`.
 | D-UI-39 | How is the Tracker head arranged? | **Three surfaces, settled over three rounds of a mock built on the plugin's own pixels.** Top left, a **FILE card** as wide as its four glyph-and-word buttons -- Save, Load, Import, and **Export as a menu** (MIDI, built as D-UI-41; player ROM `.gb` and LSDj save `.sav`, not yet) -- so exports can multiply without clutter. A 6 px breath, then the **song tabs**, whose active tab shares the fill of the **SONG bar** under it and breaks the strip's bottom line, Chrome's way: tempo, transpose and start are the active song's own, so they open its pane as its first row, with the lane's own follow (D-UI-38) at the bar's left. On the right the **TRANSPORT card** stands on the chain with square corners at the joint and holds play/pause, stop, loop, the chain's follow, **record** (a red dot, where a DAW keeps it; the per-channel arms stay by the lane names) and the `bar·beat·tick` readout, the zoom under them; the LED went, play reads pause. Both columns' heads are 108 and 76 px, so the lane keeps its sixteen rows |
 | D-UI-40 | Does the lane stop where the phrase stops? | **No: it runs to the pane's foot, like the chain.** Past each channel's own phrase the lane previews the rows that follow -- the next row's cells, then the next -- dimmed as the unreached steps are, a hairline where each new row begins, as if the phrase ran on; a looping chain comes round, one that stops shows its empty rows. Preview rows are not cells: nothing types into them, the cursor never rests on one, and a click puts the play head at that channel's row (the pass the play head is on). The pane's last row may be cut; only a phrase longer than the pane scrolls, and the 8 px scrollbar's width is kept free at the right whether or not it shows, so the columns never re-lay. The zoom opens where a grid line is 48 ticks, two quarters |
 | D-UI-41 | How does a song leave as MIDI? | **Export ▸ MIDI in the FILE card, a chooser, the notes and nothing else** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §224, [`plan-midi-export.md`](plan-midi-export.md)): the song is rendered through the engine and the note each channel sounds after every tick is written, so `H`, `K`, `C` and the tables come out as they play; the time signatures are the chain's, the tempo the song's with its `T` points. The submenu offers *All four channels…* and *Without the noise channel…*, since noise never translates; the status line counts the notes per channel and says where a signature could not be named. `chipboy_recordtest --export-midi FILE OUT.mid [--no-noise]` does the same from the command line |
+| D-UI-42 | Does the chain scroll with a bar of its own? | **Yes, the lane's 8 px bar** (D-UI-40), at the right of the rows under the chain's head, shown while the song outruns the pane and hidden otherwise with its width kept, so the columns never re-lay. It and the wheel move the same scroll, and the chain's follow (D-UI-16) keeps moving it while the transport plays. The column grows from 264 to 272 px for it; the lane gives up the 8 |
