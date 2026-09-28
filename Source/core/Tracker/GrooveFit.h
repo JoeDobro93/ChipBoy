@@ -1,8 +1,10 @@
 // ChipBoy -- grooves inferred from what is played (docs/plan-groove-inference.md,
 // docs/COMMANDS_AND_TEMPO.md section 226). A recorded row's note-on ticks are
-// fitted, at the row's end, against a simplest-first list of grooves within a
-// tolerance; a row may be two segments joined by a `G`; a row's length never
-// changes. The fitter is pure: ticks in, a layout out.
+// fitted, at the row's end, against a simplest-first list of grooves, exactly:
+// a note is where it is, and the groove says so, the row's own gaps if nothing
+// simpler does; a row may be two segments joined by a `G`; a row's length never
+// changes; a note moves only when no groove can say the row. The fitter is
+// pure: ticks in, a layout out.
 #pragma once
 #include "core/Tracker/Song.h"
 
@@ -27,8 +29,8 @@ struct FitSegment {
 
 struct FitResult {
     std::vector<FitSegment> segments;   ///< one or two
-    bool fits = true;         ///< every onset within the tolerance of its step
-    int moved = 0;            ///< onsets quantised beyond the tolerance (only when !fits)
+    bool fits = true;         ///< every onset on a step of its own
+    int moved = 0;            ///< onsets moved to a step, when no groove could say the row (!fits)
     int maxMove = 0;          ///< the largest such move, in ticks
     double score = 0.0;
     int totalSteps() const { int n = 0; for (const auto& s : segments) n += s.steps; return n; }
@@ -36,7 +38,6 @@ struct FitResult {
 
 struct FitOptions {
     int rowTicks = 96;        ///< the row's length, which the layout must keep
-    int tolerance = 1;        ///< ticks an onset may sit from its step
     const Groove* sticky = nullptr;                      ///< the groove in force before this row: a change costs
     const std::array<Groove, kGrooveSlots>* slots = nullptr;   ///< the song's grooves: a new one costs
     int maxSteps = kMaxSteps;

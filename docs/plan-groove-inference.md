@@ -98,6 +98,10 @@ row there: the phrase's STEPS is set, and the rest of the bar becomes the next r
 phrase on that channel alone, which the model allows (§25). The user sees a shorter row in the
 chain; the timeline draws it as long as it lasts.
 
+**Tolerance, as built (§226 amendment).** None: the user's target is sequenced MIDI, so every
+note must sit on a step of its own and the row's own gaps are always a candidate. What follows
+about a one-tick tolerance and sloppy playing is the plan as first written.
+
 **`G` placement.** The first segment's groove is the phrase's chip (no `G`). Each later
 segment writes `G n` into its first cell's free command column (a straight segment names a
 slot that is straight: `G 0` is the revert to the chip). If the row ends under a `G`, the

@@ -26,6 +26,14 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-28, after testing -- the groove fit is literal; the tolerance goes
+
+`docs/COMMANDS_AND_TEMPO.md` §226 amendment. The user's law: the target is sequenced MIDI, so a
+note is where it is and the groove says so; anything unwanted a tick off would have been
+quantised before capture. The one-tick tolerance and `Song::grooveTolerance` (file key
+`grooveTolerance`) are removed; a layout fits only when every note is on a step of its own, the
+row's own gaps always compete, and a note moves only when no groove can say the row.
+
 ### 2026-09-28, last -- the MIDI tab's five notes; grooves inferred from what is played
 
 `docs/COMMANDS_AND_TEMPO.md` §225 amendments (last) and §226, `docs/UI_DESIGN.md` D-UI-43b and

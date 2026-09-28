@@ -1117,8 +1117,8 @@ int recordMidi(const juce::File& songFile, const juce::File& midiFile, const juc
     const double tempo = std::clamp(song0->tempoBpm, driver::kMinSongBpm, driver::kMaxSongBpm);
     std::vector<TimedMessage> midi;
     if (!loadMidi(midiFile, tempo, midi)) { std::printf("FAIL cannot read %s\n", midiFile.getFullPathName().toRawUTF8()); return 1; }
-    std::printf("%s: %.0f BPM, auto groove %s, tolerance %d; recording %s, %d events over %d bars\n", songFile.getFileNameWithoutExtension().toRawUTF8(), tempo,
-                song0->autoGroove ? "on" : "off", int(song0->grooveTolerance), midiFile.getFileName().toRawUTF8(), int(midi.size()), bars);
+    std::printf("%s: %.0f BPM, auto groove %s; recording %s, %d events over %d bars\n", songFile.getFileNameWithoutExtension().toRawUTF8(), tempo,
+                song0->autoGroove ? "on" : "off", midiFile.getFileName().toRawUTF8(), int(midi.size()), bars);
     p.mutateSong([](tracker::Song& s) { for (auto& a : s.recordArm) a = true; });
     p.prepareToPlay(kSampleRate, kBlock);
     setParameter(p, ids::notesOnTick, 1.0);

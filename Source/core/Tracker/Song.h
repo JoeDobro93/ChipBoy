@@ -183,10 +183,9 @@ struct Song {
     /// Section 225: the MIDI map -- each MIDI channel's target and its
     /// velocity regions. Off for a new song and for a file without the key.
     MidiMap midiMap;
-    /// Section 226: recording fits each row's groove to what was played, and
-    /// a note may sit this many ticks from its step before it counts as off it.
+    /// Section 226: recording fits each row's groove to what was played,
+    /// exactly -- a note is where it is, and the groove says so.
     bool    autoGroove = true;
-    uint8_t grooveTolerance = 1;
     // The song's own timeline (docs/COMMANDS_AND_TEMPO.md section 4).
     /// The base tempo the file carries, written from the Song tempo
     /// parameter when the song is saved and read back into it when one is

@@ -2,7 +2,7 @@
 PU1 row 1: 16 steps, straight, 16 notes
 PU1 row 2: 16 steps, 8 4, 12 notes
 PU1 row 3: 16 steps, 8 4, 8 notes
-PU1 row 4: 16 steps, 8 4, 16 notes
+PU1 row 4: 16 steps, 7 5 8 4 8 4 9 3 8 4 8 4 8 4 9 3, 16 notes
 PU1 row 5: 12 steps, 8, 12 notes
 PU1 row 6: 16 steps, straight, 16 notes
 PU1 row 7: 32 steps, 3, 32 notes
@@ -10,7 +10,7 @@ PU1 row 8: 32 steps, 3, 32 notes
 PU1 row 9: 20 steps, straight, 20 notes, G 3 @13
 PU1 row 10: 24 steps, straight, 24 notes, G = @1, G 3 @9
 PU1 row 11: 20 steps, 3, 20 notes, G = @1, G straight @9
-PU1 row 12: 16 steps, straight, 16 notes, G = @1
+PU1 row 12: 16 steps, 6 6 6 6 6 10 2 6 6 6 6 6 6 6 6 6, 16 notes, G = @1
 PU1 row 14: 16 steps, straight, 1 notes
 PU1 row 15: 24 steps, 4, 24 notes
 PU1 row 16: 32 steps, 4 2, 32 notes

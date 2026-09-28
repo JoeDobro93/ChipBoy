@@ -557,9 +557,8 @@ var songToVar(const tracker::Song& s)
     Array<var> names;
     for (const auto& g : s.grooves) names.add(String(CharPointer_UTF8(g.nameOf())));
     o->setProperty("grooveNames", names);
-    // Section 226: the groove fit's switch and tolerance, only off the defaults.
+    // Section 226: the groove fit's switch, only when off.
     if (!s.autoGroove) o->setProperty("autoGroove", false);
-    if (s.grooveTolerance != 1) o->setProperty("grooveTolerance", int(s.grooveTolerance));
     // Section 225: the MIDI map, only when it is not the default -- off and
     // nothing assigned -- so no file written before it changes.
     if (!tracker::midiMapIsDefault(s.midiMap)) {
@@ -764,7 +763,6 @@ bool songFromVar(const var& v, tracker::Song& out)
     }
     tracker::normalizeMidiMap(out.midiMap);
     out.autoGroove = o->hasProperty("autoGroove") ? bool(o->getProperty("autoGroove")) : true;
-    out.grooveTolerance = uint8_t(std::clamp(getOr(o, "grooveTolerance", 1), 0, 6));
     tracker::buildRowTables(out);
     return true;
 }

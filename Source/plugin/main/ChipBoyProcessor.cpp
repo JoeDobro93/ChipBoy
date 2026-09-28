@@ -763,7 +763,6 @@ void ChipBoyProcessor::finishTake(int ch, tracker::Song& song)
         if (!m.slotsOnly && m.cell.note >= 1 && m.cell.note <= 127) onsets.push_back(int(std::lround(m.tick - double(take.rowStart))));
     tracker::FitOptions o;
     o.rowTicks = take.rowTicks;
-    o.tolerance = int(song.grooveTolerance);
     o.sticky = &grooveBefore_[size_t(ch & 3)];
     o.slots = &song.grooves;
     const tracker::FitResult fit = tracker::fitRow(onsets, o);

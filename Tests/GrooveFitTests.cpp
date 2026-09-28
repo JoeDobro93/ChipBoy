@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -50,15 +51,17 @@ TEST_CASE("groove fit: a shuffled bar with rests is 8 4, and stays 8 4 across a 
     CHECK(sameGroove(r3.segments[0].groove(), groove({ 6 })));
 }
 
-TEST_CASE("groove fit: drifting swing lands on the pair its median offbeat sits nearest", "[groovefit]")
+TEST_CASE("groove fit: drifting swing is written as it was played", "[groovefit]")
 {
     const auto s = slots();
     FitOptions o; o.slots = &s;
-    const auto r = fitRow({ 0, 7, 12, 20, 24, 32, 36, 45 }, o);   // offbeats at 7, 8, 8, 9
-    REQUIRE(r.segments.size() == 1);
+    const std::vector<int> on = { 0, 7, 12, 20, 24, 32, 36, 45, 48, 56, 60, 68, 72, 80, 84, 93 };   // offbeats at 7, 8, 8, 9
+    const auto r = fitRow(on, o);
     CHECK(r.fits);
-    CHECK(sameGroove(r.segments[0].groove(), groove({ 8, 4 })));
-    CHECK(r.segments[0].order == 1);
+    CHECK(r.moved == 0);
+    // Every note is on a step of its own, whatever grooves say it.
+    const auto steps = layoutSteps(r);
+    for (int t : on) CHECK(std::find(steps.begin(), steps.end(), t) != steps.end());
 }
 
 TEST_CASE("groove fit: triplets are 8, sixteenth triplets 4, thirty-seconds 3", "[groovefit]")
@@ -130,7 +133,7 @@ TEST_CASE("groove fit: a remainder goes to the last step, written out", "[groove
     CHECK(steps.back() == 90);
 }
 
-TEST_CASE("groove fit: one sloppy note is moved, not given a groove", "[groovefit]")
+TEST_CASE("groove fit: one note four ticks late is literal: the bar's own gaps", "[groovefit]")
 {
     const auto s = slots();
     FitOptions o; o.slots = &s;
@@ -138,32 +141,37 @@ TEST_CASE("groove fit: one sloppy note is moved, not given a groove", "[groovefi
     on[6] = 40;                                            // four ticks late
     const auto r = fitRow(on, o);
     REQUIRE(r.segments.size() == 1);
-    CHECK_FALSE(r.fits);
-    CHECK(sameGroove(r.segments[0].groove(), groove({ 6 })));
-    CHECK(r.moved == 1);
-    CHECK(r.maxMove == 4);
+    CHECK(r.fits);
+    CHECK(r.segments[0].order == 8);
+    CHECK(layoutSteps(r) == on);
+    CHECK(sameGroove(r.segments[0].groove(), groove({ 6, 6, 6, 6, 6, 10, 2, 6, 6, 6, 6, 6, 6, 6, 6, 6 })));
 }
 
-TEST_CASE("groove fit: irregular notes land within the tolerance, and exactly at tolerance 0", "[groovefit]")
+TEST_CASE("groove fit: irregular notes are exact, the onsets' own gaps as the groove", "[groovefit]")
 {
     const auto s = slots();
     FitOptions o; o.slots = &s;
     const std::vector<int> on = { 0, 5, 17, 40, 61, 70, 92 };
-    // At a tick's tolerance no simple grid says this without moving two of
-    // the seven, so the onsets' own gaps do: every note lands within a tick
-    // of a step, and no note is moved further.
-    auto r = fitRow(on, o);
-    CHECK(r.fits);
-    CHECK(r.segments.size() <= 2);
-    for (int t : on) { int st = 0; stepNearTick(r, t, &st); CHECK(std::abs(st - t) <= 1); }
-    // Exactness asked for: the onsets' own gaps become the groove.
-    o.tolerance = 0;
-    r = fitRow(on, o);
+    const auto r = fitRow(on, o);
     REQUIRE(r.segments.size() == 1);
     CHECK(r.fits);
     CHECK(r.segments[0].order == 8);
     CHECK(layoutSteps(r) == on);
     CHECK(r.segments[0].steps == 7);
+}
+
+TEST_CASE("groove fit: a row no groove can say moves the fewest notes and says so", "[groovefit]")
+{
+    const auto s = slots();
+    FitOptions o; o.slots = &s;
+    // Forty onsets with no pattern: more gaps than two grooves hold.
+    std::vector<int> on;
+    for (int t = 0, i = 0; t < 96 && int(on.size()) < 40; ++i) { on.push_back(t); t += 1 + (i * 7) % 3; }
+    const auto r = fitRow(on, o);
+    CHECK_FALSE(r.fits);
+    CHECK(r.moved > 0);
+    CHECK(r.moved < int(on.size()));
+    CHECK(r.segments.size() == 1);
 }
 
 TEST_CASE("groove fit: an empty row and a single note are straight, or the groove in force", "[groovefit]")
@@ -179,7 +187,7 @@ TEST_CASE("groove fit: an empty row and a single note are straight, or the groov
     CHECK(sameGroove(r.segments[0].groove(), groove({ 7, 5 })));
 }
 
-TEST_CASE("groove fit: a note's tolerance of one tick keeps a late sixteenth straight", "[groovefit]")
+TEST_CASE("groove fit: a late sixteenth is literal, not nudged", "[groovefit]")
 {
     const auto s = slots();
     FitOptions o; o.slots = &s;
@@ -187,10 +195,10 @@ TEST_CASE("groove fit: a note's tolerance of one tick keeps a late sixteenth str
     on[3] = 19;
     const auto r = fitRow(on, o);
     CHECK(r.fits);
-    CHECK(sameGroove(r.segments[0].groove(), groove({ 6 })));
+    CHECK(layoutSteps(r) == on);
     int st = 0;
     CHECK(stepNearTick(r, 19, &st) == 3);
-    CHECK(st == 18);
+    CHECK(st == 19);
 }
 
 TEST_CASE("groove fit: swung thirty-seconds and a sparse row", "[groovefit]")

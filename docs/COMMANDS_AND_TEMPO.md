@@ -6694,8 +6694,9 @@ take is **fitted** and the row laid again from it.
   `1` (7); the onsets' own gaps (8). A candidate is laid over the row -- cyclic when its sum
   divides the length, else written out with the last step taking the remainder -- and the notes
   take its steps **closest pair first**, so a note a little off never pushes an exact one off
-  its step. A layout fits when every note is within the **tolerance** (`Song::grooveTolerance`,
-  file key `grooveTolerance`, one tick; no control yet) of its step and no two share one.
+  its step. A layout fits when every note is within the **tolerance** (one tick, as first
+  built; gone in the amendment below: every note on a step of its own) of its step and no two
+  share one.
 - **The score**, lower wins: the rank, plus five times the mean distance of the notes within
   tolerance from their steps, plus 1 for a groove the song's slots do not hold, plus 1.5 for a
   groove other than the one **in force** before the row (the last fitted row's last groove,
@@ -6738,6 +6739,20 @@ take is **fitted** and the row laid again from it.
   every row became; the CTest `demo_groovecases_record` holds every row to the expect file.
   `CHIPBOY_FIT_DEBUG=1` prints each fit's onsets and segments.
 - **Left for later.** A grid that would need more than 64 steps (a `1` over a 96-tick row) is
-  not offered rather than ending the row early as the plan had it; the tolerance has no
-  control; a mid-song recording over rows that already hold hand-written `G`s reads the groove
-  in force from the tables but does not look for a `G` inside the row.
+  not offered rather than ending the row early as the plan had it; a mid-song recording over
+  rows that already hold hand-written `G`s reads the groove in force from the tables but does
+  not look for a `G` inside the row.
+
+**Amendment, 2026-09-28 (the tolerance goes).** The user's law: the recorder's target is
+sequenced MIDI, not a live player, so a note is where it is -- a tick off is a tick off, and
+had that been unwanted it would have been quantised before capture. The tolerance above is
+therefore gone (`Song::grooveTolerance` and its file key with it): a layout **fits only when
+every note is on a step of its own**, the row's own gaps are always a candidate (rank 8) for
+either segment of a split as well as the whole row, an exact layout always beats a moved one,
+and a note is moved only when no groove can say the row at all -- more distinct gaps than two
+sixteen-entry grooves hold -- in which case the nearest grid takes it, the fewest notes move,
+and the status line says how many and how far. The deviation term leaves the score with the
+tolerance; what remains ranks exact layouts only: rank, a new slot, a change from the groove
+in force, empty steps, and 2 for a split. Bar 4 of the cases (swing drifting 7 8 8 9) is now
+the sixteen-entry groove `7 5 8 4 8 4 9 3 8 4 8 4 8 4 9 3` and bar 12 (one note four ticks
+late) `6 6 6 6 6 10 2 6 6 6 6 6 6 6 6 6`, each exactly what was played.

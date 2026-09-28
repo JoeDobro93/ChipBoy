@@ -72,23 +72,33 @@ bool layGrid(const std::vector<int>& entries, int length, int maxSteps, std::vec
     return true;
 }
 
-struct SegFit { bool ok = false; FitSegment seg; double dev = 0.0; int moved = 0; int maxMove = 0; double score = 0.0; };
+struct SegFit { bool ok = false; FitSegment seg; int moved = 0; int maxMove = 0; double score = 0.0; };
+
+double segScore(const FitSegment& seg, const FitOptions& o, int notes, bool& fresh)
+{
+    const bool change = o.sticky != nullptr && !sameGroove(*o.sticky, seg.groove());
+    fresh = !inSlots(seg, o) && (o.sticky == nullptr || change);   // what is in force has a slot
+    // The rank, a new slot, a change from the groove in force, and steps
+    // nothing lands on: a finer grid that fits by being fine is not simpler
+    // than a coarser one that fits by being right (eight empty steps of a `3`
+    // outweigh a `G` and a change of groove).
+    const double empty = 0.45 * double(std::max(0, seg.steps - notes));
+    return double(seg.order) + (fresh ? 1.0 : 0.0) + (change ? 1.5 : 0.0) + empty;
+}
 
 /// One candidate over one segment's onsets (relative ticks): every onset on
-/// a step within the tolerance, no two on one step. `snap` accepts any
-/// distance and counts the moves instead, for the fallback.
+/// a step of its own, exactly. `snap` accepts any distance and counts the
+/// moves instead, for a row no groove can say.
 SegFit fitSegment(const std::vector<int>& onsets, int length, const Candidate& c, const FitOptions& o, bool snap)
 {
     SegFit f;
     std::vector<int> starts;
     if (!layGrid(c.entries, length, o.maxSteps, starts, f.seg)) return f;
     f.seg.order = c.order;
-    // Notes take steps closest pair first, so a note a little off never
-    // pushes an exact one off its own step: the pair with the smallest
-    // distance is settled, then the next, until every note has a step.
+    // Notes take steps closest pair first, so when snapping a note a little
+    // off never pushes an exact one off its own step.
     std::vector<char> taken(starts.size(), 0), placed(onsets.size(), 0);
-    double dev = 0.0, moveCost = 0.0;
-    int within = 0;
+    double moveCost = 0.0;
     for (size_t n = 0; n < onsets.size(); ++n) {
         int bestOn = -1, bestStep = -1, bestD = 1 << 30;
         for (size_t i = 0; i < onsets.size(); ++i) {
@@ -100,28 +110,16 @@ SegFit fitSegment(const std::vector<int>& onsets, int length, const Candidate& c
             }
         }
         if (bestOn < 0) return f;
-        if (bestD > o.tolerance) { if (!snap) return f; ++f.moved; f.maxMove = std::max(f.maxMove, bestD); moveCost += double(bestD) + 0.5; }
-        else { dev += bestD; ++within; }
+        if (bestD > 0) { if (!snap) return f; ++f.moved; f.maxMove = std::max(f.maxMove, bestD); moveCost += double(bestD) + 0.5; }
         taken[size_t(bestStep)] = 1; placed[size_t(bestOn)] = 1;
     }
     f.ok = true;
-    f.dev = within == 0 ? 0.0 : dev / double(within);   // a moved note pays once, above
-    const bool change = o.sticky != nullptr && !sameGroove(*o.sticky, f.seg.groove());
-    f.seg.fresh = !inSlots(f.seg, o) && (o.sticky == nullptr || change);   // what is in force has a slot
-    // Steps nothing lands on cost a little each: a finer grid that fits by
-    // being fine is not simpler than a coarser one that fits by being right
-    // (eight empty steps of a `3` outweigh a `G` and a change of groove). The
-    // mean distance of the notes within tolerance from their steps is weighed
-    // so that a grid every note sits on beats one they sit a tick off, one
-    // rank up, when neither is in force. A note moved beyond the tolerance
-    // costs its distance and a half.
-    const double empty = 0.45 * double(std::max(0, f.seg.steps - int(onsets.size())));
-    f.score = double(c.order) + 5.0 * f.dev + (f.seg.fresh ? 1.0 : 0.0) + (change ? 1.5 : 0.0) + empty + moveCost;
+    f.score = segScore(f.seg, o, int(onsets.size()), f.seg.fresh) + moveCost;
     return f;
 }
 
-/// The fallback: the onsets' own gaps as the entries, rests where a gap is
-/// longer than a step may be.
+/// The row's own gaps as the entries, rests where a gap is longer than a
+/// step may be: exact by construction, ranked last.
 SegFit fitCustom(const std::vector<int>& onsets, int length, const FitOptions& o)
 {
     SegFit f;
@@ -141,20 +139,29 @@ SegFit fitCustom(const std::vector<int>& onsets, int length, const FitOptions& o
     f.seg.ticks.fill(0);
     for (size_t k = 0; k < entries.size(); ++k) f.seg.ticks[k] = uint8_t(entries[k]);
     f.seg.order = 8;
-    f.seg.fresh = !inSlots(f.seg, o);
     f.ok = true;
-    const bool change = o.sticky != nullptr && !sameGroove(*o.sticky, f.seg.groove());
-    f.score = 8.0 + (f.seg.fresh ? 1.0 : 0.0) + (change ? 1.5 : 0.0);
+    f.score = segScore(f.seg, o, int(onsets.size()), f.seg.fresh);
     return f;
 }
 
-SegFit bestSimple(const std::vector<int>& onsets, int length, const FitOptions& o, bool snap)
+/// The best exact layout of one segment: a candidate, or the gaps.
+SegFit bestExact(const std::vector<int>& onsets, int length, const FitOptions& o)
 {
     SegFit best;
     for (const auto& c : candidates()) {
-        SegFit f = fitSegment(onsets, length, c, o, snap);
-        if (!f.ok) continue;
-        if (!best.ok || f.score < best.score) best = f;
+        SegFit f = fitSegment(onsets, length, c, o, false);
+        if (f.ok && (!best.ok || f.score < best.score)) best = f;
+    }
+    if (SegFit f = fitCustom(onsets, length, o); f.ok && (!best.ok || f.score < best.score)) best = f;
+    return best;
+}
+
+SegFit bestSnap(const std::vector<int>& onsets, int length, const FitOptions& o)
+{
+    SegFit best;
+    for (const auto& c : candidates()) {
+        SegFit f = fitSegment(onsets, length, c, o, true);
+        if (f.ok && (!best.ok || f.score < best.score)) best = f;
     }
     return best;
 }
@@ -176,19 +183,22 @@ FitResult fitRow(std::vector<int> onsets, const FitOptions& o)
     onsets.erase(std::unique(onsets.begin(), onsets.end()), onsets.end());
     onsets.erase(std::remove_if(onsets.begin(), onsets.end(), [length](int t) { return t < 0 || t >= length; }), onsets.end());
 
-    // Every way of laying the row competes on one score: one exact grid, two
-    // grids joined by a G, the nearest grid with its moves counted, and the
-    // onsets' own gaps when three or more notes would otherwise move.
-    struct Choice { bool ok = false; double score = 1e9; std::vector<FitSegment> segs; bool exact = true; int moved = 0; int maxMove = 0; };
+    // Every exact way of laying the row competes on one score: one grid, or
+    // two joined by a G, each a candidate or the segment's own gaps.
+    struct Choice { bool ok = false; double score = 1e9; std::vector<FitSegment> segs; };
     Choice best;
     auto offer = [&](const Choice& c) { if (c.ok && c.score < best.score) best = c; };
 
-    if (SegFit single = bestSimple(onsets, length, o, false); single.ok) {
+    if (SegFit single = bestExact(onsets, length, o); single.ok) {
         Choice c; c.ok = true; c.score = single.score; single.seg.start = 0; c.segs = { single.seg };
         offer(c);
     }
     for (size_t k = 1; k < onsets.size(); ++k) {
         const std::vector<int> a(onsets.begin(), onsets.begin() + long(k));
+        // The first part under a candidate, split at the last step of its grid
+        // before the second part's first note; or under its own gaps, split at
+        // that note.
+        std::vector<std::pair<int, SegFit>> firsts;
         for (const auto& cand : candidates()) {
             std::vector<int> starts; FitSegment probe;
             if (!layGrid(cand.entries, length, o.maxSteps, starts, probe)) continue;
@@ -196,28 +206,25 @@ FitResult fitRow(std::vector<int> onsets, const FitOptions& o)
             for (int st : starts) if (st <= onsets[k]) boundary = st;
             if (boundary <= a.back()) continue;                 // the first part's last note needs its step
             SegFit fa = fitSegment(a, boundary, cand, o, false);
-            if (!fa.ok) continue;
+            if (fa.ok) firsts.emplace_back(boundary, fa);
+        }
+        if (SegFit fa = fitCustom(a, onsets[k], o); fa.ok) firsts.emplace_back(onsets[k], fa);
+        for (auto& [boundary, fa] : firsts) {
             std::vector<int> b;
             for (size_t i = k; i < onsets.size(); ++i) b.push_back(onsets[i] - boundary);
             FitOptions ob = o; ob.sticky = nullptr; ob.maxSteps = o.maxSteps - fa.seg.steps;
-            SegFit fb = bestSimple(b, length - boundary, ob, false);
+            SegFit fb = bestExact(b, length - boundary, ob);
             if (!fb.ok) continue;
             Choice c; c.ok = true; c.score = fa.score + fb.score + 2.0;   // the G, and the row that reads in two grids
             fa.seg.start = 0; fb.seg.start = boundary; c.segs = { fa.seg, fb.seg };
             offer(c);
         }
     }
-    if (SegFit snap = bestSimple(onsets, length, o, true); snap.ok) {
-        Choice c; c.ok = true; c.score = snap.score; snap.seg.start = 0; c.segs = { snap.seg };
-        c.exact = snap.moved == 0; c.moved = snap.moved; c.maxMove = snap.maxMove;
-        offer(c);
-        // The onsets' own gaps: for three notes that would move, or two when
-        // they are a quarter of the row -- never for one clumsy note.
-        if (snap.moved >= 3 || (snap.moved >= 2 && snap.moved * 4 >= int(onsets.size())))
-            if (SegFit custom = fitCustom(onsets, length, o); custom.ok) { Choice cc; cc.ok = true; cc.score = custom.score; custom.seg.start = 0; cc.segs = { custom.seg }; offer(cc); }
-    }
-    if (best.ok) {
-        r.segments = best.segs; r.score = best.score; r.fits = best.exact; r.moved = best.moved; r.maxMove = best.maxMove;
+    if (best.ok) { r.segments = best.segs; r.score = best.score; r.fits = true; return r; }
+    // No groove says this row: the nearest grid, its moves counted.
+    if (SegFit snap = bestSnap(onsets, length, o); snap.ok) {
+        snap.seg.start = 0;
+        r.segments = { snap.seg }; r.score = snap.score; r.fits = false; r.moved = snap.moved; r.maxMove = snap.maxMove;
         return r;
     }
     // Too many notes for any grid: straight, the extras counted as moved.
