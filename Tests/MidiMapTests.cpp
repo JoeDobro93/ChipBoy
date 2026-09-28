@@ -12,7 +12,7 @@ TEST_CASE("MIDI map: normalising orders the regions, pins the first at 1 and cap
     MidiMap m;
     auto& c = m.channels[1];
     c.target = 2;
-    c.regions = { MidiRegion{ 65, 2, 0, {}, {} }, MidiRegion{ 30, 0, 0, { bank::Cmd::V, 4, 6, 0 }, {} } };
+    c.regions = { MidiRegion{ 65, 2, 0, 0, 0, {}, {} }, MidiRegion{ 30, 0, 0, 0, 0, { bank::Cmd::V, 4, 6, 0 }, {} } };
     normalizeMidiMap(m);
     REQUIRE(c.regions.size() == 2);
     CHECK(c.regions[0].from == 1);                 // the lowest region starts at 1 whatever it said
@@ -31,9 +31,9 @@ TEST_CASE("MIDI map: normalising orders the regions, pins the first at 1 and cap
     CHECK(c.regions[1].inst == 3);
 
     c.regions.clear();
-    for (int i = 0; i < 12; ++i) c.regions.push_back(MidiRegion{ uint8_t(1 + i * 10), uint8_t(i + 1) });
+    for (int i = 0; i < 130; ++i) c.regions.push_back(MidiRegion{ uint8_t(1 + i % 127), uint8_t(1 + i % 100) });
     normalizeMidiMap(m);
-    CHECK(c.regions.size() == size_t(kMaxRegions));
+    CHECK(c.regions.size() == size_t(kMaxRegions));          // 127: a region a velocity, no more
 
     m.channels[5].target = 9;
     normalizeMidiMap(m);
@@ -77,5 +77,7 @@ TEST_CASE("MIDI map: a fresh map is the default the file leaves out", "[midimap]
     m.on = false; m.channels[3].target = 0;
     CHECK_FALSE(midiMapIsDefault(m));
     m.channels[3].target = -1; m.channels[3].regions.front().inst = 4;
+    CHECK_FALSE(midiMapIsDefault(m));
+    m.channels[3].regions.front().inst = 0; m.channels[3].regions.front().transpose = -12;
     CHECK_FALSE(midiMapIsDefault(m));
 }

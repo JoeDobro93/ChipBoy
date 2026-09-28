@@ -92,6 +92,30 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
 
+## Done (2026-09-28, last of all) -- a region is the whole row; READROOM as MIDI, write for write
+
+- The user's three asks after the demo. **Decimal velocities** in the region grid and the
+  bar whatever the display base (`Kind::From` is the grid's own kind for the `from`
+  column). **READROOM remade as MIDI**: `chipboy_recordtest --remake-midi SONG.cbsong OUTDIR`
+  runs the Player offline and writes every cell it fires as a MIDI event -- a note with a
+  velocity that picks the region holding its INS/TBL/TSP/Smp/commands, a row without a note
+  as note 0 -- plus a song file with the cells kept, the map on and every channel on MIDI
+  (flip a lane to Trkr for the A/B); `--check-remake SONG FILE.mid [bars]` plays both under
+  a host play head and compares the register streams. What it took to get there, each now
+  in §225's amendments: a **TSP** column on regions (baking the transpose into the note
+  number broke on the noise channel, whose transposed indices go below zero); a **Smp**
+  column (a kit's second sample rode in the velocity); **note 0** as the row without a note
+  on every channel (the noise map's banks have no command octave); `kMaxRegions` **127**
+  and the grid in a viewport; events a 96th before their tick under Quantize, tick 0 on the
+  host's beat 0 (a host play head ignores `songStartSeconds`). Result: 1.24 million writes
+  identical over 127 bars; the mismatch past the end is the cells coming round (§212).
+- The remake files are the user's own song, so they stay out of the tree (scratchpad
+  `remake/readroom-remake.{cbsong,mid}`, sent to the user).
+- **Groove inference** (`docs/plan-groove-inference.md`): the user's idea thought through --
+  a row's-end fit over the row's onsets against a simplest-first list of grooves with a
+  one-tick tolerance, stickiness for a shuffle across gaps, at most two segments a row joined
+  by a `G`, the row-length invariant, slots reused and named. Waiting on the user's go.
+
 ## Done (2026-09-28, last) -- the MIDI map (§225, D-UI-43)
 
 - The user's brief: sixteen MIDI channels, each to one ChipBoy channel, velocity regions that

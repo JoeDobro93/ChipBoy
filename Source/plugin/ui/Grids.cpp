@@ -534,13 +534,13 @@ const juce::String kBlank2 = "--", kBlank3 = "---";
 // ---------------------------------------------------------------------------
 // the grid core: columns, cursor, hover, navigation, painting
 // ---------------------------------------------------------------------------
-enum class Kind { Step, Vol, VolLen, Transpose, Cmd, Note, Vel, Inst, Table, Ghost, Info };
+enum class Kind { Step, Vol, VolLen, Transpose, Cmd, Note, Vel, Inst, Table, Ghost, Info, From };   // From: a MIDI region's lowest velocity (D-UI-43)
 
 struct Column { Kind kind = Kind::Step; int ch = 0; int x = 0, w = 0; juce::String title; };
 
 bool editableKind(Kind k)
 {
-    return k == Kind::Vol || k == Kind::VolLen || k == Kind::Transpose || k == Kind::Cmd || k == Kind::Note || k == Kind::Vel || k == Kind::Inst || k == Kind::Table;
+    return k == Kind::Vol || k == Kind::VolLen || k == Kind::Transpose || k == Kind::Cmd || k == Kind::Note || k == Kind::Vel || k == Kind::Inst || k == Kind::Table || k == Kind::From;
 }
 
 struct GridCore {
@@ -1160,11 +1160,11 @@ struct RegionGrid::Impl {
     {
         auto& cols = core.cols;
         cols.clear();
-        const int widths[6] = { 64, 88, 58, 58, 76, 76 };
-        const Kind kinds[6] = { Kind::Step, Kind::Vel, Kind::Inst, Kind::Table, Kind::Cmd, Kind::Cmd };
-        const char* titles[6] = { "Region", "Velocity", "Ins", "Tbl", "Cmd 1", "Cmd 2" };
+        const int widths[8] = { 60, 84, 50, 50, 50, 50, 74, 74 };
+        const Kind kinds[8] = { Kind::Step, Kind::From, Kind::Inst, Kind::Table, Kind::Transpose, Kind::Vel, Kind::Cmd, Kind::Cmd };
+        const char* titles[8] = { "Region", "Velocity", "Ins", "Tbl", "Tsp", "Smp", "Cmd 1", "Cmd 2" };
         int x = 0;
-        for (int i = 0; i < 6; ++i) { cols.push_back({ kinds[i], i == 5 ? 1 : 0, x, widths[i], titles[i] }); x += widths[i]; }
+        for (int i = 0; i < 8; ++i) { cols.push_back({ kinds[i], i == 7 ? 1 : 0, x, widths[i], titles[i] }); x += widths[i]; }
         if (width - x >= 90) cols.push_back({ Kind::Info, 0, x, width - x, juce::String::charToString(0x2192) + " the note is" });
     }
 
@@ -1180,14 +1180,18 @@ struct RegionGrid::Impl {
         const auto& r = regions[size_t(row)];
         const auto k = core.cols[size_t(col)].kind;
         blank = false;
-        if (k == Kind::Vel) return ValueFormat::number(int(r.from)) + juce::String::charToString(0x2013) + ValueFormat::number(top(row));
+        // A velocity reads in decimal whatever the display's base: it is MIDI's number, not the chip's (D-UI-43).
+        if (k == Kind::From) return juce::String(int(r.from)) + juce::String::charToString(0x2013) + juce::String(top(row));
         if (k == Kind::Inst) { blank = r.inst == 0; return blank ? kBlank2 : ValueFormat::slot(r.inst); }
         if (k == Kind::Table) { blank = r.table == 0; return blank ? kBlank2 : ValueFormat::slot(r.table); }
+        if (k == Kind::Transpose) { blank = r.transpose == 0; return blank ? kBlank2 : ValueFormat::transpose(r.transpose); }
+        if (k == Kind::Vel) { blank = r.sample == 0; return blank ? kBlank2 : ValueFormat::slot(r.sample); }
         if (k == Kind::Info) {
             blank = true;
             juce::String t = r.inst ? "plain: loads " + ValueFormat::slot(r.inst) : "bare: keeps what sounds";
             if (r.inst && bank) if (const auto* i = bank->instrument(r.inst)) t += " " + juce::String(i->name);
             if (r.table) t += ", table " + ValueFormat::slot(r.table);
+            if (r.transpose) t += ", " + juce::String(r.transpose > 0 ? "+" : "") + juce::String(int(r.transpose)) + " st";
             return t;
         }
         return {};
@@ -1225,9 +1229,11 @@ struct RegionGrid::Impl {
     {
         const auto& c = core.cols[size_t(col)];
         const auto& r = regions[size_t(row)];
-        if (c.kind == Kind::Vel) return int(r.from);
+        if (c.kind == Kind::From) return int(r.from);
         if (c.kind == Kind::Inst) return int(r.inst);
         if (c.kind == Kind::Table) return int(r.table);
+        if (c.kind == Kind::Transpose) return int(r.transpose);
+        if (c.kind == Kind::Vel) return int(r.sample);
         if (c.kind == Kind::Cmd) {
             const auto& cmd = c.ch == 0 ? r.cmd1 : r.cmd2;
             if (cmd.cmd == bank::Cmd::None) return 0;
@@ -1239,9 +1245,11 @@ struct RegionGrid::Impl {
     {
         const auto& c = core.cols[size_t(col)];
         auto& r = regions[size_t(row)];
-        if (c.kind == Kind::Vel) { const auto v = uint8_t(juce::jlimit(fromLo(row), fromHi(row), want)); if (r.from == v) return; r.from = v; }
+        if (c.kind == Kind::From) { const auto v = uint8_t(juce::jlimit(fromLo(row), fromHi(row), want)); if (r.from == v) return; r.from = v; }
         else if (c.kind == Kind::Inst) { const auto v = uint8_t(wrapRange(want, 0, bank::kInstrumentSlots)); if (r.inst == v) return; r.inst = v; }
         else if (c.kind == Kind::Table) { const auto v = uint8_t(wrapRange(want, 0, bank::kTableSlots)); if (r.table == v) return; r.table = v; }
+        else if (c.kind == Kind::Transpose) { const auto v = int8_t(wrapRange(want, -128, 127)); if (r.transpose == v) return; r.transpose = v; }
+        else if (c.kind == Kind::Vel) { const auto v = uint8_t(wrapRange(want, 0, 127)); if (r.sample == v) return; r.sample = v; }
         else if (c.kind == Kind::Cmd) {
             auto& cmd = c.ch == 0 ? r.cmd1 : r.cmd2;
             if (cmd.cmd == bank::Cmd::None) return;
@@ -1256,14 +1264,27 @@ struct RegionGrid::Impl {
         auto& r = regions[size_t(core.curRow)];
         const auto& col = core.cols[size_t(core.curCol)];
         bool done = false;
-        if (col.kind == Kind::Vel) {
+        if (col.kind == Kind::From) {
             if (core.curRow == 0) return false;                 // the first region starts at 1, always
-            uint8_t v = r.from;
-            done = editSlot(v, 127, k, core.entry);
-            if (done) r.from = v ? v : uint8_t(fromLo(core.curRow));
+            // Typed in decimal whatever the display's base (D-UI-43): digits
+            // build the number, Backspace takes one back.
+            const juce::juce_wchar ch = k.getTextCharacter();
+            if (ch >= '0' && ch <= '9') {
+                const int v = core.entry.count == 0 ? int(ch - '0') : core.entry.acc * 10 + int(ch - '0');
+                if (v > 127) return true;
+                core.entry.acc = v; ++core.entry.count;
+                r.from = uint8_t(juce::jmax(1, v));
+                done = true;
+            } else if (k.getKeyCode() == juce::KeyPress::backspaceKey) {
+                core.entry.acc /= 10; core.entry.count = juce::jmax(0, core.entry.count - 1);
+                r.from = uint8_t(juce::jmax(1, core.entry.acc));
+                done = true;
+            }
         }
         else if (col.kind == Kind::Inst) done = editSlot(r.inst, bank::kInstrumentSlots, k, core.entry);
         else if (col.kind == Kind::Table) done = editSlot(r.table, bank::kTableSlots, k, core.entry);
+        else if (col.kind == Kind::Transpose) { bool has = true; done = editTranspose(has, r.transpose, k, core.entry); if (done && !has) r.transpose = 0; }
+        else if (col.kind == Kind::Vel) done = editSlot(r.sample, 127, k, core.entry);
         else if (col.kind == Kind::Cmd) {
             done = editCmd(col.ch == 0 ? r.cmd1 : r.cmd2, k, core.entry);
             // The letters a region cannot carry (section 225).
@@ -1303,20 +1324,24 @@ struct RegionGrid::Impl {
     {
         if (row < 0 || row >= rows() || col < 0 || col >= int(core.cols.size())) return;
         const auto kind = core.cols[size_t(col)].kind;
-        if (kind != Kind::Vel && kind != Kind::Inst && kind != Kind::Table) return;
-        if (kind == Kind::Vel && row == 0) return;
+        if (kind != Kind::From && kind != Kind::Inst && kind != Kind::Table && kind != Kind::Transpose && kind != Kind::Vel) return;
+        if (kind == Kind::From && row == 0) return;
         const auto& r = regions[size_t(row)];
-        const int cur = kind == Kind::Vel ? int(r.from) : kind == Kind::Inst ? int(r.inst) : int(r.table);
-        const int hi = kind == Kind::Vel ? 127 : kind == Kind::Inst ? bank::kInstrumentSlots : bank::kTableSlots;
+        const int cur = kind == Kind::From ? int(r.from) : kind == Kind::Inst ? int(r.inst) : kind == Kind::Table ? int(r.table) : kind == Kind::Vel ? int(r.sample) : int(r.transpose);
+        const int hi = kind == Kind::From ? 127 : kind == Kind::Inst ? bank::kInstrumentSlots : kind == Kind::Table ? bank::kTableSlots : 127;
         core.setCursor(row, col);
-        const juce::String shown = cur == 0 ? juce::String() : kind == Kind::Vel ? ValueFormat::number(cur) : ValueFormat::slot(cur);
+        const juce::String shown = cur == 0 ? juce::String() : kind == Kind::From ? juce::String(cur) : kind == Kind::Transpose ? ValueFormat::transpose(cur) : ValueFormat::slot(cur);
         box.begin(owner, core.cellRect(row, col).reduced(1), shown, juce::Justification::centredLeft,
                   [this, row, kind, hi](const juce::String& text) {
                       int v = 0;
-                      const bool ok = kind == Kind::Vel ? detail::parseTypedInt(text, 1, hi, v) : text.trim().isEmpty() || detail::parseSlotTyped(text, hi, v);
+                      // A velocity is typed in decimal in either display base (D-UI-43).
+                      const bool ok = kind == Kind::From ? (text.trim().containsOnly("0123456789") && text.trim().isNotEmpty() && (v = text.trim().getIntValue()) >= 1 && v <= hi)
+                                    : kind == Kind::Transpose ? (text.trim().isEmpty() || detail::parseTransposeTyped(text, -128, 127, v))
+                                    : text.trim().isEmpty() || detail::parseSlotTyped(text, hi, v);
                       if (!ok) { owner.repaint(); return; }
                       auto& t = regions[size_t(row)];
-                      uint8_t& field = kind == Kind::Vel ? t.from : kind == Kind::Inst ? t.inst : t.table;
+                      if (kind == Kind::Transpose) { if (int(t.transpose) == v) { owner.repaint(); return; } t.transpose = int8_t(v); changed(row); return; }
+                      uint8_t& field = kind == Kind::From ? t.from : kind == Kind::Inst ? t.inst : kind == Kind::Table ? t.table : t.sample;
                       if (int(field) == v) { owner.repaint(); return; }
                       field = uint8_t(v);
                       changed(row);
@@ -1329,9 +1354,11 @@ struct RegionGrid::Impl {
         auto& r = regions[size_t(row)];
         const auto& c = core.cols[size_t(col)];
         core.entry.restart();
-        if (c.kind == Kind::Vel) { if (row == 0) return true; r.from = uint8_t(juce::jlimit(fromLo(row), fromHi(row), int(r.from) + delta)); }
+        if (c.kind == Kind::From) { if (row == 0) return true; r.from = uint8_t(juce::jlimit(fromLo(row), fromHi(row), int(r.from) + delta)); }
         else if (c.kind == Kind::Inst) r.inst = uint8_t(wrapRange(int(r.inst) + delta, 0, bank::kInstrumentSlots));
         else if (c.kind == Kind::Table) r.table = uint8_t(wrapRange(int(r.table) + delta, 0, bank::kTableSlots));
+        else if (c.kind == Kind::Transpose) r.transpose = int8_t(wrapRange(int(r.transpose) + delta, -128, 127));
+        else if (c.kind == Kind::Vel) r.sample = uint8_t(wrapRange(int(r.sample) + delta, 0, 127));
         else if (c.kind == Kind::Cmd) { if (!nudgeCommand(c.ch == 0 ? r.cmd1 : r.cmd2, core.entry.arg, delta)) return true; }
         else return false;
         changed(row);
@@ -1402,10 +1429,12 @@ struct RegionGrid::Impl {
         if (row < 0 || row >= rows() || col < 0 || col >= int(core.cols.size())) return {};
         const auto& c = core.cols[size_t(col)];
         const auto& r = regions[size_t(row)];
-        if (c.kind == Kind::Vel) return row == 0 ? "The lowest region starts at velocity 1 and stays there; the region above it says where it ends."
+        if (c.kind == Kind::From) return row == 0 ? "The lowest region starts at velocity 1 and stays there; the region above it says where it ends."
                                               : "The lowest velocity this region takes; the region below ends where this begins. Type it, double-click for a box, Shift+arrows move it.";
         if (c.kind == Kind::Inst) return "The instrument a note in this region loads -- a plain note, as a cell with an INS. Blank is a bare note: the pitch moves and what sounds keeps its instrument. Right-click lists the bank.";
         if (c.kind == Kind::Table) return "The table a plain note in this region starts; blank is the instrument's own. Right-click lists the bank.";
+        if (c.kind == Kind::Vel) return "On a kit, the second sample a note in this region plays with -- the row's VEL column (D-UI-34); blank is none. Nothing on any other instrument.";
+        if (c.kind == Kind::Transpose) return "Semitones added to a note in this region, as a chain row's TSP: under the instrument's Transpose flag, and on the noise channel a step along the map. Type it, double-click for a box, Shift+arrows move it.";
         if (c.kind == Kind::Cmd) return cmdTooltip(c.ch == 0 ? r.cmd1 : r.cmd2) + " Fires once with each note in this region, as a cell's command does. H, G and T cannot be carried here.";
         if (c.kind == Kind::Info) return "What a note in this region does: plain reloads the instrument, bare keeps what is sounding.";
         return "Region " + juce::String(row + 1) + " of " + juce::String(rows()) + ".";
@@ -1463,7 +1492,7 @@ void RegionGrid::paint(juce::Graphics& g)
                 g.setFont(Fonts::mono(10.5f)); g.setColour(colours::textDim);
                 g.drawText(text, core.cellRect(r, c).withTrimmedLeft(8), juce::Justification::centredLeft, true);
             }
-            else core.paintCell(g, r, c, text, blank, kind == Kind::Vel ? colours::textMute : colours::text, focused);
+            else core.paintCell(g, r, c, text, blank, kind == Kind::From ? colours::textMute : colours::text, focused);
         }
     }
 }
@@ -1535,7 +1564,7 @@ bool RegionGrid::keyPressed(const juce::KeyPress& k)
     if (k.getKeyCode() == juce::KeyPress::returnKey) {
         if (!k.getModifiers().isShiftDown() && im.fillBlank(core.curRow, core.curCol)) return true;
         const auto kind = core.editable(core.curCol) ? core.cols[size_t(core.curCol)].kind : Kind::Step;
-        if (kind == Kind::Vel || kind == Kind::Inst || kind == Kind::Table) im.openNumberEntry(core.curRow, core.curCol);
+        if (kind == Kind::From || kind == Kind::Inst || kind == Kind::Table || kind == Kind::Transpose || kind == Kind::Vel) im.openNumberEntry(core.curRow, core.curCol);
         else if (k.getModifiers().isShiftDown() || !im.openValueEntry(core.curRow, core.curCol, core.entry.arg)) im.openPalette(core.curRow, core.curCol);
         return true;
     }

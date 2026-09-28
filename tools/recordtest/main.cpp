@@ -37,6 +37,8 @@
 //   chipboy_recordtest --check-state FILE    build it and compare against FILE
 //   chipboy_recordtest --play-song FILE [bars]   play a song file and hear it
 //   chipboy_recordtest --play-midi SONG.cbsong FILE.mid [bars]   a MIDI file through a song's map (section 225)
+//   chipboy_recordtest --remake-midi SONG.cbsong OUTDIR          the song's cells as a MIDI file and a map
+//   chipboy_recordtest --check-remake SONG.cbsong FILE.mid [bars] the cells against the MIDI, write for write
 //   chipboy_recordtest --trace-song FILE OUT.csv [seconds] [--tempo BPM] [--from TICK]
 //   chipboy_recordtest --export-midi FILE OUT.mid [--no-noise]     (section 224)
 //                                        the register writes a song file makes, in
@@ -743,6 +745,295 @@ int playSong(const juce::File& file, int bars)
     return ok ? 0 : 1;
 }
 
+
+/* ------------------------------------------ --remake-midi (section 225) */
+
+/// A song's cells as MIDI through the map: every cell the Player would fire
+/// becomes a note-on whose velocity picks the region that carries the cell's
+/// INS, TBL and commands; a cell without a note is a note in the command
+/// octave (note 0) in such a region; an OFF is a note-off. The timing the
+/// Player gives the cells -- grooves, `G`, `H` hops, the chain's loops -- is
+/// baked into the ticks, so `G` and `H` are not carried and need not be.
+struct RemakeEvent {
+    int64_t tick = 0;
+    int     order = 0;            ///< at one tick: offs, then row-only notes, then note-ons
+    int     ch = 0;
+    int     kind = 0;             ///< 0 note-off, 1 note-on, 2 a row without a note (the command octave)
+    uint8_t note = 0;
+    uint8_t inst = 0, table = 0;
+    int8_t  tsp = 0;              ///< the chain row's transpose, carried by the region (section 48)
+    uint8_t sample = 0;           ///< a kit row's VEL: the second sample (D-UI-34)
+    bank::Command c1, c2;
+};
+
+struct RegionKey {
+    uint8_t inst = 0, table = 0; int8_t tsp = 0; uint8_t sample = 0; bank::Command c1, c2;
+    bool operator==(const RegionKey& o) const { return inst == o.inst && table == o.table && tsp == o.tsp && sample == o.sample && bank::sameCmd(c1, o.c1) && bank::sameCmd(c2, o.c2); }
+    bool blank() const { return inst == 0 && table == 0 && c1.cmd == bank::Cmd::None && c2.cmd == bank::Cmd::None; }
+};
+
+int remakeMidi(const juce::File& songFile, const juce::File& outDir)
+{
+    if (!songFile.existsAsFile()) { std::printf("FAIL %s does not exist\n", songFile.getFullPathName().toRawUTF8()); return 1; }
+    auto song = std::make_unique<tracker::Song>();
+    auto bank = std::make_unique<bank::Bank>();
+    SongReport report;
+    if (!loadSong(songFile, *song, report, nullptr, bank.get())) { std::printf("FAIL cannot open %s as a song file\n", songFile.getFullPathName().toRawUTF8()); return 1; }
+    if (!report.hasBank) { std::printf("FAIL %s carries no bank\n", songFile.getFullPathName().toRawUTF8()); return 1; }
+    for (auto& n : song->noteSource) n = tracker::NoteSource::Tracker;
+    tracker::buildRowTables(*song);
+    const int64_t end = tracker::songTicks(*song);
+    if (song->rows() == 0 || end <= 0) { std::printf("FAIL %s has no rows\n", songFile.getFileName().toRawUTF8()); return 1; }
+
+    // --- the cells as the Player fires them, tick by tick -------------------
+    std::vector<RemakeEvent> evs;
+    {
+        tracker::Player player;
+        player.prepare(kSampleRate);
+        player.setSong(song.get());
+        std::vector<driver::NoteEvent> out;
+        uint8_t sounding[4] = { 0, 0, 0, 0 };
+        int zCells = 0, dropped = 0;
+        for (int64_t t = 0; t < end; ++t) {
+            const driver::TickPoint tp{ 0, t };
+            out.clear();
+            player.process(&tp, 1, true, out);
+            for (const auto& e : out) {
+                const int ch = e.channel & 3;
+                RegionKey key;
+                key.inst = e.inst; key.table = e.table; key.tsp = e.transpose;
+                key.sample = e.kind == driver::NoteEvent::NoteOn && e.b != tracker::kDefaultVelocity ? e.b : uint8_t(0);   // a kit row's second sample (section 221)
+                key.c1 = tracker::midiRegionCommand(e.cmd1); key.c2 = tracker::midiRegionCommand(e.cmd2);
+                if ((e.cmd1.cmd != bank::Cmd::None && key.c1.cmd == bank::Cmd::None && e.cmd1.cmd != bank::Cmd::G && e.cmd1.cmd != bank::Cmd::H)
+                    || (e.cmd2.cmd != bank::Cmd::None && key.c2.cmd == bank::Cmd::None && e.cmd2.cmd != bank::Cmd::G && e.cmd2.cmd != bank::Cmd::H)) ++dropped;
+                if (key.c1.cmd == bank::Cmd::Z || key.c2.cmd == bank::Cmd::Z) ++zCells;
+                if (e.kind == driver::NoteEvent::NoteOn && e.b) {
+                    // The chain row's transpose rides in the region's TSP column
+                    // (section 48), so the driver applies it exactly as a cell's.
+                    const int note = int(e.a);
+                    if (sounding[ch]) { RemakeEvent off; off.tick = t; off.order = 0; off.ch = ch; off.kind = 0; off.note = sounding[ch]; evs.push_back(off); }
+                    RemakeEvent on; on.tick = t; on.order = 2; on.ch = ch; on.kind = 1; on.note = uint8_t(note);
+                    on.inst = key.inst; on.table = key.table; on.tsp = key.tsp; on.sample = key.sample; on.c1 = key.c1; on.c2 = key.c2;
+                    evs.push_back(on);
+                    sounding[ch] = uint8_t(note);
+                } else if (e.kind == driver::NoteEvent::NoteOff || (e.kind == driver::NoteEvent::NoteOn && !e.b)) {
+                    if (sounding[ch]) { RemakeEvent off; off.tick = t; off.order = 0; off.ch = ch; off.kind = 0; off.note = sounding[ch]; evs.push_back(off); sounding[ch] = 0; }
+                    if (!key.blank()) { RemakeEvent row; row.tick = t; row.order = 1; row.ch = ch; row.kind = 2; row.inst = key.inst; row.table = key.table; row.tsp = key.tsp; row.c1 = key.c1; row.c2 = key.c2; evs.push_back(row); }
+                } else if (e.kind == driver::NoteEvent::Command && !e.hybrid) {
+                    if (key.blank()) continue;
+                    RemakeEvent row; row.tick = t; row.order = 1; row.ch = ch; row.kind = 2; row.inst = key.inst; row.table = key.table; row.tsp = key.tsp; row.c1 = key.c1; row.c2 = key.c2; evs.push_back(row);
+                }
+            }
+        }
+        std::printf("%s: %lld ticks, %d events from the cells", songFile.getFileNameWithoutExtension().toRawUTF8(), (long long) end, int(evs.size()));
+        if (zCells) std::printf("; %d rows carry a Z, which rolls afresh on every play", zCells);
+        if (dropped) std::printf("; %d commands a region cannot carry were dropped", dropped);
+        std::printf("\n");
+    }
+
+    // --- the regions: a row's columns once per ChipBoy channel --------------
+    std::array<std::vector<RegionKey>, 4> keys;
+    std::vector<int> regionOf(evs.size(), -1);
+    for (size_t i = 0; i < evs.size(); ++i) {
+        const auto& e = evs[i];
+        if (e.kind == 0) continue;
+        RegionKey k; k.inst = e.inst; k.table = e.table; k.tsp = e.tsp; k.sample = e.sample; k.c1 = e.c1; k.c2 = e.c2;
+        auto& list = keys[size_t(e.ch)];
+        int idx = -1;
+        for (size_t r = 0; r < list.size(); ++r) if (list[r] == k) { idx = int(r); break; }
+        if (idx < 0) { list.push_back(k); idx = int(list.size()) - 1; }
+        regionOf[i] = idx;
+    }
+    // MIDI channels: each ChipBoy channel takes as many as its regions need,
+    // a region a velocity (section 225), in order PU1 PU2 WAV NOI.
+    tracker::MidiMap map;
+    map.on = true;
+    std::array<int, 4> firstMidi{ { -1, -1, -1, -1 } };
+    int nextMidi = 0;
+    for (int ch = 0; ch < 4; ++ch) {
+        const int n = int(keys[size_t(ch)].size());
+        if (n == 0) continue;
+        const int need = (n + tracker::kMaxRegions - 1) / tracker::kMaxRegions;
+        if (nextMidi + need > tracker::kMidiChannels) {
+            std::printf("FAIL %s needs more MIDI channels than a port has: PU1 %d, PU2 %d, WAV %d, NOI %d distinct rows at %d a channel\n",
+                        songFile.getFileName().toRawUTF8(), int(keys[0].size()), int(keys[1].size()), int(keys[2].size()), int(keys[3].size()), tracker::kMaxRegions);
+            return 1;
+        }
+        firstMidi[size_t(ch)] = nextMidi;
+        for (int m = 0; m < need; ++m) {
+            auto& c = map.channels[size_t(nextMidi + m)];
+            c.target = int8_t(ch);
+            c.regions.clear();
+            for (int r = m * tracker::kMaxRegions; r < std::min(n, (m + 1) * tracker::kMaxRegions); ++r) {
+                const auto& k = keys[size_t(ch)][size_t(r)];
+                tracker::MidiRegion reg;
+                reg.from = uint8_t(r - m * tracker::kMaxRegions + 1);
+                reg.inst = k.inst; reg.table = k.table; reg.transpose = k.tsp; reg.sample = k.sample; reg.cmd1 = k.c1; reg.cmd2 = k.c2;
+                c.regions.push_back(reg);
+            }
+        }
+        nextMidi += need;
+    }
+    tracker::normalizeMidiMap(map);
+
+    // --- the song file: the cells kept for the A/B, the map on, MIDI playing --
+    outDir.createDirectory();
+    const juce::String stem = songFile.getFileNameWithoutExtension();
+    {
+        auto out = std::make_unique<tracker::Song>(*song);
+        out->midiMap = map;
+        for (auto& n : out->noteSource) n = tracker::NoteSource::PianoRoll;
+        out->songStartSeconds = 0.0;   // under a host play head tick 0 is the host's beat 0 (section 4)
+        const juce::File f = outDir.getChildFile(stem + "-remake.cbsong");
+        if (!saveSong(*out, *bank, f, report.bankName)) { std::printf("FAIL cannot write %s\n", f.getFullPathName().toRawUTF8()); return 1; }
+        std::printf("wrote %s\n", f.getFullPathName().toRawUTF8());
+    }
+
+    // --- the MIDI file: 96 a quarter, every event a 96th before its tick ------
+    // Under the header's Quantize the plugin holds it to that tick exactly; an
+    // event on the tick itself could land a whole tick late in a host that
+    // rounds. Tick 0's events sit on the host's beat 0, where the cells' do.
+    {
+        constexpr int kPpq = 96, kPerTick = kPpq / driver::kTicksPerBeat;   // 4 MIDI ticks a ChipBoy tick
+        auto mt = [](int64_t tick) { return uint32_t(std::max<int64_t>(0, tick * kPerTick - 1)); };
+        std::vector<uint8_t> file;
+        auto be16 = [&](uint32_t v) { file.push_back(uint8_t(v >> 8)); file.push_back(uint8_t(v)); };
+        auto be32 = [&](uint32_t v) { file.push_back(uint8_t(v >> 24)); file.push_back(uint8_t(v >> 16)); file.push_back(uint8_t(v >> 8)); file.push_back(uint8_t(v)); };
+        auto vlq = [](std::vector<uint8_t>& o, uint32_t v) { uint8_t buf[5]; int n = 0; do { buf[n++] = uint8_t(v & 0x7f); v >>= 7; } while (v && n < 5); while (n > 0) { --n; o.push_back(uint8_t(buf[n] | (n > 0 ? 0x80 : 0))); } };
+        struct Ev { uint32_t tick; int order; std::vector<uint8_t> bytes; };
+        auto writeTrack = [&](std::vector<Ev>& evsOut, uint32_t endTick) {
+            std::stable_sort(evsOut.begin(), evsOut.end(), [](const Ev& a, const Ev& b) { return a.tick != b.tick ? a.tick < b.tick : a.order < b.order; });
+            std::vector<uint8_t> body; uint32_t at = 0;
+            for (const auto& e : evsOut) { const uint32_t t = std::max(at, e.tick); vlq(body, t - at); at = t; body.insert(body.end(), e.bytes.begin(), e.bytes.end()); }
+            vlq(body, endTick > at ? endTick - at : 0); body.push_back(0xFF); body.push_back(0x2F); body.push_back(0x00);
+            file.push_back('M'); file.push_back('T'); file.push_back('r'); file.push_back('k'); be32(uint32_t(body.size())); file.insert(file.end(), body.begin(), body.end());
+        };
+        auto meta = [&](std::vector<Ev>& to, uint32_t tick, uint8_t type, const std::vector<uint8_t>& data) { Ev e; e.tick = tick; e.order = 0; e.bytes = { 0xFF, type }; vlq(e.bytes, uint32_t(data.size())); e.bytes.insert(e.bytes.end(), data.begin(), data.end()); to.push_back(std::move(e)); };
+        auto text = [&](std::vector<Ev>& to, uint32_t tick, uint8_t type, const juce::String& s) { const auto u = s.toStdString(); meta(to, tick, type, std::vector<uint8_t>(u.begin(), u.end())); };
+        const uint32_t endTick = mt(end) + 1;
+        std::vector<std::vector<Ev>> tracks{ size_t(nextMidi) };
+        std::vector<Ev> zero;
+        text(zero, 0, 0x03, stem + " remake");
+        {
+            const double bpm = std::clamp(song->tempoBpm, driver::kMinSongBpm, driver::kMaxSongBpm);
+            const uint32_t us = uint32_t(std::clamp(std::llround(60.0e6 / bpm), 1LL, 0xFFFFFFLL));
+            meta(zero, 0, 0x51, { uint8_t(us >> 16), uint8_t(us >> 8), uint8_t(us) });
+            meta(zero, 0, 0x58, { 4, 2, 24, 8 });
+            text(zero, 0, 0x01, "Plays " + stem + "-remake.cbsong through its MIDI map with Tempo source Host at " + juce::String(bpm, 1)
+                                + " BPM and Quantize on; every event sits a 96th before its tick. Switch a channel's lane to Trkr to hear the cells instead.");
+        }
+        for (int m = 0; m < nextMidi; ++m) {
+            const auto& c = map.channels[size_t(m)];
+            int part = m - firstMidi[size_t(c.target)], parts = 0;
+            for (int k = 0; k < nextMidi; ++k) if (map.channels[size_t(k)].target == c.target) ++parts;
+            text(tracks[size_t(m)], 0, 0x03, juce::String(kStreamName[c.target]) + (parts > 1 ? " " + juce::String(part + 1) + "/" + juce::String(parts) : juce::String()));
+        }
+        int notes = 0, rows = 0;
+        for (size_t i = 0; i < evs.size(); ++i) {
+            const auto& e = evs[i];
+            const int ch = e.ch;
+            if (e.kind == 0) {
+                // The note-off goes on the MIDI channel the note went out on: it
+                // was the same voice's, so any of that voice's channels ends it.
+                const int m = firstMidi[size_t(ch)];
+                Ev ev; ev.tick = mt(e.tick); ev.order = 1; ev.bytes = { uint8_t(0x80 | m), e.note, 0 };
+                tracks[size_t(m)].push_back(std::move(ev));
+                continue;
+            }
+            const int r = regionOf[i];
+            const int m = firstMidi[size_t(ch)] + r / tracker::kMaxRegions;
+            const uint8_t vel = uint8_t(r % tracker::kMaxRegions + 1);
+            const uint8_t note = e.kind == 1 ? e.note : uint8_t(0);
+            Ev on; on.tick = mt(e.tick); on.order = e.kind == 1 ? 3 : 2; on.bytes = { uint8_t(0x90 | m), note, vel };
+            tracks[size_t(m)].push_back(std::move(on));
+            if (e.kind == 2) { Ev off; off.tick = mt(e.tick) + 2; off.order = 1; off.bytes = { uint8_t(0x80 | m), 0, 0 }; tracks[size_t(m)].push_back(std::move(off)); ++rows; }
+            else ++notes;
+        }
+        file.push_back('M'); file.push_back('T'); file.push_back('h'); file.push_back('d');
+        be32(6); be16(1); be16(uint32_t(1 + nextMidi)); be16(kPpq);
+        writeTrack(zero, endTick);
+        for (auto& t : tracks) writeTrack(t, endTick);
+        const juce::File f = outDir.getChildFile(stem + "-remake.mid");
+        if (!f.replaceWithData(file.data(), file.size())) { std::printf("FAIL cannot write %s\n", f.getFullPathName().toRawUTF8()); return 1; }
+        std::printf("wrote %s: %d notes, %d rows without a note, on %d MIDI channels\n", f.getFullPathName().toRawUTF8(), notes, rows, nextMidi);
+        for (int ch = 0; ch < 4; ++ch) if (firstMidi[size_t(ch)] >= 0)
+            std::printf("  %s: %d distinct rows on MIDI channel%s %d%s\n", kStreamName[ch], int(keys[size_t(ch)].size()),
+                        int(keys[size_t(ch)].size()) > tracker::kMaxRegions ? "s" : "", firstMidi[size_t(ch)] + 1,
+                        int(keys[size_t(ch)].size()) > tracker::kMaxRegions ? ("-" + juce::String(firstMidi[size_t(ch)] + (int(keys[size_t(ch)].size()) + tracker::kMaxRegions - 1) / tracker::kMaxRegions)).toRawUTF8() : "");
+    }
+    return 0;
+}
+
+/// `--check-remake SONG.cbsong FILE.mid [bars]`: the song's cells under a host
+/// play head at the song's tempo, then the MIDI file through the song's map,
+/// and the two register streams compared write for write (section 9.5's
+/// tolerance). The remake's proof. Without `bars` it runs the song's own
+/// length in whole bars: past its end the cells come round again (section
+/// 212) and the MIDI file has stopped, which is no difference of the map's.
+int checkRemake(const juce::File& songFile, const juce::File& midiFile, int bars)
+{
+    if (!songFile.existsAsFile() || !midiFile.existsAsFile()) { std::printf("FAIL a file is missing\n"); return 1; }
+    double tempo = 120.0;
+    if (bars <= 0) {
+        const auto pOwned = std::make_unique<ChipBoyProcessor>();
+        SongReport report;
+        if (!openForPlayback(*pOwned, songFile, -1, report)) return 1;
+        const auto song = pOwned->song();
+        bars = song ? int(tracker::songTicks(*song) / (4 * driver::kTicksPerBeat)) : 8;
+        bars = std::max(1, bars);
+    }
+    auto pass = [&](bool viaMidi, Capture& cap) {
+        const auto pOwned = std::make_unique<ChipBoyProcessor>();
+        auto& p = *pOwned;
+        SongReport report;
+        if (!openForPlayback(p, songFile, -1, report)) return false;
+        const auto song = p.song();
+        if (song == nullptr) return false;
+        tempo = std::clamp(song->tempoBpm, driver::kMinSongBpm, driver::kMaxSongBpm);
+        p.mutateSong([viaMidi](tracker::Song& s) { for (auto& n : s.noteSource) n = viaMidi ? tracker::NoteSource::PianoRoll : tracker::NoteSource::Tracker; });
+        std::vector<TimedMessage> midi;
+        if (viaMidi && !loadMidi(midiFile, tempo, midi)) { std::printf("FAIL cannot read %s\n", midiFile.getFullPathName().toRawUTF8()); return false; }
+        p.prepareToPlay(kSampleRate, kBlock);
+        setParameter(p, ids::notesOnTick, 1.0);
+        setParameter(p, ids::tempoSource, 0.0);
+        std::vector<driver::RegWrite> log;
+        log.reserve(1u << 20);
+        p.setWriteLog(&log);
+        FakePlayHead head;
+        head.bpm = tempo;
+        p.setPlayHead(&head);
+        juce::AudioBuffer<float> buffer(2, kBlock);
+        juce::MidiBuffer in;
+        const int64_t samples = int64_t(std::llround(double(bars) * 4.0 * 60.0 / tempo * kSampleRate));
+        const int blocks = int((samples + kBlock - 1) / kBlock);
+        size_t next = 0;
+        for (int b = 0; b < blocks; ++b) {
+            const int64_t f0 = int64_t(b) * kBlock;
+            head.frame = f0;
+            in.clear();
+            while (next < midi.size() && midi[next].sample < f0 + kBlock) { in.addEvent(midi[next].message, int(midi[next].sample - f0)); ++next; }
+            p.processBlock(buffer, in);
+            if (b % 16 == 0) pump(1);
+        }
+        p.setWriteLog(nullptr);
+        p.setPlayHead(nullptr);
+        for (const auto& w : log) {
+            const int s = streamOf(w.addr);
+            if (s < 0) continue;
+            cap.streams[size_t(s)].push_back({ int64_t(std::llround(double(w.cycle) * kSampleRate / double(kCpuHz))), w.cycle, w.addr, w.value });
+        }
+        return true;
+    };
+    Capture cells, viaMap;
+    if (!pass(false, cells)) return 1;
+    if (!pass(true, viaMap)) return 1;
+    std::printf("%s over %d bars at %.0f BPM: the cells (record) against the MIDI through the map (replay)\n", songFile.getFileNameWithoutExtension().toRawUTF8(), bars, tempo);
+    for (int s = 0; s < kStreams; ++s) std::printf("  %-6s %6d writes from the cells, %6d through the map\n", kStreamName[s], int(cells.streams[size_t(s)].size()), int(viaMap.streams[size_t(s)].size()));
+    const bool same = compare(cells, viaMap, tempo);
+    std::printf("\n%s the MIDI remake %s the cells write for write over %d bars\n", same ? "PASSED" : "FAILED", same ? "matches" : "does not match", bars);
+    return same ? 0 : 1;
+}
+
 /// `chipboy_recordtest --play-midi SONG.cbsong FILE.mid [bars]` (section 225):
 /// the song file opens in a tab -- its bank and its MIDI map -- and the MIDI
 /// file plays into the plugin under a host play head at the song's tempo, as
@@ -861,6 +1152,8 @@ int main(int argc, char** argv)
     int64_t traceFrom = 0;                                       // --from TICK: locate there before playing (section 223)
     juce::File midiFile, midiOut; bool midiNoise = true;         // --export-midi FILE OUT.mid [--no-noise] (section 224)
     juce::File playMidiSong, playMidiFile; int playMidiBars = 8;  // --play-midi SONG.cbsong FILE.mid [bars] (section 225)
+    juce::File remakeSong, remakeOut;                             // --remake-midi SONG.cbsong OUTDIR (section 225)
+    juce::File checkSongFile, checkMidiFile; int checkBars = 0;   // --check-remake SONG.cbsong FILE.mid [bars]; 0: the song's own length
     int playBars = 8;                                         // --play-song's default (section 24)
     bool dump = false;
     for (int i = 1; i < argc; ++i) {
@@ -881,6 +1174,12 @@ int main(int argc, char** argv)
         else if (key == "--model") importModel = juce::String(argv[++i]);
         else if (key == "--tempo") traceBpm = std::clamp(juce::String(argv[++i]).getDoubleValue(), driver::kMinSongBpm, driver::kMaxSongBpm);
         else if (key == "--from" && i + 1 < argc) traceFrom = std::max<int64_t>(0, juce::String(argv[++i]).getLargeIntValue());
+        else if (key == "--remake-midi" && i + 2 < argc) { remakeSong = juce::File::getCurrentWorkingDirectory().getChildFile(argv[++i]); remakeOut = juce::File::getCurrentWorkingDirectory().getChildFile(argv[++i]); }
+        else if (key == "--check-remake" && i + 2 < argc) {
+            checkSongFile = juce::File::getCurrentWorkingDirectory().getChildFile(argv[++i]);
+            checkMidiFile = juce::File::getCurrentWorkingDirectory().getChildFile(argv[++i]);
+            if (i + 1 < argc && argv[i + 1][0] != '-') checkBars = std::clamp(int(std::strtol(argv[++i], nullptr, 10)), 1, 256);
+        }
         else if (key == "--play-midi" && i + 2 < argc) {
             playMidiSong = juce::File::getCurrentWorkingDirectory().getChildFile(argv[++i]);
             playMidiFile = juce::File::getCurrentWorkingDirectory().getChildFile(argv[++i]);
@@ -953,6 +1252,9 @@ int main(int argc, char** argv)
 
     /* ---- --trace-song: the register writes of a song file, as a CSV ---- */
     if (traceFile != juce::File()) return traceSong(traceFile, traceOut, traceSeconds, traceBpm, traceFrom);
+    /* ---- --remake-midi / --check-remake: a song's cells as MIDI (section 225) ---- */
+    if (remakeSong != juce::File()) return remakeMidi(remakeSong, remakeOut);
+    if (checkSongFile != juce::File()) return checkRemake(checkSongFile, checkMidiFile, checkBars);
     /* ---- --play-midi: a MIDI file through a song's map (section 225) ---- */
     if (playMidiSong != juce::File()) return playMidi(playMidiSong, playMidiFile, playMidiBars);
     /* ---- --export-midi: the song file as a MIDI file (section 224) ---- */
@@ -1032,8 +1334,8 @@ int main(int argc, char** argv)
         a->midiMap.on = true;
         a->midiMap.channels[0].target = 0;
         a->midiMap.channels[1].target = 2;
-        a->midiMap.channels[1].regions = { tracker::MidiRegion{ 1, 0, 0, { bank::Cmd::V, 4, 6, 0 }, {} }, tracker::MidiRegion{ 65, 7, 2, {}, { bank::Cmd::K, 3, 0, 0 } } };
-        a->midiMap.channels[9].regions = { tracker::MidiRegion{ 1, 12, 0, {}, {} }, tracker::MidiRegion{ 90, 15, 0, {}, {} } };   // regions without a target survive too
+        a->midiMap.channels[1].regions = { tracker::MidiRegion{ 1, 0, 0, -12, 0, { bank::Cmd::V, 4, 6, 0 }, {} }, tracker::MidiRegion{ 65, 7, 2, 0, 3, {}, { bank::Cmd::K, 3, 0, 0 } } };
+        a->midiMap.channels[9].regions = { tracker::MidiRegion{ 1, 12, 0, 7, 0, {}, {} }, tracker::MidiRegion{ 90, 15, 0, 0, 0, {}, {} } };   // regions without a target survive too
         auto b = std::make_unique<tracker::Song>();
         if (!songFromJson(songToJson(*a), *b)) { std::printf("FAIL the MIDI map's song does not read back\n"); return 1; }
         bool same = b->midiMap.on == a->midiMap.on;
@@ -1042,6 +1344,7 @@ int main(int argc, char** argv)
             same = x.target == y.target && x.regions.size() == y.regions.size();
             for (size_t i = 0; same && i < x.regions.size(); ++i)
                 same = x.regions[i].from == y.regions[i].from && x.regions[i].inst == y.regions[i].inst && x.regions[i].table == y.regions[i].table
+                       && x.regions[i].transpose == y.regions[i].transpose && x.regions[i].sample == y.regions[i].sample
                        && bank::sameCmd(x.regions[i].cmd1, y.regions[i].cmd1) && bank::sameCmd(x.regions[i].cmd2, y.regions[i].cmd2);
         }
         if (!same) { std::printf("FAIL the MIDI map does not survive the song file\n"); return 1; }

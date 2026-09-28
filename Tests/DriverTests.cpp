@@ -1846,10 +1846,10 @@ TEST_CASE("a cell's OFF after two notes ends the channel, not the note before", 
 
 /// A note the MIDI map routed (section 225): the cell its region describes,
 /// marked so the driver plays it by the cell path and ends it as a `K`.
-NoteEvent mappedOn(int ch, uint8_t note, uint8_t vel, uint8_t inst, const Command& c1 = {}, const Command& c2 = {}, uint32_t off = 0)
+NoteEvent mappedOn(int ch, uint8_t note, uint8_t vel, uint8_t inst, const Command& c1 = {}, const Command& c2 = {}, uint32_t off = 0, int8_t tsp = 0)
 {
     NoteEvent e; e.channel = uint8_t(ch); e.kind = NoteEvent::NoteOn; e.source = NoteEvent::Midi; e.mapped = true;
-    e.a = note; e.b = vel; e.inst = inst; e.cmd1 = c1; e.cmd2 = c2; e.offset = off; return e;
+    e.a = note; e.b = vel; e.inst = inst; e.cmd1 = c1; e.cmd2 = c2; e.offset = off; e.transpose = tsp; return e;
 }
 NoteEvent mappedOff(int ch, uint8_t note, uint32_t off = 0)
 {
@@ -1929,6 +1929,21 @@ TEST_CASE("MIDI map: a note's end is a K at the next tick, cleared by a note tha
     CHECK(r.drv.view(0).active);
     CHECK(r.drv.view(0).note == 62);
     CHECK(r.drv.view(0).instrument == 1);
+}
+
+TEST_CASE("MIDI map: a region's TSP is the chain row's transpose, and a note in the command octave is the row without a note", "[driver][midimap]")
+{
+    Rig r;
+    r.tickHz = 100.0;
+    r.block({ mappedOn(0, 60, 100, 1, {}, {}, 0, 7) }, 480);         // the Square lead's Transpose flag is on
+    CHECK(r.drv.view(0).note == 60);                                // the base note, as a cell's
+    CHECK(r.drv.view(0).period == Driver::periodForNote(67.0, false));   // sounding a fifth up
+    // Note 0, the row without a note: the region's columns as a note-less
+    // cell's -- the W here changes the duty of what sounds, no trigger, no new note.
+    r.block({ mappedOn(0, 0, 100, 0, { Cmd::W, 0, 0, 0 }) }, 480);
+    CHECK(r.drv.view(0).note == 60);
+    CHECK(r.drv.view(0).duty == 0);
+    CHECK(r.drv.view(0).active);
 }
 
 TEST_CASE("MIDI map: releasing over an older held key returns to it, as a keyboard does", "[driver][midimap]")

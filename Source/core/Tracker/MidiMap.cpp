@@ -42,7 +42,7 @@ bool midiMapIsDefault(const MidiMap& m)
     for (const auto& c : m.channels) {
         if (c.target >= 0 || c.regions.size() != 1) return false;
         const auto& r = c.regions.front();
-        if (r.from != 1 || r.inst || r.table || r.cmd1.cmd != bank::Cmd::None || r.cmd2.cmd != bank::Cmd::None) return false;
+        if (r.from != 1 || r.inst || r.table || r.transpose || r.sample || r.cmd1.cmd != bank::Cmd::None || r.cmd2.cmd != bank::Cmd::None) return false;
     }
     return true;
 }

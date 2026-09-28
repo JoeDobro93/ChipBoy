@@ -26,6 +26,16 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-28, later still -- a region is the whole row but its note; a song's cells as MIDI, proven
+
+`docs/COMMANDS_AND_TEMPO.md` §225 amendments, `docs/UI_DESIGN.md` D-UI-43a. Regions gain TSP
+(the chain row's transpose) and Smp (a kit's second sample); up to 127 regions a MIDI channel;
+mapped note 0 is the region's row without a note; velocities read in decimal in either base.
+`chipboy_recordtest --remake-midi SONG OUTDIR` turns a song's cells into a MIDI file and a song
+file with the map (the cells kept for an A/B), and `--check-remake SONG FILE.mid` proves the two
+sound the same: READROOM's 1.24 million register writes are identical over its 127 bars. The
+groove question has a design of its own, `docs/plan-groove-inference.md`, not yet built.
+
 ### 2026-09-28, demo -- the MIDI map demo, and `--play-midi`
 
 `Demo/midi-map/midi-map-demo.cbsong` (the bank and the map, no cells) and

@@ -649,6 +649,11 @@ void Driver::noteOn(int ch, uint8_t note, uint8_t vel, const NoteEvent* cell)
     // would be the ones that never sounded -- so a bank that carries the map
     // has no command octave on the noise channel.
     const bool numbered = ch == 3 && bank_ != nullptr && bank_->noiseMapSet;
+    // Section 225: under the map note 0 -- the number an empty cell holds, so
+    // never a pitch, on the noise channel's map too -- is the region's row
+    // without a note: its INS, TBL and commands apply as a note-less cell's
+    // do, and the strip's slots are not the map's to fire.
+    if (note == 0 && cell != nullptr && cell->mapped) { if (!hy) applyCellColumns(ch, *cell); return; }
     if (note < 12 && !numbered) {
         // On a Hybrid channel the command octave is inert: the cells carry the
         // commands, and the slots it would fire are empty (section 20).

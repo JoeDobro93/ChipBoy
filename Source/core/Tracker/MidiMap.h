@@ -12,13 +12,15 @@
 
 namespace chipboy::tracker {
 
-constexpr int kMidiChannels = 16, kMaxRegions = 8;
+constexpr int kMidiChannels = 16, kMaxRegions = 127;   ///< at most one region per velocity
 
 /// A row without a note: the lowest velocity it takes, and a cell's other
 /// columns. The next region's `from` ends it; the last runs to 127.
 struct MidiRegion {
     uint8_t from = 1;
     uint8_t inst = 0, table = 0;          ///< 0 keep, as a cell's columns
+    int8_t  transpose = 0;                ///< semitones, as a chain row's TSP (section 48): under the instrument's flag
+    uint8_t sample = 0;                   ///< on a kit, the second sample's index + 1 -- the row's VEL column (D-UI-34); 0 none
     bank::Command cmd1, cmd2;
 };
 

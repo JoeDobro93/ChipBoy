@@ -46,6 +46,7 @@ private:
     ui::Segmented target_;
     juce::TextButton addRegion_, removeRegion_;
     std::unique_ptr<VelocityBar> bar_;
+    juce::Viewport gridView_;         ///< the grid scrolls: a region a velocity at most (section 225)
     ui::RegionGrid grid_;
     HelpText help_;
     int midiCh_ = 1;

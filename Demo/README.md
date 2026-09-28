@@ -319,7 +319,14 @@ What each MIDI channel shows, and where in the eight bars:
 | 7 → WAV | 1–127 `tri-bass` + TBL `octave-drop` | 7–8 | A region's TBL column: the bass drops an octave every other tick. |
 
 Every note's end is a `K` at the next tick unless the next note follows at once (the lead's
-soft notes do), so the file's note lengths are exactly what you hear. `chipboy_recordtest
+soft notes do), so the file's note lengths are exactly what you hear.
+
+Any song can be turned into such a pair: `chipboy_recordtest --remake-midi SONG.cbsong OUTDIR`
+writes `NAME-remake.mid` (every cell the Player fires, a 96th before its tick) and
+`NAME-remake.cbsong` (the cells kept, the map on, every channel on MIDI -- flip a lane's switch
+to Trkr for an A/B), and `--check-remake NAME-remake.cbsong NAME-remake.mid` proves the two
+identical write for write. Play the pair with **Tempo source Host** at the song's tempo and
+**Quantize** on. `chipboy_recordtest
 --play-midi midi-map/midi-map-demo.cbsong midi-map/midi-map-demo.mid 8` plays the pair and
 measures every channel; CTest runs it as `demo_midimap_plays`.
 

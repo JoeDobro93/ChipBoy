@@ -570,6 +570,8 @@ var songToVar(const tracker::Song& s)
             for (const auto& r : c.regions) {
                 auto* ro = new DynamicObject();
                 ro->setProperty("from", int(r.from)); ro->setProperty("inst", int(r.inst)); ro->setProperty("table", int(r.table));
+                if (r.transpose) ro->setProperty("tsp", int(r.transpose));
+                if (r.sample) ro->setProperty("smp", int(r.sample));
                 if (r.cmd1.cmd != Cmd::None) ro->setProperty("cmd1", cmdToVar(r.cmd1));
                 if (r.cmd2.cmd != Cmd::None) ro->setProperty("cmd2", cmdToVar(r.cmd2));
                 regs.add(var(ro));
@@ -747,6 +749,8 @@ bool songFromVar(const var& v, tracker::Song& out)
                         r.from = uint8_t(std::clamp(getOr(ro, "from", 1), 1, 127));
                         r.inst = uint8_t(std::clamp(getOr(ro, "inst", 0), 0, bank::kInstrumentSlots));
                         r.table = uint8_t(std::clamp(getOr(ro, "table", 0), 0, bank::kTableSlots));
+                        r.transpose = int8_t(std::clamp(getOr(ro, "tsp", 0), -128, 127));
+                        r.sample = uint8_t(std::clamp(getOr(ro, "smp", 0), 0, 127));
                         r.cmd1 = cmdFromVar(ro->getProperty("cmd1")); r.cmd2 = cmdFromVar(ro->getProperty("cmd2"));
                         c.regions.push_back(r);
                     }

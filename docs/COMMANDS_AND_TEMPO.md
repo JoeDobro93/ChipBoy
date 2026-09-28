@@ -6623,3 +6623,30 @@ ChipBoy channel, and within each, velocity regions that are tracker rows without
   then the region's commands on what sounds. **Recording** (§9.4) writes the region's table and
   commands -- what the channel read -- and a blank VEL.
 
+**Amendments, 2026-09-28 (later).** Settled while remaking an imported song as MIDI so that the
+map and the cells sound the same write for write (`chipboy_recordtest --remake-midi` /
+`--check-remake`, below):
+- A region has **two more columns**: **TSP**, the chain row's transpose in semitones (§48),
+  applied by the driver exactly as a cell's -- under the instrument's Transpose flag, through
+  the floor law (§217), on the noise channel as a step along the map; and **Smp**, a kit's
+  second sample (D-UI-34, the row's VEL column), which is what a mapped note carries as its
+  `b`, else the default behind which the instrument's own volume stands (§221). So a region is
+  the whole of a row but its note.
+- **Note 0** -- the number an empty cell holds, never a pitch, on the noise channel's own map
+  too -- is under the map **the region's row without a note**: its INS, TBL, TSP and commands
+  apply as a note-less cell's do (`applyCellColumns`), no trigger, the strip's slots not fired.
+  Notes 1-11 keep §13's command-octave law where it applies. A whole song's cells therefore
+  go through the map: notes as notes, rows without one as note 0.
+- **Up to 127 regions a MIDI channel** -- one a velocity -- so a whole song's distinct rows
+  fit; READROOM needs 100, 58, 178 and 153 for its four voices, on six MIDI channels.
+- The regions' **velocities read and type in decimal** whatever the display's base (D-UI-43):
+  they are MIDI's numbers, not the chip's.
+- **`--remake-midi SONG.cbsong OUTDIR`** writes the song's cells, as the Player fires them --
+  grooves, `G`, `H`, the chain's loops and transposes all baked into the ticks -- as a MIDI
+  file (96 a quarter, every event a 96th before its tick so the header's Quantize lands it on
+  the tick) and a song file that keeps the cells, adds the map and sets every channel to MIDI,
+  for an A/B by the lane's switch. **`--check-remake SONG FILE.mid [bars]`** plays the cells
+  and then the MIDI through the map under a host play head and compares the register streams
+  write for write (§9.5). READROOM: 1.24 million writes, identical over its 127 bars; past the
+  song's end the cells come round (§212) and the file has stopped, which is not the map's.
+

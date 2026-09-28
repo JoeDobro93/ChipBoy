@@ -104,6 +104,14 @@ badge); `tools/uishot` (the shot).
 - Keyswitches (the channel parameter) still select; a region's INS overrides what they chose.
 - The Voice plugin is untouched: its notes arrive already routed.
 
+## Amendments (2026-09-28, later)
+
+`MidiRegion` gained `transpose` (the chain row's TSP) and `sample` (a kit's second sample);
+`kMaxRegions` is 127; mapped note 0 is the row without a note; velocities show in decimal.
+`chipboy_recordtest --remake-midi` / `--check-remake` turn a song's cells into MIDI plus a map
+and prove the two identical write for write. See §225's amendments. The `G` question below is
+superseded by `docs/plan-groove-inference.md`.
+
 ## Open: `G` as a record grid (the user's pushback)
 
 A `G` in a region is dropped today. The user's point: while a groove is inaudible under MIDI

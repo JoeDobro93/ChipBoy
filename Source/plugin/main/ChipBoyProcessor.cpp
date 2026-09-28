@@ -456,8 +456,12 @@ void ChipBoyProcessor::routeMidi(const MidiMessage& m, int offset, std::vector<d
             e.mapped = true;
             if (e.kind == driver::NoteEvent::NoteOn && e.b > 0) {
                 const auto& r = tracker::regionFor(map, e.b);
-                e.inst = r.inst; e.table = r.table;
+                e.inst = r.inst; e.table = r.table; e.transpose = r.transpose;
                 e.cmd1 = tracker::midiRegionCommand(r.cmd1); e.cmd2 = tracker::midiRegionCommand(r.cmd2);
+                // The velocity chose the region; what the note carries as `b`
+                // is the row's VEL -- a kit's second sample, else the default
+                // the instrument's own volume stands behind (section 221).
+                e.b = r.sample ? r.sample : tracker::kDefaultVelocity;
             }
         }
         dst.push_back(e);

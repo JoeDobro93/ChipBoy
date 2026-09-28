@@ -36,7 +36,7 @@ public:
             g.setFont(Fonts::mono(10.0f));
             g.setColour(colours::text);
             const auto label = Rectangle<float>(x0 + 4.0f, area.getY(), jmax(0.0f, x1 - x0 - 8.0f), area.getHeight());
-            g.drawText(String(i + 1) + "  " + ValueFormat::number(from) + String::charToString(0x2013) + ValueFormat::number(to), label, Justification::centredLeft, true);
+            g.drawText(String(i + 1) + "  " + String(from) + String::charToString(0x2013) + String(to), label, Justification::centredLeft, true);   // decimal in either display base (D-UI-43)
             if (i > 0) {
                 g.setColour(i == hover_ || i == drag_ ? colours::accentHi : colours::line);
                 g.fillRect(Rectangle<float>(x0 - 1.0f, area.getY() + 1.0f, 2.0f, area.getHeight() - 2.0f));
@@ -88,7 +88,10 @@ MidiMapPanel::MidiMapPanel(ChipBoyProcessor& p)
     addAndMakeVisible(addRegion_);
     addAndMakeVisible(removeRegion_);
     addAndMakeVisible(*bar_);
-    addAndMakeVisible(grid_);
+    gridView_.setViewedComponent(&grid_, false);
+    gridView_.setScrollBarsShown(true, false, true, false);
+    gridView_.setScrollBarThickness(8);
+    addAndMakeVisible(gridView_);
     addAndMakeVisible(help_);
 
     list_.setRenameable(false);
@@ -264,8 +267,9 @@ void MidiMapPanel::resized()
     bar_->setBounds(inner.removeFromTop(kBarHeight));
     inner.removeFromTop(kRowGap);
     const int gh = std::min<int>(inner.getHeight(), grid_.preferredHeight());
-    grid_.setBounds(inner.removeFromTop(gh));
-    pane_ = pane_.withBottom(grid_.getBottom() + 12);
+    gridView_.setBounds(inner.removeFromTop(gh));
+    grid_.setSize(gridView_.getMaximumVisibleWidth(), grid_.preferredHeight());
+    pane_ = pane_.withBottom(gridView_.getBottom() + 12);
 
     area.removeFromLeft(kHelpGap);
     help_.setBounds(area.withHeight(std::min<int>(area.getHeight(), help_.preferredHeight(area.getWidth()))));
