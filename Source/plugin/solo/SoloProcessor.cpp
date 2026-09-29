@@ -41,7 +41,7 @@ struct SnapshotAction : UndoableAction {
     int getSizeInUnits() override { return int(sizeof(T)) * 2; }
 };
 
-const char* kParamIds[] = { sid::channel, sid::model, sid::tempoSource, sid::tempo, sid::notesOnTick, sid::sound, sid::volume, sid::trim, sid::hexDisplay, sid::keyMap };
+const char* kParamIds[] = { sid::channel, sid::model, sid::tempoSource, sid::tempo, sid::notesOnTick, sid::sound, sid::volume, sid::trim, sid::hexDisplay, sid::keyMap, sid::midiChannel };
 const char* kRowIds[] = { plugin::ids::instrument, plugin::ids::table, plugin::ids::level, plugin::ids::pan, plugin::ids::transpose,
                           plugin::ids::cmd1Type, plugin::ids::cmd1X, plugin::ids::cmd1Y, plugin::ids::cmd2Type, plugin::ids::cmd2X, plugin::ids::cmd2Y,
                           plugin::ids::liveFollow, plugin::ids::velocityMode, plugin::ids::keyswitch };
@@ -62,6 +62,7 @@ AudioProcessorValueTreeState::ParameterLayout SoloProcessor::createLayout()
           AudioParameterFloatAttributes().withLabel("dB").withStringFromValueFunction([](float v, int) { return String(v, 1) + " dB"; })));
     L.add(std::make_unique<AudioParameterBool>(ParameterID(sid::hexDisplay, 1), "Hex Display", false));
     L.add(std::make_unique<AudioParameterBool>(ParameterID(sid::keyMap, 1), "Key Map", true));
+    L.add(intParam(sid::midiChannel, "MIDI Channel", 0, 16, 0, [](int v, int) { return v == 0 ? String("Omni") : String(v); }));
     // The row: one lane set, every letter allowed since the channel can move;
     // Live follow on, so a change reaches the sounding note (plan section 2).
     addChannelParameters(L, sid::prefix, ChannelKind::Any, false, true);
@@ -74,7 +75,7 @@ SoloProcessor::SoloProcessor()
 {
     params.bind(apvts, sid::prefix);
     pChannel_ = raw(sid::channel); pModel_ = raw(sid::model); pTempoSource_ = raw(sid::tempoSource); pTempo_ = raw(sid::tempo);
-    pNotesOnTick_ = raw(sid::notesOnTick); pSound_ = raw(sid::sound); pVolume_ = raw(sid::volume); pTrim_ = raw(sid::trim); pKeyMap_ = raw(sid::keyMap);
+    pNotesOnTick_ = raw(sid::notesOnTick); pSound_ = raw(sid::sound); pVolume_ = raw(sid::volume); pTrim_ = raw(sid::trim); pKeyMap_ = raw(sid::keyMap); pMidiChannel_ = raw(sid::midiChannel);
     events_.reserve(2048); writes_.reserve(8192);
     cycleAt_ = [this](uint64_t f) { return renderer_.cycleForFrame(f); };
     // `new T(prvalue)` builds the bank in its heap block: 41 KB never sits
@@ -406,8 +407,10 @@ void SoloProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi)
     const bool keys = paramInt(pKeyMap_) != 0 && soloNow != nullptr;
     int lo = 0, hi = 127;
     soloNoteRange(ch, lo, hi);
+    const int only = std::clamp(paramInt(pMidiChannel_), 0, 16);   // 0: every channel of the track
     for (const auto meta : midi) {
         const MidiMessage m = meta.getMessage();
+        if (only != 0 && m.getChannel() != 0 && m.getChannel() != only) continue;
         driver::NoteEvent e;
         e.offset = uint32_t(std::max(0, meta.samplePosition)); e.channel = uint8_t(ch); e.source = driver::NoteEvent::Midi;
         if (m.isNoteOn() || m.isNoteOff()) {

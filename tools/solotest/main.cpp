@@ -215,6 +215,19 @@ int main(int argc, char** argv)
         check(!solo.driverView().view(0).active, "and ends when the pedal lifts");
     }
     {
+        // A MIDI channel chosen: the others are ignored.
+        set(solo.apvts, solo::ids::midiChannel, 2.0f);
+        juce::MidiBuffer m; m.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8) 100), 0);
+        int on = 0; run(solo, m, 8, on);
+        check(!solo.driverView().view(0).active, "a note on MIDI channel 1 is ignored when channel 2 is chosen");
+        juce::MidiBuffer m2; m2.addEvent(juce::MidiMessage::noteOn(2, 60, (juce::uint8) 100), 0);
+        run(solo, m2, 8, on);
+        check(solo.driverView().view(0).active, "and one on channel 2 plays");
+        juce::MidiBuffer off; off.addEvent(juce::MidiMessage::noteOff(2, 60), 0);
+        run(solo, off, 8, on);
+        set(solo.apvts, solo::ids::midiChannel, 0.0f);
+    }
+    {
         // The noise channel's keys: 12-127 play, the twelve below select.
         set(solo.apvts, solo::ids::channel, 3.0f);
         int lo = 0, hi = 127; solo.noteRange(lo, hi);

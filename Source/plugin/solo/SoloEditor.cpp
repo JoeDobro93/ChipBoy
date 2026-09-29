@@ -695,7 +695,7 @@ public:
 SetupPanel::SetupPanel(SoloProcessor& p) : EditorPanel(p), processor_(p)
 {
     addAndMakeVisible(scroll_);
-    auto stack = std::make_unique<Stack>(14);
+    auto stack = std::make_unique<Stack>(6);
     auto play = std::make_unique<FormGroup>("Playing", 130);
     {
         auto seg = std::make_unique<Segmented>(StringArray{ "start volume", "instrument bank", "ignored" });
@@ -717,6 +717,13 @@ SetupPanel::SetupPanel(SoloProcessor& p) : EditorPanel(p), processor_(p)
         auto t = std::make_unique<Toggle>("Keys outside the range select sounds");
         t->attach(param(processor_, solo::ids::keyMap));
         play->add("Key map", std::move(t), 300, Toggle::kHeight, "The Sounds tab lays out which key selects which sound");
+    }
+    {
+        auto st = std::make_unique<Stepper>();
+        st->setRange(0, 16, 0);
+        st->attach(param(processor_, solo::ids::midiChannel));
+        st->setTextFunction([](int v) { return v == 0 ? String("Omni") : "MIDI " + String(v); });
+        play->add("MIDI channel", std::move(st), 110, Stepper::kHeight, "Omni takes every channel of the track's MIDI; a number takes that channel only -- for a split keyboard, or two Solos on one track");
     }
     stack->add(std::move(play));
     auto time = std::make_unique<FormGroup>("Ticks", 130);

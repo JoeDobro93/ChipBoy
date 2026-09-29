@@ -6781,7 +6781,9 @@ ChipBoy Voice, which stays in the tree this round.
   and `Clock` as the main plugin and a `bank::Bank`; no song, no Player, no link, the
   renderer's noise floor and display line off. The **Channel** parameter (PU1 / PU2 / WAV /
   NOI) picks the voice; only it is gated on (NR51) and only it receives events; a change
-  flushes the channel it left (§9.1). Every MIDI channel of the track reaches it. The
+  flushes the channel it left (§9.1). Every MIDI channel of the track reaches it, or one
+  chosen by the **MIDI channel** parameter (Setup), for a split keyboard or two Solos on one
+  track. The
   ticks are the host's beat (Tempo source Host) or the own **Tempo** parameter, and free-run
   while the transport is stopped or absent, as the Clock always has (§4), so tables and
   commands run live. Quantize (`notes_on_tick`) is off by default. The **sustain pedal**

@@ -129,7 +129,10 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
 - **After the first look, three user-view rounds**: one page at a time (560 x 552), the
   editors' compact mode, the key map per channel, the scope's trace in Setup, the row's
   commands on the Commands page, program change as a recall, Load bank from a `.cbsong`,
-  and `Demo/solo/solo-demo.cbsolo` (`make_solo.py`, CTest `demo_solo_loads`).
+  and `Demo/solo/solo-demo.cbsolo` (`make_solo.py`, CTest `demo_solo_loads`); then the
+  sustain pedal, feedback on Store and empty recalls, the SOUND field's *(edited)*, the
+  playing mark in the Sounds list, Ctrl+1..8 for the pages, the Waves tools row wrapping,
+  the window's size at 100 / 125 / 150 %, and a MIDI channel choice.
 - **A record-test flake fixed on the way** (§226 amendment): a message for a row already
   fitted opened a second take and its finish cleared the row; late messages now merge onto
   the fitted grid. Seen once in a gate run, not reproduced after the fix in four runs.

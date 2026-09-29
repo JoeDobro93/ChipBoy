@@ -40,6 +40,7 @@ constexpr const char* volume = "volume";            ///< NR50, both sides
 constexpr const char* trim = "trim";
 constexpr const char* hexDisplay = "hex";
 constexpr const char* keyMap = "keymap";            ///< keys outside the range select sounds
+constexpr const char* midiChannel = "midi_channel"; ///< 0 omni, 1-16 one channel of the track's MIDI
 constexpr const char* prefix = "s_";                ///< the channel set (Parameters.h ids::)
 } // namespace solo::ids
 
@@ -197,7 +198,7 @@ private:
     // parameters
     std::atomic<float>* pChannel_ = nullptr; std::atomic<float>* pModel_ = nullptr; std::atomic<float>* pTempoSource_ = nullptr;
     std::atomic<float>* pTempo_ = nullptr; std::atomic<float>* pNotesOnTick_ = nullptr; std::atomic<float>* pSound_ = nullptr;
-    std::atomic<float>* pVolume_ = nullptr; std::atomic<float>* pTrim_ = nullptr; std::atomic<float>* pKeyMap_ = nullptr;
+    std::atomic<float>* pVolume_ = nullptr; std::atomic<float>* pTrim_ = nullptr; std::atomic<float>* pKeyMap_ = nullptr; std::atomic<float>* pMidiChannel_ = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SoloProcessor)
 };
