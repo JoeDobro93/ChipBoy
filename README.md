@@ -17,13 +17,13 @@ them.
 
 ![The ChipBoy window](docs/screenshots/main-instrument.png)
 
-## Two plugins
+## Three plugins
 
 | | |
 |---|---|
 | **ChipBoy** | The chip. One instance is one complete DMG APU: four channels, stereo out, and a **tab per open song** — each with its own instrument bank, only the active one live. Plays MIDI directly if it is the only thing loaded. |
 | **ChipBoy Solo** | One channel as a synth of its own, for a DAW track or a keyboard: the same chip and analog stage, the whole bank, the row (instrument, table, two commands) as automation lanes, sixty-four sounds recalled by a click, a parameter or a key outside the channel's range, and the same instrument, table, wave and kit editors in a small window. Reads ChipBoy's `.cbi` presets, `.chipboy` banks and the bank inside a `.cbsong`; `Demo/solo/solo-demo.cbsolo` is a set of sounds to start from (`docs/COMMANDS_AND_TEMPO.md` §227). |
-| **ChipBoy Voice** | A control surface for one channel, on its own DAW track. Produces no audio; sends notes and parameters to a linked ChipBoy instance. Superseded by the MIDI map (a track's MIDI channel straight into ChipBoy) and by Solo; still built. |
+| **ChipBoy Voice** | A control surface for one channel, on its own DAW track. Produces no audio; sends notes and parameters to a linked ChipBoy instance. With the MIDI map (a track's MIDI channel straight into ChipBoy) and Solo it is needed less often; it stays. |
 
 Four voices per ChipBoy instance, always. If you want more, load another instance -- or a Solo.
 

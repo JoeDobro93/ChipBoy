@@ -5,6 +5,10 @@ design-log section the change touches. Update this file at the end of every chan
 
 ## Read this first (2026-09-17, UI round 1) -- the chain is a timeline, the play head goes anywhere
 
+**2026-09-29: ChipBoy Solo** is the newest thing -- a third plugin, one channel on its own
+(`Source/plugin/solo/`, §227, D-UI-45, `docs/plan-solo.md`, the Done section below); the
+bank editors it shares with the main window go through `EditorHost`. Then, as before:
+
 **State.** The core (`Source/core/`) plays LSDj songs from 3.1.5 to 9.4.2 as the ROMs do (the
 parity campaign, `docs/COMMANDS_AND_TEMPO.md` §1-§221, is closed; every law in the driver names its
 section). The user's focus is now **UI and user interactions**. This round rebuilt the Tracker
@@ -120,9 +124,8 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
   parameter too; the default key layout counts down from the floor, laid per channel;
   Live follow on by default; no keyswitch octave in Solo (the key map replaces it); the
   window size follows the Tables page (a whole table in view) rather than the Main page.
-- **Voice**: superseded by the MIDI map plus Solo, as the user said; left in the tree
-  (removing it takes the link region, the Link tab, `chipboy_linktest` and the Voice
-  sources with it -- a round of its own).
+- **Voice** stays: the user uses it less than expected (the MIDI map and Solo cover the
+  cases) but does not want it retired.
 - **After the first look, three user-view rounds**: one page at a time (560 x 552), the
   editors' compact mode, the key map per channel, the scope's trace in Setup, the row's
   commands on the Commands page, program change as a recall, Load bank from a `.cbsong`,

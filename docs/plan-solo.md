@@ -195,10 +195,10 @@ panels compile without the main processor. `EditorHost::channelCount()` (4 or 1)
 
 ## 9. What this replaces, and what is left
 
-ChipBoy Voice was a remote for one channel of a ChipBoy instance on another track; with
+ChipBoy Voice is a remote for one channel of a ChipBoy instance on another track; with
 the MIDI map a track's MIDI reaches ChipBoy directly, and with Solo a channel on its own
-track has its own sound. Voice stays in the tree this round -- removing it touches the link
-region, the Link tab and `chipboy_linktest` -- and is marked for retirement in HANDOFF.
+track has its own sound. The user's word after the first build: Voice stays -- it is used
+less than expected, not retired.
 
 Left for a later round: window scaling (the main window's 125 / 150 %); MIDI learn for
 the sound slots; a Solo instance reading the *same* bank as a ChipBoy instance live (a
