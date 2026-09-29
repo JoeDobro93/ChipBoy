@@ -65,8 +65,10 @@ SoloStrip::SoloStrip(SoloProcessor& p)
     sound_.setTooltip("The sound last recalled into the row: pick one to recall it. Right-click lists them; double-click opens the Sounds tab.");
     sound_.setTextFunction([](int v) { return v == 0 ? String(CharPointer_UTF8("\xe2\x80\x93")) : ValueFormat::slot(v); });
     sound_.onChange = [this](int v) {
-        if (v >= 1) processor_.recallSound(v, true);
-        else setParam(*this, param(processor_, solo::ids::sound), 0.0f);
+        if (v < 1) { setParam(*this, param(processor_, solo::ids::sound), 0.0f); return; }
+        const auto s = processor_.solo();
+        if (s && !s->sounds[size_t(v - 1)].used) { if (onMessage) onMessage("Sound " + ValueFormat::slot(v) + " is empty: Store puts the row there"); return; }
+        processor_.recallSound(v, true);
     };
     sound_.onList = [this] { showSoundMenu(); };
     sound_.onOpen = [this] { if (onOpenSound) onOpenSound(std::max(1, sound_.value())); };
@@ -76,10 +78,11 @@ SoloStrip::SoloStrip(SoloProcessor& p)
         if (slot < 1) {
             const auto s = processor_.solo();
             for (int k = 1; k <= kSoloSounds && slot < 1; ++k) if (s && !s->sounds[size_t(k - 1)].used) slot = k;
-            if (slot < 1) return;
+            if (slot < 1) { if (onMessage) onMessage("Every sound slot is taken: clear one in the Sounds page"); return; }
             setParam(*this, param(processor_, solo::ids::sound), float(slot));
         }
         processor_.storeSound(slot);
+        if (const auto s = processor_.solo(); s && onMessage) onMessage("Stored the row as sound " + ValueFormat::slot(slot) + " " + String(CharPointer_UTF8(s->sounds[size_t(slot - 1)].name.c_str())));
     };
 
     instrument_.setTooltip("The instrument the row plays. Right-click lists the bank, double-click opens it.");
@@ -397,14 +400,26 @@ SoundsPanel::SoundsPanel(SoloProcessor& p)
         addAndMakeVisible(c);
     list_.setKindColours([](int) { return colours::text; });
     list_.onSelect = [this](int slot) { slot_ = slot; contextChanged(); };
-    list_.onDoubleClick = [this](int slot) { slot_ = slot; processor_.recallSound(slot, true); };
+    list_.onDoubleClick = [this](int slot) {
+        slot_ = slot;
+        const auto s = processor_.solo();
+        if (s && !s->sounds[size_t(slot - 1)].used) { message("Sound " + ValueFormat::slot(slot) + " is empty: Store here puts the row in it"); return; }
+        processor_.recallSound(slot, true);
+    };
     list_.onRename = [this](int slot, const String& name) {
         processor_.editSolo("Rename sound " + String(slot), [slot, name](SoloState& s) { auto& snd = s.sounds[size_t(slot - 1)]; snd.used = true; snd.name = name.toStdString(); });
     };
     recallBtn_.setTooltip("The sound's row into the main window (a double click on a row does the same)");
-    recallBtn_.onClick = [this] { processor_.recallSound(slot_, true); };
+    recallBtn_.onClick = [this] {
+        const auto s = processor_.solo();
+        if (s && !s->sounds[size_t(slot_ - 1)].used) { message("Sound " + ValueFormat::slot(slot_) + " is empty: Store here puts the row in it"); return; }
+        processor_.recallSound(slot_, true);
+    };
     storeBtn_.setTooltip("The row as it stands -- instrument, table, the two commands -- into this slot");
-    storeBtn_.onClick = [this] { processor_.storeSound(slot_); };
+    storeBtn_.onClick = [this] {
+        processor_.storeSound(slot_);
+        if (const auto s = processor_.solo()) message("Stored the row as sound " + ValueFormat::slot(slot_) + " " + String(CharPointer_UTF8(s->sounds[size_t(slot_ - 1)].name.c_str())));
+    };
     clearBtn_.onClick = [this] { processor_.editSolo("Clear sound " + String(slot_), [this](SoloState& s) { s.sounds[size_t(slot_ - 1)] = SoloSound{}; }); };
     defaultKeysBtn_.setTooltip("The keys below the floor counting down are sounds 1, 2, 3 ...; the keys above the ceiling carry on from there");
     defaultKeysBtn_.onClick = [this] { const int ch = processor_.channel(); processor_.editSolo("Default key layout", [ch](SoloState& s) { soloDefaultKeyMap(ch, s.keyMaps[size_t(ch)]); }); };
@@ -916,6 +931,10 @@ SoloEditor::SoloEditor(SoloProcessor& p)
         content_.addChildComponent(*panel);
     }
     strip_.onOpenSlot = [this](SlotKind kind, int slot) { openSlot(kind, slot); };
+    strip_.onMessage = [this](const String& text) { showMessage(text); };
+    tempo_.setTooltip("The tempo the ticks run at; click to open Setup, where the source and the own tempo are");
+    tempo_.setInterceptsMouseClicks(true, false);
+    tempo_.addMouseListener(this, false);
     strip_.onOpenSound = [this](int slot) { showTab(Sounds); panels_[Sounds]->selectSlot(slot); };
     tabs_->onChange = [this](int panel) { showTab(panel); };
 
@@ -1132,6 +1151,11 @@ void SoloEditor::redo()
     const String what = history.redoName();
     if (!history.redo()) return;
     showMessage(what.isEmpty() ? String("Redone") : "Redone: " + what);
+}
+
+void SoloEditor::mouseUp(const MouseEvent& e)
+{
+    if (e.eventComponent == &tempo_ && e.mouseWasClicked()) showTab(Setup);
 }
 
 bool SoloEditor::keyPressed(const KeyPress& key)

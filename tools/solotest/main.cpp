@@ -178,6 +178,63 @@ int main(int argc, char** argv)
         check(cmdFromChoice(int(get(solo.apvts, solo.channelParamId(0, ids::cmd2Type)))) == bank::Cmd::V && int(get(solo.apvts, solo.channelParamId(0, ids::cmd2X))) == 8, "a library entry goes into CMD 2");
     }
 
+    {
+        // Recalling a sound that keeps the instrument and changes a command
+        // never retriggers the note (the brief's law): no NRx4 trigger write
+        // after the recall, and the command lands at the next tick.
+        set(solo.apvts, inst, 1.0f);
+        set(solo.apvts, solo.channelParamId(0, ids::cmd1Type), 0.0f);
+        set(solo.apvts, solo.channelParamId(0, ids::cmd2Type), 0.0f);
+        solo.storeSound(3, "same inst, vib");
+        solo.editSolo("vib", [](SoloState& s) { s.sounds[2].cmd1 = bank::Command{ bank::Cmd::V, 6, 4, 0 }; });
+        juce::MidiBuffer m; m.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8) 100), 0);
+        int on = 0; run(solo, m, 8, on);
+        std::vector<driver::RegWrite> log;
+        solo.setWriteLog(&log);
+        solo.recallSound(3, true);
+        run(solo, {}, 12, on);
+        solo.setWriteLog(nullptr);
+        int triggers = 0;
+        for (const auto& w : log) if (w.addr == 0xFF14 && (w.value & 0x80)) ++triggers;
+        check(triggers == 0 && solo.driverView().view(0).active, "a recall that keeps the instrument does not retrigger the held note");
+        check(solo.driverView().slot(0, 0).cmd == bank::Cmd::V, "and its command is in the slot");
+        juce::MidiBuffer off; off.addEvent(juce::MidiMessage::noteOff(1, 60), 0);
+        run(solo, off, 8, on);
+        pump(250);
+    }
+    {
+        // The sustain pedal holds a released note until it lifts.
+        juce::MidiBuffer m;
+        m.addEvent(juce::MidiMessage::controllerEvent(1, 64, 127), 0);
+        m.addEvent(juce::MidiMessage::noteOn(1, 62, (juce::uint8) 100), 1);
+        m.addEvent(juce::MidiMessage::noteOff(1, 62), 100);
+        int on = 0; run(solo, m, 20, on);
+        check(solo.driverView().view(0).active && solo.driverView().view(0).note == 62, "a note released under the pedal keeps sounding");
+        juce::MidiBuffer lift; lift.addEvent(juce::MidiMessage::controllerEvent(1, 64, 0), 0);
+        run(solo, lift, 20, on);
+        check(!solo.driverView().view(0).active, "and ends when the pedal lifts");
+    }
+    {
+        // The noise channel's keys: 12-127 play, the twelve below select.
+        set(solo.apvts, solo::ids::channel, 3.0f);
+        int lo = 0, hi = 127; solo.noteRange(lo, hi);
+        const auto s = solo.solo();
+        check(lo == 12 && hi == 127 && s->keyMaps[3][11] == 1 && s->keyMaps[3][0] == 12, "noise: keys 0-11 select sounds 12 down to 1... counting down from the floor");
+        set(solo.apvts, solo::ids::channel, 0.0f);
+        int on = 0; run(solo, {}, 4, on);
+    }
+    {
+        // A table change under Live follow starts the table on the held note.
+        juce::MidiBuffer m; m.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8) 100), 0);
+        int on = 0; run(solo, m, 8, on);
+        set(solo.apvts, solo.channelParamId(0, ids::table), 1.0f);
+        run(solo, {}, 8, on);
+        check(solo.driverView().view(0).tableSlot == 1, "a Table change reaches the held note");
+        set(solo.apvts, solo.channelParamId(0, ids::table), 0.0f);
+        juce::MidiBuffer off; off.addEvent(juce::MidiMessage::noteOff(1, 60), 0);
+        run(solo, off, 8, on);
+    }
+
     // --- state and file round trips -------------------------------------------
     {
         juce::MemoryBlock state;

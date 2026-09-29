@@ -316,6 +316,20 @@ sound still audible 100 ms after all-notes-off, and prints its seed on failure
 ![The Tables tab, lighting a running table's row](docs/screenshots/main-tables.png)
 ![The Waves tab and its synth](docs/screenshots/main-waves.png)
 
+### Playing ChipBoy Solo
+
+Put **ChipBoy Solo** on a track (or open its standalone). The Main page is the channel's
+scope and the row it plays: pick the channel and the model in the header, an instrument in
+INST, a table, two commands. **Store** keeps that row as a sound; the SOUND field, the
+Sounds page, the *Sound* automation lane, a MIDI program change, or a key outside the
+channel's range recalls one -- the key under the lowest playable note is sound 1, the next
+down sound 2, and the Sounds page lays them out. Every change reaches the note that is
+sounding (Live follow); only a new instrument or a new note retriggers. The Instrument,
+Tables, Waves and Kits pages are ChipBoy's editors; *Load preset…* on the Instrument page
+takes a `.cbi`, Setup's *Load bank…* a `.chipboy` bank or the bank inside a `.cbsong`, and
+*Save… / Load…* keep the whole instance as a `.cbsolo`. `Demo/solo/solo-demo.cbsolo` is a
+set of sounds to start from. The sustain pedal holds notes, the mod wheel is vibrato depth.
+
 ## Building the core and its tests
 
 The emulation core has no dependency on JUCE and builds on its own. Test ROMs are

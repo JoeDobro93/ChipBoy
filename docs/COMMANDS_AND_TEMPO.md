@@ -6784,7 +6784,11 @@ ChipBoy Voice, which stays in the tree this round.
   flushes the channel it left (§9.1). Every MIDI channel of the track reaches it. The
   ticks are the host's beat (Tempo source Host) or the own **Tempo** parameter, and free-run
   while the transport is stopped or absent, as the Clock always has (§4), so tables and
-  commands run live. Quantize (`notes_on_tick`) is off by default.
+  commands run live. Quantize (`notes_on_tick`) is off by default. The **sustain pedal**
+  (CC 64) holds a note released under it until the pedal lifts, unless the key is pressed
+  again meanwhile (the driver has no pedal of its own; the mod wheel is vibrato depth and
+  CC 7 a level, as in ChipBoy). A channel change or an all-notes-off drops what the pedal
+  held.
 - **The row is the parameters**: Instrument, Table, Level, Pan, Transpose, CMD 1, CMD 2
   (prefix `s_`, `ChannelKind::Any`), Velocity mode, and **Live follow on by default** --
   the brief's law that a change reaches the sounding note at once is Live follow (§3): an

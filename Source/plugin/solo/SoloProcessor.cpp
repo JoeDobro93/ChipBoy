@@ -358,6 +358,7 @@ void SoloProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi)
     if (prevChannel_ >= 0 && ch != prevChannel_) {
         driver::NoteEvent e; e.kind = driver::NoteEvent::AllNotesOff; e.channel = uint8_t(prevChannel_); e.offset = 0;
         events_.push_back(e);
+        sustained_.fill(false); keyDown_.fill(false);
     }
     prevChannel_ = ch;
     driver_.setGateMask(1u << ch);
@@ -416,13 +417,29 @@ void SoloProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi)
                 if (m.isNoteOn() && m.getVelocity() > 0 && slot >= 1) recallOnAudioThread(slot, soloNow, note);
                 continue;                                  // a mapped key never sounds, nor does its release
             }
-            if (m.isNoteOn()) { e.kind = driver::NoteEvent::NoteOn; e.a = uint8_t(note); e.b = uint8_t(m.getVelocity()); }
+            const bool on = m.isNoteOn() && m.getVelocity() > 0;
+            keyDown_[size_t(note & 127)] = on;
+            if (on) { sustained_[size_t(note & 127)] = false; e.kind = driver::NoteEvent::NoteOn; e.a = uint8_t(note); e.b = uint8_t(m.getVelocity()); }
+            else if (sustain_) { sustained_[size_t(note & 127)] = true; continue; }   // the pedal holds it
             else { e.kind = driver::NoteEvent::NoteOff; e.a = uint8_t(note); }
         }
         else if (m.isProgramChange()) { if (soloNow) recallOnAudioThread(m.getProgramChangeNumber() + 1, soloNow, kProgramKey); continue; }   // a foot controller's way to a sound
         else if (m.isPitchWheel()) { e.kind = driver::NoteEvent::PitchBend; e.value = int16_t(m.getPitchWheelValue() - 8192); }
+        else if (m.isSustainPedalOn()) { sustain_ = true; continue; }
+        else if (m.isSustainPedalOff()) {
+            // The pedal lifts: every note it was holding ends now, in order.
+            sustain_ = false;
+            for (int k = 0; k < 128; ++k) {
+                if (!sustained_[size_t(k)]) continue;
+                sustained_[size_t(k)] = false;
+                if (keyDown_[size_t(k)]) continue;
+                driver::NoteEvent off = e; off.kind = driver::NoteEvent::NoteOff; off.a = uint8_t(k);
+                events_.push_back(off);
+            }
+            continue;
+        }
         else if (m.isController()) { e.kind = driver::NoteEvent::Control; e.a = uint8_t(m.getControllerNumber()); e.b = uint8_t(m.getControllerValue()); }
-        else if (m.isAllNotesOff() || m.isAllSoundOff()) { e.kind = driver::NoteEvent::AllNotesOff; }
+        else if (m.isAllNotesOff() || m.isAllSoundOff()) { e.kind = driver::NoteEvent::AllNotesOff; sustain_ = false; sustained_.fill(false); keyDown_.fill(false); }
         else continue;
         events_.push_back(e);
     }

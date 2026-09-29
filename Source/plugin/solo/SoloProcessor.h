@@ -168,6 +168,10 @@ private:
     std::atomic<uint32_t> recallApplied_{ 0 };   ///< the serial the timer last wrote into the parameters
     uint32_t recallSeen_ = 0, recallSerialAudio_ = 0;
     std::atomic<int> lastNote_{ -1 }, lastKey_{ -1 };
+    /// The sustain pedal (CC 64): a note released under it is held until the
+    /// pedal lifts, unless it is pressed again meanwhile.
+    bool sustain_ = false;
+    std::array<bool, 128> keyDown_{}, sustained_{};
     std::atomic<bool> playing_{ false }, hostTempo_{ false };
     std::atomic<double> tempo_{ 120.0 };
 

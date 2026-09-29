@@ -38,6 +38,7 @@ public:
     void setScopeTrace(ui::ScopeView::Trace t) { scope_.setTrace(t); }
     std::function<void(ui::SlotKind, int slot)> onOpenSlot;
     std::function<void(int slot)> onOpenSound;
+    std::function<void(const juce::String&)> onMessage;
     void paint(juce::Graphics&) override;
     void resized() override;
 private:
@@ -169,6 +170,7 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
     bool keyPressed(const juce::KeyPress&) override;
+    void mouseUp(const juce::MouseEvent&) override;
 
 private:
     class TabBar;
