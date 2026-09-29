@@ -373,6 +373,10 @@ if(CHIPBOY_BUILD_PLUGIN)
     chipboy_configure_plugin(chipboy_solotest)
     set(CHIPBOY_MODAL_LOOPS 0)
     add_test(NAME chipboy_solotest COMMAND chipboy_solotest --out "${CMAKE_CURRENT_BINARY_DIR}/solotest")
+    # The Solo demo file (section 227): it loads, every sound names an
+    # instrument of its bank, and the first mapped key plays.
+    add_test(NAME demo_solo_loads COMMAND chipboy_solotest --out "${CMAKE_CURRENT_BINARY_DIR}/solotest"
+             --load "${CMAKE_CURRENT_SOURCE_DIR}/Demo/solo/solo-demo.cbsolo")
 
     # --- chipboy_fuzz: random songs through the whole plugin, to find the
     # crash nobody would have written by hand (section 28) -------------------

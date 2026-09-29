@@ -107,11 +107,16 @@ bool soloStateFromVar(const var& v, SoloState& out)
             c.name = co->getProperty("name").toString().toStdString();
             c.cmd = commandFromVar(co->getProperty("cmd"));
         }
-    if (auto* maps = o->getProperty("keyMaps").getArray())
+    if (auto* maps = o->getProperty("keyMaps").getArray()) {
         for (int ch = 0; ch < 4 && ch < maps->size(); ++ch)
             if (auto* keys = (*maps)[ch].getArray())
                 for (int n = 0; n < 128 && n < keys->size(); ++n)
                     out.keyMaps[size_t(ch)][size_t(n)] = uint8_t(std::clamp(int((*keys)[n]), 0, kSoloSounds));
+    } else {
+        // A file that says nothing about keys -- a generated one -- takes
+        // the default layout, as a new instance does.
+        for (int ch = 0; ch < 4; ++ch) soloDefaultKeyMap(ch, out.keyMaps[size_t(ch)]);
+    }
     return true;
 }
 

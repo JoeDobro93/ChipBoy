@@ -333,6 +333,16 @@ identical write for write. Play the pair with **Tempo source Host** at the song'
 --play-midi midi-map/midi-map-demo.cbsong midi-map/midi-map-demo.mid 8` plays the pair and
 measures every channel; CTest runs it as `demo_midimap_plays`.
 
+## The ChipBoy Solo demo
+
+`solo/solo-demo.cbsolo` (`../docs/COMMANDS_AND_TEMPO.md` §227) is a Solo instance in a file:
+the MIDI map demo's bank, eight **sounds** that use it (a lead with vibrato, a pluck, a bass, an
+arpeggio through a table, a fading lead, a pluck dropping octaves, a retriggered lead, a pluck
+cut at six ticks), five library commands, and the row set to the first sound. Load it from
+Solo's Setup page (*Load Solo file…*), play C-2 and up on PU1; the keys under C-2 recall the
+sounds -- B-1 is sound 1, A#1 sound 2, and so on down -- and so does a MIDI program change.
+CTest loads it as `demo_solo_loads`.
+
 ## Regenerating
 
 ```
@@ -341,6 +351,7 @@ python3 tools/demo/make_demo.py --paramdump build-plugin/chipboy_paramdump_artef
 python3 tools/demo/make_songs.py            # the six songs under songs/
 python3 tools/demo/make_midimap.py          # the MIDI map demo under midi-map/
 python3 tools/demo/make_groovecases.py      # the groove-fit cases under midi-map/
+python3 tools/demo/make_solo.py             # the ChipBoy Solo demo under solo/
 python3 tools/demo/make_songs.py --list     # what they are, and which bars each channel plays in
 ```
 

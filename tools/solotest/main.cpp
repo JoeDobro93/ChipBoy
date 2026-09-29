@@ -5,6 +5,7 @@
 // and the bank; a channel change silences the channel it left.
 //
 //   chipboy_solotest [--out DIR]
+//   chipboy_solotest --load FILE.cbsolo     load a Solo file and say what it holds
 #include "plugin/solo/SoloProcessor.h"
 
 #include <cmath>
@@ -56,9 +57,40 @@ int main(int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI gui;
     juce::File outDir = juce::File::getCurrentWorkingDirectory().getChildFile("solotest");
-    for (int i = 1; i < argc; ++i)
+    juce::File loadFile;
+    for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) outDir = juce::File::getCurrentWorkingDirectory().getChildFile(argv[++i]);
+        else if (std::strcmp(argv[i], "--load") == 0 && i + 1 < argc) loadFile = juce::File::getCurrentWorkingDirectory().getChildFile(argv[++i]);
+    }
     outDir.createDirectory();
+    if (loadFile != juce::File()) {
+        // A Solo file, as the Setup page loads it: the bank, the sounds, the
+        // library, the key maps and the row; every sound names an instrument
+        // the bank holds, and a mapped key plays the first sound.
+        SoloProcessor solo;
+        solo.prepareToPlay(48000.0, 512);
+        juce::String report;
+        const bool loaded = solo.loadSoloFile(loadFile, report);
+        check(loaded, ("loads: " + report).toRawUTF8());
+        const auto s = solo.solo();
+        const auto b = solo.bank();
+        int sounds = 0, commands = 0, named = 0;
+        for (const auto& snd : s->sounds) if (snd.used) { ++sounds; if (snd.inst == 0 || (b && b->instrument(snd.inst) != nullptr)) ++named; }
+        for (const auto& c : s->commands) if (c.used) ++commands;
+        std::printf("  %d sounds, %d library entries, channel %d, instrument %d\n", sounds, commands, solo.channel(), int(get(solo.apvts, solo.channelParamId(0, ids::instrument))));
+        check(sounds >= 1 && named == sounds, "every sound names an instrument the bank holds");
+        int lo = 0, hi = 127; solo.noteRange(lo, hi);
+        check(s->keyMaps[size_t(solo.channel())][size_t(lo - 1)] == 1, "the key under the floor recalls sound 1");
+        juce::MidiBuffer m;
+        m.addEvent(juce::MidiMessage::noteOn(1, lo - 1, (juce::uint8) 100), 0);
+        m.addEvent(juce::MidiMessage::noteOn(1, lo + 24, (juce::uint8) 100), 0);
+        int on = 0;
+        const float peak = run(solo, m, 40, on);
+        check(peak > 0.01f && solo.driverView().view(solo.channel()).instrument == s->sounds[0].inst, "a mapped key and a note: the note plays sound 1's instrument");
+        if (failures) std::printf("FAILED %d checks\n", failures);
+        else std::printf("PASSED %s\n", loadFile.getFileName().toRawUTF8());
+        return failures ? 1 : 0;
+    }
 
     SoloProcessor solo;
     solo.prepareToPlay(48000.0, 512);

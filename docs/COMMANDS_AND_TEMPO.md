@@ -6850,12 +6850,16 @@ ChipBoy Voice, which stays in the tree this round.
   Documents/ChipBoy/Solo; a load is one undo step. *Load bank…* takes a `.chipboy` bank
   file or the bank inside a `.cbsong` (format 5 and later carry one, §18), which is where a
   ChipBoy user's sounds usually are. Loading a project clears the history, as ChipBoy does.
+- **The demo** (`tools/demo/make_solo.py` → `Demo/solo/solo-demo.cbsolo`): the MIDI map
+  demo's bank, eight sounds over it, five library entries, the row on the first sound; a
+  file that says nothing about keys takes the default layout for every channel.
 - **Checks.** `chipboy_solotest`: every channel sounds; the floor and the default key
   layout; a mapped key and a note in one block sound with the recalled instrument and the
   parameter follows; the Sound parameter recalls; a hand recall is one undo step; the
   library into a slot; the state and a `.cbsolo` round-trip sounds, library, key map,
   bank and row; a channel change silences the channel left; a held note reloads under
-  Live follow. `chipboy_uishot --solo DIR` shoots every tab (`docs/screenshots/solo-*.png`).
+  Live follow; `--load FILE` loads a Solo file and plays its first mapped key (the CTest
+  `demo_solo_loads`). `chipboy_uishot --solo DIR` shoots every tab (`docs/screenshots/solo-*.png`).
 - **Left for later**: window scaling; MIDI learn for the slots; a live shared bank between a
   Solo and a ChipBoy instance (a `.cbsolo` or a bank file carries it across); retiring
   ChipBoy Voice (its link region, the Link tab and `chipboy_linktest` go with it).
