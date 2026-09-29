@@ -335,6 +335,28 @@ int main(int argc, char** argv)
         juce::MidiBuffer off; off.addEvent(juce::MidiMessage::noteOff(1, 60), 0);
         run(solo, off, 8, on);
     }
+    // --- the bend range: the wheel reaches further at 12 than at 2 --------------
+    {
+        auto bentPeriod = [&](float range) {
+            set(solo.apvts, solo::ids::bendRange, range);
+            juce::MidiBuffer m;
+            m.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8) 100), 0);
+            m.addEvent(juce::MidiMessage::pitchWheel(1, 16383), 32);
+            int on = 0; run(solo, m, 8, on);
+            const int period = int(solo.driverView().view(0).period);
+            juce::MidiBuffer off; off.addEvent(juce::MidiMessage::pitchWheel(1, 8192), 0); off.addEvent(juce::MidiMessage::noteOff(1, 60), 16);
+            run(solo, off, 8, on);
+            return period;
+        };
+        const int at2 = bentPeriod(2.0f), at12 = bentPeriod(12.0f), plain = [&] {
+            juce::MidiBuffer m; m.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8) 100), 0);
+            int on = 0; run(solo, m, 8, on);
+            const int period = int(solo.driverView().view(0).period);
+            juce::MidiBuffer off; off.addEvent(juce::MidiMessage::noteOff(1, 60), 0); run(solo, off, 8, on);
+            return period; }();
+        check(at2 > plain && at12 > at2, "a full bend raises the period register more at 12 semitones than at 2");
+        set(solo.apvts, solo::ids::bendRange, 2.0f);
+    }
     // --- Stop: every note off, the pedal too -----------------------------------
     {
         juce::MidiBuffer m;

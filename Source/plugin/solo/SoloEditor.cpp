@@ -714,11 +714,19 @@ void CommandsPanel::resized()
 
 namespace {
 /// Two buttons on one form row.
-class ButtonPair : public Component {
+/// Three buttons on one row of the form, equal widths.
+class ButtonRow : public Component {
 public:
-    ButtonPair(const String& a, const String& b) : first(a), second(b) { addAndMakeVisible(first); addAndMakeVisible(second); }
-    TextButton first, second;
-    void resized() override { auto r = getLocalBounds(); first.setBounds(r.removeFromLeft((r.getWidth() - 6) / 2)); r.removeFromLeft(6); second.setBounds(r); }
+    ButtonRow(const String& a, const String& b, const String& c) : first(a), second(b), third(c) { addAndMakeVisible(first); addAndMakeVisible(second); addAndMakeVisible(third); }
+    TextButton first, second, third;
+    void resized() override
+    {
+        auto r = getLocalBounds();
+        const int w = (r.getWidth() - 12) / 3;
+        first.setBounds(r.removeFromLeft(w)); r.removeFromLeft(6);
+        second.setBounds(r.removeFromLeft(w)); r.removeFromLeft(6);
+        third.setBounds(r);
+    }
 };
 } // namespace
 
@@ -754,6 +762,13 @@ SetupPanel::SetupPanel(SoloProcessor& p) : EditorPanel(p), processor_(p)
         st->attach(param(processor_, solo::ids::midiChannel));
         st->setTextFunction([](int v) { return v == 0 ? String("Omni") : "MIDI " + String(v); });
         play->add("MIDI channel", std::move(st), 110, Stepper::kHeight, "Omni takes every channel of the track's MIDI; a number takes that channel only -- for a split keyboard, or two Solos on one track");
+    }
+    {
+        auto st = std::make_unique<Stepper>();
+        st->setRange(1, 24, 2);
+        st->attach(param(processor_, solo::ids::bendRange));
+        st->setTextFunction([](int v) { return String(v) + " st"; });
+        play->add("Bend range", std::move(st), 110, Stepper::kHeight, "The pitch wheel's reach at full deflection, in semitones; the mod wheel is vibrato depth");
     }
     stack->add(std::move(play));
     auto time = std::make_unique<FormGroup>("Ticks", 130);
@@ -809,15 +824,15 @@ SetupPanel::SetupPanel(SoloProcessor& p) : EditorPanel(p), processor_(p)
     stack->add(std::move(out));
     auto files = std::make_unique<FormGroup>("Files", 130);
     {
-        auto pair = std::make_unique<ButtonPair>("Save" + String(CharPointer_UTF8("\xe2\x80\xa6")), "Load" + String(CharPointer_UTF8("\xe2\x80\xa6")));
-        pair->first.onClick = [this] { saveFile(); };
-        pair->second.onClick = [this] { loadFile(); };
-        files->add("Solo file", std::move(pair), 240, 24, "The bank, the sounds, the library, the key maps, the channel and the row as a .cbsolo file; loading one replaces all of that, as one undo step");
-    }
-    {
-        auto b = std::make_unique<TextButton>("Load bank" + String(CharPointer_UTF8("\xe2\x80\xa6")));
-        b->onClick = [this] { loadBankFile(); };
-        files->add("The bank", std::move(b), 160, 24, "A ChipBoy bank file (.chipboy), or the bank inside a song file (.cbsong), replaces the instruments, tables, waves and kits; the Instrument page loads a single .cbi preset");
+        const String more = String(CharPointer_UTF8("\xe2\x80\xa6"));
+        auto row = std::make_unique<ButtonRow>("Save" + more, "Load" + more, "Load bank" + more);
+        row->first.onClick = [this] { saveFile(); };
+        row->second.onClick = [this] { loadFile(); };
+        row->third.onClick = [this] { loadBankFile(); };
+        row->first.setTooltip("The bank, the sounds, the library, the key maps, the channel and the row as a .cbsolo file");
+        row->second.setTooltip("A .cbsolo file replaces the bank, the sounds, the library, the key maps, the channel and the row, as one undo step");
+        row->third.setTooltip("A ChipBoy bank file (.chipboy), or the bank inside a song file (.cbsong), replaces the instruments, tables, waves and kits; the Instrument page loads a single .cbi preset");
+        files->add("Solo file", std::move(row), 340, 24, "Save and load the whole instance as a .cbsolo file, or take a bank from a ChipBoy bank or song file");
     }
     stack->add(std::move(files));
     scroll_.setContent(std::move(stack));

@@ -137,7 +137,9 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
   out from the right (the frame readout keeps its width, the name takes the rest, no
   FRAME label), the Kits page's table hint shortened, and the Main page's note line
   reduced to the range and the note (the recall is the status line's), and a **Stop**
-  button on the Main page (every note off, the pedal too; `stopNotes`, checked).
+  button on the Main page (every note off, the pedal too; `stopNotes`, checked), a
+  **Bend range** parameter (`Driver::setBendRange`, 2 st unless set; checked) with the
+  Setup page's files on one row to make room for it.
 - **A record-test flake fixed on the way** (§226 amendment): a message for a row already
   fitted opened a second take and its finish cleared the row; a second take now re-fits
   the row over the union of both takes' messages. The groove cases record the same with

@@ -6787,7 +6787,9 @@ ChipBoy Voice, which stays in the tree this round.
   NOI) picks the voice; only it is gated on (NR51) and only it receives events; a change
   flushes the channel it left (§9.1). Every MIDI channel of the track reaches it, or one
   chosen by the **MIDI channel** parameter (Setup), for a split keyboard or two Solos on one
-  track. The
+  track. The pitch wheel's reach is the **Bend range** parameter (1-24 semitones, 2 as
+  MIDI's usual: `Driver::setBendRange`, per channel, read when the wheel moves; ChipBoy
+  never sets it, so its bends are as they were). The
   ticks are the host's beat (Tempo source Host) or the own **Tempo** parameter, and free-run
   while the transport is stopped or absent, as the Clock always has (§4), so tables and
   commands run live. Quantize (`notes_on_tick`) is off by default. The **sustain pedal**

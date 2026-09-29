@@ -3561,7 +3561,7 @@ void Driver::handleEvent(NoteEvent& e)
             noteOff(ch, e.a, e.mapped);
             if (e.source == NoteEvent::Tracker) applyCellColumns(ch, e);
             break;
-        case NoteEvent::PitchBend: v.bend = double(e.value) / 8192.0 * 2.0; if (v.active) writePeriod(ch, false); break;
+        case NoteEvent::PitchBend: v.bend = double(e.value) / 8192.0 * bendRange_[size_t(ch & 3)]; if (v.active) writePeriod(ch, false); break;
         case NoteEvent::Control:
             if (e.a == 1) { v.vibDepth = uint8_t(e.b / 8); v.vibOn = e.b != 0; }   // the mod wheel is vibrato depth
             // CC7 is a level change: zombie-mode writes, no trigger (26).

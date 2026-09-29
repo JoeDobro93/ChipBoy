@@ -129,6 +129,9 @@ public:
     /// on the next tick, and pops like the hardware does.
     void setGateMask(uint32_t enabledMask) { const uint8_t m = uint8_t(enabledMask & 15); if (m != gateMask_) { gateMask_ = m; gateDirty_ = true; } }
     uint32_t gateMask() const { return gateMask_; }
+    /// The pitch wheel's reach at full deflection, in semitones (2 unless
+    /// set: MIDI's usual). Read when the wheel moves.
+    void setBendRange(int ch, double semitones) { bendRange_[size_t(ch & 3)] = semitones; }
 
     void setParams(int ch, const ChannelParams& p) { params_[size_t(ch & 3)] = p; }
     const ChannelParams& params(int ch) const { return params_[size_t(ch & 3)]; }
@@ -700,6 +703,7 @@ private:
     const tracker::Song* song_ = nullptr;
     std::array<const bank::Instrument*, 4> local_{};
     uint32_t recordMask_ = 0;
+    std::array<double, 4> bendRange_{ 2.0, 2.0, 2.0, 2.0 };
     uint8_t gateMask_ = 15;
     bool gateDirty_ = false;
     Console model_ = Console::DMG;
