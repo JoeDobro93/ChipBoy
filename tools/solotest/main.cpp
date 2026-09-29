@@ -6,11 +6,16 @@
 //
 //   chipboy_solotest [--out DIR]
 //   chipboy_solotest --load FILE.cbsolo     load a Solo file and say what it holds
+//   chipboy_solotest --fuzz BLOCKS [--seed N]   random notes, keys, program changes, parameter
+//                                            and channel moves, state reloads: the output stays
+//                                            finite and nothing hangs
 #include "plugin/solo/SoloProcessor.h"
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <random>
 
 using namespace chipboy;
 using namespace chipboy::plugin;
@@ -58,11 +63,53 @@ int main(int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI gui;
     juce::File outDir = juce::File::getCurrentWorkingDirectory().getChildFile("solotest");
     juce::File loadFile;
+    int fuzzBlocks = 0; unsigned seed = 1;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) outDir = juce::File::getCurrentWorkingDirectory().getChildFile(argv[++i]);
         else if (std::strcmp(argv[i], "--load") == 0 && i + 1 < argc) loadFile = juce::File::getCurrentWorkingDirectory().getChildFile(argv[++i]);
+        else if (std::strcmp(argv[i], "--fuzz") == 0 && i + 1 < argc) fuzzBlocks = std::max(1, std::atoi(argv[++i]));
+        else if (std::strcmp(argv[i], "--seed") == 0 && i + 1 < argc) seed = unsigned(std::strtoul(argv[++i], nullptr, 10));
     }
     outDir.createDirectory();
+    if (fuzzBlocks > 0) {
+        std::mt19937 rng(seed);
+        auto pick = [&rng](int n) { return int(rng() % unsigned(std::max(1, n))); };
+        SoloProcessor solo;
+        solo.prepareToPlay(48000.0, 512);
+        for (int k = 1; k <= 8; ++k) { set(solo.apvts, solo.channelParamId(0, ids::instrument), float(1 + pick(16))); solo.storeSound(k); }
+        juce::AudioBuffer<float> buf(2, 512);
+        juce::MemoryBlock state;
+        int notes = 0, recalls = 0, reloads = 0;
+        bool finite = true;
+        for (int b = 0; b < fuzzBlocks && finite; ++b) {
+            juce::MidiBuffer midi;
+            const int events = pick(4);
+            for (int e = 0; e < events; ++e) {
+                const int at = pick(512), what = pick(10), note = pick(128);
+                if (what < 4) { midi.addEvent(juce::MidiMessage::noteOn(1 + pick(2), note, (juce::uint8) (1 + pick(127))), at); ++notes; }
+                else if (what < 7) midi.addEvent(juce::MidiMessage::noteOff(1 + pick(2), note), at);
+                else if (what == 7) midi.addEvent(juce::MidiMessage::programChange(1, pick(128)), at);
+                else if (what == 8) midi.addEvent(juce::MidiMessage::controllerEvent(1, pick(2) ? 1 : 64, pick(128)), at);
+                else midi.addEvent(juce::MidiMessage::pitchWheel(1, pick(16384)), at);
+            }
+            if (pick(20) == 0) set(solo.apvts, solo::ids::channel, float(pick(4)));
+            if (pick(10) == 0) set(solo.apvts, solo.channelParamId(0, ids::instrument), float(pick(129)));
+            if (pick(10) == 0) { set(solo.apvts, solo::ids::sound, float(pick(9))); ++recalls; }
+            if (pick(10) == 0) set(solo.apvts, solo.channelParamId(0, ids::table), float(pick(65)));
+            if (pick(8) == 0) { const int slot = pick(2); set(solo.apvts, solo.channelParamId(0, slot ? ids::cmd2Type : ids::cmd1Type), float(pick(commandChoices().size()))); set(solo.apvts, solo.channelParamId(0, slot ? ids::cmd2X : ids::cmd1X), float(pick(256))); }
+            if (pick(40) == 0) set(solo.apvts, solo::ids::model, float(pick(3)));
+            if (pick(40) == 0) set(solo.apvts, solo::ids::tempoSource, float(pick(2)));
+            if (pick(60) == 0) set(solo.apvts, solo::ids::tempo, float(40 + pick(256)));
+            if (pick(200) == 0) { state.reset(); solo.getStateInformation(state); solo.setStateInformation(state.getData(), int(state.getSize())); ++reloads; }
+            if (pick(5) == 0) pump(1);
+            solo.processBlock(buf, midi);
+            for (int c = 0; c < 2 && finite; ++c) for (int i = 0; i < 512; ++i) if (!std::isfinite(buf.getSample(c, i))) { finite = false; std::printf("  block %d: sample %d of channel %d is not finite\n", b, i, c); break; }
+        }
+        std::printf("  %d blocks, %d notes, %d recalls, %d state reloads, seed %u\n", fuzzBlocks, notes, recalls, reloads, seed);
+        check(finite, "the output stayed finite");
+        if (failures) std::printf("FAILED %d checks (seed %u)\n", failures, seed); else std::printf("PASSED fuzz, seed %u\n", seed);
+        return failures ? 1 : 0;
+    }
     if (loadFile != juce::File()) {
         // A Solo file, as the Setup page loads it: the bank, the sounds, the
         // library, the key maps and the row; every sound names an instrument

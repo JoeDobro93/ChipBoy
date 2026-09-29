@@ -377,6 +377,8 @@ if(CHIPBOY_BUILD_PLUGIN)
     # instrument of its bank, and the first mapped key plays.
     add_test(NAME demo_solo_loads COMMAND chipboy_solotest --out "${CMAKE_CURRENT_BINARY_DIR}/solotest"
              --load "${CMAKE_CURRENT_SOURCE_DIR}/Demo/solo/solo-demo.cbsolo")
+    # Random abuse of a Solo instance: the output stays finite and nothing hangs.
+    add_test(NAME chipboy_solofuzz COMMAND chipboy_solotest --out "${CMAKE_CURRENT_BINARY_DIR}/solotest" --fuzz 3000 --seed 7)
 
     # --- chipboy_fuzz: random songs through the whole plugin, to find the
     # crash nobody would have written by hand (section 28) -------------------

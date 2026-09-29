@@ -1124,6 +1124,11 @@ int recordMidi(const juce::File& songFile, const juce::File& midiFile, const juc
     setParameter(p, ids::notesOnTick, 1.0);
     setParameter(p, ids::tempoSource, 0.0);
     p.setRecordArm(true);
+    // CHIPBOY_PUMP_MS: how long the message loop runs after each block, so
+    // the 100 ms timer -- which closes the takes -- lands on other blocks; a
+    // sweep of it must record the same rows (section 226).
+    int pumpMs = 1;
+    if (const char* e = std::getenv("CHIPBOY_PUMP_MS"); e != nullptr) pumpMs = std::clamp(std::atoi(e), 0, 500);
     FakePlayHead head;
     head.bpm = tempo;
     p.setPlayHead(&head);
@@ -1138,7 +1143,7 @@ int recordMidi(const juce::File& songFile, const juce::File& midiFile, const juc
         in.clear();
         while (next < midi.size() && midi[next].sample < f0 + kBlock) { in.addEvent(midi[next].message, int(midi[next].sample - f0)); ++next; }
         p.processBlock(buffer, in);
-        pump(1);                                  // the recorder's messages are applied on the timer
+        pump(pumpMs);                             // the recorder's messages are applied on the timer
     }
     head.playing = false;
     p.processBlock(buffer, in);                   // a stopped play head: the last take ends

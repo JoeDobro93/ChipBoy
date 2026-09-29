@@ -6760,11 +6760,15 @@ late) `6 6 6 6 6 10 2 6 6 6 6 6 6 6 6 6`, each exactly what was played.
 **Amendment, 2026-09-29 (a late message).** The record test failed once in a run of the gate:
 bar 12 replayed with one note two steps late and the rest gone. A message whose tick lies
 in a row already fitted -- a note-off recorded after the next row's first note had opened
-its take, a held note fired late -- opened a second take for that row, and its finish laid
-the row again from that message alone, clearing what the fit had written. A row fitted
-already is never laid again: each late message takes back its provisional cell and goes to
-the nearest step of the grid the fit left (`stepStartTicks` under the row's walk), a note
-never displacing one there, an OFF moving on from a note's own step.
+its take, a held note fired late, the odd notes of a 32nd run arriving a timer tick after
+the even ones -- opened a second take for that row, and its finish laid the row again from
+those messages alone, clearing what the fit had written. The processor now keeps the
+messages a row was fitted from (`fittedMsgs_`, one row per channel); a second take for the
+same row is fitted again over the union of the two (a message already there, same tick,
+note and kind, is not added twice), so the row's layout is the fit of everything played in
+it whenever the messages arrived. `CHIPBOY_PUMP_MS` in `chipboy_recordtest` sets how long
+the message loop runs after each block; the groove cases record the same at 0, 2, 5, 9, 13,
+21, 34 and 55 ms, which puts the timer at every phase against the blocks.
 
 ## 227. ChipBoy Solo: one channel as a plugin of its own
 
@@ -6873,7 +6877,10 @@ ChipBoy Voice, which stays in the tree this round.
   library into a slot; the state and a `.cbsolo` round-trip sounds, library, key map,
   bank and row; a channel change silences the channel left; a held note reloads under
   Live follow; `--load FILE` loads a Solo file and plays its first mapped key (the CTest
-  `demo_solo_loads`). `chipboy_uishot --solo DIR` shoots every tab (`docs/screenshots/solo-*.png`).
+  `demo_solo_loads`); `--fuzz BLOCKS [--seed N]` throws random notes, keys, program changes,
+  controllers, bends, parameter and channel moves and state reloads at an instance and holds
+  the output finite (the CTest `chipboy_solofuzz`, 3000 blocks; 12000 on two more seeds by
+  hand). `chipboy_uishot --solo DIR` shoots every tab (`docs/screenshots/solo-*.png`).
 - **Left for later**: MIDI learn for the slots; a live shared bank between a
   Solo and a ChipBoy instance (a `.cbsolo` or a bank file carries it across); retiring
   ChipBoy Voice (its link region, the Link tab and `chipboy_linktest` go with it).

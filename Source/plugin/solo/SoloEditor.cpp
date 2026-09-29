@@ -393,6 +393,12 @@ public:
             const int ch = owner_.processor_.channel();
             owner_.processor_.editSolo("Key " + ValueFormat::noteName(note_), [this, v, ch](SoloState& s) { s.keyMaps[size_t(ch)][size_t(note_)] = uint8_t(std::clamp(v, 0, kSoloSounds)); });
         };
+        sound_.onList = [this] {
+            const auto s = owner_.processor_.solo();
+            std::vector<SlotRow> rows;
+            for (int k = 1; k <= kSoloSounds; ++k) { SlotRow r; r.slot = k; r.used = s && s->sounds[size_t(k - 1)].used; r.name = r.used ? String(CharPointer_UTF8(s->sounds[size_t(k - 1)].name.c_str())) : String(); rows.push_back(r); }
+            slotMenu(sound_, rows, sound_.value(), "Sound for " + ValueFormat::noteName(note_), [this](int v) { sound_.setValue(v); });
+        };
         addAndMakeVisible(label_);
         label_.setFont(Fonts::sans(11.0f));
         label_.setColour(colours::textDim);

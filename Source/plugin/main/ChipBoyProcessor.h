@@ -286,6 +286,7 @@ private:
     std::array<RowTake, 4> takes_;
     std::array<tracker::Groove, 4> grooveBefore_{};   ///< the groove in force when the take began (stickiness)
     std::array<int, 4> lastFitRow_{ { -2, -2, -2, -2 } };   ///< the row last fitted, so the one after it inherits its groove
+    std::array<std::vector<tracker::RecordMessage>, 4> fittedMsgs_;   ///< that row's messages, so late ones are fitted with them
     /// Notes in a channel's keyswitch octave select an instrument and never
     /// sound, so the recorder never writes them as cells (section 9.4).
     bool keyswitchNote(int ch, const bank::Bank* bank, uint8_t note) const;
