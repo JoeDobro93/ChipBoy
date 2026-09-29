@@ -136,6 +136,13 @@ int shootSolo(const juce::File& outDir, bool desktop)
     SoloProcessor solo;
     solo.prepareToPlay(48000.0, 512);
     const auto id = [&solo](const char* i) { return solo.channelParamId(0, i); };
+    // The demo file, when the tool runs from the tree: the shots then show
+    // its sounds. Elsewhere a small set is made here.
+    const juce::File demo = juce::File::getCurrentWorkingDirectory().getChildFile("Demo/solo/solo-demo.cbsolo");
+    juce::String report;
+    const bool fromDemo = demo.existsAsFile() && solo.loadSoloFile(demo, report);
+    if (fromDemo) std::printf("solo: %s\n", report.toRawUTF8());
+    if (!fromDemo) {
     set(solo.apvts, id(ids::cmd1Type), float(choiceFromCmd(chipboy::bank::Cmd::V)));
     set(solo.apvts, id(ids::cmd1X), 4.0f); set(solo.apvts, id(ids::cmd1Y), 6.0f);
     solo.storeSound(1, "Lead vib");
@@ -149,6 +156,7 @@ int shootSolo(const juce::File& outDir, bool desktop)
     set(solo.apvts, id(ids::cmd2Type), float(choiceFromCmd(chipboy::bank::Cmd::K)));
     set(solo.apvts, id(ids::cmd2X), 6.0f);
     solo.storeLibraryCommand(2, 1, "cut at 6");
+    }
     int lo = 0, hi = 127; solo.noteRange(lo, hi);
     auto play = [&solo](int note, int key, int blocks) {
         juce::AudioBuffer<float> buf(2, 512);

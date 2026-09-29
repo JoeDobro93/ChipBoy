@@ -6841,7 +6841,8 @@ ChipBoy Voice, which stays in the tree this round.
   the files. The
   Commands page shows the row's two commands as they stand, since Main is not in view
   there; the Sounds list names the instrument and the letters each sound carries and marks
-  the sound the row came from. The SOUND field says *(edited)* once the row has moved away
+  the sound the row came from; the last note reads large at the scope's corner, for a
+  player's glance. The SOUND field says *(edited)* once the row has moved away
   from the sound it was recalled from -- Store keeps the new row. Ctrl+1 to Ctrl+8 (Command
   on macOS) switch pages in the bar's order. The size is what the widest page needs:
   the Tables page shows all sixteen steps and the written-as column without scrolling.

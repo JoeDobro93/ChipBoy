@@ -28,8 +28,12 @@ public:
         addAndMakeVisible(hop);
         addAndMakeVisible(help);
     }
+    /// Narrower than this (a compact window, D-UI-45) the hint has no room
+    /// beside the controls and goes; the grid's tooltips say the same.
+    static constexpr int kHintWidth = 600;
     int preferredHeight(int width) override
     {
+        if (width < kHintWidth) return 26;
         const int helpW = std::min(300, std::max(120, width - 380));
         return std::max(26, help.preferredHeight(helpW));
     }
@@ -40,6 +44,7 @@ public:
         end.setBounds(90, (26 - end.preferredHeight()) / 2, end.preferredWidth(), end.preferredHeight());
         const int hx = 90 + end.preferredWidth() + 10;
         hop.setBounds(hx, 1, hop.preferredWidth(), Stepper::kHeight);
+        help.setVisible(getWidth() >= kHintWidth);
         const int helpW = std::min(300, std::max(120, getWidth() - 380));
         help.setBounds(getWidth() - helpW, 0, helpW, h);
     }

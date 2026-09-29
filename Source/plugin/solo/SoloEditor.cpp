@@ -283,6 +283,7 @@ void SoloStrip::tick()
         scope_.setFixedWindow(inst != nullptr && inst->type == bank::InstrumentType::Kit);
     }
     const int note = processor_.lastNote();
+    if (note != noteDrawn_) { noteDrawn_ = note; repaint(scope_.getBounds()); }
     int lo = 0, hi = 127;
     processor_.noteRange(lo, hi);
     String line = "plays " + ValueFormat::noteValue(lo, ch == 3) + String(CharPointer_UTF8("\xe2\x80\x93")) + ValueFormat::noteValue(hi, ch == 3);
@@ -309,6 +310,22 @@ void SoloStrip::paint(Graphics& g)
     g.fillRoundedRectangle(r, 5.0f);
     g.setColour(colours::lineSoft);
     g.drawRoundedRectangle(r, 5.0f, 1.0f);
+}
+
+/// The last note, large, at the scope's top right: what a player looks at.
+void SoloStrip::paintOverChildren(Graphics& g)
+{
+    const int note = processor_.lastNote();
+    if (note < 0) return;
+    const int ch = std::max(0, channel_);
+    const String text = ValueFormat::noteValue(note, ch == 3);
+    g.setFont(Fonts::pixel(20.0f));
+    const auto r = scope_.getBounds().reduced(10, 6);
+    g.setColour(colours::lcd.withAlpha(0.55f));
+    const int w = int(draw::textWidth(g.getCurrentFont(), text)) + 12;
+    g.fillRoundedRectangle(Rectangle<float>(float(r.getRight() - w), float(r.getY()), float(w), 26.0f), 3.0f);
+    g.setColour(colours::channel(ch));
+    g.drawText(text, r.getRight() - w, r.getY(), w, 26, Justification::centred);
 }
 
 void SoloStrip::resized()

@@ -40,6 +40,7 @@ public:
     std::function<void(int slot)> onOpenSound;
     std::function<void(const juce::String&)> onMessage;
     void paint(juce::Graphics&) override;
+    void paintOverChildren(juce::Graphics&) override;   ///< the note, large, over the scope's corner
     void resized() override;
 private:
     void refreshInstrumentName();
@@ -64,7 +65,7 @@ private:
     const SoloState* soundsFor_ = nullptr;
     int instrumentShown_ = -1, loadedInstrument_ = 0, soundShown_ = -1;
     bool editedShown_ = false;        ///< the row differs from the sound it was recalled from
-    int modelShown_ = -1;
+    int modelShown_ = -1, noteDrawn_ = -2;
     juce::String noteShown_;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SoloStrip)
 };
