@@ -14,7 +14,7 @@ parity campaign, `docs/COMMANDS_AND_TEMPO.md` §1-§221, is closed; every law in
 section). The user's focus is now **UI and user interactions**. This round rebuilt the Tracker
 tab around a **tick**: the chain is drawn in time (D-UI-35, §222, §223, `docs/plan-chain-timeline.md`),
 the lanes show each channel's own row at the play head, the plugin's own transport locates, and
-the song carries time signatures. The gate is green (`tools/gate.sh all`: 351 core tests, 11
+the song carries time signatures. The gate is green (`tools/gate.sh all`: 365 core tests, 16
 plugin checks, the parameter table, the 1 MB-stack link test); `main` is pushed with every commit
 and the user builds Windows and macOS from it -- the user has clicked the first build
 and sent four notes, answered in the second pass below; the rest is still Linux-shot only.**
@@ -146,9 +146,12 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
   the row over the union of both takes' messages. The groove cases record the same with
   the tool's message loop at eight lengths (`CHIPBOY_PUMP_MS`), so the timer's phase
   against the blocks no longer matters.
-- Open: MIDI learn for slots; a shared live bank between instances; the
+- Open: MIDI learn for slots (a program change and the Sound lane reach them); a shared
+  live bank between instances; the DAW's program list as a way to the sounds (JUCE's
+  programs; the VST3 and AU wrappers differ, and those builds are the user's); the
   Waves tab's synth section is wide for the window (it scrolls); the strip's LEVEL knob
-  folds the sixteen levels onto WAV's four.
+  folds the sixteen levels onto WAV's four. Not yet seen on Windows or macOS: the user
+  builds those and reports.
 
 ## Done (2026-09-28, the round's end) -- the MIDI tab's five notes; Auto groove (§226, D-UI-44)
 
