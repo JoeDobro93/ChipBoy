@@ -6820,7 +6820,8 @@ ChipBoy Voice, which stays in the tree this round.
   layout counts down from the floor (the key under the lowest playable note is sound 1)
   and on up from the ceiling, laid for all four channels when the instance starts; every
   key is typed in the Sounds tab for the channel on show (a right click on a key's field
-  lists the sounds by name); a toggle turns the map off. **The recall happens on the audio thread, in front of the note**: the row the driver
+  lists the sounds by name); a toggle turns the map off, and the key rows, their buttons
+  and the help line dim to say so. **The recall happens on the audio thread, in front of the note**: the row the driver
   reads is the sound's from that block on, so a note in the same block -- or the one being
   held, under Live follow -- takes it; the timer brings the parameters up to it (no undo
   step: a played key is not a hand edit) and says so, and the audio thread stops

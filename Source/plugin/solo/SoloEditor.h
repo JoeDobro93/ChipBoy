@@ -102,7 +102,8 @@ private:
     int keysForChannel_ = -1;
     const SoloState* rowsFor_ = nullptr;
     const bank::Bank* rowsBank_ = nullptr;
-    int lastSerial_ = -1, playingShown_ = -1;
+    int lastSerial_ = -1, playingShown_ = -1, keysOnShown_ = -1;
+    juce::String keysHelpText_;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SoundsPanel)
 };
 

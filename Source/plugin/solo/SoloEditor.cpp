@@ -522,7 +522,9 @@ void SoundsPanel::rebuildKeys()
     for (int n = hi + 1; n < 128; ++n) add(n);
     keys_.setContent(std::move(stack));
     keysTitle_.setText(String("Keys outside ") + colours::channelName(ch) + "'s range");
-    keysHelp_.setText(ValueFormat::noteValue(lo, ch == 3) + " to " + ValueFormat::noteValue(hi, ch == 3) + " play; " + String(keyRows_.size()) + " keys can select a sound");
+    keysHelpText_ = ValueFormat::noteValue(lo, ch == 3) + " to " + ValueFormat::noteValue(hi, ch == 3) + " play; " + String(keyRows_.size()) + " keys can select a sound";
+    keysHelp_.setText(keysHelpText_);
+    keysOnShown_ = -1;                                  // tick() lays the map's state over it again
     syncKeys();
 }
 
@@ -551,6 +553,16 @@ void SoundsPanel::tick()
     if (processor_.recallSerial() != lastSerial_) { lastSerial_ = processor_.recallSerial(); message(processor_.lastRecall()); }
     const int playing = paramValue(processor_, solo::ids::sound);
     if (playing != playingShown_) { playingShown_ = playing; rowsFor_ = nullptr; rebuildList(); }
+    // The map off: the key rows and their buttons dim, so the page says why
+    // a key plays instead of selecting.
+    const int keysOn = paramValue(processor_, solo::ids::keyMap) != 0 ? 1 : 0;
+    if (keysOn != keysOnShown_) {
+        keysOnShown_ = keysOn;
+        keys_.setEnabled(keysOn != 0); keys_.setAlpha(keysOn != 0 ? 1.0f : 0.4f);
+        defaultKeysBtn_.setEnabled(keysOn != 0); clearKeysBtn_.setEnabled(keysOn != 0);
+        keysHelp_.setColour(keysOn != 0 ? colours::textDim : colours::warn);
+        keysHelp_.setText(keysOn != 0 ? keysHelpText_ : String("Key map off: every key plays, none selects a sound"));
+    }
 }
 
 RichText SoundsPanel::contextLine() const
