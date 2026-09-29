@@ -655,6 +655,16 @@ void CommandsPanel::resized()
 
 /* ------------------------------------------------------------- setup */
 
+namespace {
+/// Two buttons on one form row.
+class ButtonPair : public Component {
+public:
+    ButtonPair(const String& a, const String& b) : first(a), second(b) { addAndMakeVisible(first); addAndMakeVisible(second); }
+    TextButton first, second;
+    void resized() override { auto r = getLocalBounds(); first.setBounds(r.removeFromLeft((r.getWidth() - 6) / 2)); r.removeFromLeft(6); second.setBounds(r); }
+};
+} // namespace
+
 SetupPanel::SetupPanel(SoloProcessor& p) : EditorPanel(p), processor_(p)
 {
     addAndMakeVisible(scroll_);
@@ -725,17 +735,20 @@ SetupPanel::SetupPanel(SoloProcessor& p) : EditorPanel(p), processor_(p)
         seg->onChange = [this](int i) { processor_.apvts.state.setProperty("ui_scope_trace", i, nullptr); if (onScopeTrace) onScopeTrace(i); };
         out->add("Scope", std::move(seg), 240, 22, "The chip's steps, the analog stage's output after the coupling, or both over each other");
     }
+    {
+        auto seg = std::make_unique<Segmented>(StringArray{ "100 %", "125 %", "150 %" });
+        seg->setMini(true);
+        seg->setSelected(storedScale(processor_), dontSendNotification);
+        seg->onChange = [this](int i) { processor_.apvts.state.setProperty("ui_scale", i, nullptr); if (onScale) onScale(i); };
+        out->add("Size", std::move(seg), 240, 22, "The whole window in more pixels, for a high-resolution screen");
+    }
     stack->add(std::move(out));
     auto files = std::make_unique<FormGroup>("Files", 130);
     {
-        auto b = std::make_unique<TextButton>("Save Solo file" + String(CharPointer_UTF8("\xe2\x80\xa6")));
-        b->onClick = [this] { saveFile(); };
-        files->add("This instance", std::move(b), 160, 24, "The bank, the sounds, the library, the key map, the channel and the row as a .cbsolo file");
-    }
-    {
-        auto b = std::make_unique<TextButton>("Load Solo file" + String(CharPointer_UTF8("\xe2\x80\xa6")));
-        b->onClick = [this] { loadFile(); };
-        files->add("", std::move(b), 160, 24, "A .cbsolo file replaces all of that, as one undo step");
+        auto pair = std::make_unique<ButtonPair>("Save" + String(CharPointer_UTF8("\xe2\x80\xa6")), "Load" + String(CharPointer_UTF8("\xe2\x80\xa6")));
+        pair->first.onClick = [this] { saveFile(); };
+        pair->second.onClick = [this] { loadFile(); };
+        files->add("Solo file", std::move(pair), 240, 24, "The bank, the sounds, the library, the key maps, the channel and the row as a .cbsolo file; loading one replaces all of that, as one undo step");
     }
     {
         auto b = std::make_unique<TextButton>("Load bank" + String(CharPointer_UTF8("\xe2\x80\xa6")));
@@ -749,6 +762,7 @@ SetupPanel::SetupPanel(SoloProcessor& p) : EditorPanel(p), processor_(p)
 SetupPanel::~SetupPanel() = default;
 
 int SetupPanel::storedTrace(const SoloProcessor& p) { return std::clamp(int(p.apvts.state.getProperty("ui_scope_trace", 2)), 0, 2); }
+int SetupPanel::storedScale(const SoloProcessor& p) { return std::clamp(int(p.apvts.state.getProperty("ui_scale", 0)), 0, 2); }
 
 RichText SetupPanel::contextLine() const
 {
@@ -861,10 +875,12 @@ SoloEditor::SoloEditor(SoloProcessor& p)
 {
     setLookAndFeel(&lookAndFeel_);
     setWantsKeyboardFocus(true);
+    addAndMakeVisible(content_);
+    content_.setWantsKeyboardFocus(true);
     tempoLabel_.setUpperCase(true);
     for (auto* c : std::initializer_list<Component*>{ &wordmark_, &product_, &tempoLabel_, &tempo_, &channel_, &model_, &undoBtn_, &redoBtn_, &status_ })
-        addAndMakeVisible(c);
-    addChildComponent(strip_);
+        content_.addAndMakeVisible(c);
+    content_.addChildComponent(strip_);
     channel_.setMini(true);
     channel_.attach(param(processor_, solo::ids::channel));
     channel_.setTooltip("Which of the four voices this plugin is");
@@ -876,7 +892,7 @@ SoloEditor::SoloEditor(SoloProcessor& p)
     undoBtn_.onClick = [this] { undo(); };
     redoBtn_.onClick = [this] { redo(); };
     tabs_ = std::make_unique<TabBar>();
-    addAndMakeVisible(*tabs_);
+    content_.addAndMakeVisible(*tabs_);
 
     panels_[Sounds] = std::make_unique<SoundsPanel>(processor_);
     panels_[Instrument] = std::make_unique<InstrumentPanel>(processor_);
@@ -887,6 +903,7 @@ SoloEditor::SoloEditor(SoloProcessor& p)
     {
         auto setup = std::make_unique<SetupPanel>(processor_);
         setup->onScopeTrace = [this](int t) { strip_.setScopeTrace(t == 1 ? ScopeView::Trace::Analog : t == 2 ? ScopeView::Trace::Both : ScopeView::Trace::Digital); };
+        setup->onScale = [this](int i) { setScale(i == 1 ? 1.25f : i == 2 ? 1.5f : 1.0f); };
         panels_[Setup] = std::move(setup);
     }
     { const int t = SetupPanel::storedTrace(processor_); strip_.setScopeTrace(t == 1 ? ScopeView::Trace::Analog : t == 2 ? ScopeView::Trace::Both : ScopeView::Trace::Digital); }
@@ -896,7 +913,7 @@ SoloEditor::SoloEditor(SoloProcessor& p)
         panel->onContextChanged = [this] { refreshContext(); };
         panel->onMessage = [this](const String& text) { showMessage(text); };
         panel->onOpenSlot = [this](SlotKind kind, int slot) { openSlot(kind, slot); };
-        addChildComponent(*panel);
+        content_.addChildComponent(*panel);
     }
     strip_.onOpenSlot = [this](SlotKind kind, int slot) { openSlot(kind, slot); };
     strip_.onOpenSound = [this](int slot) { showTab(Sounds); panels_[Sounds]->selectSlot(slot); };
@@ -913,7 +930,7 @@ SoloEditor::SoloEditor(SoloProcessor& p)
 
     lastBank_ = processor_.bank().get();
     lastSolo_ = processor_.solo().get();
-    setSize(kSoloWidth, kSoloHeight);
+    { const int i = SetupPanel::storedScale(processor_); setScale(i == 1 ? 1.25f : i == 2 ? 1.5f : 1.0f); }
     channelChanged();
     showTab(Main);
     restoreView();
@@ -925,6 +942,15 @@ SoloEditor::~SoloEditor()
     stopTimer();
     saveView();
     setLookAndFeel(nullptr);
+}
+
+/// The scale multiplies the whole window: the content stays laid out at
+/// 560 x 552 and a transform draws it larger (UI_DESIGN section 2).
+void SoloEditor::setScale(float factor)
+{
+    scale_ = std::abs(factor - 1.25f) < 0.01f ? 1.25f : std::abs(factor - 1.5f) < 0.01f ? 1.5f : 1.0f;
+    content_.setTransform(AffineTransform::scale(scale_));
+    setSize(roundToInt(kSoloWidth * scale_), roundToInt(kSoloHeight * scale_));
 }
 
 void SoloEditor::channelChanged()
@@ -1063,7 +1089,8 @@ void SoloEditor::paint(Graphics& g)
 
 void SoloEditor::resized()
 {
-    auto area = getLocalBounds();
+    content_.setBounds(0, 0, kSoloWidth, kSoloHeight);
+    auto area = content_.getLocalBounds();
     auto head = area.removeFromTop(kHeader).reduced(kPad, 0);
     wordmark_.setBounds(head.removeFromLeft(62));
     product_.setBounds(head.removeFromLeft(38));
@@ -1109,7 +1136,7 @@ void SoloEditor::redo()
 
 bool SoloEditor::keyPressed(const KeyPress& key)
 {
-    if (key == KeyPress::escapeKey) { grabKeyboardFocus(); return true; }
+    if (key == KeyPress::escapeKey) { content_.grabKeyboardFocus(); return true; }
     const auto mods = key.getModifiers();
     if ((mods.isCtrlDown() || mods.isCommandDown()) && !typing()) {
         const auto ch = key.getTextCharacter();

@@ -741,7 +741,8 @@ a DAW track or a keyboard: 560 × 552, fixed, one page at a time -- the width an
   stepper's right click listing the bank by name; WAV only for the last two),
   **Commands** (the library with → CMD 1 / → CMD 2 and Store CMD 1 / 2, and the letter
   reference), **Setup** (velocity, Live follow, Quantize, the key map, tempo source and own
-  tempo, volume, trim, Hex, the `.cbsolo` and bank files).
+  tempo, volume, trim, Hex, the scope's trace, the window's size at 100 / 125 / 150 %, the
+  `.cbsolo` and bank files).
 - The status line: the page's context line, a message for a few seconds when there is one, undo and redo at its right.
 
 ![ChipBoy Solo: the Main page](screenshots/solo-main.png)

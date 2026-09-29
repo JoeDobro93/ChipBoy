@@ -139,6 +139,9 @@ public:
     /// The scope's trace (0 digital, 1 analog, 2 both), kept as "ui_scope_trace".
     std::function<void(int)> onScopeTrace;
     static int storedTrace(const SoloProcessor& p);
+    /// The window's size (0: 100 %, 1: 125 %, 2: 150 %), kept as "ui_scale".
+    std::function<void(int)> onScale;
+    static int storedScale(const SoloProcessor& p);
 private:
     void saveFile();
     void loadFile();
@@ -159,6 +162,8 @@ public:
     ui::EditHistory& editHistory() override { return processor_.history(); }
     void showTab(int tab);
     void openSlot(ui::SlotKind kind, int slot);
+    /// 1.0, 1.25 or 1.5: the whole window in more pixels, as the main window does.
+    void setScale(float factor);
     void undo();
     void redo();
     void paint(juce::Graphics&) override;
@@ -180,6 +185,8 @@ private:
     SoloProcessor& processor_;
     ui::ChipBoyLookAndFeel lookAndFeel_;
     juce::TooltipWindow tooltips_;
+    juce::Component content_;         ///< everything, at 100 %; the scale is a transform on it
+    float scale_ = 1.0f;
     // header
     TextLine wordmark_, product_, tempoLabel_, tempo_;
     ui::Segmented channel_, model_;

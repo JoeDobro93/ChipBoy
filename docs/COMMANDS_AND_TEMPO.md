@@ -6828,7 +6828,9 @@ ChipBoy Voice, which stays in the tree this round.
   five seconds when there is one, and undo / redo. Setup holds what the row does not:
   velocity mode, Live follow, Quantize, the key map, tempo source and own tempo, volume,
   trim, Hex, the scope's trace (digital, analog or both, kept in the state as
-  `ui_scope_trace`; the analog trace follows the model's corner) and the files. The
+  `ui_scope_trace`; the analog trace follows the model's corner), the window's size (100,
+  125 or 150 %, a transform on the content as the main window's, kept as `ui_scale`) and
+  the files. The
   Commands page shows the row's two commands as they stand, since Main is not in view
   there; the Sounds list names the instrument and the letters each sound carries. The size is what the widest page needs:
   the Tables page shows all sixteen steps and the written-as column without scrolling.
@@ -6860,7 +6862,7 @@ ChipBoy Voice, which stays in the tree this round.
   bank and row; a channel change silences the channel left; a held note reloads under
   Live follow; `--load FILE` loads a Solo file and plays its first mapped key (the CTest
   `demo_solo_loads`). `chipboy_uishot --solo DIR` shoots every tab (`docs/screenshots/solo-*.png`).
-- **Left for later**: window scaling; MIDI learn for the slots; a live shared bank between a
+- **Left for later**: MIDI learn for the slots; a live shared bank between a
   Solo and a ChipBoy instance (a `.cbsolo` or a bank file carries it across); retiring
   ChipBoy Voice (its link region, the Link tab and `chipboy_linktest` go with it).
 

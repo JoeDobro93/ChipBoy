@@ -133,7 +133,7 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
 - **A record-test flake fixed on the way** (§226 amendment): a message for a row already
   fitted opened a second take and its finish cleared the row; late messages now merge onto
   the fitted grid. Seen once in a gate run, not reproduced after the fix in four runs.
-- Open: window scaling; MIDI learn for slots; a shared live bank between instances; the
+- Open: MIDI learn for slots; a shared live bank between instances; the
   Waves tab's synth section is wide for the window (it scrolls); the strip's LEVEL knob
   folds the sixteen levels onto WAV's four.
 
