@@ -132,7 +132,11 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
   and `Demo/solo/solo-demo.cbsolo` (`make_solo.py`, CTest `demo_solo_loads`); then the
   sustain pedal, feedback on Store and empty recalls, the SOUND field's *(edited)*, the
   playing mark in the Sounds list, Ctrl+1..8 for the pages, the Waves tools row wrapping,
-  the window's size at 100 / 125 / 150 %, and a MIDI channel choice.
+  the window's size at 100 / 125 / 150 %, and a MIDI channel choice; then, from the
+  screenshots, the header's wordmark no longer clipped, the compact Waves top row laid
+  out from the right (the frame readout keeps its width, the name takes the rest, no
+  FRAME label), the Kits page's table hint shortened, and the Main page's note line
+  reduced to the range and the note (the recall is the status line's).
 - **A record-test flake fixed on the way** (§226 amendment): a message for a row already
   fitted opened a second take and its finish cleared the row; a second take now re-fits
   the row over the union of both takes' messages. The groove cases record the same with

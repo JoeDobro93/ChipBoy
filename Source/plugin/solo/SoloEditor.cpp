@@ -286,9 +286,9 @@ void SoloStrip::tick()
     if (note != noteDrawn_) { noteDrawn_ = note; repaint(scope_.getBounds()); }
     int lo = 0, hi = 127;
     processor_.noteRange(lo, hi);
-    String line = "plays " + ValueFormat::noteValue(lo, ch == 3) + String(CharPointer_UTF8("\xe2\x80\x93")) + ValueFormat::noteValue(hi, ch == 3);
+    // The last recall is the status line's; here the range and the note.
+    String line = "plays " + ValueFormat::noteValue(lo, ch == 3) + " to " + ValueFormat::noteValue(hi, ch == 3);
     line += kDot + "note " + (note >= 0 ? ValueFormat::noteValue(note, ch == 3) : kDash);
-    if (const String r = processor_.lastRecall(); r.isNotEmpty()) line += kDot + r;
     if (line != noteShown_) { noteShown_ = line; noteLine_.setText(line); }
 }
 
@@ -1156,9 +1156,9 @@ void SoloEditor::resized()
     content_.setBounds(0, 0, kSoloWidth, kSoloHeight);
     auto area = content_.getLocalBounds();
     auto head = area.removeFromTop(kHeader).reduced(kPad, 0);
-    wordmark_.setBounds(head.removeFromLeft(62));
-    product_.setBounds(head.removeFromLeft(38));
-    head.removeFromLeft(8);
+    wordmark_.setBounds(head.removeFromLeft(76));
+    product_.setBounds(head.removeFromLeft(42));
+    head.removeFromLeft(6);
     channel_.setBounds(head.removeFromLeft(channel_.preferredWidth()).withSizeKeepingCentre(channel_.preferredWidth(), 22));
     head.removeFromLeft(8);
     model_.setBounds(head.removeFromLeft(model_.preferredWidth()).withSizeKeepingCentre(model_.preferredWidth(), 22));

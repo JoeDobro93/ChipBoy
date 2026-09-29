@@ -316,7 +316,7 @@ void KitsPanel::rebuildContent()
         // Section 194: the custom table -- LSDj's raw page, editable -- and its LCD quirk.
         auto hex = std::make_unique<HexPage>();
         hex->onChange = [this](std::vector<uint8_t> t) { editKit("dist table", [t](bank::Kit& k) { k.distTable = t; }); };
-        hex_ = grid->addField("Table", "row = one sample's nibble, column = the other's", std::move(hex), HexPage::kHeight, HexPage::kWidth, 2);
+        hex_ = grid->addField("Table", "row = one sample, column = other", std::move(hex), HexPage::kHeight, HexPage::kWidth, 2);
         auto lcd = std::make_unique<Toggle>("LCD holes");
         lcd->setTooltip("Read the table as LSDj reads a page of video RAM: a byte mixed while the LCD draws a line comes back FF, which puts FE bytes through each frame in the scanline's rhythm (section 184). An import sets it for a page in video RAM.");
         lcd->onChange = [this](bool on) { editKit("LCD holes", [on](bank::Kit& k) { k.distVram = on; }); };

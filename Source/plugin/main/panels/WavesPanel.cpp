@@ -807,10 +807,19 @@ void WavesPanel::resized()
         newBtn_.setBounds(top.removeFromRight(44).withHeight(Stepper::kHeight));
         top.removeFromRight(6);
     }
-    name_.setBounds(top.removeFromLeft(compact ? std::max(60, top.getWidth() - 116) : 200).withHeight(NameField::kHeight));
-    top.removeFromLeft(compact ? 6 : 12);
-    frameLabel_.setBounds(top.removeFromLeft(44));
-    frameText_.setBounds(top.removeFromLeft(64));
+    frameLabel_.setVisible(!compact);
+    if (compact) {
+        // The frame readout ("1 of 16") keeps its width without its label;
+        // the name takes what is left.
+        frameText_.setBounds(top.removeFromRight(52));
+        top.removeFromRight(6);
+        name_.setBounds(top.withHeight(NameField::kHeight));
+    } else {
+        name_.setBounds(top.removeFromLeft(200).withHeight(NameField::kHeight));
+        top.removeFromLeft(12);
+        frameLabel_.setBounds(top.removeFromLeft(44));
+        frameText_.setBounds(top.removeFromLeft(64));
+    }
     area.removeFromTop(6);
     scroll_.setBounds(area);
     synthScroll_.setBounds(synth);
