@@ -134,19 +134,34 @@ public:
         viewLabel_.setUpperCase(true);
         for (auto* c : std::initializer_list<Component*>{ &drawLabel_, &shape_, &interp_, &import_, &viewLabel_, &view_ }) addAndMakeVisible(c);
     }
-    int preferredHeight(int) override { return 26; }
+    /// Narrower than the row wants (a compact window, D-UI-45), the two
+    /// buttons take a second line.
+    static constexpr int kOneLine = 460;
+    int preferredHeight(int width) override { return width < kOneLine ? 26 + 4 + 26 : 26; }
     void resized() override
     {
         auto area = getLocalBounds();
-        drawLabel_.setBounds(area.removeFromLeft(38));
-        shape_.setBounds(area.removeFromLeft(shape_.preferredWidth()).withSizeKeepingCentre(shape_.preferredWidth(), shape_.preferredHeight()));
-        area.removeFromLeft(8);
-        interp_.setBounds(area.removeFromLeft(88).reduced(0, 2));
-        area.removeFromLeft(6);
-        import_.setBounds(area.removeFromLeft(72).reduced(0, 2));
-        view_.setBounds(area.removeFromRight(view_.preferredWidth()).withSizeKeepingCentre(view_.preferredWidth(), view_.preferredHeight()));
-        area.removeFromRight(6);
-        viewLabel_.setBounds(area.removeFromRight(34));
+        const bool wrap = getWidth() < kOneLine;
+        auto line = wrap ? area.removeFromTop(26) : area;
+        drawLabel_.setBounds(line.removeFromLeft(38));
+        shape_.setBounds(line.removeFromLeft(shape_.preferredWidth()).withSizeKeepingCentre(shape_.preferredWidth(), shape_.preferredHeight()));
+        line.removeFromLeft(8);
+        if (!wrap) {
+            interp_.setBounds(line.removeFromLeft(88).reduced(0, 2));
+            line.removeFromLeft(6);
+            import_.setBounds(line.removeFromLeft(72).reduced(0, 2));
+        }
+        view_.setBounds(line.removeFromRight(view_.preferredWidth()).withSizeKeepingCentre(view_.preferredWidth(), view_.preferredHeight()));
+        line.removeFromRight(6);
+        viewLabel_.setBounds(line.removeFromRight(34));
+        if (wrap) {
+            area.removeFromTop(4);
+            auto second = area.removeFromTop(26);
+            second.removeFromLeft(38);
+            interp_.setBounds(second.removeFromLeft(88).reduced(0, 2));
+            second.removeFromLeft(6);
+            import_.setBounds(second.removeFromLeft(72).reduced(0, 2));
+        }
     }
 private:
     TextLine drawLabel_, viewLabel_;
