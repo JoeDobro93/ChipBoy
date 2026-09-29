@@ -328,7 +328,9 @@ sounding (Live follow); only a new instrument or a new note retriggers. The Inst
 Tables, Waves and Kits pages are ChipBoy's editors; *Load preset…* on the Instrument page
 takes a `.cbi`, Setup's *Load bank…* a `.chipboy` bank or the bank inside a `.cbsong`, and
 *Save… / Load…* keep the whole instance as a `.cbsolo`. `Demo/solo/solo-demo.cbsolo` is a
-set of sounds to start from. The sustain pedal holds notes, the mod wheel is vibrato depth.
+set of sounds to start from. The sustain pedal holds notes, the mod wheel is vibrato depth,
+the pitch wheel reaches as far as Setup's *Bend range* says (2 semitones unless changed),
+and *Stop* on the Main page ends every note when one is left hanging.
 
 ## Building the core and its tests
 

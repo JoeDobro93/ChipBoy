@@ -100,6 +100,8 @@ int main(int argc, char** argv)
             if (pick(40) == 0) set(solo.apvts, solo::ids::model, float(pick(3)));
             if (pick(40) == 0) set(solo.apvts, solo::ids::tempoSource, float(pick(2)));
             if (pick(60) == 0) set(solo.apvts, solo::ids::tempo, float(40 + pick(256)));
+            if (pick(60) == 0) set(solo.apvts, solo::ids::bendRange, float(1 + pick(24)));
+            if (pick(80) == 0) solo.stopNotes();
             if (pick(200) == 0) { state.reset(); solo.getStateInformation(state); solo.setStateInformation(state.getData(), int(state.getSize())); ++reloads; }
             if (pick(5) == 0) pump(1);
             solo.processBlock(buf, midi);

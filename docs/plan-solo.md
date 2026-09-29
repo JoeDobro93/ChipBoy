@@ -200,6 +200,7 @@ the MIDI map a track's MIDI reaches ChipBoy directly, and with Solo a channel on
 track has its own sound. The user's word after the first build: Voice stays -- it is used
 less than expected, not retired.
 
-Left for a later round: window scaling (the main window's 125 / 150 %); MIDI learn for
-the sound slots; a Solo instance reading the *same* bank as a ChipBoy instance live (a
-`.cbsolo` or a bank file carries it across today).
+Left for a later round: MIDI learn for the sound slots (a program change and the Sound
+parameter's automation lane reach them today); a Solo instance reading the *same* bank as
+a ChipBoy instance live (a `.cbsolo` or a bank file carries it across today). The window's
+scaling (100 / 125 / 150 %) came in the polish rounds.
