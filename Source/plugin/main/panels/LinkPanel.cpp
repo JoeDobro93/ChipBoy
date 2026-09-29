@@ -212,7 +212,7 @@ public:
 
 /* ------------------------------------------------------------ panel */
 
-LinkPanel::LinkPanel(ChipBoyProcessor& p) : EditorPanel(p)
+LinkPanel::LinkPanel(ChipBoyProcessor& p) : MainPanel(p)
 {
     addAndMakeVisible(scroll_);
     auto cols = std::make_unique<Columns>(14);

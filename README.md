@@ -22,9 +22,10 @@ them.
 | | |
 |---|---|
 | **ChipBoy** | The chip. One instance is one complete DMG APU: four channels, stereo out, and a **tab per open song** — each with its own instrument bank, only the active one live. Plays MIDI directly if it is the only thing loaded. |
-| **ChipBoy Voice** | A control surface for one channel, on its own DAW track. Produces no audio; sends notes and parameters to a linked ChipBoy instance so each channel gets its own piano roll and its own automation lanes. |
+| **ChipBoy Solo** | One channel as a synth of its own, for a DAW track or a keyboard: the same chip and analog stage, the whole bank, the row (instrument, table, two commands) as automation lanes, sixty-four sounds recalled by a click, a parameter or a key outside the channel's range, and the same instrument, table, wave and kit editors in a small window. Reads ChipBoy's `.cbi` presets and `.chipboy` banks (`docs/COMMANDS_AND_TEMPO.md` §227). |
+| **ChipBoy Voice** | A control surface for one channel, on its own DAW track. Produces no audio; sends notes and parameters to a linked ChipBoy instance. Superseded by the MIDI map (a track's MIDI channel straight into ChipBoy) and by Solo; still built. |
 
-Four voices per instance, always. If you want more, load another instance.
+Four voices per ChipBoy instance, always. If you want more, load another instance -- or a Solo.
 
 ## Status
 
@@ -94,7 +95,7 @@ from GitHub, so it needs the network once.
 git clone https://github.com/JoeDobro93/ChipBoy.git
 cd ChipBoy
 cmake -S . -B build -DCHIPBOY_BUILD_PLUGIN=ON -DCHIPBOY_BUILD_TESTS=OFF
-cmake --build build --config Release --target ChipBoy_VST3 ChipBoyVoice_VST3 ChipBoy_Standalone
+cmake --build build --config Release --target ChipBoy_VST3 ChipBoyVoice_VST3 ChipBoySolo_VST3 ChipBoy_Standalone ChipBoySolo_Standalone
 ```
 
 The outputs:
@@ -103,6 +104,8 @@ The outputs:
 |---|---|
 | ChipBoy VST3 | `build\ChipBoy_artefacts\Release\VST3\ChipBoy.vst3` |
 | ChipBoy Voice VST3 | `build\ChipBoyVoice_artefacts\Release\VST3\ChipBoy Voice.vst3` |
+| ChipBoy Solo VST3 | `build\ChipBoySolo_artefacts\Release\VST3\ChipBoy Solo.vst3` |
+| ChipBoy Solo Standalone | `build\ChipBoySolo_artefacts\Release\Standalone\ChipBoy Solo.exe` |
 | Standalone | `build\ChipBoy_artefacts\Release\Standalone\ChipBoy.exe` |
 
 Copy the two `.vst3` folders into `C:\Program Files\Common Files\VST3\` and rescan in
@@ -116,7 +119,7 @@ to the build command, or you get a slow Debug build in `build\...\Debug\`.
 
 ```
 cmake -S . -B build -DCHIPBOY_BUILD_PLUGIN=ON -DCHIPBOY_BUILD_TESTS=OFF
-cmake --build build --config Release --target ChipBoy_VST3 ChipBoy_AU ChipBoyVoice_VST3 ChipBoyVoice_AU ChipBoy_Standalone
+cmake --build build --config Release --target ChipBoy_VST3 ChipBoy_AU ChipBoyVoice_VST3 ChipBoyVoice_AU ChipBoySolo_VST3 ChipBoySolo_AU ChipBoy_Standalone ChipBoySolo_Standalone
 ```
 
 Outputs land in the same `*_artefacts/Release/` folders; VST3s go to

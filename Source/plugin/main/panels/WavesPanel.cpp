@@ -290,7 +290,7 @@ struct WavesPanel::SynthWidgets {
     RunStrip* run = nullptr;
 };
 
-WavesPanel::WavesPanel(ChipBoyProcessor& p)
+WavesPanel::WavesPanel(EditorHost& p)
     : EditorPanel(p),
       listTitle_("Waves" + middot() + String(bank::kWaveSlots) + " slots" + middot() + String(bank::kWaveFrames) + " frames",
                  Fonts::sans(11.0f), colours::textMute),
@@ -308,21 +308,21 @@ WavesPanel::WavesPanel(ChipBoyProcessor& p)
     list_.onSelect = [this](int slot) { showSlot(slot); };
     list_.onRename = [this](int slot, const String& n) {
         const int s = std::clamp(slot, 1, bank::kWaveSlots);
-        processor.editBank("Wave " + ValueFormat::slot(s) + " named " + n, [s, n](bank::Bank& b) { auto& w = b.waves[size_t(s - 1)]; w.used = true; if (w.frames.empty()) w.frames.push_back(bank::Frame{}); w.name = n.toStdString(); });
-        selfBank_ = processor.bank().get();
+        host.editBank("Wave " + ValueFormat::slot(s) + " named " + n, [s, n](bank::Bank& b) { auto& w = b.waves[size_t(s - 1)]; w.used = true; if (w.frames.empty()) w.frames.push_back(bank::Frame{}); w.name = n.toStdString(); });
+        selfBank_ = host.bank().get();
         if (s == slot_) name_.setText(n);
         rebuildList();
         contextChanged();
     };
     newBtn_.setTooltip("New wave in the first empty slot: sixteen triangle frames");
     newBtn_.onClick = [this] {
-        const auto b = processor.bank();
+        const auto b = host.bank();
         if (!b) return;
         int slot = 0;
         for (int k = 0; k < bank::kWaveSlots; ++k) if (!b->waves[size_t(k)].used) { slot = k + 1; break; }
         if (slot == 0) return;
-        processor.editBank("New wave " + ValueFormat::slot(slot), [slot](bank::Bank& bk) { auto& w = bk.waves[size_t(slot - 1)]; w.used = true; w.name = ("Wave " + String(slot)).toStdString(); w.frames.assign(size_t(bank::kMaxFrames), bank::frameTriangle()); });
-        selfBank_ = processor.bank().get();
+        host.editBank("New wave " + ValueFormat::slot(slot), [slot](bank::Bank& bk) { auto& w = bk.waves[size_t(slot - 1)]; w.used = true; w.name = ("Wave " + String(slot)).toStdString(); w.frames.assign(size_t(bank::kMaxFrames), bank::frameTriangle()); });
+        selfBank_ = host.bank().get();
         rebuildList();
         showSlot(slot);
     };
@@ -366,7 +366,7 @@ WavesPanel::~WavesPanel() = default;
 RichText WavesPanel::contextLine() const
 {
     RichText r;
-    const auto b = processor.bank();
+    const auto b = host.bank();
     const bank::Wave* w = b ? b->wave(slot_) : nullptr;
     r.plain("Wave ").bold(w ? slotAndName(slot_, w->name) : slotAndName(slot_, "empty"));
     if (w) r.plain(middot() + String(int(w->frames.size())) + (w->frames.size() == 1 ? " frame" : " frames") + middot() + "frame " + String(frame_ + 1));
@@ -389,7 +389,7 @@ void WavesPanel::restoreView(const juce::ValueTree& v)
 
 void WavesPanel::rebuildList()
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     if (!b) return;
     std::vector<SlotRow> rows;
     rows.resize(size_t(bank::kWaveSlots));
@@ -422,7 +422,7 @@ void WavesPanel::showSlot(int slot)
 
 void WavesPanel::syncFromBank(bool pushToGrid)
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     if (!b) return;
     const bank::Wave& w = b->waves[size_t(slot_ - 1)];
     const String n = w.used ? String(w.name) : String();
@@ -441,14 +441,14 @@ void WavesPanel::syncFromBank(bool pushToGrid)
 void WavesPanel::editWave(const String& what, const std::function<void(bank::Wave&)>& fn, bool pushToGrid)
 {
     const int slot = slot_;
-    processor.editBank("Wave " + ValueFormat::slot(slot) + " " + what, [&fn, slot](bank::Bank& b) {
+    host.editBank("Wave " + ValueFormat::slot(slot) + " " + what, [&fn, slot](bank::Bank& b) {
         auto& w = b.waves[size_t(slot - 1)];
         if (!w.used) { w.used = true; if (w.name.empty()) w.name = ("Wave " + String(slot)).toStdString(); }
         if (w.frames.empty()) w.frames.push_back(bank::Frame{});
         fn(w);
         if (w.frames.empty()) w.frames.push_back(bank::Frame{});
     });
-    selfBank_ = processor.bank().get();
+    selfBank_ = host.bank().get();
     syncFromBank(pushToGrid);
     rebuildList();
     contextChanged();
@@ -487,7 +487,7 @@ void WavesPanel::interpolate()
 
 void WavesPanel::bankChanged()
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     rebuildList();
     // The edited end's shape decides which of the synth's own fields the
     // section holds, so it is the one change that rebuilds it (section 36).
@@ -511,13 +511,13 @@ void WavesPanel::hexChanged()
 
 bank::Synth WavesPanel::currentSynth() const
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     return b ? b->waves[size_t(slot_ - 1)].synth : bank::Synth{};
 }
 
 bank::Frame WavesPanel::drawnFrame() const
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     if (!b) return {};
     const auto& w = b->waves[size_t(slot_ - 1)];
     if (w.frames.empty()) return {};
@@ -550,7 +550,7 @@ void WavesPanel::rebuildSynthLater()
 
 void WavesPanel::buildSynth()
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     sw_ = std::make_unique<SynthWidgets>();
     auto stack = std::make_unique<Stack>(10);
     if (!b) { synthScroll_.setContent(std::move(stack)); return; }
@@ -708,7 +708,7 @@ void WavesPanel::buildSynth()
 void WavesPanel::syncSynth()
 {
     if (!sw_) return;
-    const auto b = processor.bank();
+    const auto b = host.bank();
     if (!b) return;
     const bank::Synth sy = b->waves[size_t(slot_ - 1)].synth;
     const bank::SynthState& st = editEnd_ == 1 ? sy.end : sy.start;

@@ -148,7 +148,7 @@ private:
     int slot_ = 1, sample_ = -1;
 };
 
-KitsPanel::KitsPanel(ChipBoyProcessor& p)
+KitsPanel::KitsPanel(EditorHost& p)
     : EditorPanel(p),
       listTitle_("Kits" + middot() + "32 slots", Fonts::sans(11.0f), colours::textMute),
       importBtn_("Import" + String(CharPointer_UTF8("\xe2\x80\xa6")))
@@ -157,8 +157,8 @@ KitsPanel::KitsPanel(ChipBoyProcessor& p)
     list_.onSelect = [this](int slot) { showSlot(slot); };
     list_.onRename = [this](int slot, const String& n) {
         const int s = std::clamp(slot, 1, bank::kKitSlots);
-        processor.editBank("Kit " + ValueFormat::slot(s) + " named " + n, [s, n](bank::Bank& b) { auto& k = b.kits[size_t(s - 1)]; k.used = true; k.name = n.toStdString(); });
-        selfBank_ = processor.bank().get();
+        host.editBank("Kit " + ValueFormat::slot(s) + " named " + n, [s, n](bank::Bank& b) { auto& k = b.kits[size_t(s - 1)]; k.used = true; k.name = n.toStdString(); });
+        selfBank_ = host.bank().get();
         rebuildList();
         contextChanged();
     };
@@ -173,7 +173,7 @@ KitsPanel::~KitsPanel() = default;
 RichText KitsPanel::contextLine() const
 {
     RichText r;
-    const auto b = processor.bank();
+    const auto b = host.bank();
     const bank::Kit* k = b ? b->kit(slot_) : nullptr;
     r.plain("Kit ").bold(k ? slotAndName(slot_, k->name) : slotAndName(slot_, "empty"));
     if (k) r.plain(middot() + String(int(k->samples.size())) + (k->samples.size() == 1 ? " sample" : " samples") + middot() + withThousands(int(std::lround(bank::sampleRateForPeriod(k->period)))) + " Hz");
@@ -182,7 +182,7 @@ RichText KitsPanel::contextLine() const
 
 void KitsPanel::rebuildList()
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     if (!b) return;
     std::vector<SlotRow> rows;
     rows.resize(size_t(bank::kKitSlots));
@@ -212,7 +212,7 @@ void KitsPanel::showSlot(int slot)
 
 void KitsPanel::rebuildContent()
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     const bank::Kit* kit = b ? b->kit(slot_) : nullptr;
     const int count = kit ? int(kit->samples.size()) : 0;
     sample_ = count > 0 ? std::clamp(sample_, 0, count - 1) : -1;
@@ -346,7 +346,7 @@ void KitsPanel::rebuildContent()
         // D-UI-29: hear the selected sample without disturbing the song.
         auto btn = std::make_unique<TextButton>("Play");
         btn->setTooltip("Play the selected sample once at the kit's rate. It mixes in beside the song; it does not stop it.");
-        btn->onClick = [this] { processor.previewKitSample(slot_, sample_); };
+        btn->onClick = [this] { host.previewKitSample(slot_, sample_); };
         playBtn_ = grid->addField("Audition", "4-bit, kit rate", std::move(btn), Stepper::kHeight, 80);
     }
     stack->add(std::move(grid));
@@ -361,7 +361,7 @@ void KitsPanel::rebuildContent()
 
 void KitsPanel::syncValues()
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     if (!b) return;
     const bank::Kit& kit = b->kits[size_t(slot_ - 1)];
     const double rate = bank::sampleRateForPeriod(kit.period);
@@ -398,12 +398,12 @@ void KitsPanel::syncValues()
 void KitsPanel::editKit(const String& what, const std::function<void(bank::Kit&)>& fn)
 {
     const int slot = slot_;
-    processor.editBank("Kit " + ValueFormat::slot(slot) + " " + what, [&fn, slot](bank::Bank& b) {
+    host.editBank("Kit " + ValueFormat::slot(slot) + " " + what, [&fn, slot](bank::Bank& b) {
         auto& k = b.kits[size_t(slot - 1)];
         if (!k.used) { k.used = true; if (k.name.empty()) k.name = ("Kit " + String(slot)).toStdString(); }
         fn(k);
     });
-    selfBank_ = processor.bank().get();
+    selfBank_ = host.bank().get();
     syncValues();
     rebuildList();
     contextChanged();
@@ -411,7 +411,7 @@ void KitsPanel::editKit(const String& what, const std::function<void(bank::Kit&)
 
 void KitsPanel::importSamples()
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     const bank::Kit* kit = b ? b->kit(slot_) : nullptr;
     const uint16_t period = kit ? kit->period : uint16_t(1865);
     const int slot = slot_;
@@ -425,13 +425,13 @@ void KitsPanel::importSamples()
 
 void KitsPanel::appendSample(int slot, const bank::KitSample& sample)
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     if (!b) return;
     if (b->kits[size_t(slot - 1)].samples.size() >= size_t(bank::kMaxKitSamples)) {
         AlertWindow::showMessageBoxAsync(MessageBoxIconType::InfoIcon, "ChipBoy", "A kit holds 32 samples; this one is full.");
         return;
     }
-    processor.editBank("Kit " + ValueFormat::slot(slot) + " sample " + String(sample.name), [slot, sample](bank::Bank& bk) {
+    host.editBank("Kit " + ValueFormat::slot(slot) + " sample " + String(sample.name), [slot, sample](bank::Bank& bk) {
         auto& k = bk.kits[size_t(slot - 1)];
         if (!k.used) { k.used = true; if (k.name.empty()) k.name = ("Kit " + String(slot)).toStdString(); }
         if (k.samples.size() >= size_t(bank::kMaxKitSamples)) return;
@@ -442,15 +442,15 @@ void KitsPanel::appendSample(int slot, const bank::KitSample& sample)
         s.name = bank::uniqueKitSampleName(k, int(k.samples.size()), s.name);   // section 221
         k.samples.push_back(std::move(s));
     });
-    selfBank_ = processor.bank().get();
-    if (slot == slot_) { sample_ = int(processor.bank()->kits[size_t(slot - 1)].samples.size()) - 1; rebuildContent(); }
+    selfBank_ = host.bank().get();
+    if (slot == slot_) { sample_ = int(host.bank()->kits[size_t(slot - 1)].samples.size()) - 1; rebuildContent(); }
     rebuildList();
     contextChanged();
 }
 
 void KitsPanel::bankChanged()
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     rebuildList();
     if (!b) return;
     const bank::Kit* kit = b->kit(slot_);

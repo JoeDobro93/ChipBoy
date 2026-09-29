@@ -426,6 +426,9 @@ var waveToVar(const Wave& w, int slot) { return waveToVarImpl(w, slot); }
 bool waveFromVar(const var& v, Wave& out) { if (!v.getDynamicObject()) return false; waveFromVarImpl(v, out); return true; }
 var kitToVar(const Kit& k, int slot) { return kitToVarImpl(k, slot); }
 bool kitFromVar(const var& v, Kit& out) { if (!v.getDynamicObject()) return false; kitFromVarImpl(v, out); return true; }
+var commandToVar(const Command& c) { return cmdToVar(c); }
+Command commandFromVar(const var& v) { return cmdFromVar(v); }
+
 int slotOfVar(const var& v) { auto* o = v.getDynamicObject(); return o ? int(o->getProperty("slot")) : 0; }
 bool instrumentFromVar(const var& v, Instrument& out)
 {

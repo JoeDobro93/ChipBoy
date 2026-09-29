@@ -15,7 +15,7 @@ namespace chipboy::plugin {
 
 class TablesPanel : public EditorPanel {
 public:
-    explicit TablesPanel(ChipBoyProcessor& p);
+    explicit TablesPanel(EditorHost& p);
     ~TablesPanel() override;
 
     RichText contextLine() const override;

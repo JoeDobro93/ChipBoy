@@ -7,14 +7,14 @@
 // With the map off the strips' Source menus route as they always did.
 #pragma once
 
-#include "plugin/main/panels/PanelCommon.h"
+#include "plugin/main/panels/MainCommon.h"
 
 #include <memory>
 #include <vector>
 
 namespace chipboy::plugin {
 
-class MidiMapPanel : public EditorPanel {
+class MidiMapPanel : public MainPanel {
 public:
     explicit MidiMapPanel(ChipBoyProcessor& p);
     ~MidiMapPanel() override;

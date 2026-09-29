@@ -7,7 +7,8 @@
 // through atomics, shared_ptr snapshots or the packed scope state.
 #pragma once
 
-#include "plugin/main/ChipBoyProcessor.h"
+#include "plugin/shared/EditorHost.h"
+#include "plugin/shared/Parameters.h"
 #include "plugin/ui/Theme.h"
 #include "plugin/ui/Widgets.h"
 
@@ -247,10 +248,10 @@ public:
 
 /* ------------------------------------------------------- parameters */
 
-juce::RangedAudioParameter& param(ChipBoyProcessor& p, const juce::String& id);
-int paramValue(const ChipBoyProcessor& p, const juce::String& id);          ///< denormalised, rounded
-float paramFloat(const ChipBoyProcessor& p, const juce::String& id);
-juce::String paramText(ChipBoyProcessor& p, const juce::String& id);
+juce::RangedAudioParameter& param(EditorHost& p, const juce::String& id);
+int paramValue(const EditorHost& p, const juce::String& id);          ///< denormalised, rounded
+float paramFloat(const EditorHost& p, const juce::String& id);
+juce::String paramText(EditorHost& p, const juce::String& id);
 /// Set by hand from `owner`'s window: one gesture, on that window's undo
 /// history (UI_DESIGN section 2.1).
 void setParam(const juce::Component& owner, juce::RangedAudioParameter& p, float denormalised);
@@ -294,32 +295,10 @@ private:
     std::unique_ptr<juce::ParameterAttachment> att_;
 };
 
-/* --------------------------------------------------------- the tracker */
-
-/// Where the transport stands, as the tracker counts it: the song's tick, and
-/// per channel the row of its own chain it is in and how far into that row --
-/// the channels drift apart by design (docs/COMMANDS_AND_TEMPO.md 25).
-struct TrackerPosition {
-    int64_t tick = 0;
-    int row[4] = { 0, 0, 0, 0 };
-    int inRow[4] = { 0, 0, 0, 0 };
-    bool playing = false;
-};
-TrackerPosition trackerPosition(const ChipBoyProcessor& p);
-/// The step a channel is really playing: its groove says how long each step
-/// lasts, so a swung phrase marks the row that is sounding. -1 for none.
-int playingStepOf(const ChipBoyProcessor& p, const tracker::Song& s, int ch, int row, int inRow);
-
 /* ----------------------------------------------------------- lookups */
 
-/// The coupling corner of the current model: DMG 25 Hz, CGB 338 Hz over the
-/// bass-mod factor, RAW 0.
-double analogCornerHz(const ChipBoyProcessor& p);
-int modelIndex(const ChipBoyProcessor& p);
 juce::String modelName(int index);
 juce::Colour modelColour(int index);
-/// "Omni", "MIDI 2", "Off", or "Voice: <name>" when a Voice owns the channel.
-juce::String channelSourceText(ChipBoyProcessor& p, int ch, bool* voiceOwned = nullptr);
 juce::Colour instrumentKindColour(int kind);
 juce::String instrumentTypeName(bank::InstrumentType t);
 bank::InstrumentType channelInstrumentType(int ch);
@@ -330,10 +309,13 @@ juce::String slotAndName(int slot, const std::string& name);   ///< "05 Bass 07"
 
 /* ------------------------------------------------------------ panels */
 
-/// One of the seven editor tabs.
+/// One of the editor tabs. It reads its plugin through EditorHost, so the
+/// bank editors serve the main window and ChipBoy Solo alike
+/// (docs/plan-solo.md section 7); a tab of the machine derives from
+/// MainPanel (MainCommon.h), which also keeps the ChipBoyProcessor.
 class EditorPanel : public juce::Component {
 public:
-    explicit EditorPanel(ChipBoyProcessor& p) : processor(p) {}
+    explicit EditorPanel(EditorHost& h) : host(h) {}
     virtual void setChannel(int ch) { channel = ch; }
     virtual RichText contextLine() const = 0;
     virtual void bankChanged() {}          ///< processor.bank() is a new object
@@ -360,7 +342,7 @@ protected:
     void contextChanged() { if (onContextChanged) onContextChanged(); }
     void openSlot(ui::SlotKind kind, int slot) { if (onOpenSlot && slot > 0) onOpenSlot(kind, slot); }
     void message(const juce::String& text) { if (onMessage) onMessage(text); }
-    ChipBoyProcessor& processor;
+    EditorHost& host;
     int channel = 0;
 };
 

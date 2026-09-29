@@ -19,7 +19,7 @@ constexpr int kSlots = tracker::kGrooveSlots;   // thirty-two (section 162)
 }
 
 GroovesPanel::GroovesPanel(ChipBoyProcessor& p)
-    : EditorPanel(p),
+    : MainPanel(p),
       listTitle_("Grooves" + middot() + "32 slots", Fonts::sans(11.0f), colours::textMute)
 {
     addAndMakeVisible(list_);

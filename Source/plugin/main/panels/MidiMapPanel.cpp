@@ -70,7 +70,7 @@ private:
 };
 
 MidiMapPanel::MidiMapPanel(ChipBoyProcessor& p)
-    : EditorPanel(p),
+    : MainPanel(p),
       listTitle_("MIDI channels" + middot() + "16 a port", Fonts::sans(11.0f), colours::textMute),
       on_("Route MIDI through the map"),
       head_("MIDI channel 1", Fonts::sans(13.0f), colours::text),

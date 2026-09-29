@@ -18,7 +18,7 @@
 // is chosen in the lane's chip and edited in the Grooves tab.
 #pragma once
 
-#include "plugin/main/panels/PanelCommon.h"
+#include "plugin/main/panels/MainCommon.h"
 
 #include <array>
 #include <memory>
@@ -26,7 +26,7 @@
 
 namespace chipboy::plugin {
 
-class TrackerPanel : public EditorPanel {
+class TrackerPanel : public MainPanel {
 public:
     explicit TrackerPanel(ChipBoyProcessor& p);
     ~TrackerPanel() override;

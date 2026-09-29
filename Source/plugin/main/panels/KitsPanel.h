@@ -24,7 +24,7 @@ private:
 
 class KitsPanel : public EditorPanel {
 public:
-    explicit KitsPanel(ChipBoyProcessor& p);
+    explicit KitsPanel(EditorHost& p);
     void selectSlot(int slot) override { showSlot(slot); }
     void saveView(juce::ValueTree& v) const override { v.setProperty("slot", slot_, nullptr); }
     void restoreView(const juce::ValueTree& v) override { if (v.hasProperty("slot")) showSlot(int(v["slot"])); }

@@ -33,6 +33,9 @@ juce::var kitToVar(const bank::Kit& k, int slot);
 bool      kitFromVar(const juce::var& v, bank::Kit& out);
 /// The slot an object written by one of those carries, or 0.
 int slotOfVar(const juce::var& v);
+/// One command as the files spell it (`c`, `a`, `b`, `x`); a void var for none.
+juce::var     commandToVar(const bank::Command& c);
+bank::Command commandFromVar(const juce::var& v);
 juce::String instrumentToJson(const bank::Instrument& i);
 bool         instrumentFromJson(const juce::String& text, bank::Instrument& out);
 

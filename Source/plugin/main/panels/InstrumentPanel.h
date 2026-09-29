@@ -16,7 +16,7 @@ namespace chipboy::plugin {
 
 class InstrumentPanel : public EditorPanel {
 public:
-    explicit InstrumentPanel(ChipBoyProcessor& p);
+    explicit InstrumentPanel(EditorHost& p);
     ~InstrumentPanel() override;
 
     void setChannel(int ch) override;

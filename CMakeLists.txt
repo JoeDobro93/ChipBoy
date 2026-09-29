@@ -150,6 +150,16 @@ if(CHIPBOY_BUILD_PLUGIN)
         Source/plugin/main/panels/*.cpp)
     file(GLOB CHIPBOY_VOICE_SOURCES CONFIGURE_DEPENDS
         Source/plugin/voice/*.cpp)
+    # ChipBoy Solo (docs/plan-solo.md): its own sources, and the main window's
+    # bank editors, which reach the plugin through EditorHost.
+    file(GLOB CHIPBOY_SOLO_SOURCES CONFIGURE_DEPENDS
+        Source/plugin/solo/*.cpp)
+    set(CHIPBOY_SOLO_PANEL_SOURCES
+        Source/plugin/main/panels/PanelCommon.cpp
+        Source/plugin/main/panels/InstrumentPanel.cpp
+        Source/plugin/main/panels/TablesPanel.cpp
+        Source/plugin/main/panels/WavesPanel.cpp
+        Source/plugin/main/panels/KitsPanel.cpp)
 
     # Fonts and other assets: every file in Source/plugin/ui/assets becomes
     # BinaryData (namespace chipboy::assets), e.g. IBMPlexSansRegular_ttf.
@@ -230,6 +240,25 @@ if(CHIPBOY_BUILD_PLUGIN)
         AU_MAIN_TYPE kAudioUnitType_MusicDevice)
     target_sources(ChipBoyVoice PRIVATE ${CHIPBOY_PLUGIN_SHARED_SOURCES} ${CHIPBOY_VOICE_SOURCES})
     chipboy_configure_plugin(ChipBoyVoice)
+
+    # --- ChipBoy Solo: one channel as a plugin of its own (docs/plan-solo.md) --
+    juce_add_plugin(ChipBoySolo
+        PRODUCT_NAME "ChipBoy Solo"
+        COMPANY_NAME "ChipBoy"
+        BUNDLE_ID com.chipboy.chipboysolo
+        PLUGIN_MANUFACTURER_CODE Chpb
+        PLUGIN_CODE Chbs
+        FORMATS ${CHIPBOY_FORMATS}
+        IS_SYNTH TRUE
+        NEEDS_MIDI_INPUT TRUE
+        NEEDS_MIDI_OUTPUT FALSE
+        IS_MIDI_EFFECT FALSE
+        EDITOR_WANTS_KEYBOARD_FOCUS TRUE
+        COPY_PLUGIN_AFTER_BUILD ${CHIPBOY_COPY_PLUGINS}
+        VST3_CATEGORIES Instrument Synth
+        AU_MAIN_TYPE kAudioUnitType_MusicDevice)
+    target_sources(ChipBoySolo PRIVATE ${CHIPBOY_PLUGIN_SHARED_SOURCES} ${CHIPBOY_SOLO_PANEL_SOURCES} ${CHIPBOY_SOLO_SOURCES})
+    chipboy_configure_plugin(ChipBoySolo)
 
     # --- chipboy_paramdump: prints the host-visible parameter list in index
     # order, for the demo project generator and the documentation ------------
@@ -327,6 +356,24 @@ if(CHIPBOY_BUILD_PLUGIN)
                  --out "${CMAKE_CURRENT_BINARY_DIR}/recordtest" --play-song "${song}" 8)
     endforeach()
 
+    # --- chipboy_solotest: ChipBoy Solo headless (docs/plan-solo.md section 8) --
+    juce_add_console_app(chipboy_solotest PRODUCT_NAME "chipboy_solotest")
+    target_sources(chipboy_solotest PRIVATE
+        ${CHIPBOY_PLUGIN_SHARED_SOURCES} ${CHIPBOY_SOLO_PANEL_SOURCES} ${CHIPBOY_SOLO_SOURCES}
+        tools/solotest/main.cpp)
+    target_compile_definitions(chipboy_solotest PRIVATE
+        CHIPBOY_NO_PLUGIN_FILTER=1
+        JUCE_STANDALONE_APPLICATION=1
+        JucePlugin_Name="ChipBoy Solo" JucePlugin_Manufacturer="ChipBoy" JucePlugin_ManufacturerCode=0x43687062 JucePlugin_PluginCode=0x43686273
+        JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0 JucePlugin_IsMidiEffect=0
+        JucePlugin_EditorRequiresKeyboardFocus=1 JucePlugin_Version=0.1.0 JucePlugin_VersionCode=0x100 JucePlugin_VersionString="0.1.0"
+        JucePlugin_Build_VST3=0 JucePlugin_Build_AU=0 JucePlugin_Build_Standalone=0
+        JucePlugin_MaxNumInputChannels=0 JucePlugin_MaxNumOutputChannels=2 JucePlugin_PreferredChannelConfigurations= )
+    set(CHIPBOY_MODAL_LOOPS 1)
+    chipboy_configure_plugin(chipboy_solotest)
+    set(CHIPBOY_MODAL_LOOPS 0)
+    add_test(NAME chipboy_solotest COMMAND chipboy_solotest --out "${CMAKE_CURRENT_BINARY_DIR}/solotest")
+
     # --- chipboy_fuzz: random songs through the whole plugin, to find the
     # crash nobody would have written by hand (section 28) -------------------
     juce_add_console_app(chipboy_fuzz PRODUCT_NAME "chipboy_fuzz")
@@ -352,7 +399,7 @@ if(CHIPBOY_BUILD_PLUGIN)
     # --- chipboy_uishot: PNG snapshots of the windows (needs a display) ----
     juce_add_console_app(chipboy_uishot PRODUCT_NAME "chipboy_uishot")
     target_sources(chipboy_uishot PRIVATE
-        ${CHIPBOY_PLUGIN_SHARED_SOURCES} ${CHIPBOY_MAIN_SOURCES} ${CHIPBOY_VOICE_SOURCES}
+        ${CHIPBOY_PLUGIN_SHARED_SOURCES} ${CHIPBOY_MAIN_SOURCES} ${CHIPBOY_VOICE_SOURCES} ${CHIPBOY_SOLO_SOURCES}
         tools/uishot/main.cpp)
     target_compile_definitions(chipboy_uishot PRIVATE
         CHIPBOY_NO_PLUGIN_FILTER=1

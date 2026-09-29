@@ -17,7 +17,7 @@ namespace chipboy::plugin {
 
 class WavesPanel : public EditorPanel {
 public:
-    explicit WavesPanel(ChipBoyProcessor& p);
+    explicit WavesPanel(EditorHost& p);
     ~WavesPanel() override;
 
     RichText contextLine() const override;

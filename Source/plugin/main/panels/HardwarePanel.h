@@ -3,11 +3,11 @@
 // MODIFIED while one is on) and the display options.
 #pragma once
 
-#include "plugin/main/panels/PanelCommon.h"
+#include "plugin/main/panels/MainCommon.h"
 
 namespace chipboy::plugin {
 
-class HardwarePanel : public EditorPanel {
+class HardwarePanel : public MainPanel {
 public:
     explicit HardwarePanel(ChipBoyProcessor& p);
     ~HardwarePanel() override;

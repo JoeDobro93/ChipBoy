@@ -8,12 +8,12 @@
 // lane keeps the chip that says which groove a phrase runs on.
 #pragma once
 
-#include "plugin/main/panels/PanelCommon.h"
+#include "plugin/main/panels/MainCommon.h"
 #include "plugin/ui/GrooveEditor.h"
 
 namespace chipboy::plugin {
 
-class GroovesPanel : public EditorPanel {
+class GroovesPanel : public MainPanel {
 public:
     explicit GroovesPanel(ChipBoyProcessor& p);
     ~GroovesPanel() override;

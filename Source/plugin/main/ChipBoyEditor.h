@@ -13,7 +13,7 @@
 #include "plugin/main/ChipBoyProcessor.h"
 #include "plugin/main/panels/HeaderBar.h"
 #include "plugin/main/panels/MixerRow.h"
-#include "plugin/main/panels/PanelCommon.h"
+#include "plugin/main/panels/MainCommon.h"
 #include "plugin/main/panels/StatusBar.h"
 #include "plugin/ui/Theme.h"
 #include "plugin/ui/Widgets.h"

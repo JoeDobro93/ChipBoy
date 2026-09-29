@@ -750,6 +750,39 @@ void ChipBoyProcessor::finishTake(int ch, tracker::Song& song)
         chainOf[size_t(row)] = slot;
     }
     auto& ph = song.phrases[size_t(slot - 1)];
+    // A row fitted already whose messages keep coming -- a note-off whose
+    // tick fell in it after the next row had opened, a held note fired late
+    // -- is not laid again: its cells stand, and each late message goes to
+    // the nearest step of the grid the fit left, its provisional cell taken
+    // back (section 226).
+    if (lastFitRow_[size_t(ch & 3)] == row) {
+        std::vector<int> start(size_t(tracker::kMaxPlaySteps) + 1, 0);
+        std::vector<uint8_t> stepOf(size_t(tracker::kMaxPlaySteps) + 1, 0);
+        tracker::GrooveWalk w = song.walkAt(ch & 3, row);
+        const int n = tracker::stepStartTicks(song, &ph, w, start.data(), stepOf.data());
+        for (const auto& m : take.msgs) {
+            if (int(m.row) < int(chainOf.size()) && chainOf[size_t(m.row)] != 0) {
+                auto& c = song.phrases[size_t(chainOf[size_t(m.row)] - 1)].cells[size_t(m.step) % size_t(tracker::kMaxSteps)];
+                if (!m.slotsOnly && c.note == m.cell.note) { c.note = 0; c.vel = 0; c.inst = 0; c.table = 0; }
+            }
+            const int rel = int(std::lround(m.tick - double(take.rowStart)));
+            int k = -1, bestD = 1 << 30;
+            for (int i = 0; i < n; ++i) { const int d = std::abs(start[size_t(i)] - rel); if (d < bestD) { bestD = d; k = int(stepOf[size_t(i)]); } }
+            if (k < 0 || k >= ph.length()) continue;
+            auto& c = ph.cells[size_t(k)];
+            if (!m.slotsOnly && m.cell.note >= 1 && m.cell.note <= 127) {
+                if (c.note >= 1 && c.note <= 127 && c.note != m.cell.note) continue;
+                c.note = m.cell.note; c.vel = m.cell.vel; c.inst = m.cell.inst; c.table = m.cell.table;
+            } else if (!m.slotsOnly && m.cell.note == tracker::kNoteOff) {
+                if (c.note >= 1 && c.note <= 127) { if (k + 1 < ph.length() && ph.cells[size_t(k) + 1].note == 0) ph.cells[size_t(k) + 1].note = tracker::kNoteOff; continue; }
+                if (c.note == 0) c.note = tracker::kNoteOff;
+            }
+            if (m.cell.cmd1.cmd != bank::Cmd::None && c.cmd1.cmd == bank::Cmd::None) c.cmd1 = m.cell.cmd1;
+            if (m.cell.cmd2.cmd != bank::Cmd::None && c.cmd2.cmd == bank::Cmd::None) c.cmd2 = m.cell.cmd2;
+        }
+        take.msgs.clear();
+        return;
+    }
     // A note the quantiser sent to another row's step is taken back from there.
     for (const auto& m : take.msgs) {
         if (int(m.row) == row || m.slotsOnly || int(m.row) >= int(chainOf.size())) continue;

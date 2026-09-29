@@ -3,11 +3,11 @@
 // session, link mode, and the diagram of how the link works.
 #pragma once
 
-#include "plugin/main/panels/PanelCommon.h"
+#include "plugin/main/panels/MainCommon.h"
 
 namespace chipboy::plugin {
 
-class LinkPanel : public EditorPanel {
+class LinkPanel : public MainPanel {
 public:
     explicit LinkPanel(ChipBoyProcessor& p);
     ~LinkPanel() override;

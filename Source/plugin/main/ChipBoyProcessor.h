@@ -16,6 +16,7 @@
 #include "core/Tracker/GrooveFit.h"
 #include "core/Tracker/Player.h"
 #include "core/Tracker/Song.h"
+#include "plugin/shared/EditorHost.h"
 #include "plugin/shared/LinkTransport.h"
 #include "plugin/shared/Parameters.h"
 #include "plugin/shared/ScopeBuffers.h"
@@ -48,7 +49,7 @@ struct SongTab {
     int   id = 0;
 };
 
-class ChipBoyProcessor : public juce::AudioProcessor, private juce::Timer
+class ChipBoyProcessor : public juce::AudioProcessor, public EditorHost, private juce::Timer
 {
 public:
     ChipBoyProcessor();
@@ -79,11 +80,17 @@ public:
     // --- for the editor (message thread) --------------------------------
     juce::AudioProcessorValueTreeState apvts;
     std::array<ChannelParamCache, 4> channelParams;
+    // --- EditorHost (docs/plan-solo.md section 7) ------------------------
+    juce::AudioProcessorValueTreeState& state() override { return apvts; }
+    const juce::AudioProcessorValueTreeState& state() const override { return apvts; }
+    int channelCount() const override { return 4; }
+    int hardwareChannel(int lane) const override { return lane & 3; }
+    juce::String channelParamId(int lane, const char* id) const override { return plugin::channelParamId(lane, id); }
     static ChannelKind kindOf(int ch) { return ch == 0 ? ChannelKind::Pulse1 : ch == 1 ? ChannelKind::Pulse2 : ch == 2 ? ChannelKind::Wave : ChannelKind::Noise; }
 
     /// The active tab's bank and song: what plays, what the window edits.
-    std::shared_ptr<const bank::Bank> bank() const { return bankShared_; }
-    std::shared_ptr<const tracker::Song> song() const { return songShared_; }
+    std::shared_ptr<const bank::Bank> bank() const override { return bankShared_; }
+    std::shared_ptr<const tracker::Song> song() const override { return songShared_; }
 
     // --- song tabs (docs/COMMANDS_AND_TEMPO.md section 18) ---------------
     //
@@ -135,11 +142,11 @@ public:
     // bury what the musician typed.
 
     /// The history the window's controls, its buttons and its keys use.
-    ui::UndoHistory& history() { return history_; }
+    ui::UndoHistory& history() override { return history_; }
 
     /// A hand edit of the bank or the song: the copy-on-write path above,
     /// with the snapshots it already makes put on the history under `name`.
-    void editBank(const juce::String& name, const std::function<void(bank::Bank&)>& fn);
+    void editBank(const juce::String& name, const std::function<void(bank::Bank&)>& fn) override;
     void editSong(const juce::String& name, const std::function<void(tracker::Song&)>& fn);
     /// Section 225: the MIDI map's routing changed, so nothing may ring on
     /// a channel that is no longer fed -- every channel is flushed in front
@@ -164,7 +171,7 @@ public:
     /// Tap every register write the driver emits, for the record test
     /// (docs/COMMANDS_AND_TEMPO.md section 9.5). Null to stop.
     void setWriteLog(std::vector<driver::RegWrite>* log) { driver_.setWriteLog(log); }
-    ScopeBuffers& scopes() { return scopes_; }
+    ScopeBuffers& scopes() override { return scopes_; }
     juce::String instanceName() const { return instanceName_; }
     void setInstanceName(const juce::String& n) { instanceName_ = n; }
     juce::String instanceUuid() const { return uuid_; }
@@ -189,7 +196,7 @@ public:
     /// reads it straight out of the live bank and mixes it in after the render,
     /// so it never touches the driver and the song plays on. Pressing it again
     /// starts over; slot 0 stops it.
-    void previewKitSample(int slot, int sample)
+    void previewKitSample(int slot, int sample) override
     {
         const uint32_t req = (uint32_t(slot & 63) << 8) | uint32_t(sample & 63) | (uint32_t(++previewSeq_ & 0x3FFFF) << 14);
         previewReq_.store(req, std::memory_order_release);
@@ -242,7 +249,7 @@ public:
     /// the host's BPM in Host mode, the song's tempo in force -- its master
     /// tempo, or the T last passed -- in Song mode (section 19).
     bool songTempoSource() const { return songTempo_.load(); }
-    double effectiveTempo() const { return tempo_.load(); }
+    double effectiveTempo() const override { return tempo_.load(); }
     /// The tracker's position: the song's time in ticks, and where each
     /// channel is in its own chain -- its row and the step inside it, which
     /// differ between channels by design (section 25). -1 when the channel is

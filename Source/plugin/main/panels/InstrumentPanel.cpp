@@ -288,7 +288,7 @@ struct InstrumentPanel::Widgets {
 
 /* ------------------------------------------------------------ panel */
 
-InstrumentPanel::InstrumentPanel(ChipBoyProcessor& p)
+InstrumentPanel::InstrumentPanel(EditorHost& p)
     : EditorPanel(p),
       listTitle_("Instruments" + middot() + "128 slots", Fonts::sans(11.0f), colours::textMute),
       newBtn_("New"), dupBtn_("Dup"),
@@ -310,12 +310,12 @@ InstrumentPanel::InstrumentPanel(ChipBoyProcessor& p)
     list_.onRename = [this](int slot, const String& name) {
         const int s = std::clamp(slot, 1, bank::kInstrumentSlots);
         const int ch = channel;
-        processor.editBank("Instrument " + ValueFormat::slot(s) + " named " + name, [s, ch, name](bank::Bank& b) {
+        host.editBank("Instrument " + ValueFormat::slot(s) + " named " + name, [s, ch, name](bank::Bank& b) {
             auto& i = b.instruments[size_t(s - 1)];
             if (!i.used) i = bank::Instrument::defaults(channelInstrumentType(ch), "");
             i.name = name.toStdString();
         });
-        selfBank_ = processor.bank().get();
+        selfBank_ = host.bank().get();
         if (s == slot_ && w_ && w_->head) w_->head->name.setText(name);
         rebuildList();
         contextChanged();
@@ -332,7 +332,7 @@ InstrumentPanel::InstrumentPanel(ChipBoyProcessor& p)
     loadPresetBtn_.setTooltip("Read a .cbi into this slot; its tables, waves and kit take free slots and every reference is renumbered.");
     loadPresetBtn_.onClick = [this] { loadPreset(); };
 
-    const int v = paramValue(processor, channelParamId(channel, ids::instrument));
+    const int v = paramValue(host, host.channelParamId(channel, ids::instrument));
     slot_ = v >= 1 ? v : 1;
     rebuildList();
     rebuildEditor();
@@ -344,7 +344,7 @@ InstrumentPanel::~InstrumentPanel() = default;
 void InstrumentPanel::setChannel(int ch)
 {
     EditorPanel::setChannel(ch);
-    const int v = paramValue(processor, channelParamId(channel, ids::instrument));
+    const int v = paramValue(host, host.channelParamId(channel, ids::instrument));
     lastChannelInst_[size_t(channel)] = v;
     showSlot(v >= 1 ? v : slot_);
 }
@@ -353,7 +353,7 @@ RichText InstrumentPanel::contextLine() const
 {
     RichText r;
     r.plain("Editing ").bold(colours::channelName(channel)).plain(middot());
-    const auto b = processor.bank();
+    const auto b = host.bank();
     const bank::Instrument* inst = b ? b->instrument(slot_) : nullptr;
     if (inst) r.plain("instrument ").bold(slotAndName(slot_, inst->name));
     else r.plain("slot ").bold(ValueFormat::slot(slot_)).plain(" is empty");
@@ -362,7 +362,7 @@ RichText InstrumentPanel::contextLine() const
 
 void InstrumentPanel::bankChanged()
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     rebuildList();
     if (!b) return;
     const auto& inst = b->instruments[size_t(slot_ - 1)];
@@ -390,12 +390,12 @@ void InstrumentPanel::hexChanged()
 void InstrumentPanel::tick()
 {
     bool changed = false;
-    for (int ch = 0; ch < 4; ++ch) {
-        const int v = paramValue(processor, channelParamId(ch, ids::instrument));
+    for (int ch = 0; ch < host.channelCount(); ++ch) {
+        const int v = paramValue(host, host.channelParamId(ch, ids::instrument));
         if (v == lastChannelInst_[size_t(ch)]) continue;
         lastChannelInst_[size_t(ch)] = v;
         changed = true;
-        if (ch == channel && v >= 1 && v != slot_) showSlot(v);
+        if (host.hardwareChannel(ch) == channel && v >= 1 && v != slot_) showSlot(v);
     }
     if (changed) { updateUsedOn(); rebuildList(); }
 }
@@ -431,8 +431,8 @@ int InstrumentPanel::firstEmptySlot(const bank::Bank& b)
 std::vector<int> InstrumentPanel::computeUses(const bank::Bank& b, const tracker::Song* song) const
 {
     std::vector<int> uses(size_t(bank::kInstrumentSlots + 1), 0);
-    for (int ch = 0; ch < 4; ++ch) {
-        const int v = paramValue(processor, channelParamId(ch, ids::instrument));
+    for (int ch = 0; ch < host.channelCount(); ++ch) {
+        const int v = paramValue(host, host.channelParamId(ch, ids::instrument));
         if (v >= 1 && v <= bank::kInstrumentSlots && b.instruments[size_t(v - 1)].used) ++uses[size_t(v)];
     }
     if (song)
@@ -445,9 +445,9 @@ std::vector<int> InstrumentPanel::computeUses(const bank::Bank& b, const tracker
 
 void InstrumentPanel::rebuildList()
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     if (!b) return;
-    const auto s = processor.song();
+    const auto s = host.song();
     const std::vector<int> uses = computeUses(*b, s.get());
     std::vector<SlotRow> rows;
     rows.resize(size_t(bank::kInstrumentSlots));
@@ -479,11 +479,11 @@ void InstrumentPanel::showSlot(int slot)
 void InstrumentPanel::assignSlot(int slot)
 {
     showSlot(slot);
-    const auto b = processor.bank();
+    const auto b = host.bank();
     const bank::Instrument* inst = b ? b->instrument(slot_) : nullptr;
     if (inst && instrumentFitsChannel(inst->type, channel)) {
         lastChannelInst_[size_t(channel)] = slot_;
-        setParam(*this, param(processor, channelParamId(channel, ids::instrument)), float(slot_));
+        setParam(*this, param(host, host.channelParamId(channel, ids::instrument)), float(slot_));
         updateUsedOn();
         rebuildList();
     }
@@ -493,7 +493,7 @@ void InstrumentPanel::refreshAssignButton()
 {
     const String ch = colours::channelName(channel);
     assignBtn_.setButtonText("Assign to " + ch);
-    const auto b = processor.bank();
+    const auto b = host.bank();
     const bank::Instrument* inst = b ? b->instrument(slot_) : nullptr;
     const bool fits = inst != nullptr && instrumentFitsChannel(inst->type, channel);
     assignBtn_.setEnabled(fits);
@@ -503,21 +503,21 @@ void InstrumentPanel::refreshAssignButton()
 
 void InstrumentPanel::newInstrument()
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     if (!b) return;
     int slot = !b->instruments[size_t(slot_ - 1)].used ? slot_ : firstEmptySlot(*b);
     if (slot == 0) return;
     const bank::InstrumentType t = channelInstrumentType(channel);
     const String name = instrumentTypeName(t) + " " + String(slot);
-    processor.editBank("New instrument " + ValueFormat::slot(slot), [slot, t, name](bank::Bank& bk) { bk.instruments[size_t(slot - 1)] = bank::Instrument::defaults(t, name.toRawUTF8()); });
-    selfBank_ = processor.bank().get();
+    host.editBank("New instrument " + ValueFormat::slot(slot), [slot, t, name](bank::Bank& bk) { bk.instruments[size_t(slot - 1)] = bank::Instrument::defaults(t, name.toRawUTF8()); });
+    selfBank_ = host.bank().get();
     rebuildList();
     assignSlot(slot);
 }
 
 void InstrumentPanel::duplicate()
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     if (!b) return;
     const auto& src = b->instruments[size_t(slot_ - 1)];
     if (!src.used) return;
@@ -525,8 +525,8 @@ void InstrumentPanel::duplicate()
     if (slot == 0) return;
     bank::Instrument copy = src;
     copy.name += " copy";
-    processor.editBank("Duplicate into instrument " + ValueFormat::slot(slot), [slot, copy](bank::Bank& bk) { bk.instruments[size_t(slot - 1)] = copy; });
-    selfBank_ = processor.bank().get();
+    host.editBank("Duplicate into instrument " + ValueFormat::slot(slot), [slot, copy](bank::Bank& bk) { bk.instruments[size_t(slot - 1)] = copy; });
+    selfBank_ = host.bank().get();
     rebuildList();
     showSlot(slot);
 }
@@ -535,7 +535,7 @@ void InstrumentPanel::duplicate()
 
 void InstrumentPanel::savePreset()
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     if (!b) return;
     const bank::Instrument* inst = b->instrument(slot_);
     if (inst == nullptr) { message("Slot " + ValueFormat::slot(slot_) + " is empty: nothing to save."); return; }
@@ -567,9 +567,9 @@ void InstrumentPanel::loadPreset()
         InstrumentPanel& panel = *safe;
         const int slot = panel.slot_;
         bank::PlaceReport report;
-        panel.processor.editBank("Preset " + String(preset->instrument.name) + " into slot " + ValueFormat::slot(slot),
+        panel.host.editBank("Preset " + String(preset->instrument.name) + " into slot " + ValueFormat::slot(slot),
                                  [&preset, slot, &report](bank::Bank& b) { bank::placePreset(b, *preset, slot, report); });
-        panel.selfBank_ = panel.processor.bank().get();
+        panel.selfBank_ = panel.host.bank().get();
         panel.rebuildList();
         panel.rebuildEditor();
         panel.refreshAssignButton();
@@ -585,12 +585,12 @@ void InstrumentPanel::edit(const String& what, const std::function<void(bank::In
 {
     const int slot = slot_;
     const int ch = channel;
-    processor.editBank("Instrument " + ValueFormat::slot(slot) + middot() + what, [&fn, slot, ch](bank::Bank& b) {
+    host.editBank("Instrument " + ValueFormat::slot(slot) + middot() + what, [&fn, slot, ch](bank::Bank& b) {
         auto& i = b.instruments[size_t(slot - 1)];
         if (!i.used) i = bank::Instrument::defaults(channelInstrumentType(ch), ("Inst " + String(slot)).toRawUTF8());
         fn(i);
     });
-    selfBank_ = processor.bank().get();
+    selfBank_ = host.bank().get();
     updateUsedOn();
     refreshDerived();
     rebuildList();
@@ -599,7 +599,7 @@ void InstrumentPanel::edit(const String& what, const std::function<void(bank::In
 
 void InstrumentPanel::rebuildEditor()
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     w_ = std::make_unique<Widgets>();
     auto stack = std::make_unique<Stack>(12);
     builtSlot_ = slot_;
@@ -701,7 +701,7 @@ void InstrumentPanel::rebuildEditor()
                                0, 255, 0, {}, [](bank::Instrument& i, int v) { i.fineTune = uint8_t(v); });
     } else if (type == bank::InstrumentType::Wave) {
         w_->wave = stepper(*sound, "Wave", "The wave RAM source; a W command overrides it. Right-click lists the bank, double-click opens it.", 1, bank::kWaveSlots, 1,
-                           [this](int v) { const auto bk = processor.bank(); const bank::Wave* wv = bk ? bk->wave(v) : nullptr; return wv ? slotAndName(v, wv->name) : slotAndName(v, "empty"); },
+                           [this](int v) { const auto bk = host.bank(); const bank::Wave* wv = bk ? bk->wave(v) : nullptr; return wv ? slotAndName(v, wv->name) : slotAndName(v, "empty"); },
                            [](bank::Instrument& i, int v) { i.wave = uint8_t(v); }, 190);
         w_->wave->setSlotNumbering(true);   // section 52
         w_->wave->onList = [this] { showWaveMenu(); };
@@ -711,7 +711,7 @@ void InstrumentPanel::rebuildEditor()
                                   [](bank::Instrument& i, int v) { i.frameLength = uint8_t(v); });
         w_->frameLoopStep = stepper(*sound, "Loop from", "The step of that run Loop and Ping-pong come back to; the run always starts at its first (section 65). Counted from the end it is the steps before the run's last, whatever a U makes the length (section 211).",
                                     0, bank::kMaxRunSteps - 1, 0,
-                                    [this](int v) { const auto bk = processor.bank(); const bool fromEnd = bk && bk->instruments[size_t(slot_ - 1)].frameLoopFromEnd; return fromEnd ? (v == 0 ? juce::String("end") : "end-" + juce::String(v)) : juce::String(v); },
+                                    [this](int v) { const auto bk = host.bank(); const bool fromEnd = bk && bk->instruments[size_t(slot_ - 1)].frameLoopFromEnd; return fromEnd ? (v == 0 ? juce::String("end") : "end-" + juce::String(v)) : juce::String(v); },
                                     [](bank::Instrument& i, int v) { i.frameLoopStep = uint8_t(v); });
         w_->frameLoopEnd = stepper(*sound, "Loop to", "The step Loop and Ping-pong turn at: the run's last, or a step of its own, so the frames after it play only in One-shot (section 211).",
                                    0, bank::kMaxRunSteps, 0, [](int v) { return v == 0 ? juce::String("end") : juce::String(v); },
@@ -724,7 +724,7 @@ void InstrumentPanel::rebuildEditor()
         w_->waveWrite = seg(*sound, "RAM writes", "How each frame reaches wave RAM (section 215). Pre-trigger is LSDj 9's way: the channel muted for the write and a fast pre-trigger; Muted is 4.7.3 - 8.5.1's, the mute alone; Plain is 3.x - 4.6's, no mute -- no click every frame, which is what an old song's kits sounded like. Imported songs set it by version.", { "Pre-trigger", "Muted", "Plain" }, [](bank::Instrument& i, int v) { i.waveWrite = bank::WaveWrite(std::clamp(v, 0, 2)); });
     } else if (type == bank::InstrumentType::Kit) {
         w_->kit = stepper(*sound, "Kit", "Streamed through wave RAM. Right-click lists the bank, double-click opens it.", 1, bank::kKitSlots, 1,
-                          [this](int v) { const auto bk = processor.bank(); const bank::Kit* k = bk ? bk->kit(v) : nullptr; return k ? slotAndName(v, k->name) : slotAndName(v, "empty"); },
+                          [this](int v) { const auto bk = host.bank(); const bank::Kit* k = bk ? bk->kit(v) : nullptr; return k ? slotAndName(v, k->name) : slotAndName(v, "empty"); },
                           [](bank::Instrument& i, int v) { i.kit = uint8_t(v); }, 190);
         w_->kit->setSlotNumbering(true);   // section 52
         w_->kit->onList = [this] { showKitMenu(); };
@@ -852,7 +852,7 @@ void InstrumentPanel::rebuildEditor()
     auto tab = std::make_unique<FormGroup>("Table & note behaviour");
     w_->table = stepper(*tab, "Table", "The table this instrument runs from note-on, unless an A overrides it. Right-click lists the bank, double-click opens it.",
                         0, bank::kTableSlots, 0,
-                        [this](int v) { if (v == 0) return String("none"); const auto bk = processor.bank(); const bank::Table* t = bk ? bk->table(v) : nullptr; return t ? slotAndName(v, t->name) : slotAndName(v, "empty"); },
+                        [this](int v) { if (v == 0) return String("none"); const auto bk = host.bank(); const bank::Table* t = bk ? bk->table(v) : nullptr; return t ? slotAndName(v, t->name) : slotAndName(v, "empty"); },
                         [](bank::Instrument& i, int v) { i.table = uint8_t(v); }, 190);
     w_->table->setSlotNumbering(true);   // section 52
     w_->table->onList = [this] { showTableMenu(); };
@@ -892,7 +892,7 @@ void InstrumentPanel::rebuildEditor()
 
 void InstrumentPanel::showTableMenu()
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     if (!b || !w_ || w_->table == nullptr) return;
     PopupMenu m;
     m.addSectionHeader("Table");
@@ -916,7 +916,7 @@ void InstrumentPanel::showTableMenu()
 
 void InstrumentPanel::showWaveMenu()
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     if (!b || !w_ || w_->wave == nullptr) return;
     PopupMenu m;
     m.addSectionHeader("Wave");
@@ -943,7 +943,7 @@ void InstrumentPanel::showWaveMenu()
 
 void InstrumentPanel::showKitMenu()
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     if (!b || !w_ || w_->kit == nullptr) return;
     PopupMenu m;
     m.addSectionHeader("Kit");
@@ -967,7 +967,7 @@ void InstrumentPanel::showKitMenu()
 void InstrumentPanel::syncValues()
 {
     if (!w_) return;
-    const auto b = processor.bank();
+    const auto b = host.bank();
     if (!b) return;
     const auto& i = b->instruments[size_t(slot_ - 1)];
     if (!i.used) return;
@@ -1012,7 +1012,7 @@ void InstrumentPanel::syncValues()
 void InstrumentPanel::refreshDerived()
 {
     if (!w_) return;
-    const auto b = processor.bank();
+    const auto b = host.bank();
     if (!b) return;
     const auto& i = b->instruments[size_t(slot_ - 1)];
     auto& w = *w_;
@@ -1039,8 +1039,8 @@ void InstrumentPanel::updateUsedOn()
 {
     if (!w_ || !w_->head) return;
     String on;
-    for (int ch = 0; ch < 4; ++ch)
-        if (paramValue(processor, channelParamId(ch, ids::instrument)) == slot_) { if (on.isNotEmpty()) on += ", "; on += colours::channelName(ch); }
+    for (int ch = 0; ch < host.channelCount(); ++ch)
+        if (paramValue(host, host.channelParamId(ch, ids::instrument)) == slot_) { if (on.isNotEmpty()) on += ", "; on += colours::channelName(host.hardwareChannel(ch)); }
     w_->head->usedOn.setText("slot " + ValueFormat::slot(slot_) + middot() + "used on " + (on.isEmpty() ? String("no channel") : on));
 }
 

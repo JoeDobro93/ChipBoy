@@ -722,6 +722,30 @@ Small, because it lives beside a piano roll: 560 × 420.
 - *Open editor* jumps the main window to this channel's instrument. Editing happens in
   one place, the bank, so a change is heard everywhere the instrument is used.
 
+### 8.1 ChipBoy Solo
+
+One channel as a plugin of its own (`docs/plan-solo.md`, `COMMANDS_AND_TEMPO.md` §227), for
+a DAW track or a keyboard: 560 × 400, fixed, one page at a time.
+
+- A header: the channel as a four-way switch whose colour is the window's accent, the model,
+  the tempo in force (host or own); under it the page bar with the page's context line.
+- **Main**: the channel's scope and registers across the top, the row under them, compact
+  -- SOUND with *Store*, INST with the name the driver loaded, TABLE, TRANSPOSE, PAN,
+  LEVEL, CMD 1 and CMD 2 -- and a note line: the playable range, the last note, the last
+  recall ("Sound 5 Bass · key C1").
+- The other pages take the whole window: **Sounds** (the sixty-four slots with the
+  instrument each recalls; Recall, Store here, Clear; the key map as a list of the keys
+  outside the range with a sound each, Default, Clear, the toggle), **Instrument**,
+  **Tables**, **Waves** and **Kits** (the main window's panels, WAV only for the last two),
+  **Commands** (the library with → CMD 1 / → CMD 2 and Store CMD 1 / 2, and the letter
+  reference), **Setup** (velocity, Live follow, Quantize, the key map, tempo source and own
+  tempo, volume, trim, Hex, the `.cbsolo` and bank files).
+- The status line: what a file did, what a recall did; undo and redo at its right.
+
+![ChipBoy Solo: the Main page](screenshots/solo-main.png)
+
+![ChipBoy Solo: the Sounds page](screenshots/solo-sounds.png)
+
 ---
 
 ## 9. Standalone
@@ -791,4 +815,5 @@ recorded in `CHANGES.md`.
 | D-UI-43 | How is MIDI mapped to the four channels now that a port has sixteen? | **A MIDI tab, and a map that is the routing** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §225, [`plan-midi-map.md`](plan-midi-map.md)). Left, the sixteen MIDI channels listed with their targets; right, the map's switch (off, the strips' Source menus route as before), the selected channel's target as Off / PU1 / PU2 / WAV / NOI, a **velocity bar** across 1-127 showing the regions with draggable boundaries, and the **region grid**: a row per region -- VEL (its lowest velocity; the first is always 1), INS, TBL, CMD 1, CMD 2 -- typed, nudged, boxed and right-clicked exactly as the lane's cells are, with `+` and `-` for a region above the top one and the last one gone; the palette has no H, G or T. Each region is a tracker row without the note, so the tab teaches nothing new. While the map is on the strip's source badge reads `MAP 1·5` -- the MIDI channels that reach it -- and its Source menu says the tab routes |
 | D-UI-43a | (amendment) What else is in a region, and how are velocities shown? | **TSP and Smp columns** -- the chain row's transpose and a kit's second sample, so a region is the whole row but its note (§225 amendments); **up to 127 regions**, one a velocity, so the grid scrolls in its pane; **velocities in decimal** in both display bases, since they are MIDI's numbers. The list opens on the first assigned channel |
 | D-UI-43b | (amendment) The user's five notes on the tab | **Smp 1 and Smp 2 on the WAV target only**, three-letter sample labels (D-UI-34), typed and listed only when the region's INS is a kit and washed out otherwise; with Smp 1 set the region plays those samples whatever key was struck (the one exception to the note coming from MIDI, §225 amendments). **No TSP column** -- transposes are baked into the notes by whoever writes them. **One CMD column**: the second was never needed and is what the recorder writes its `G`s into (§226). **No help pane**: the region grid stretches to the tab's right edge in a viewport, so the info column's "the note is …" text reads in full |
+| D-UI-45 | A channel on its own track, as a synth rather than a remote? | **ChipBoy Solo** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §227, [`plan-solo.md`](plan-solo.md), §8.1): one channel of the engine with its analog stage and the whole bank, the row as the host's parameters with Live follow on, sixty-four **sounds** that recall a row (by a click, by the Sound parameter, or by a **key outside the channel's range**, recalled on the audio thread in front of the note so a simultaneous note sounds with it), a command library, and the Instrument / Tables / Waves / Kits editors shared file for file with the main window through `EditorHost`. 560 × 400, fixed, one page at a time: the scope and the playing row on Main, every editor a page of its own; Waves and Kits only on WAV. With the MIDI map routing a track into ChipBoy this replaces the Voice remote, which stays until its link is removed |
 | D-UI-44 | Can the tracker record what was played rather than where the grid was? | **Auto groove, a toggle at the right of the SONG bar** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §226, [`plan-groove-inference.md`](plan-groove-inference.md)), on for a new song and saved with it. With it on, a recorded row is fitted at its end against the simplest groove that lands every note exactly on a step of its own -- straight, the swings, triplets, thirty-seconds, two grids joined by a `G`, or the row's own gaps -- and laid again from the take; the status line says what each row became and what it cost (`PU1 row 9: 6 (12 steps) then G 3 (8 steps) · new groove slot`). Off, the recorder is as it was. `Demo/midi-map/groove-cases.mid` runs sixteen bars of cases through it |

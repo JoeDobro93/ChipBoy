@@ -67,8 +67,8 @@ plugin() {
     run "plugin configure" "$log" cmake -S . -B build-plugin -DCHIPBOY_BUILD_PLUGIN=ON \
         -DCHIPBOY_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release "${LAUNCHER[@]}" "${JUCE[@]}"
     run "plugin build" "$log" cmake --build build-plugin --config Release --parallel "$JOBS" --target \
-        ChipBoy_VST3 ChipBoyVoice_VST3 ChipBoy_Standalone \
-        chipboy_linktest chipboy_recordtest chipboy_paramdump chipboy_uishot chipboy_fuzz
+        ChipBoy_VST3 ChipBoyVoice_VST3 ChipBoy_Standalone ChipBoySolo_VST3 ChipBoySolo_Standalone \
+        chipboy_linktest chipboy_recordtest chipboy_paramdump chipboy_uishot chipboy_fuzz chipboy_solotest
     warnings "$log"
     run "plugin checks" "$log" ctest --test-dir build-plugin -C Release --output-on-failure
     summary "$log"

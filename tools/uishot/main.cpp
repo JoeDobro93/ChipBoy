@@ -5,7 +5,11 @@
 // whether a tab fits the window. Needs a display (Xvfb will do).
 //
 //   chipboy_uishot <output folder> [--desktop] [--song <file.cbsong>]
-//                  [--hybrid] [--shaped] [--hex] [--scope-check] [--tab-switch]
+//                  [--hybrid] [--shaped] [--hex] [--scope-check] [--tab-switch] [--solo]
+//
+// --solo shoots ChipBoy Solo instead (docs/plan-solo.md): every tab on PU1,
+// then the Waves and Kits tabs on WAV, with a sound stored and a mapped key
+// played so the strip and the Sounds tab show something.
 //
 // --song opens a .cbsong in a tab of its own before the editor opens and
 // leaves the processor without a play head, so the plugin owns the transport
@@ -38,6 +42,7 @@
 // period-locked one moved.
 #include "plugin/main/ChipBoyProcessor.h"
 #include "plugin/shared/SongFiles.h"
+#include "plugin/solo/SoloProcessor.h"
 #include "plugin/voice/VoiceProcessor.h"
 #include "plugin/ui/Widgets.h"
 
@@ -125,6 +130,61 @@ void setCommands(ChipBoyProcessor& proc)
     slot(3, 1, chipboy::bank::Cmd::O);
 }
 
+/// ChipBoy Solo's window, tab by tab (docs/plan-solo.md section 5).
+int shootSolo(const juce::File& outDir, bool desktop)
+{
+    SoloProcessor solo;
+    solo.prepareToPlay(48000.0, 512);
+    const auto id = [&solo](const char* i) { return solo.channelParamId(0, i); };
+    set(solo.apvts, id(ids::cmd1Type), float(choiceFromCmd(chipboy::bank::Cmd::V)));
+    set(solo.apvts, id(ids::cmd1X), 4.0f); set(solo.apvts, id(ids::cmd1Y), 6.0f);
+    solo.storeSound(1, "Lead vib");
+    set(solo.apvts, id(ids::instrument), 2.0f);
+    set(solo.apvts, id(ids::cmd1Type), 0.0f);
+    solo.storeSound(2, "Pluck dry");
+    set(solo.apvts, id(ids::cmd1Type), float(choiceFromCmd(chipboy::bank::Cmd::E)));
+    set(solo.apvts, id(ids::cmd1X), 12.0f); set(solo.apvts, id(ids::cmd1Y), 3.0f);
+    solo.storeSound(3, "Fading");
+    solo.storeLibraryCommand(1, 0, "fade 12 / 3");
+    set(solo.apvts, id(ids::cmd2Type), float(choiceFromCmd(chipboy::bank::Cmd::K)));
+    set(solo.apvts, id(ids::cmd2X), 6.0f);
+    solo.storeLibraryCommand(2, 1, "cut at 6");
+    int lo = 0, hi = 127; solo.noteRange(lo, hi);
+    auto play = [&solo](int note, int key, int blocks) {
+        juce::AudioBuffer<float> buf(2, 512);
+        for (int b = 0; b < blocks; ++b) {
+            juce::MidiBuffer midi;
+            if (b == 0) { if (key >= 0) midi.addEvent(juce::MidiMessage::noteOn(1, key, (juce::uint8) 100), 0); midi.addEvent(juce::MidiMessage::noteOn(1, note, (juce::uint8) 100), 0); }
+            solo.processBlock(buf, midi);
+        }
+    };
+    play(60, lo - 1, 60);                          // the key under the floor: sound 1
+    pump(300);
+    std::unique_ptr<juce::AudioProcessorEditor> ed(solo.createEditor());
+    ed->setOpaque(true);
+    if (desktop) ed->addToDesktop(0);
+    ed->setVisible(true);
+    pump(600);
+    play(64, -1, 30); pump(300);
+    auto* bar = findChild<juce::TabbedButtonBar>(ed.get());
+    if (bar == nullptr) { std::printf("no tab bar found\n"); return 1; }
+    auto shoot = [&](const char* tab) {
+        for (int i = 0; i < bar->getNumTabs(); ++i)
+            if (bar->getTabNames()[i].equalsIgnoreCase(tab)) { bar->setCurrentTabIndex(i); break; }
+        pump(300);
+        play(67, -1, 20); pump(200);
+        save(*ed, outDir.getChildFile(juce::String("solo_") + juce::String(tab).toLowerCase() + ".png"));
+        reportPanes(*ed, tab);
+    };
+    for (const char* tab : { "Main", "Sounds", "Instrument", "Tables", "Commands", "Setup" }) shoot(tab);
+    set(solo.apvts, solo::ids::channel, 2.0f);
+    set(solo.apvts, id(ids::instrument), 7.0f);
+    play(48, -1, 30); pump(400);
+    for (const char* tab : { "Waves", "Kits" }) shoot(tab);
+    ed.reset();
+    return 0;
+}
+
 struct FakePlayHead : juce::AudioPlayHead {
     int64_t frame = 0;
     juce::Optional<PositionInfo> getPosition() const override
@@ -208,10 +268,11 @@ int main(int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI init;
     juce::String out = "shots", songPath;
     bool desktop = false;                       // a real window: the scopes' timers run
-    bool hybrid = false, shaped = false, hex = false, scopeCheck = false, tabSwitch = false;
+    bool hybrid = false, shaped = false, hex = false, scopeCheck = false, tabSwitch = false, soloOnly = false;
     for (int i = 1; i < argc; ++i) {
         const juce::String a(argv[i]);
         if (a == "--desktop") desktop = true;
+        else if (a == "--solo") soloOnly = true;
         else if (a == "--hybrid") hybrid = true;
         else if (a == "--shaped") shaped = true;
         else if (a == "--hex") hex = true;
@@ -222,6 +283,7 @@ int main(int argc, char** argv)
     }
     const juce::File outDir = juce::File::getCurrentWorkingDirectory().getChildFile(out);
     outDir.createDirectory();
+    if (soloOnly) { chipboy::ui::ScopeView::setOffscreenRefresh(true); return shootSolo(outDir, desktop); }
 
     chipboy::ui::ScopeView::setOffscreenRefresh(true);
     ChipBoyProcessor proc;

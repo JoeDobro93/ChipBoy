@@ -26,6 +26,18 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-09-29 -- ChipBoy Solo, a channel as a plugin of its own
+
+`docs/plan-solo.md`, `docs/COMMANDS_AND_TEMPO.md` §227, `docs/UI_DESIGN.md` §8.1 and D-UI-45.
+A third plugin target, `ChipBoySolo` (VST3 / AU / Standalone), built from the same core: one
+channel, the row as parameters with Live follow on, sixty-four sounds recalled by hand, by
+a parameter or by keys outside the range (on the audio thread, in front of the note), a
+command library, a key map, `.cbsolo` files. The four bank editors are shared with the main
+window through a new `EditorHost` interface (`PanelCommon` and the panels no longer name
+`ChipBoyProcessor`; the main-only lookups moved to `MainCommon.*`). Nothing audible in the
+main plugin changes; `addChannelParameters` gained a Live-follow default argument. ChipBoy
+Voice is superseded (the MIDI map does its routing) and stays until its link is removed.
+
 ### 2026-09-28, after testing -- the groove fit is literal; the tolerance goes
 
 `docs/COMMANDS_AND_TEMPO.md` §226 amendment. The user's law: the target is sequenced MIDI, so a

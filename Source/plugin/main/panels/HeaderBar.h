@@ -9,7 +9,7 @@
 // and Beats, because it belongs to the song and the window can hold several.
 #pragma once
 
-#include "plugin/main/panels/PanelCommon.h"
+#include "plugin/main/panels/MainCommon.h"
 
 #include <memory>
 

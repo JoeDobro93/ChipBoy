@@ -129,7 +129,7 @@ juce::String channelParamId(int channel, const char* id);
 /// Adds one channel's parameter set to a layout. `kind` decides the ranges;
 /// Any (the Voice plugin) includes everything.
 void addChannelParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout,
-                          const juce::String& prefix, ChannelKind kind, bool withSource);
+                          const juce::String& prefix, ChannelKind kind, bool withSource, bool liveFollowDefault = false);
 /// Adds the main plugin's global parameters.
 void addGlobalParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout);
 

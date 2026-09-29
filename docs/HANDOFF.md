@@ -83,14 +83,47 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
   Clock), `Tracker` (Song, Player, recorder), `Bank` (instruments, tables, waves, kits,
   grooves, presets, the wave synth), `Link` (the shared-memory region), `Export` (MIDI).
   `Tracker/MidiMap` is the MIDI map (§225).
-- `Source/plugin/`: `main` (ChipBoyProcessor, editor, panels), `voice`, `shared`
-  (parameters, JSON, song and preset files), `ui` (widgets, grids, scopes, undo).
+- `Source/plugin/`: `main` (ChipBoyProcessor, editor, panels), `solo` (ChipBoy Solo, §227),
+  `voice`, `shared` (parameters, JSON, song and preset files, `EditorHost`), `ui` (widgets,
+  grids, scopes, undo).
 - `tools/`: `gate.sh`, `demo` (make_demo.py, make_songs.py), `recordtest`, `linktest`,
-  `paramdump`, `uishot`, `fuzz`, `lsdjref` (parity harness, opt-in). `Tests/`: Catch2.
+  `solotest`, `paramdump`, `uishot`, `fuzz`, `lsdjref` (parity harness, opt-in). `Tests/`: Catch2.
 - `docs/`: `COMMANDS_AND_TEMPO.md` (design log §1–§37, binding), `CHIPBOY_SPEC.md`,
   `UI_DESIGN.md`, `HARDWARE_DRIVER_AUDIT.md`, `LSDJ_PARITY.md`, `LICENSING.md`.
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
+
+## Done (2026-09-29) -- ChipBoy Solo (§227, D-UI-45, `docs/plan-solo.md`)
+
+- **The brief**: standalone individual channel plugins from the same engine for DAW and
+  live use. Built as `ChipBoySolo` (`Source/plugin/solo/`): `SoloProcessor` (the Apu,
+  Renderer, Driver and Clock of the main plugin; one channel gated on; every MIDI channel
+  of the track; the row as `s_` parameters with Live follow on; 64 `SoloSound`s and a
+  32-entry command library in a published `SoloState`; the key map with recalls on the
+  audio thread in front of the note and the timer bringing the parameters up; `.cbsolo`
+  files; the kit audition), `SoloEditor` (header, the strip, the Sounds / Commands /
+  Setup panels, the shared Instrument / Tables / Waves / Kits panels), 560 x 400 with
+  one page at a time -- the user's note after the first build: the scope and the playing
+  row on Main, compact, and every other tab a page that takes the whole window. `chipboy_solotest` (30 checks) runs in the plugin checks; `chipboy_uishot
+  --solo DIR` shoots the tabs (`docs/screenshots/solo-*.png`).
+- **EditorHost** (`plugin/shared/EditorHost.h`): the interface the four bank editors read
+  their plugin through; `ChipBoyProcessor` and `SoloProcessor` implement it. `EditorPanel`
+  holds `host`; the main-only tabs derive from `MainPanel` (`main/panels/MainCommon.*`,
+  which also took `trackerPosition`, `playingStepOf`, `channelSourceText`, `modelIndex`,
+  `analogCornerHz`). `PanelCommon.cpp` and the four panels compile into both targets.
+- **Decisions the user should confirm**: sounds store `inst, table, cmd1, cmd2` and not
+  level, pan or transpose (those stay performance fields); a key recall sets the Sound
+  parameter too; the default key layout counts down from the floor; Live follow on by
+  default; no keyswitch octave in Solo (the key map replaces it); the name *Solo*.
+- **Voice**: superseded by the MIDI map plus Solo, as the user said; left in the tree
+  (removing it takes the link region, the Link tab, `chipboy_linktest` and the Voice
+  sources with it -- a round of its own).
+- **A record-test flake fixed on the way** (§226 amendment): a message for a row already
+  fitted opened a second take and its finish cleared the row; late messages now merge onto
+  the fitted grid. Seen once in a gate run, not reproduced after the fix in four runs.
+- Open: window scaling; MIDI learn for slots; a shared live bank between instances; the
+  Waves tab's synth section is wide for the window (it scrolls); the strip's LEVEL knob
+  folds the sixteen levels onto WAV's four.
 
 ## Done (2026-09-28, the round's end) -- the MIDI tab's five notes; Auto groove (§226, D-UI-44)
 

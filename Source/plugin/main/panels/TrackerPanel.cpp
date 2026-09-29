@@ -37,7 +37,7 @@ String ellipsis() { return String(CharPointer_UTF8("\xe2\x80\xa6")); }
 }
 
 TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
-    : EditorPanel(p),
+    : MainPanel(p),
       pos_("1" + String(CharPointer_UTF8("\xc2\xb7")) + "1" + String(CharPointer_UTF8("\xc2\xb7")) + "0", Fonts::mono(12.0f), colours::text),
       startLabel_("Start", Fonts::caption(10.0f), colours::textDim),
       tempoLabel_("Tempo", Fonts::caption(10.0f), colours::textDim),

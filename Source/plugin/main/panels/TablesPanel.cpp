@@ -49,7 +49,7 @@ public:
     HelpText help;
 };
 
-TablesPanel::TablesPanel(ChipBoyProcessor& p)
+TablesPanel::TablesPanel(EditorHost& p)
     : EditorPanel(p),
       listTitle_("Tables" + middot() + "64 slots", Fonts::sans(11.0f), colours::textMute),
       newBtn_("New"),
@@ -62,21 +62,21 @@ TablesPanel::TablesPanel(ChipBoyProcessor& p)
     list_.onSelect = [this](int slot) { showSlot(slot); };
     list_.onRename = [this](int slot, const String& n) {
         const int s = std::clamp(slot, 1, bank::kTableSlots);
-        processor.editBank("Table " + ValueFormat::slot(s) + " named " + n, [s, n](bank::Bank& b) { auto& t = b.tables[size_t(s - 1)]; t.used = true; t.name = n.toStdString(); });
-        selfBank_ = processor.bank().get();
+        host.editBank("Table " + ValueFormat::slot(s) + " named " + n, [s, n](bank::Bank& b) { auto& t = b.tables[size_t(s - 1)]; t.used = true; t.name = n.toStdString(); });
+        selfBank_ = host.bank().get();
         if (s == slot_) name_.setText(n);
         rebuildList();
         contextChanged();
     };
     newBtn_.setTooltip("New table in the first empty slot");
     newBtn_.onClick = [this] {
-        const auto b = processor.bank();
+        const auto b = host.bank();
         if (!b) return;
         int slot = 0;
         for (int k = 0; k < bank::kTableSlots; ++k) if (!b->tables[size_t(k)].used) { slot = k + 1; break; }
         if (slot == 0) return;
-        processor.editBank("New table " + ValueFormat::slot(slot), [slot](bank::Bank& bk) { auto& t = bk.tables[size_t(slot - 1)]; t = bank::Table{}; t.used = true; t.name = ("Table " + String(slot)).toStdString(); });
-        selfBank_ = processor.bank().get();
+        host.editBank("New table " + ValueFormat::slot(slot), [slot](bank::Bank& bk) { auto& t = bk.tables[size_t(slot - 1)]; t = bank::Table{}; t.used = true; t.name = ("Table " + String(slot)).toStdString(); });
+        selfBank_ = host.bank().get();
         rebuildList();
         showSlot(slot);
     };
@@ -104,7 +104,7 @@ TablesPanel::~TablesPanel() = default;
 RichText TablesPanel::contextLine() const
 {
     RichText r;
-    const auto b = processor.bank();
+    const auto b = host.bank();
     const bank::Table* t = b ? b->table(slot_) : nullptr;
     r.plain("Table ").bold(t ? slotAndName(slot_, t->name) : slotAndName(slot_, "empty"));
     if (b) {
@@ -124,12 +124,12 @@ int TablesPanel::usedBy(const bank::Bank& b, int slot)
 String TablesPanel::stepRateText() const
 {
     // Ticks are always 24 per beat (docs/COMMANDS_AND_TEMPO.md section 4).
-    return "1 per tick (24 per beat, " + String(int(std::lround(processor.effectiveTempo()))) + " BPM)";
+    return "1 per tick (24 per beat, " + String(int(std::lround(host.effectiveTempo()))) + " BPM)";
 }
 
 void TablesPanel::rebuildList()
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     if (!b) return;
     std::vector<SlotRow> rows;
     rows.resize(size_t(bank::kTableSlots));
@@ -159,7 +159,7 @@ void TablesPanel::showSlot(int slot)
 
 void TablesPanel::syncFromBank(bool pushToGrid)
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     if (!b) return;
     const bank::Table& t = b->tables[size_t(slot_ - 1)];
     const String n = t.used ? String(t.name) : String();
@@ -183,12 +183,12 @@ void TablesPanel::syncFromBank(bool pushToGrid)
 void TablesPanel::editTable(const String& what, const std::function<void(bank::Table&)>& fn, bool pushToGrid)
 {
     const int slot = slot_;
-    processor.editBank("Table " + ValueFormat::slot(slot) + " " + what, [&fn, slot](bank::Bank& b) {
+    host.editBank("Table " + ValueFormat::slot(slot) + " " + what, [&fn, slot](bank::Bank& b) {
         auto& t = b.tables[size_t(slot - 1)];
         if (!t.used) { t.used = true; if (t.name.empty()) t.name = ("Table " + String(slot)).toStdString(); }
         fn(t);
     });
-    selfBank_ = processor.bank().get();
+    selfBank_ = host.bank().get();
     syncFromBank(pushToGrid);
     rebuildList();
     contextChanged();
@@ -196,7 +196,7 @@ void TablesPanel::editTable(const String& what, const std::function<void(bank::T
 
 void TablesPanel::bankChanged()
 {
-    const auto b = processor.bank();
+    const auto b = host.bank();
     rebuildList();
     if (b && b.get() != selfBank_) syncFromBank(true);
     contextChanged();
@@ -218,16 +218,17 @@ void TablesPanel::tick()
     stepRate_.setText(stepRateText());
     int row = -1, from = -1, rowE = -1, row2 = -1;
     uint32_t newest = 0;
-    for (int ch = 0; ch < 4; ++ch) {
+    for (int lane = 0; lane < host.channelCount(); ++lane) {
+        const int ch = host.hardwareChannel(lane);
         int slot = 0, r = -1;
         uint32_t run = 0;
-        unpackTableRun(processor.scopes().tableRun[size_t(ch)].load(std::memory_order_relaxed), slot, r, run);
+        unpackTableRun(host.scopes().tableRun[size_t(ch)].load(std::memory_order_relaxed), slot, r, run);
         if (r < 0 || slot != slot_) continue;
         if (from < 0 || int16_t(uint16_t(run) - uint16_t(newest)) > 0) {
             newest = run; row = r; from = ch;
             // The winning run's other two lanes, which sit at rows of their
             // own (section 64).
-            unpackTableLanes(processor.scopes().tableLanes[size_t(ch)].load(std::memory_order_relaxed), rowE, row2);
+            unpackTableLanes(host.scopes().tableLanes[size_t(ch)].load(std::memory_order_relaxed), rowE, row2);
         }
     }
     if (row < 0) { rowE = -1; row2 = -1; }

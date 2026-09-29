@@ -2,7 +2,7 @@
 // the master strip, scopes on top, mixer-bridge style.
 #pragma once
 
-#include "plugin/main/panels/PanelCommon.h"
+#include "plugin/main/panels/MainCommon.h"
 #include "plugin/ui/CommandSlot.h"
 
 #include <array>

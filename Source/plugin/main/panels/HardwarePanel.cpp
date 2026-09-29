@@ -192,7 +192,7 @@ int HardwarePanel::storedPeriods(const ChipBoyProcessor& p)
     return v == 1 || v == 2 || v == 4 || v == 8 ? v : 2;
 }
 
-HardwarePanel::HardwarePanel(ChipBoyProcessor& p) : EditorPanel(p)
+HardwarePanel::HardwarePanel(ChipBoyProcessor& p) : MainPanel(p)
 {
     addAndMakeVisible(scroll_);
     auto stack = std::make_unique<Stack>(14);

@@ -1,0 +1,190 @@
+// chipboy_solotest -- ChipBoy Solo headless (docs/plan-solo.md section 8):
+// a note on each channel sounds; a mapped key followed by a note in the same
+// block sounds with the recalled sound; the Sound parameter recalls; the
+// state and a .cbsolo file round-trip the sounds, the key map, the library
+// and the bank; a channel change silences the channel it left.
+//
+//   chipboy_solotest [--out DIR]
+#include "plugin/solo/SoloProcessor.h"
+
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+
+using namespace chipboy;
+using namespace chipboy::plugin;
+
+namespace {
+int failures = 0;
+void check(bool ok, const char* what)
+{
+    std::printf("%s  %s\n", ok ? "ok  " : "FAIL", what);
+    if (!ok) ++failures;
+}
+
+void set(juce::AudioProcessorValueTreeState& s, const juce::String& id, float v)
+{
+    if (auto* p = s.getParameter(id)) p->setValueNotifyingHost(p->convertTo0to1(v));
+    else { std::printf("no parameter %s\n", id.toRawUTF8()); ++failures; }
+}
+float get(juce::AudioProcessorValueTreeState& s, const juce::String& id)
+{
+    auto* p = s.getParameter(id);
+    return p ? p->convertFrom0to1(p->getValue()) : -1.0f;
+}
+
+/// Render `blocks` blocks with a MIDI buffer on the first; the peak level.
+float run(SoloProcessor& p, juce::MidiBuffer first, int blocks, int& dacOnBlocks)
+{
+    juce::AudioBuffer<float> buf(2, 512);
+    float peak = 0.0f;
+    dacOnBlocks = 0;
+    for (int b = 0; b < blocks; ++b) {
+        juce::MidiBuffer midi;
+        if (b == 0) midi = first;
+        p.processBlock(buf, midi);
+        peak = std::max(peak, buf.getMagnitude(0, 0, 512));
+        if (p.driverView().view(p.channel()).active) ++dacOnBlocks;
+    }
+    return peak;
+}
+
+void pump(int ms) { juce::MessageManager::getInstance()->runDispatchLoopUntil(ms); }
+} // namespace
+
+int main(int argc, char** argv)
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    juce::File outDir = juce::File::getCurrentWorkingDirectory().getChildFile("solotest");
+    for (int i = 1; i < argc; ++i)
+        if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) outDir = juce::File::getCurrentWorkingDirectory().getChildFile(argv[++i]);
+    outDir.createDirectory();
+
+    SoloProcessor solo;
+    solo.prepareToPlay(48000.0, 512);
+    const juce::String inst = solo.channelParamId(0, ids::instrument);
+
+    // --- every channel sounds ---------------------------------------------
+    for (int ch = 0; ch < 4; ++ch) {
+        set(solo.apvts, solo::ids::channel, float(ch));
+        set(solo.apvts, inst, float(ch == 0 ? 1 : ch == 1 ? 3 : ch == 2 ? 7 : 11));   // the factory bank's per-kind defaults
+        juce::MidiBuffer m;
+        m.addEvent(juce::MidiMessage::noteOn(1, ch == 3 ? 40 : 60, (juce::uint8) 100), 0);
+        int on = 0;
+        const float peak = run(solo, m, 40, on);
+        juce::MidiBuffer off;
+        off.addEvent(juce::MidiMessage::noteOff(1, ch == 3 ? 40 : 60), 0);
+        run(solo, off, 40, on);
+        char what[96];
+        std::snprintf(what, sizeof what, "channel %d sounds (peak %.3f)", ch, double(peak));
+        check(peak > 0.01f, what);
+    }
+    set(solo.apvts, solo::ids::channel, 0.0f);
+    set(solo.apvts, inst, 1.0f);
+    { int on = 0; run(solo, {}, 4, on); }
+
+    // --- sounds and the key map ---------------------------------------------
+    solo.storeSound(1, "one");                         // instrument 1
+    set(solo.apvts, inst, 2.0f);
+    solo.storeSound(2, "two");                         // instrument 2
+    set(solo.apvts, inst, 1.0f);
+    {
+        const auto s = solo.solo();
+        check(s && s->sounds[0].used && s->sounds[0].inst == 1 && s->sounds[1].inst == 2, "two sounds stored from the row");
+        int lo = 0, hi = 127; solo.noteRange(lo, hi);
+        check(lo == 36 && hi > 100 && s->keyMap[size_t(lo - 1)] == 1 && s->keyMap[size_t(lo - 2)] == 2, "pulse keys: the floor is 36, the key under it is sound 1, the next sound 2");
+        check(soloKeyMappable(0, lo - 1) && !soloKeyMappable(0, lo), "a key under the floor is mappable, the floor is not");
+    }
+    {
+        // A mapped key and a note in one block: the note sounds with sound 2.
+        int lo = 0, hi = 127; solo.noteRange(lo, hi);
+        juce::MidiBuffer m;
+        m.addEvent(juce::MidiMessage::noteOn(1, lo - 2, (juce::uint8) 100), 0);   // sound 2
+        m.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8) 100), 0);
+        int on = 0;
+        const float peak = run(solo, m, 8, on);
+        check(peak > 0.01f && solo.driverView().view(0).instrument == 2, "a mapped key then a note in the same block: the note plays the recalled instrument");
+        pump(250);                                       // the timer brings the parameters up to the recall
+        check(int(get(solo.apvts, inst)) == 2, "the Instrument parameter followed the key's recall");
+        check(solo.lastRecall().contains("Sound 2") && solo.lastRecall().contains("key"), "the status line names the sound and the key");
+        juce::MidiBuffer off; off.addEvent(juce::MidiMessage::noteOff(1, 60), 0);
+        run(solo, off, 8, on);
+        check(solo.lastKey() == lo - 2, "the last key is remembered");
+    }
+    {
+        // The Sound parameter recalls too.
+        set(solo.apvts, solo::ids::sound, 1.0f);
+        int on = 0; run(solo, {}, 2, on);
+        pump(250);
+        check(int(get(solo.apvts, inst)) == 1, "the Sound parameter moving to 1 recalled instrument 1");
+        // By hand: the row and the Sound parameter, one step.
+        solo.recallSound(2, true);
+        check(int(get(solo.apvts, inst)) == 2 && int(get(solo.apvts, solo::ids::sound)) == 2, "a hand recall sets the row and the Sound parameter");
+        check(solo.history().canUndo(), "and is undoable");
+        solo.history().undo();
+        check(int(get(solo.apvts, inst)) == 1, "undo puts the row back");
+        { int settled = 0; run(solo, {}, 2, settled); pump(250); }
+    }
+    {
+        // The library.
+        set(solo.apvts, solo.channelParamId(0, ids::cmd1Type), float(choiceFromCmd(bank::Cmd::V)));
+        set(solo.apvts, solo.channelParamId(0, ids::cmd1X), 8.0f);
+        set(solo.apvts, solo.channelParamId(0, ids::cmd1Y), 4.0f);
+        solo.storeLibraryCommand(1, 0, "wide vib");
+        set(solo.apvts, solo.channelParamId(0, ids::cmd1Type), 0.0f);
+        solo.useLibraryCommand(1, 1);
+        check(cmdFromChoice(int(get(solo.apvts, solo.channelParamId(0, ids::cmd2Type)))) == bank::Cmd::V && int(get(solo.apvts, solo.channelParamId(0, ids::cmd2X))) == 8, "a library entry goes into CMD 2");
+    }
+
+    // --- state and file round trips -------------------------------------------
+    {
+        juce::MemoryBlock state;
+        solo.getStateInformation(state);
+        SoloProcessor other;
+        other.prepareToPlay(48000.0, 512);
+        other.setStateInformation(state.getData(), int(state.getSize()));
+        const auto s = other.solo();
+        check(s && s->sounds[1].used && s->sounds[1].name == "two" && s->sounds[1].inst == 2, "the state carries the sounds");
+        check(s && s->commands[0].used && s->commands[0].cmd.cmd == bank::Cmd::V, "the state carries the library");
+        int lo = 0, hi = 127; other.noteRange(lo, hi);
+        check(s && s->keyMap[size_t(lo - 2)] == 2, "the state carries the key map");
+        check(other.bank() && other.bank()->instrument(1) != nullptr && other.bank()->instrument(1)->name == solo.bank()->instrument(1)->name, "the state carries the bank");
+        check(int(get(other.apvts, solo.channelParamId(0, ids::cmd2X))) == 8, "the state carries the row");
+    }
+    {
+        const juce::File f = outDir.getChildFile("roundtrip.cbsolo");
+        check(solo.saveSoloFile(f), "a .cbsolo file is written");
+        SoloProcessor other;
+        other.prepareToPlay(48000.0, 512);
+        juce::String report;
+        check(other.loadSoloFile(f, report), ("the file loads: " + report).toRawUTF8());
+        const auto s = other.solo();
+        check(s && s->sounds[0].used && s->sounds[0].name == "one", "the file carries the sounds");
+        check(int(get(other.apvts, solo.channelParamId(0, ids::cmd2X))) == 8 && int(get(other.apvts, solo::ids::channel)) == 0, "the file carries the row and the channel");
+        check(other.history().canUndo(), "loading a file is one undo step");
+    }
+
+    // --- a channel change silences the channel it left ------------------------
+    {
+        juce::MidiBuffer m; m.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8) 100), 0);
+        int on = 0; run(solo, m, 8, on);
+        check(solo.driverView().view(0).active, "PU1 sounds before the change");
+        set(solo.apvts, solo::ids::channel, 1.0f);
+        run(solo, {}, 8, on);
+        check(!solo.driverView().view(0).active, "after the change to PU2, PU1 is silent");
+        set(solo.apvts, solo::ids::channel, 0.0f);
+        juce::MidiBuffer off; off.addEvent(juce::MidiMessage::noteOff(1, 60), 0);
+        run(solo, off, 8, on);
+    }
+    {
+        // Live follow: a held note takes an instrument change at once.
+        juce::MidiBuffer m; m.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8) 100), 0);
+        int on = 0; run(solo, m, 8, on);
+        set(solo.apvts, inst, 2.0f);
+        run(solo, {}, 8, on);
+        check(solo.driverView().view(0).active && solo.driverView().view(0).instrument == 2, "a held note reloads when the Instrument parameter moves (Live follow)");
+    }
+
+    std::printf(failures ? "FAILED %d checks\n" : "PASSED chipboy_solotest\n", failures);
+    return failures ? 1 : 0;
+}

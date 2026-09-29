@@ -6756,3 +6756,92 @@ tolerance; what remains ranks exact layouts only: rank, a new slot, a change fro
 in force, empty steps, and 2 for a split. Bar 4 of the cases (swing drifting 7 8 8 9) is now
 the sixteen-entry groove `7 5 8 4 8 4 9 3 8 4 8 4 8 4 9 3` and bar 12 (one note four ticks
 late) `6 6 6 6 6 10 2 6 6 6 6 6 6 6 6 6`, each exactly what was played.
+
+**Amendment, 2026-09-29 (a late message).** The record test failed once in a run of the gate:
+bar 12 replayed with one note two steps late and the rest gone. A message whose tick lies
+in a row already fitted -- a note-off recorded after the next row's first note had opened
+its take, a held note fired late -- opened a second take for that row, and its finish laid
+the row again from that message alone, clearing what the fit had written. A row fitted
+already is never laid again: each late message takes back its provisional cell and goes to
+the nearest step of the grid the fit left (`stepStartTicks` under the row's walk), a note
+never displacing one there, an OFF moving on from a note's own step.
+
+## 227. ChipBoy Solo: one channel as a plugin of its own
+
+`docs/plan-solo.md` is the design; this is what was built (`Source/plugin/solo/`, the
+target `ChipBoySolo`, VST3 / AU / Standalone, plugin code `Chbs`; `chipboy_solotest` in the
+plugin checks; `chipboy_uishot --solo`). The user's brief: individual channel plugins
+derived from the same engine, for DAW and live use, the main window a row of the tracker,
+sixty-four automatable sound slots, keys outside the channel's range selecting sounds so a
+simultaneous note sounds with the new sound, no tracker, a small window, ChipBoy presets
+readable. With the MIDI map (§225) routing a track's MIDI into ChipBoy, Solo can replace
+ChipBoy Voice, which stays in the tree this round.
+
+- **One machine, one channel.** `SoloProcessor` holds the same `Apu`, `Renderer`, `Driver`
+  and `Clock` as the main plugin and a `bank::Bank`; no song, no Player, no link, the
+  renderer's noise floor and display line off. The **Channel** parameter (PU1 / PU2 / WAV /
+  NOI) picks the voice; only it is gated on (NR51) and only it receives events; a change
+  flushes the channel it left (§9.1). Every MIDI channel of the track reaches it. The
+  ticks are the host's beat (Tempo source Host) or the own **Tempo** parameter, and free-run
+  while the transport is stopped or absent, as the Clock always has (§4), so tables and
+  commands run live. Quantize (`notes_on_tick`) is off by default.
+- **The row is the parameters**: Instrument, Table, Level, Pan, Transpose, CMD 1, CMD 2
+  (prefix `s_`, `ChannelKind::Any`), Velocity mode, and **Live follow on by default** --
+  the brief's law that a change reaches the sounding note at once is Live follow (§3): an
+  Instrument change reloads and re-attacks, a Table change starts the new table on the
+  note, Level and Pan write at the next tick, a slot fires when its value changes and
+  reverts at none; the same instrument staying never retriggers, and only a new MIDI
+  note-on does otherwise. Nothing in the driver changed for this.
+- **Sounds** (`SoloSound` x 64, in the state): `name, inst, table, cmd1, cmd2` -- a row
+  without its note and performance fields. *Store* writes the row into a slot; a recall
+  writes the slot into the row: by a click or a double click in the Sounds tab or the
+  strip's SOUND field (one undo step, the Sound parameter following), by the **Sound**
+  parameter (0 none, 1-64; a lane steps through sounds), or by a **mapped key**. The
+  Sound parameter names what was last recalled whoever recalled it; editing the row
+  afterwards leaves it where it is.
+- **The key map** (`keyMap[128]`): a note outside the channel's range -- pulse below 36,
+  wave below 24, noise below 12, and above the highest note the period register holds --
+  selects the sound it maps to and never sounds; a note-off on it is dropped. The default
+  layout counts down from the floor (the key under the lowest playable note is sound 1)
+  and on up from the ceiling; every key is typed in the Sounds tab; a toggle turns the map
+  off. **The recall happens on the audio thread, in front of the note**: the row the driver
+  reads is the sound's from that block on, so a note in the same block -- or the one being
+  held, under Live follow -- takes it; the timer brings the parameters up to it (no undo
+  step: a played key is not a hand edit) and says so, and the audio thread stops
+  overriding once the parameters carry the sound (or after 200 blocks, for a window that
+  never pumps). The Sound parameter moving takes the same path.
+- **The command library** (`SoloCommand` x 32): a command and a name, kept per instance,
+  dropped into CMD 1 or CMD 2 with one click; beside it the letter reference for the
+  channel (`commandInfo`, the letters that do nothing on it dimmed).
+- **The window** (560 x 400, fixed; D-UI-45): a header with the channel (its colour is the
+  window's accent), the model and the tempo in force; a page bar; one page at a time. The
+  **Main** page is the scope and registers across the top and the row under them, compact
+  -- SOUND with *Store*, INST with the loaded instrument's name (§30), TABLE, TRANSPOSE,
+  PAN, LEVEL, CMD 1, CMD 2, a note line with the playable range, the last note and the
+  last recall. The other pages take the whole window: Sounds, Instrument, Tables, Waves
+  and Kits (on WAV only), Commands, Setup (the user's note after the first build: the
+  settings as pages of their own, so the window can be small with the oscilloscope on
+  top). Undo and redo sit on the status line. Instrument, Tables, Waves and Kits are the main
+  window's own panels: `EditorHost` (`plugin/shared/EditorHost.h`) is what a panel needs of
+  its plugin -- the parameters, the bank, `editBank`, the history, the scopes, the tempo,
+  the kit audition, the lanes -- and both processors implement it; `PanelCommon` and the
+  four panels compile into both targets, the main-only lookups moved to
+  `main/panels/MainCommon.*` and the main-only tabs derive from `MainPanel`. The Instrument
+  tab's *Load preset…* reads a `.cbi` into Solo's bank as it does in ChipBoy.
+- **State and files.** The plugin state carries the parameters, the bank and the Solo
+  state (`soloStateToVar`: sounds as `{slot, name, inst, table, cmd1, cmd2}`, commands as
+  `{slot, name, cmd}`, `keyMap` as 128 ints when any is set). A **`.cbsolo`** file
+  (`chipboy-solo`, version 1) is the instance without the DAW: the bank, the Solo state,
+  the channel and every parameter; *Save…* / *Load…* in Setup, under
+  Documents/ChipBoy/Solo; a load is one undo step. *Load bank…* takes a `.chipboy` bank
+  file. Loading a project clears the history, as ChipBoy does.
+- **Checks.** `chipboy_solotest`: every channel sounds; the floor and the default key
+  layout; a mapped key and a note in one block sound with the recalled instrument and the
+  parameter follows; the Sound parameter recalls; a hand recall is one undo step; the
+  library into a slot; the state and a `.cbsolo` round-trip sounds, library, key map,
+  bank and row; a channel change silences the channel left; a held note reloads under
+  Live follow. `chipboy_uishot --solo DIR` shoots every tab (`docs/screenshots/solo-*.png`).
+- **Left for later**: window scaling; MIDI learn for the slots; a live shared bank between a
+  Solo and a ChipBoy instance (a `.cbsolo` or a bank file carries it across); retiring
+  ChipBoy Voice (its link region, the Link tab and `chipboy_linktest` go with it).
+

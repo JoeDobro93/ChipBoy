@@ -3,7 +3,7 @@
 // the right, what the last file or preset did, until it goes stale.
 #pragma once
 
-#include "plugin/main/panels/PanelCommon.h"
+#include "plugin/main/panels/MainCommon.h"
 
 namespace chipboy::plugin {
 

@@ -353,7 +353,7 @@ void addGlobalParameters(AudioProcessorValueTreeState::ParameterLayout& L)
     L.add(boolParam(ids::hexDisplay, "Hex Display", true));   // Hex by default: it counts like LSDj (section 52)
 }
 
-void addChannelParameters(AudioProcessorValueTreeState::ParameterLayout& L, const String& px, ChannelKind kind, bool withSource)
+void addChannelParameters(AudioProcessorValueTreeState::ParameterLayout& L, const String& px, ChannelKind kind, bool withSource, bool liveFollowDefault)
 {
     // The channel is a tracker row (docs/COMMANDS_AND_TEMPO.md section 3):
     // an instrument, a table, the few performance fields, and two commands.
@@ -385,7 +385,7 @@ void addChannelParameters(AudioProcessorValueTreeState::ParameterLayout& L, cons
         L.add(intParam(px + xIds[i], n + " x", 0, 255, 0));
         L.add(intParam(px + yIds[i], n + " y", 0, 255, 0));
     }
-    L.add(boolParam(px + ids::liveFollow, name + "Live Follow", false));
+    L.add(boolParam(px + ids::liveFollow, name + "Live Follow", liveFollowDefault));
     L.add(choiceParam(px + ids::velocityMode, name + "Velocity", { "start volume", "instrument bank", "ignored" }, 0));
     L.add(boolParam(px + ids::keyswitch, name + "Keyswitches", false));
 }
