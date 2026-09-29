@@ -6801,7 +6801,9 @@ ChipBoy Voice, which stays in the tree this round.
 - **Sounds** (`SoloSound` x 64, in the state): `name, inst, table, cmd1, cmd2` -- a row
   without its note and performance fields. *Store* writes the row into a slot; a recall
   writes the slot into the row: by a click or a double click in the Sounds tab or the
-  strip's SOUND field (one undo step, the Sound parameter following), by the **Sound**
+  strip's SOUND field (one undo step, the Sound parameter following; stepping the field to
+  an empty slot selects it without a recall, which is how a new sound is made: pick the
+  slot, then Store), by the **Sound**
   parameter (0 none, 1-64; a lane steps through sounds), or by a **mapped key**. The
   Sound parameter names what was last recalled whoever recalled it; editing the row
   afterwards leaves it where it is.

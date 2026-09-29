@@ -67,12 +67,14 @@ SoloStrip::SoloStrip(SoloProcessor& p)
     sound_.onChange = [this](int v) {
         if (v < 1) { setParam(*this, param(processor_, solo::ids::sound), 0.0f); return; }
         const auto s = processor_.solo();
-        if (s && !s->sounds[size_t(v - 1)].used) { if (onMessage) onMessage("Sound " + ValueFormat::slot(v) + " is empty: Store puts the row there"); return; }
+        // An empty slot can be chosen -- that is how a new sound is made from
+        // the row: pick the slot, then Store.
+        if (s && !s->sounds[size_t(v - 1)].used) { setParam(*this, param(processor_, solo::ids::sound), float(v)); if (onMessage) onMessage("Sound " + ValueFormat::slot(v) + " is empty: Store puts the row there"); return; }
         processor_.recallSound(v, true);
     };
     sound_.onList = [this] { showSoundMenu(); };
     sound_.onOpen = [this] { if (onOpenSound) onOpenSound(std::max(1, sound_.value())); };
-    storeBtn_.setTooltip("Store the row as it stands into the sound shown, or into the first empty slot when none is");
+    storeBtn_.setTooltip("Store the row as it stands into the sound shown -- step SOUND to an empty slot for a new one -- or into the first empty slot when none is shown");
     storeBtn_.onClick = [this] {
         int slot = paramValue(processor_, solo::ids::sound);
         if (slot < 1) {
