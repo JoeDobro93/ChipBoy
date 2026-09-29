@@ -480,7 +480,7 @@ void KitsPanel::resized()
     auto area = getLocalBounds();
     list_.setVisible(!compact); listTitle_.setVisible(!compact); slotStepper_.setVisible(compact);
     if (compact) {
-        auto top = area.removeFromTop(kListHeader).withHeight(Stepper::kHeight);
+        auto top = area.removeFromTop(Stepper::kHeight);   // no list title: the row is the stepper's height
         slotStepper_.setBounds(top.removeFromLeft(slotStepper_.preferredWidth()));
         top.removeFromLeft(6);
         importBtn_.setBounds(top.removeFromLeft(90));
