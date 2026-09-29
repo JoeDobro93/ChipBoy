@@ -34,6 +34,8 @@ public:
     void bankChanged();
     void soloChanged();
     void hexChanged();
+    /// The scope's trace, chosen on the Setup page and kept in the state.
+    void setScopeTrace(ui::ScopeView::Trace t) { scope_.setTrace(t); }
     std::function<void(ui::SlotKind, int slot)> onOpenSlot;
     std::function<void(int slot)> onOpenSound;
     void paint(juce::Graphics&) override;
@@ -60,6 +62,7 @@ private:
     const bank::Bank* namesFor_ = nullptr;
     const SoloState* soundsFor_ = nullptr;
     int instrumentShown_ = -1, loadedInstrument_ = 0, soundShown_ = -1;
+    int modelShown_ = -1;
     juce::String noteShown_;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SoloStrip)
 };
@@ -109,15 +112,17 @@ public:
     void soloChanged();
     void channelChanged();
     void hexChanged() override;
+    void tick() override;
     void resized() override;
 private:
     void rebuildList();
     void rebuildReference();
     SoloProcessor& processor_;
     ui::SlotList list_;
-    TextLine listTitle_, refTitle_;
+    TextLine listTitle_, refTitle_, rowLine_;
     juce::TextButton use1Btn_, use2Btn_, store1Btn_, store2Btn_, clearBtn_;
     ScrollBlock reference_;
+    juce::String rowShown_;
     int entry_ = 1;
     int refForChannel_ = -1;
     const SoloState* rowsFor_ = nullptr;
@@ -131,6 +136,9 @@ public:
     ~SetupPanel() override;
     RichText contextLine() const override;
     void resized() override;
+    /// The scope's trace (0 digital, 1 analog, 2 both), kept as "ui_scope_trace".
+    std::function<void(int)> onScopeTrace;
+    static int storedTrace(const SoloProcessor& p);
 private:
     void saveFile();
     void loadFile();

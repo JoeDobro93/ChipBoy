@@ -257,6 +257,10 @@ void SoloStrip::tick()
     regs_.setState(processor_.scopes().state[size_t(ch)].load(std::memory_order_acquire));
     refreshInstrumentName();
     refreshSoundName();
+    if (const int model = paramValue(processor_, solo::ids::model); model != modelShown_) {
+        modelShown_ = model;
+        scope_.setAnalogCornerHz(model == 2 ? 0.0 : model == 1 ? 338.0 : 25.0);   // RAW has no analog trace; CGB's corner, DMG's
+    }
     if (ch == 2) {
         const auto b = processor_.bank();
         const bank::Instrument* inst = b ? b->instrument(v.instrument) : nullptr;
@@ -381,7 +385,7 @@ private:
 
 SoundsPanel::SoundsPanel(SoloProcessor& p)
     : EditorPanel(p), processor_(p),
-      listTitle_("Sounds", Fonts::caption(10.0f, true), colours::textDim), keysTitle_("Keys outside the range", Fonts::caption(10.0f, true), colours::textDim),
+      listTitle_(String("Sounds ") + String(CharPointer_UTF8("\xc2\xb7")) + " double-click recalls, Enter renames", Fonts::caption(10.0f, true), colours::textDim), keysTitle_("Keys outside the range", Fonts::caption(10.0f, true), colours::textDim),
       keysHelp_({}, Fonts::sans(11.0f), colours::textDim),
       recallBtn_("Recall"), storeBtn_("Store here"), clearBtn_("Clear"), defaultKeysBtn_("Default"), clearKeysBtn_("Clear"),
       keyMap_("Key map on")
@@ -436,6 +440,10 @@ void SoundsPanel::rebuildList()
         if (snd.used) {
             const bank::Instrument* inst = b ? b->instrument(snd.inst) : nullptr;
             r.note = snd.inst == 0 ? "bare" : ValueFormat::slot(snd.inst) + (inst ? " " + String(inst->name) : String());
+            String letters;
+            if (snd.table) letters += " T";
+            for (const auto* cmd : { &snd.cmd1, &snd.cmd2 }) if (cmd->cmd != bank::Cmd::None) letters += String(" ") + bank::cmdLetter(cmd->cmd);
+            if (letters.isNotEmpty()) r.note += String(CharPointer_UTF8(" \xc2\xb7")) + letters;
         }
     }
     list_.setRows(rows);
@@ -525,11 +533,12 @@ void SoundsPanel::resized()
 CommandsPanel::CommandsPanel(SoloProcessor& p)
     : EditorPanel(p), processor_(p),
       listTitle_("Library", Fonts::caption(10.0f, true), colours::textDim), refTitle_("The letters on this channel", Fonts::caption(10.0f, true), colours::textDim),
+      rowLine_({}, Fonts::mono(11.0f), colours::textMute),
       use1Btn_(String(CharPointer_UTF8("\xe2\x86\x92 CMD 1"))), use2Btn_(String(CharPointer_UTF8("\xe2\x86\x92 CMD 2"))),
       store1Btn_("Store CMD 1"), store2Btn_("Store CMD 2"), clearBtn_("Clear")
 {
     listTitle_.setUpperCase(true); refTitle_.setUpperCase(true);
-    for (auto* c : std::initializer_list<Component*>{ &list_, &listTitle_, &refTitle_, &use1Btn_, &use2Btn_, &store1Btn_, &store2Btn_, &clearBtn_, &reference_ })
+    for (auto* c : std::initializer_list<Component*>{ &list_, &listTitle_, &refTitle_, &rowLine_, &use1Btn_, &use2Btn_, &store1Btn_, &store2Btn_, &clearBtn_, &reference_ })
         addAndMakeVisible(c);
     list_.setKindColours([](int) { return colours::text; });
     list_.onSelect = [this](int slot) { entry_ = slot; contextChanged(); };
@@ -595,6 +604,19 @@ void CommandsPanel::rebuildReference()
 
 void CommandsPanel::soloChanged() { rebuildList(); }
 void CommandsPanel::channelChanged() { rebuildReference(); }
+
+/// The row's two commands as they stand -- what Store keeps and what a
+/// library entry replaces -- since the Main page is not in view here.
+void CommandsPanel::tick()
+{
+    const driver::ChannelParams row = processor_.params.read(ChannelKind::Any);
+    String line = "the row now:";
+    for (int i = 0; i < 2; ++i) {
+        const auto& c = row.cmd[i];
+        line += "  CMD " + String(i + 1) + " " + (c.cmd == bank::Cmd::None ? String(CharPointer_UTF8("\xe2\x80\x93")) : String(bank::cmdLetter(c.cmd)) + " " + commandValueText(c, ValueFormat::hex()));
+    }
+    if (line != rowShown_) { rowShown_ = line; rowLine_.setText(line); }
+}
 void CommandsPanel::hexChanged() { rowsFor_ = nullptr; rebuildList(); repaint(); }
 
 RichText CommandsPanel::contextLine() const
@@ -611,6 +633,8 @@ void CommandsPanel::resized()
     auto area = getLocalBounds();
     auto left = area.removeFromLeft(area.getWidth() / 2 - 8);
     listTitle_.setBounds(left.removeFromTop(16));
+    rowLine_.setBounds(left.removeFromBottom(16));
+    left.removeFromBottom(4);
     auto row2 = left.removeFromBottom(26);
     left.removeFromBottom(4);
     auto row1 = left.removeFromBottom(26);
@@ -641,14 +665,14 @@ SetupPanel::SetupPanel(SoloProcessor& p) : EditorPanel(p), processor_(p)
         play->add("Velocity", std::move(seg), 300, 22, "What a note's velocity does: the start volume, which instrument bank slot it picks, or nothing");
     }
     {
-        auto t = std::make_unique<Toggle>("Live follow");
+        auto t = std::make_unique<Toggle>("Changes reach the sounding note");
         t->attach(param(processor_, processor_.channelParamId(0, ids::liveFollow)));
-        play->add("Changes", std::move(t), 300, Toggle::kHeight, "On, a change of instrument, table, level, pan or transpose reaches the sounding note; off, the next one");
+        play->add("Live follow", std::move(t), 300, Toggle::kHeight, "On, a change of instrument, table, level, pan or transpose reaches the sounding note; off, the next one");
     }
     {
-        auto t = std::make_unique<Toggle>("Quantize notes to ticks");
+        auto t = std::make_unique<Toggle>("Notes wait for the next tick");
         t->attach(param(processor_, solo::ids::notesOnTick));
-        play->add("Timing", std::move(t), 300, Toggle::kHeight, "A note waits for the next tick, as a tracker's would; off, it plays where it lands");
+        play->add("Quantize", std::move(t), 300, Toggle::kHeight, "A note waits for the next tick, as a tracker's would; off, it plays where it lands");
     }
     {
         auto t = std::make_unique<Toggle>("Keys outside the range select sounds");
@@ -692,6 +716,13 @@ SetupPanel::SetupPanel(SoloProcessor& p) : EditorPanel(p), processor_(p)
         t->attach(param(processor_, solo::ids::hexDisplay));
         out->add("Display", std::move(t), 300, Toggle::kHeight, "Values in hex, counting like LSDj, or in decimal");
     }
+    {
+        auto seg = std::make_unique<Segmented>(StringArray{ "digital", "analog", "both" });
+        seg->setMini(true);
+        seg->setSelected(storedTrace(processor_), dontSendNotification);
+        seg->onChange = [this](int i) { processor_.apvts.state.setProperty("ui_scope_trace", i, nullptr); if (onScopeTrace) onScopeTrace(i); };
+        out->add("Scope", std::move(seg), 240, 22, "The chip's steps, the analog stage's output after the coupling, or both over each other");
+    }
     stack->add(std::move(out));
     auto files = std::make_unique<FormGroup>("Files", 130);
     {
@@ -714,6 +745,8 @@ SetupPanel::SetupPanel(SoloProcessor& p) : EditorPanel(p), processor_(p)
 }
 
 SetupPanel::~SetupPanel() = default;
+
+int SetupPanel::storedTrace(const SoloProcessor& p) { return std::clamp(int(p.apvts.state.getProperty("ui_scope_trace", 2)), 0, 2); }
 
 RichText SetupPanel::contextLine() const
 {
@@ -835,7 +868,12 @@ SoloEditor::SoloEditor(SoloProcessor& p)
     panels_[Waves] = std::make_unique<WavesPanel>(processor_);
     panels_[Kits] = std::make_unique<KitsPanel>(processor_);
     panels_[Commands] = std::make_unique<CommandsPanel>(processor_);
-    panels_[Setup] = std::make_unique<SetupPanel>(processor_);
+    {
+        auto setup = std::make_unique<SetupPanel>(processor_);
+        setup->onScopeTrace = [this](int t) { strip_.setScopeTrace(t == 1 ? ScopeView::Trace::Analog : t == 2 ? ScopeView::Trace::Both : ScopeView::Trace::Digital); };
+        panels_[Setup] = std::move(setup);
+    }
+    { const int t = SetupPanel::storedTrace(processor_); strip_.setScopeTrace(t == 1 ? ScopeView::Trace::Analog : t == 2 ? ScopeView::Trace::Both : ScopeView::Trace::Digital); }
     for (auto& panel : panels_) {
         if (!panel) continue;                      // Main is the strip, not a panel
         panel->setCompact(true);

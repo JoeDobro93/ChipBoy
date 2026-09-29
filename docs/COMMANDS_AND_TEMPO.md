@@ -6823,7 +6823,12 @@ ChipBoy Voice, which stays in the tree this round.
   Tables, Waves and Kits (on WAV only), Commands, Setup (the user's note after the first
   build: the settings as pages of their own, so the window can be small with the
   oscilloscope on top). The status line carries the page's context line, a message for
-  five seconds when there is one, and undo / redo. The size is what the widest page needs:
+  five seconds when there is one, and undo / redo. Setup holds what the row does not:
+  velocity mode, Live follow, Quantize, the key map, tempo source and own tempo, volume,
+  trim, Hex, the scope's trace (digital, analog or both, kept in the state as
+  `ui_scope_trace`; the analog trace follows the model's corner) and the files. The
+  Commands page shows the row's two commands as they stand, since Main is not in view
+  there; the Sounds list names the instrument and the letters each sound carries. The size is what the widest page needs:
   the Tables page shows all sixteen steps and the written-as column without scrolling.
   The four bank editors run in a **compact mode** (`EditorPanel::setCompact`): no slot
   list down the left, a slot stepper -- its right click lists the bank by name
