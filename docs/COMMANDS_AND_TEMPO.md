@@ -6819,7 +6819,8 @@ ChipBoy Voice, which stays in the tree this round.
   selects the sound it maps to and never sounds; a note-off on it is dropped. The default
   layout counts down from the floor (the key under the lowest playable note is sound 1)
   and on up from the ceiling, laid for all four channels when the instance starts; every
-  key is typed in the Sounds tab for the channel on show; a toggle turns the map off. **The recall happens on the audio thread, in front of the note**: the row the driver
+  key is typed in the Sounds tab for the channel on show (a right click on a key's field
+  lists the sounds by name); a toggle turns the map off. **The recall happens on the audio thread, in front of the note**: the row the driver
   reads is the sound's from that block on, so a note in the same block -- or the one being
   held, under Live follow -- takes it; the timer brings the parameters up to it (no undo
   step: a played key is not a hand edit) and says so, and the audio thread stops
@@ -6846,8 +6847,8 @@ ChipBoy Voice, which stays in the tree this round.
   velocity mode, Live follow, Quantize, the key map, tempo source and own tempo, volume,
   trim, Hex, the scope's trace (digital, analog or both, kept in the state as
   `ui_scope_trace`; the analog trace follows the model's corner), the window's size (100,
-  125 or 150 %, a transform on the content as the main window's, kept as `ui_scale`) and
-  the files. The
+  125 or 150 %, a transform on the content as the main window's, kept as `ui_scale`), the
+  MIDI channel, the bend range, and the files on one row (Save…, Load…, Load bank…). The
   Commands page shows the row's two commands as they stand, since Main is not in view
   there; the Sounds list names the instrument and the letters each sound carries and marks
   the sound the row came from; the last note reads large at the scope's corner, for a
@@ -6867,7 +6868,7 @@ ChipBoy Voice, which stays in the tree this round.
   tab's *Load preset…* reads a `.cbi` into Solo's bank as it does in ChipBoy.
 - **State and files.** The plugin state carries the parameters, the bank and the Solo
   state (`soloStateToVar`: sounds as `{slot, name, inst, table, cmd1, cmd2}`, commands as
-  `{slot, name, cmd}`, `keyMap` as 128 ints when any is set). A **`.cbsolo`** file
+  `{slot, name, cmd}`, `keyMaps` as four arrays of 128 ints when any key is set). A **`.cbsolo`** file
   (`chipboy-solo`, version 1) is the instance without the DAW: the bank, the Solo state,
   the channel and every parameter; *Save…* / *Load…* in Setup, under
   Documents/ChipBoy/Solo; a load is one undo step. *Load bank…* takes a `.chipboy` bank
@@ -6881,12 +6882,15 @@ ChipBoy Voice, which stays in the tree this round.
   parameter follows; the Sound parameter recalls; a hand recall is one undo step; the
   library into a slot; the state and a `.cbsolo` round-trip sounds, library, key map,
   bank and row; a channel change silences the channel left; a held note reloads under
-  Live follow; `--load FILE` loads a Solo file and plays its first mapped key (the CTest
+  Live follow; the pedal holds a released note and Stop ends it, pedal and all; a full
+  bend reaches further at 12 semitones than at 2; `--load FILE` loads a Solo file and plays its first mapped key (the CTest
   `demo_solo_loads`); `--fuzz BLOCKS [--seed N]` throws random notes, keys, program changes,
   controllers, bends, parameter and channel moves and state reloads at an instance and holds
   the output finite (the CTest `chipboy_solofuzz`, 3000 blocks; 12000 on two more seeds by
   hand). `chipboy_uishot --solo DIR` shoots every tab (`docs/screenshots/solo-*.png`).
-- **Left for later**: MIDI learn for the slots; a live shared bank between a
-  Solo and a ChipBoy instance (a `.cbsolo` or a bank file carries it across); retiring
-  ChipBoy Voice (its link region, the Link tab and `chipboy_linktest` go with it).
+- **Left for later**: MIDI learn for the slots (a program change and the Sound lane
+  reach them today); a live shared bank between a Solo and a ChipBoy instance (a `.cbsolo`
+  or a bank file carries it across); the DAW's program list (JUCE's programs) as a way to
+  the sounds, not done because the VST3 and AU wrappers treat programs differently and
+  the user builds those platforms by hand. ChipBoy Voice stays, on the user's word.
 
