@@ -18,6 +18,8 @@ constexpr int kTimerMs = 100;
 /// them within a few and says so, so this only guards a window that never
 /// pumps its message thread.
 constexpr int kOverrideBlocks = 200;
+/// A recall's "key" that says a program change asked for it.
+constexpr int kProgramKey = 200;
 
 template <typename T>
 std::unique_ptr<AudioParameterInt> intParam(const char* id, const String& name, int lo, int hi, int def, T text)
@@ -228,7 +230,7 @@ void SoloProcessor::recallOnAudioThread(int slot, const SoloState* s, int key)
     if (!snd.used) return;
     overrideOn_ = true; overrideBlocks_ = 0;
     overrideInst_ = snd.inst; overrideTable_ = snd.table; overrideCmd_[0] = snd.cmd1; overrideCmd_[1] = snd.cmd2;
-    if (key >= 0) lastKey_.store(key);
+    if (key >= 0 && key < 128) lastKey_.store(key);
     recallReq_.store(uint32_t(slot & 0xFF) | (uint32_t((key + 1) & 0xFF) << 8) | (uint32_t(++recallSerialAudio_ & 0xFFFF) << 16), std::memory_order_release);
 }
 
@@ -243,7 +245,8 @@ void SoloProcessor::timerCallback()
         const auto s = soloShared_;
         String what = "Sound " + String(slot);
         if (s && s->sounds[size_t(slot - 1)].used && !s->sounds[size_t(slot - 1)].name.empty()) what += " " + String(CharPointer_UTF8(s->sounds[size_t(slot - 1)].name.c_str()));
-        if (key >= 0) what += String(CharPointer_UTF8(" \xc2\xb7 key ")) + ui::ValueFormat::noteName(key);
+        if (key == kProgramKey) what += " (program change)";
+        else if (key >= 0) what += String(CharPointer_UTF8(" \xc2\xb7 key ")) + ui::ValueFormat::noteName(key);
         else what += " (parameter)";
         lastRecall_ = what;
         ++recallSerial_;
@@ -416,6 +419,7 @@ void SoloProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi)
             if (m.isNoteOn()) { e.kind = driver::NoteEvent::NoteOn; e.a = uint8_t(note); e.b = uint8_t(m.getVelocity()); }
             else { e.kind = driver::NoteEvent::NoteOff; e.a = uint8_t(note); }
         }
+        else if (m.isProgramChange()) { if (soloNow) recallOnAudioThread(m.getProgramChangeNumber() + 1, soloNow, kProgramKey); continue; }   // a foot controller's way to a sound
         else if (m.isPitchWheel()) { e.kind = driver::NoteEvent::PitchBend; e.value = int16_t(m.getPitchWheelValue() - 8192); }
         else if (m.isController()) { e.kind = driver::NoteEvent::Control; e.a = uint8_t(m.getControllerNumber()); e.b = uint8_t(m.getControllerValue()); }
         else if (m.isAllNotesOff() || m.isAllSoundOff()) { e.kind = driver::NoteEvent::AllNotesOff; }

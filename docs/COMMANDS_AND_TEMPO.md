@@ -6810,7 +6810,9 @@ ChipBoy Voice, which stays in the tree this round.
   held, under Live follow -- takes it; the timer brings the parameters up to it (no undo
   step: a played key is not a hand edit) and says so, and the audio thread stops
   overriding once the parameters carry the sound (or after 200 blocks, for a window that
-  never pumps). The Sound parameter moving takes the same path.
+  never pumps). The Sound parameter moving takes the same path, and so does a MIDI
+  **program change** (program n is sound n + 1), which is how a foot controller reaches a
+  sound.
 - **The command library** (`SoloCommand` x 32): a command and a name, kept per instance,
   dropped into CMD 1 or CMD 2 with one click; beside it the letter reference for the
   channel (`commandInfo`, the letters that do nothing on it dimmed).
@@ -6846,7 +6848,8 @@ ChipBoy Voice, which stays in the tree this round.
   (`chipboy-solo`, version 1) is the instance without the DAW: the bank, the Solo state,
   the channel and every parameter; *Save…* / *Load…* in Setup, under
   Documents/ChipBoy/Solo; a load is one undo step. *Load bank…* takes a `.chipboy` bank
-  file. Loading a project clears the history, as ChipBoy does.
+  file or the bank inside a `.cbsong` (format 5 and later carry one, §18), which is where a
+  ChipBoy user's sounds usually are. Loading a project clears the history, as ChipBoy does.
 - **Checks.** `chipboy_solotest`: every channel sounds; the floor and the default key
   layout; a mapped key and a note in one block sound with the recalled instrument and the
   parameter follows; the Sound parameter recalls; a hand recall is one undo step; the

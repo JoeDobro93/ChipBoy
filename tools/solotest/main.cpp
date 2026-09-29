@@ -126,6 +126,16 @@ int main(int argc, char** argv)
         { int settled = 0; run(solo, {}, 2, settled); pump(250); }
     }
     {
+        // A program change is a foot controller's recall: program 1 is sound 2.
+        juce::MidiBuffer m; m.addEvent(juce::MidiMessage::programChange(1, 1), 0);
+        int on = 0; run(solo, m, 2, on);
+        check(solo.recallPending() || solo.driverView().params(0).instrument == 2, "a program change recalls sound 2 on the audio thread");
+        pump(250);
+        check(int(get(solo.apvts, inst)) == 2 && solo.lastRecall().contains("program change"), "the parameters follow and the status says it was a program change");
+        solo.recallSound(1, true);
+        { int settled = 0; run(solo, {}, 2, settled); pump(250); }
+    }
+    {
         // The library.
         set(solo.apvts, solo.channelParamId(0, ids::cmd1Type), float(choiceFromCmd(bank::Cmd::V)));
         set(solo.apvts, solo.channelParamId(0, ids::cmd1X), 8.0f);

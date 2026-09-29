@@ -5,6 +5,8 @@
 #include "plugin/main/panels/TablesPanel.h"
 #include "plugin/main/panels/WavesPanel.h"
 #include "plugin/shared/BankFiles.h"
+#include "plugin/shared/BankJson.h"
+#include "plugin/shared/SongFiles.h"
 
 #include <algorithm>
 #include <cmath>
@@ -738,7 +740,7 @@ SetupPanel::SetupPanel(SoloProcessor& p) : EditorPanel(p), processor_(p)
     {
         auto b = std::make_unique<TextButton>("Load bank" + String(CharPointer_UTF8("\xe2\x80\xa6")));
         b->onClick = [this] { loadBankFile(); };
-        files->add("The bank", std::move(b), 160, 24, "A ChipBoy bank file (.chipboy) replaces the instruments, tables, waves and kits; the Instrument tab loads a single .cbi preset");
+        files->add("The bank", std::move(b), 160, 24, "A ChipBoy bank file (.chipboy), or the bank inside a song file (.cbsong), replaces the instruments, tables, waves and kits; the Instrument page loads a single .cbi preset");
     }
     stack->add(std::move(files));
     scroll_.setContent(std::move(stack));
@@ -785,13 +787,27 @@ void SetupPanel::loadFile()
     });
 }
 
+/// A ChipBoy bank file, or the bank inside a song file -- which is where a
+/// ChipBoy user's sounds usually are (section 18).
 void SetupPanel::loadBankFile()
 {
+    chooser_ = std::make_unique<FileChooser>("Load a bank, or a song file's bank", banksFolder(), "*.chipboy;*.cbsong");
     Component::SafePointer<SetupPanel> safe(this);
-    plugin::loadBank(this, [safe](std::unique_ptr<bank::Bank> b, File f) {
-        if (safe == nullptr || !b) return;
+    chooser_->launchAsync(FileBrowserComponent::openMode | FileBrowserComponent::canSelectFiles, [safe](const FileChooser& fc) {
+        if (safe == nullptr) return;
+        const File f = fc.getResult();
+        if (f == File()) return;
+        auto b = std::make_shared<bank::Bank>();               // 41 KB: never on the stack
+        bool ok = false;
+        if (f.hasFileExtension(".cbsong")) {
+            auto song = std::make_shared<tracker::Song>();
+            SongReport report;
+            ok = loadSong(f, *song, report, nullptr, b.get()) && report.hasBank;
+            if (!ok) { safe->message(f.getFileName() + ": no bank inside (a song file older than format 5)"); return; }
+        } else ok = bankFromJson(f.loadFileAsString(), *b);
+        if (!ok) { safe->message("Could not read " + f.getFileName()); return; }
         safe->processor_.loadBankEdit("Load bank " + f.getFileNameWithoutExtension(), *b);
-        safe->message("Loaded bank " + f.getFileName());
+        safe->message("Loaded the bank of " + f.getFileName());
     });
 }
 
