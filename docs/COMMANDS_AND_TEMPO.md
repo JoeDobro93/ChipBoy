@@ -6799,12 +6799,13 @@ ChipBoy Voice, which stays in the tree this round.
   parameter (0 none, 1-64; a lane steps through sounds), or by a **mapped key**. The
   Sound parameter names what was last recalled whoever recalled it; editing the row
   afterwards leaves it where it is.
-- **The key map** (`keyMap[128]`): a note outside the channel's range -- pulse below 36,
+- **The key map** (`keyMaps[4][128]`, one per channel since their ranges differ): a note
+  outside the channel's range -- pulse below 36,
   wave below 24, noise below 12, and above the highest note the period register holds --
   selects the sound it maps to and never sounds; a note-off on it is dropped. The default
   layout counts down from the floor (the key under the lowest playable note is sound 1)
-  and on up from the ceiling; every key is typed in the Sounds tab; a toggle turns the map
-  off. **The recall happens on the audio thread, in front of the note**: the row the driver
+  and on up from the ceiling, laid for all four channels when the instance starts; every
+  key is typed in the Sounds tab for the channel on show; a toggle turns the map off. **The recall happens on the audio thread, in front of the note**: the row the driver
   reads is the sound's from that block on, so a note in the same block -- or the one being
   held, under Live follow -- takes it; the timer brings the parameters up to it (no undo
   step: a played key is not a hand edit) and says so, and the audio thread stops
@@ -6813,15 +6814,21 @@ ChipBoy Voice, which stays in the tree this round.
 - **The command library** (`SoloCommand` x 32): a command and a name, kept per instance,
   dropped into CMD 1 or CMD 2 with one click; beside it the letter reference for the
   channel (`commandInfo`, the letters that do nothing on it dimmed).
-- **The window** (560 x 400, fixed; D-UI-45): a header with the channel (its colour is the
+- **The window** (560 x 552, fixed; D-UI-45): a header with the channel (its colour is the
   window's accent), the model and the tempo in force; a page bar; one page at a time. The
-  **Main** page is the scope and registers across the top and the row under them, compact
-  -- SOUND with *Store*, INST with the loaded instrument's name (§30), TABLE, TRANSPOSE,
-  PAN, LEVEL, CMD 1, CMD 2, a note line with the playable range, the last note and the
-  last recall. The other pages take the whole window: Sounds, Instrument, Tables, Waves
-  and Kits (on WAV only), Commands, Setup (the user's note after the first build: the
-  settings as pages of their own, so the window can be small with the oscilloscope on
-  top). Undo and redo sit on the status line. Instrument, Tables, Waves and Kits are the main
+  **Main** page is the scope, as tall as the page leaves it, the registers, and the row
+  under them, compact -- SOUND with *Store*, INST with the loaded instrument's name (§30),
+  TABLE, TRANSPOSE, PAN, LEVEL, CMD 1, CMD 2, a note line with the playable range, the
+  last note and the last recall. The other pages take the whole window: Sounds, Instrument,
+  Tables, Waves and Kits (on WAV only), Commands, Setup (the user's note after the first
+  build: the settings as pages of their own, so the window can be small with the
+  oscilloscope on top). The status line carries the page's context line, a message for
+  five seconds when there is one, and undo / redo. The size is what the widest page needs:
+  the Tables page shows all sixteen steps and the written-as column without scrolling.
+  The four bank editors run in a **compact mode** (`EditorPanel::setCompact`): no slot
+  list down the left, a slot stepper -- its right click lists the bank by name
+  (`slotMenu`) -- and the buttons in one row over the editor, and the Waves page gives its
+  drawing grid the larger share. Instrument, Tables, Waves and Kits are the main
   window's own panels: `EditorHost` (`plugin/shared/EditorHost.h`) is what a panel needs of
   its plugin -- the parameters, the bank, `editBank`, the history, the scopes, the tempo,
   the kit audition, the lanes -- and both processors implement it; `PanelCommon` and the

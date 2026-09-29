@@ -566,4 +566,18 @@ String slotAndName(int slot, const std::string& name)
     return ValueFormat::slot(slot).paddedLeft('0', 2) + " " + String(name);
 }
 
+void slotMenu(Component& target, const std::vector<SlotRow>& rows, int current, const String& what, std::function<void(int)> pick)
+{
+    PopupMenu m;
+    m.addSectionHeader(what);
+    int firstEmpty = 0;
+    for (const auto& r : rows) {
+        if (!r.used) { if (firstEmpty == 0) firstEmpty = r.slot; continue; }
+        m.addItem(r.slot, slotAndName(r.slot, r.name.toStdString()), true, r.slot == current);
+    }
+    if (firstEmpty > 0) { m.addSeparator(); m.addItem(firstEmpty, ValueFormat::slot(firstEmpty) + "  " + String(CharPointer_UTF8("\xe2\x80\x94")) + " empty " + String(CharPointer_UTF8("\xe2\x80\x94")), true, firstEmpty == current); }
+    Component::SafePointer<Component> safe(&target);
+    m.showMenuAsync(PopupMenu::Options().withTargetComponent(&target), [safe, pick](int r) { if (safe != nullptr && r >= 1 && pick) pick(r); });
+}
+
 } // namespace chipboy::plugin

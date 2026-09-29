@@ -63,6 +63,7 @@ private:
 
     ui::SlotList list_;
     TextLine listTitle_;
+    ui::Stepper slotStepper_;                   ///< the compact form's slot field (setCompact)
     juce::TextButton newBtn_, dupBtn_, assignBtn_, savePresetBtn_, loadPresetBtn_;
     std::unique_ptr<juce::FileChooser> chooser_;
     ScrollBlock scroll_;

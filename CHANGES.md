@@ -32,9 +32,10 @@ intended product rather than a progress report.
 A third plugin target, `ChipBoySolo` (VST3 / AU / Standalone), built from the same core: one
 channel, the row as parameters with Live follow on, sixty-four sounds recalled by hand, by
 a parameter or by keys outside the range (on the audio thread, in front of the note), a
-command library, a key map, `.cbsolo` files. The four bank editors are shared with the main
-window through a new `EditorHost` interface (`PanelCommon` and the panels no longer name
-`ChipBoyProcessor`; the main-only lookups moved to `MainCommon.*`). Nothing audible in the
+command library, a key map per channel, `.cbsolo` files, a 560 x 552 window with one page at
+a time. The four bank editors are shared with the main window through a new `EditorHost`
+interface (`PanelCommon` and the panels no longer name `ChipBoyProcessor`; the main-only
+lookups moved to `MainCommon.*`) and gained a compact mode the main window never uses. Nothing audible in the
 main plugin changes; `addChannelParameters` gained a Live-follow default argument. ChipBoy
 Voice is superseded (the MIDI map does its routing) and stays until its link is removed.
 

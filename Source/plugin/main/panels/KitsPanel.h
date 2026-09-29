@@ -49,6 +49,7 @@ private:
 
     ui::SlotList list_;
     TextLine listTitle_;
+    ui::Stepper slotStepper_;                   ///< the compact form's slot field (setCompact)
     juce::TextButton importBtn_;
     ScrollBlock scroll_;
     SampleList* samples_ = nullptr;

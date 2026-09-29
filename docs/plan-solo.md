@@ -57,7 +57,7 @@ keeps per instance and drops into CMD 1 or CMD 2 with one click, and beside it t
 reference (`commandInfo`) for the channel. The brief's "list of commands stored for that
 specific instance".
 
-**The key map** (`keyMap[128]`, sound index per note, 0 none): a MIDI note outside the
+**The key map** (`keyMaps[4][128]` as built, one per channel; sound index per note, 0 none): a MIDI note outside the
 channel's playable range selects a sound instead of sounding. Playable notes cannot be mapped.
 The default layout fills the keys **below the floor counting down** with sounds 1, 2, 3 …
 (the first key under the lowest playable note is sound 1) and the keys **above the ceiling
@@ -124,7 +124,7 @@ Threads: parameters are atomics; the bank and the Solo state are published by po
 thread is a single atomic word (`pendingRecall_`: slot | serial). The message thread's
 timer applies it to the parameters and clears the override once they match.
 
-## 5. The window (`SoloEditor`, 760 x 500, fixed -- as built 560 x 400, one page at a time, §227)
+## 5. The window (`SoloEditor`, 760 x 500, fixed -- as built 560 x 552, one page at a time, the editors in a compact mode, §227)
 
 Header (28 px): wordmark CHIPBOY SOLO, the channel as a four-way segmented control (its
 colour is the window's accent), MODEL, the tempo readout (host BPM or the own tempo,

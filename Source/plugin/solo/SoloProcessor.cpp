@@ -79,7 +79,7 @@ SoloProcessor::SoloProcessor()
     // on the message thread's stack (Windows gives it a megabyte).
     publishBank(std::shared_ptr<const bank::Bank>(new bank::Bank(bank::Bank::factory())));
     auto s = std::make_shared<SoloState>();
-    soloDefaultKeyMap(0, s->keyMap);
+    for (int ch = 0; ch < 4; ++ch) soloDefaultKeyMap(ch, s->keyMaps[size_t(ch)]);
     publishSolo(std::move(s));
     startTimer(kTimerMs);
 }
@@ -409,7 +409,7 @@ void SoloProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi)
         if (m.isNoteOn() || m.isNoteOff()) {
             const int note = m.getNoteNumber();
             if (keys && (note < lo || note > hi)) {
-                const int slot = soloNow->keyMap[size_t(note & 127)];
+                const int slot = soloNow->keyMaps[size_t(ch)][size_t(note & 127)];
                 if (m.isNoteOn() && m.getVelocity() > 0 && slot >= 1) recallOnAudioThread(slot, soloNow, note);
                 continue;                                  // a mapped key never sounds, nor does its release
             }

@@ -305,6 +305,12 @@ WavesPanel::WavesPanel(EditorHost& p)
     frameLabel_.setUpperCase(true);
     sw_ = std::make_unique<SynthWidgets>();
     for (auto* c : std::initializer_list<Component*>{ &list_, &listTitle_, &newBtn_, &name_, &frameLabel_, &frameText_, &scroll_, &synthScroll_ }) addAndMakeVisible(c);
+    addChildComponent(slotStepper_);
+    slotStepper_.setRange(1, bank::kWaveSlots, 1);
+    slotStepper_.setSlotNumbering(true);
+    slotStepper_.setTooltip("The wave on show. Right-click lists the bank by name.");
+    slotStepper_.onChange = [this](int v) { showSlot(v); };
+    slotStepper_.onList = [this] { slotMenu(slotStepper_, lastRows_, slot_, "Wave", [this](int v) { showSlot(v); }); };
     list_.onSelect = [this](int slot) { showSlot(slot); };
     list_.onRename = [this](int slot, const String& n) {
         const int s = std::clamp(slot, 1, bank::kWaveSlots);
@@ -415,6 +421,7 @@ void WavesPanel::showSlot(int slot)
     slot_ = std::clamp(slot, 1, bank::kWaveSlots);
     frame_ = 0;
     if (list_.selected() != slot_) list_.setSelected(slot_, dontSendNotification);
+    if (slotStepper_.value() != slot_) slotStepper_.setValue(slot_, dontSendNotification);
     buildSynth();
     syncFromBank(true);
     contextChanged();
@@ -763,19 +770,30 @@ void WavesPanel::runSynth()
 void WavesPanel::resized()
 {
     auto area = getLocalBounds();
-    auto left = area.removeFromLeft(kListWidth);
-    auto head = left.removeFromTop(kListHeader);
-    newBtn_.setBounds(head.removeFromRight(44).reduced(2, 3));
-    listTitle_.setBounds(head.withTrimmedLeft(8));
-    list_.setBounds(left);
-    area.removeFromLeft(kGap);
+    list_.setVisible(!compact); listTitle_.setVisible(!compact); slotStepper_.setVisible(compact);
+    if (!compact) {
+        auto left = area.removeFromLeft(kListWidth);
+        auto head = left.removeFromTop(kListHeader);
+        newBtn_.setBounds(head.removeFromRight(44).reduced(2, 3));
+        listTitle_.setBounds(head.withTrimmedLeft(8));
+        list_.setBounds(left);
+        area.removeFromLeft(kGap);
+    }
     // The synth takes the right column, the drawing grid, its tools and its
     // frames the rest (docs/COMMANDS_AND_TEMPO.md sections 33 and 36).
-    auto synth = area.removeFromRight(std::min(kSynthWidth, std::max(0, area.getWidth() / 2)));
+    // A compact window gives the drawing grid the larger share: its tools row
+    // needs the width more than the synth's rows do.
+    auto synth = area.removeFromRight(std::min(kSynthWidth, std::max(0, compact ? area.getWidth() * 46 / 100 : area.getWidth() / 2)));
     area.removeFromRight(kSynthGap);
     auto top = area.removeFromTop(kTopRow);
-    name_.setBounds(top.removeFromLeft(200).withHeight(NameField::kHeight));
-    top.removeFromLeft(12);
+    if (compact) {
+        slotStepper_.setBounds(top.removeFromLeft(slotStepper_.preferredWidth()).withHeight(Stepper::kHeight));
+        top.removeFromLeft(6);
+        newBtn_.setBounds(top.removeFromRight(44).withHeight(Stepper::kHeight));
+        top.removeFromRight(6);
+    }
+    name_.setBounds(top.removeFromLeft(compact ? std::max(60, top.getWidth() - 116) : 200).withHeight(NameField::kHeight));
+    top.removeFromLeft(compact ? 6 : 12);
     frameLabel_.setBounds(top.removeFromLeft(44));
     frameText_.setBounds(top.removeFromLeft(64));
     area.removeFromTop(6);

@@ -303,8 +303,11 @@ void SoloStrip::resized()
     led_.setBounds(x, y + 5, 7, 7);
     name_.setBounds(x + 13, y, 60, 16);
     y += 18;
-    scope_.setBounds(x, y, w, 88);
-    y += 88 + 4;
+    // The fields need a fixed height; the scope takes the rest.
+    const int fields = 14 + kGap + (12 + Stepper::kHeight) + kGap + (12 + Stepper::kHeight) + kGap + CommandSlot::kHeight + kGap + 14 + 4;
+    const int scopeH = std::max(60, area.getBottom() - y - fields);
+    scope_.setBounds(x, y, w, scopeH);
+    y += scopeH + 4;
     regs_.setBounds(x, y, w, 14);
     y += 14 + kGap;
     const int sw = sound_.preferredWidth();
@@ -350,7 +353,8 @@ public:
         sound_.setTextFunction([this](int v) { return v == 0 ? String(CharPointer_UTF8("\xe2\x80\x93")) : ValueFormat::slot(v); });
         sound_.setTooltip("The sound this key selects; " + String(CharPointer_UTF8("\xe2\x80\x93")) + " for none");
         sound_.onChange = [this](int v) {
-            owner_.processor_.editSolo("Key " + ValueFormat::noteName(note_), [this, v](SoloState& s) { s.keyMap[size_t(note_)] = uint8_t(std::clamp(v, 0, kSoloSounds)); });
+            const int ch = owner_.processor_.channel();
+            owner_.processor_.editSolo("Key " + ValueFormat::noteName(note_), [this, v, ch](SoloState& s) { s.keyMaps[size_t(ch)][size_t(note_)] = uint8_t(std::clamp(v, 0, kSoloSounds)); });
         };
         addAndMakeVisible(label_);
         label_.setFont(Fonts::sans(11.0f));
@@ -397,8 +401,8 @@ SoundsPanel::SoundsPanel(SoloProcessor& p)
     storeBtn_.onClick = [this] { processor_.storeSound(slot_); };
     clearBtn_.onClick = [this] { processor_.editSolo("Clear sound " + String(slot_), [this](SoloState& s) { s.sounds[size_t(slot_ - 1)] = SoloSound{}; }); };
     defaultKeysBtn_.setTooltip("The keys below the floor counting down are sounds 1, 2, 3 ...; the keys above the ceiling carry on from there");
-    defaultKeysBtn_.onClick = [this] { processor_.editSolo("Default key layout", [this](SoloState& s) { soloDefaultKeyMap(processor_.channel(), s.keyMap); }); };
-    clearKeysBtn_.onClick = [this] { processor_.editSolo("Clear the key map", [](SoloState& s) { s.keyMap.fill(0); }); };
+    defaultKeysBtn_.onClick = [this] { const int ch = processor_.channel(); processor_.editSolo("Default key layout", [ch](SoloState& s) { soloDefaultKeyMap(ch, s.keyMaps[size_t(ch)]); }); };
+    clearKeysBtn_.onClick = [this] { const int ch = processor_.channel(); processor_.editSolo("Clear the key map", [ch](SoloState& s) { s.keyMaps[size_t(ch)].fill(0); }); };
     keyMap_.attach(param(processor_, solo::ids::keyMap));
     keyMap_.setTooltip("Off, every key plays and none selects a sound");
     keys_.setReserveScrollbar(true);
@@ -452,6 +456,7 @@ void SoundsPanel::rebuildKeys()
     for (int n = lo - 1; n >= 0; --n) add(n);
     for (int n = hi + 1; n < 128; ++n) add(n);
     keys_.setContent(std::move(stack));
+    keysTitle_.setText(String("Keys outside ") + colours::channelName(ch) + "'s range");
     keysHelp_.setText(ValueFormat::noteValue(lo, ch == 3) + " to " + ValueFormat::noteValue(hi, ch == 3) + " play; " + String(keyRows_.size()) + " keys can select a sound");
     syncKeys();
 }
@@ -460,7 +465,7 @@ void SoundsPanel::syncKeys()
 {
     const auto s = processor_.solo();
     for (auto* row : keyRows_) {
-        const int sound = s ? int(s->keyMap[size_t(row->note())]) : 0;
+        const int sound = s ? int(s->keyMaps[size_t(processor_.channel())][size_t(row->note())]) : 0;
         row->sync(sound, soundText(sound));
     }
 }
@@ -780,16 +785,13 @@ public:
             if (panelOf_[size_t(i)] == panel) { if (bar_.getCurrentTabIndex() != i) bar_.setCurrentTabIndex(i, false); return; }
         if (bar_.getNumTabs() > 0 && bar_.getCurrentTabIndex() < 0) bar_.setCurrentTabIndex(0, false);
     }
-    void setContext(const RichText& c) { context_ = c; repaint(); }
     void paint(Graphics& g) override
     {
         g.fillAll(colours::panel);
         g.setColour(colours::lineSoft);
         g.fillRect(0, getHeight() - 1, getWidth(), 1);
-        const Rectangle<float> area(float(barWidth_ + 16), 0.0f, float(getWidth() - barWidth_ - 16 - 8), float(getHeight() - 4));
-        context_.attributed(11.0f, colours::textMute, colours::text, Justification::centredRight).draw(g, area);
     }
-    void resized() override { barWidth_ = std::min(getWidth() - 130, 66 * int(panelOf_.size())); bar_.setBounds(8, 4, barWidth_, getHeight() - 4); }
+    void resized() override { bar_.setBounds(8, 4, getWidth() - 16, getHeight() - 4); }
 private:
     struct Bar : TabbedButtonBar {
         Bar() : TabbedButtonBar(TabbedButtonBar::TabsAtTop) {}
@@ -797,8 +799,6 @@ private:
         void currentTabChanged(int i, const String&) override { if (onChange) onChange(i); }
     } bar_;
     std::vector<int> panelOf_;
-    int barWidth_ = 420;
-    RichText context_;
 };
 
 /* ------------------------------------------------------------ editor */
@@ -838,8 +838,9 @@ SoloEditor::SoloEditor(SoloProcessor& p)
     panels_[Setup] = std::make_unique<SetupPanel>(processor_);
     for (auto& panel : panels_) {
         if (!panel) continue;                      // Main is the strip, not a panel
+        panel->setCompact(true);
         panel->onContextChanged = [this] { refreshContext(); };
-        panel->onMessage = [this](const String& text) { status_.setText(text); };
+        panel->onMessage = [this](const String& text) { showMessage(text); };
         panel->onOpenSlot = [this](SlotKind kind, int slot) { openSlot(kind, slot); };
         addChildComponent(*panel);
     }
@@ -942,17 +943,26 @@ void SoloEditor::restoreView()
     }
 }
 
+void SoloEditor::showMessage(const String& text)
+{
+    message_ = text;
+    messageUntil_ = Time::getMillisecondCounter() + 5000;
+    lastContext_ = RichText();
+    refreshContext();
+}
+
 void SoloEditor::refreshContext()
 {
     RichText c;
-    if (panels_[size_t(tab_)]) c = panels_[size_t(tab_)]->contextLine();
+    if (message_.isNotEmpty() && Time::getMillisecondCounter() < messageUntil_) c.plain(message_);
+    else if (panels_[size_t(tab_)]) c = panels_[size_t(tab_)]->contextLine();
     else {
         const auto b = processor_.bank();
         const int slot = paramValue(processor_, processor_.channelParamId(0, ids::instrument));
         const bank::Instrument* inst = b && slot > 0 ? b->instrument(slot) : nullptr;
         c.bold(inst ? String(inst->name) : slot > 0 ? kDash + " empty " + kDash : String("no instrument"));
     }
-    if (c != lastContext_) { lastContext_ = c; tabs_->setContext(c); }
+    if (c != lastContext_) { lastContext_ = c; status_.setText(c.toString()); }
 }
 
 void SoloEditor::refreshHeader()
@@ -979,7 +989,7 @@ void SoloEditor::timerCallback()
         static_cast<SoundsPanel&>(*panels_[Sounds]).soloChanged();
         static_cast<CommandsPanel&>(*panels_[Commands]).soloChanged();
     }
-    if (processor_.recallSerial() != lastRecall_) { lastRecall_ = processor_.recallSerial(); status_.setText(processor_.lastRecall()); }
+    if (processor_.recallSerial() != lastRecall_) { lastRecall_ = processor_.recallSerial(); showMessage(processor_.lastRecall()); }
     strip_.tick();
     refreshHeader();
     if (panels_[size_t(tab_)]) panels_[size_t(tab_)]->tick();
@@ -1032,7 +1042,7 @@ void SoloEditor::undo()
     auto& history = processor_.history();
     const String what = history.undoName();
     if (!history.undo()) return;
-    status_.setText(what.isEmpty() ? String("Undone") : "Undone: " + what);
+    showMessage(what.isEmpty() ? String("Undone") : "Undone: " + what);
 }
 
 void SoloEditor::redo()
@@ -1040,7 +1050,7 @@ void SoloEditor::redo()
     auto& history = processor_.history();
     const String what = history.redoName();
     if (!history.redo()) return;
-    status_.setText(what.isEmpty() ? String("Redone") : "Redone: " + what);
+    showMessage(what.isEmpty() ? String("Redone") : "Redone: " + what);
 }
 
 bool SoloEditor::keyPressed(const KeyPress& key)

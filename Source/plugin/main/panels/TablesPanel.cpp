@@ -59,6 +59,12 @@ TablesPanel::TablesPanel(EditorHost& p)
 {
     stepRateLabel_.setUpperCase(true);
     for (auto* c : std::initializer_list<Component*>{ &list_, &listTitle_, &newBtn_, &name_, &used_, &stepRateLabel_, &stepRate_, &scroll_ }) addAndMakeVisible(c);
+    addChildComponent(slotStepper_);
+    slotStepper_.setRange(1, bank::kTableSlots, 1);
+    slotStepper_.setSlotNumbering(true);
+    slotStepper_.setTooltip("The table on show. Right-click lists the bank by name.");
+    slotStepper_.onChange = [this](int v) { showSlot(v); };
+    slotStepper_.onList = [this] { slotMenu(slotStepper_, lastRows_, slot_, "Table", [this](int v) { showSlot(v); }); };
     list_.onSelect = [this](int slot) { showSlot(slot); };
     list_.onRename = [this](int slot, const String& n) {
         const int s = std::clamp(slot, 1, bank::kTableSlots);
@@ -153,6 +159,7 @@ void TablesPanel::showSlot(int slot)
 {
     slot_ = std::clamp(slot, 1, bank::kTableSlots);
     if (list_.selected() != slot_) list_.setSelected(slot_, dontSendNotification);
+    if (slotStepper_.value() != slot_) slotStepper_.setValue(slot_, dontSendNotification);
     syncFromBank(true);
     contextChanged();
 }
@@ -244,6 +251,21 @@ void TablesPanel::tick()
 void TablesPanel::resized()
 {
     auto area = getLocalBounds();
+    list_.setVisible(!compact); listTitle_.setVisible(!compact); slotStepper_.setVisible(compact);
+    stepRate_.setVisible(!compact); stepRateLabel_.setVisible(!compact);
+    if (compact) {
+        auto top = area.removeFromTop(kTopRow);
+        slotStepper_.setBounds(top.removeFromLeft(slotStepper_.preferredWidth()).withHeight(Stepper::kHeight));
+        top.removeFromLeft(6);
+        newBtn_.setBounds(top.removeFromRight(44).withHeight(Stepper::kHeight));
+        top.removeFromRight(6);
+        name_.setBounds(top.removeFromLeft(std::min(200, top.getWidth() - 90)).withHeight(NameField::kHeight));
+        top.removeFromLeft(8);
+        used_.setBounds(top);
+        area.removeFromTop(6);
+        scroll_.setBounds(area);
+        return;
+    }
     auto left = area.removeFromLeft(kListWidth);
     auto head = left.removeFromTop(kListHeader);
     newBtn_.setBounds(head.removeFromRight(44).reduced(2, 3));

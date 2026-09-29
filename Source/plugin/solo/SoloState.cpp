@@ -66,13 +66,14 @@ var soloStateToVar(const SoloState& s)
         commands.add(var(co));
     }
     o->setProperty("commands", commands);
+    Array<var> maps;
     bool anyKey = false;
-    for (uint8_t k : s.keyMap) anyKey = anyKey || k != 0;
-    if (anyKey) {
+    for (const auto& map : s.keyMaps) {
         Array<var> keys;
-        for (uint8_t k : s.keyMap) keys.add(int(k));
-        o->setProperty("keyMap", keys);
+        for (uint8_t k : map) { keys.add(int(k)); anyKey = anyKey || k != 0; }
+        maps.add(keys);
     }
+    if (anyKey) o->setProperty("keyMaps", maps);
     return var(o);
 }
 
@@ -106,9 +107,11 @@ bool soloStateFromVar(const var& v, SoloState& out)
             c.name = co->getProperty("name").toString().toStdString();
             c.cmd = commandFromVar(co->getProperty("cmd"));
         }
-    if (auto* keys = o->getProperty("keyMap").getArray())
-        for (int n = 0; n < 128 && n < keys->size(); ++n)
-            out.keyMap[size_t(n)] = uint8_t(std::clamp(int((*keys)[n]), 0, kSoloSounds));
+    if (auto* maps = o->getProperty("keyMaps").getArray())
+        for (int ch = 0; ch < 4 && ch < maps->size(); ++ch)
+            if (auto* keys = (*maps)[ch].getArray())
+                for (int n = 0; n < 128 && n < keys->size(); ++n)
+                    out.keyMaps[size_t(ch)][size_t(n)] = uint8_t(std::clamp(int((*keys)[n]), 0, kSoloSounds));
     return true;
 }
 

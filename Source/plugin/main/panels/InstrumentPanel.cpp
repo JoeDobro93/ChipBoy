@@ -305,6 +305,12 @@ InstrumentPanel::InstrumentPanel(EditorHost& p)
     list_.setKindColours([](int kind) { return instrumentKindColour(kind); });
     // A click only picks what the editor shows; a double click hands the slot
     // to the channel, so browsing the bank never changes what is playing.
+    addChildComponent(slotStepper_);
+    slotStepper_.setRange(1, bank::kInstrumentSlots, 1);
+    slotStepper_.setSlotNumbering(true);
+    slotStepper_.setTooltip("The instrument on show. Right-click lists the bank by name.");
+    slotStepper_.onChange = [this](int v) { showSlot(v); };
+    slotStepper_.onList = [this] { slotMenu(slotStepper_, lastRows_, slot_, "Instrument", [this](int v) { showSlot(v); }); };
     list_.onSelect = [this](int slot) { showSlot(slot); };
     list_.onDoubleClick = [this](int slot) { assignSlot(slot); };
     list_.onRename = [this](int slot, const String& name) {
@@ -403,6 +409,21 @@ void InstrumentPanel::tick()
 void InstrumentPanel::resized()
 {
     auto area = getLocalBounds();
+    list_.setVisible(!compact); listTitle_.setVisible(!compact); slotStepper_.setVisible(compact);
+    if (compact) {
+        // One row: the slot, then the buttons (D-UI-45).
+        auto top = area.removeFromTop(kListButtons).reduced(0, 1);
+        slotStepper_.setBounds(top.removeFromLeft(slotStepper_.preferredWidth()));
+        top.removeFromLeft(6);
+        loadPresetBtn_.setBounds(top.removeFromRight(88)); top.removeFromRight(4);
+        savePresetBtn_.setBounds(top.removeFromRight(88)); top.removeFromRight(8);
+        dupBtn_.setBounds(top.removeFromRight(40)); top.removeFromRight(4);
+        newBtn_.setBounds(top.removeFromRight(44)); top.removeFromRight(4);
+        assignBtn_.setBounds(top);
+        area.removeFromTop(6);
+        scroll_.setBounds(area);
+        return;
+    }
     auto left = area.removeFromLeft(kListWidth);
     auto head = left.removeFromTop(kListHeader);
     listTitle_.setBounds(head.withTrimmedLeft(8));
@@ -471,6 +492,7 @@ void InstrumentPanel::showSlot(int slot)
 {
     slot_ = std::clamp(slot, 1, bank::kInstrumentSlots);
     if (list_.selected() != slot_) list_.setSelected(slot_, dontSendNotification);
+    if (slotStepper_.value() != slot_) slotStepper_.setValue(slot_, dontSendNotification);
     rebuildEditor();
     refreshAssignButton();
     contextChanged();

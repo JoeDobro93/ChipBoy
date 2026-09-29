@@ -338,12 +338,20 @@ public:
     virtual void restoreView(const juce::ValueTree&) {}
     /// A line for the status bar: what a file did, what a preset went where.
     std::function<void(const juce::String&)> onMessage;
+    /// A small window (ChipBoy Solo, D-UI-45): no slot list down the left;
+    /// a slot stepper and the buttons in one row over the editor instead.
+    void setCompact(bool on) { if (compact != on) { compact = on; resized(); } }
 protected:
     void contextChanged() { if (onContextChanged) onContextChanged(); }
     void openSlot(ui::SlotKind kind, int slot) { if (onOpenSlot && slot > 0) onOpenSlot(kind, slot); }
     void message(const juce::String& text) { if (onMessage) onMessage(text); }
     EditorHost& host;
     int channel = 0;
+    bool compact = false;
 };
+
+/// The slots by name, as a slot stepper's right click lists them in a
+/// compact panel: the used ones, then the first empty one.
+void slotMenu(juce::Component& target, const std::vector<ui::SlotRow>& rows, int current, const juce::String& what, std::function<void(int)> pick);
 
 } // namespace chipboy::plugin

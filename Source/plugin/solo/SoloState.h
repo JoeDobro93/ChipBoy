@@ -35,9 +35,10 @@ struct SoloCommand {
 struct SoloState {
     std::array<SoloSound, kSoloSounds>     sounds;
     std::array<SoloCommand, kSoloCommands> commands;
-    /// The sound (1-64) a MIDI note outside the channel's range selects; 0
-    /// none. Entries on playable notes are kept but never read.
-    std::array<uint8_t, 128> keyMap{};
+    /// Per channel (PU1, PU2, WAV, NOI -- their ranges differ), the sound
+    /// (1-64) a MIDI note outside the range selects; 0 none. Entries on
+    /// playable notes are kept but never read.
+    std::array<std::array<uint8_t, 128>, 4> keyMaps{};
 };
 
 /// The notes a channel (0-3) has a period for: pulse 36 up, wave 24 up, to

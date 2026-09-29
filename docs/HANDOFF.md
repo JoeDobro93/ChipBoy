@@ -102,9 +102,13 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
   32-entry command library in a published `SoloState`; the key map with recalls on the
   audio thread in front of the note and the timer bringing the parameters up; `.cbsolo`
   files; the kit audition), `SoloEditor` (header, the strip, the Sounds / Commands /
-  Setup panels, the shared Instrument / Tables / Waves / Kits panels), 560 x 400 with
+  Setup panels, the shared Instrument / Tables / Waves / Kits panels), 560 x 552 with
   one page at a time -- the user's note after the first build: the scope and the playing
-  row on Main, compact, and every other tab a page that takes the whole window. `chipboy_solotest` (30 checks) runs in the plugin checks; `chipboy_uishot
+  row on Main, compact, and every other tab a page that takes the whole window. The
+  four shared panels gained a **compact mode** (`EditorPanel::setCompact`, a slot
+  stepper and the buttons in one row instead of the slot list; `slotMenu` in
+  PanelCommon) so they fit; the main window never sets it. The key map is one per
+  channel (`keyMaps[4][128]`), since the ranges differ. `chipboy_solotest` (30 checks) runs in the plugin checks; `chipboy_uishot
   --solo DIR` shoots the tabs (`docs/screenshots/solo-*.png`).
 - **EditorHost** (`plugin/shared/EditorHost.h`): the interface the four bank editors read
   their plugin through; `ChipBoyProcessor` and `SoloProcessor` implement it. `EditorPanel`
@@ -113,8 +117,9 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
   `analogCornerHz`). `PanelCommon.cpp` and the four panels compile into both targets.
 - **Decisions the user should confirm**: sounds store `inst, table, cmd1, cmd2` and not
   level, pan or transpose (those stay performance fields); a key recall sets the Sound
-  parameter too; the default key layout counts down from the floor; Live follow on by
-  default; no keyswitch octave in Solo (the key map replaces it); the name *Solo*.
+  parameter too; the default key layout counts down from the floor, laid per channel;
+  Live follow on by default; no keyswitch octave in Solo (the key map replaces it); the
+  window size follows the Tables page (a whole table in view) rather than the Main page.
 - **Voice**: superseded by the MIDI map plus Solo, as the user said; left in the tree
   (removing it takes the link region, the Link tab, `chipboy_linktest` and the Voice
   sources with it -- a round of its own).

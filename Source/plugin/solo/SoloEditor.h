@@ -20,7 +20,7 @@
 
 namespace chipboy::plugin {
 
-constexpr int kSoloWidth = 560, kSoloHeight = 400;
+constexpr int kSoloWidth = 560, kSoloHeight = 552;
 
 /// The Main page: the channel's scope and registers across the top, and the
 /// row's fields under them -- SOUND, INST, TABLE, TSP, PAN, LEVEL, CMD 1,
@@ -162,6 +162,8 @@ private:
     void timerCallback() override;
     void channelChanged();
     void refreshContext();
+    /// The status line: a message for a few seconds, else the page's context.
+    void showMessage(const juce::String& text);
     void refreshHeader();
     void saveView();
     void restoreView();
@@ -185,7 +187,8 @@ private:
     const SoloState* lastSolo_ = nullptr;
     int lastRecall_ = -1;
     RichText lastContext_;
-    juce::String tempoShown_;
+    juce::String tempoShown_, message_;
+    uint32_t messageUntil_ = 0;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SoloEditor)
 };
 

@@ -154,6 +154,12 @@ KitsPanel::KitsPanel(EditorHost& p)
       importBtn_("Import" + String(CharPointer_UTF8("\xe2\x80\xa6")))
 {
     for (auto* c : std::initializer_list<Component*>{ &list_, &listTitle_, &importBtn_, &scroll_ }) addAndMakeVisible(c);
+    addChildComponent(slotStepper_);
+    slotStepper_.setRange(1, bank::kKitSlots, 1);
+    slotStepper_.setSlotNumbering(true);
+    slotStepper_.setTooltip("The kit on show. Right-click lists the bank by name.");
+    slotStepper_.onChange = [this](int v) { showSlot(v); };
+    slotStepper_.onList = [this] { slotMenu(slotStepper_, lastRows_, slot_, "Kit", [this](int v) { showSlot(v); }); };
     list_.onSelect = [this](int slot) { showSlot(slot); };
     list_.onRename = [this](int slot, const String& n) {
         const int s = std::clamp(slot, 1, bank::kKitSlots);
@@ -206,6 +212,7 @@ void KitsPanel::showSlot(int slot)
     slot_ = std::clamp(slot, 1, bank::kKitSlots);
     sample_ = 0;
     if (list_.selected() != slot_) list_.setSelected(slot_, dontSendNotification);
+    if (slotStepper_.value() != slot_) slotStepper_.setValue(slot_, dontSendNotification);
     rebuildContent();
     contextChanged();
 }
@@ -471,6 +478,16 @@ void KitsPanel::hexChanged()
 void KitsPanel::resized()
 {
     auto area = getLocalBounds();
+    list_.setVisible(!compact); listTitle_.setVisible(!compact); slotStepper_.setVisible(compact);
+    if (compact) {
+        auto top = area.removeFromTop(kListHeader).withHeight(Stepper::kHeight);
+        slotStepper_.setBounds(top.removeFromLeft(slotStepper_.preferredWidth()));
+        top.removeFromLeft(6);
+        importBtn_.setBounds(top.removeFromLeft(90));
+        area.removeFromTop(6);
+        scroll_.setBounds(area);
+        return;
+    }
     auto left = area.removeFromLeft(kListWidth);
     auto head = left.removeFromTop(kListHeader);
     importBtn_.setBounds(head.removeFromRight(70).reduced(2, 3));

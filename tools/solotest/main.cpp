@@ -92,7 +92,7 @@ int main(int argc, char** argv)
         const auto s = solo.solo();
         check(s && s->sounds[0].used && s->sounds[0].inst == 1 && s->sounds[1].inst == 2, "two sounds stored from the row");
         int lo = 0, hi = 127; solo.noteRange(lo, hi);
-        check(lo == 36 && hi > 100 && s->keyMap[size_t(lo - 1)] == 1 && s->keyMap[size_t(lo - 2)] == 2, "pulse keys: the floor is 36, the key under it is sound 1, the next sound 2");
+        check(lo == 36 && hi > 100 && s->keyMaps[0][size_t(lo - 1)] == 1 && s->keyMaps[0][size_t(lo - 2)] == 2, "pulse keys: the floor is 36, the key under it is sound 1, the next sound 2");
         check(soloKeyMappable(0, lo - 1) && !soloKeyMappable(0, lo), "a key under the floor is mappable, the floor is not");
     }
     {
@@ -147,7 +147,7 @@ int main(int argc, char** argv)
         check(s && s->sounds[1].used && s->sounds[1].name == "two" && s->sounds[1].inst == 2, "the state carries the sounds");
         check(s && s->commands[0].used && s->commands[0].cmd.cmd == bank::Cmd::V, "the state carries the library");
         int lo = 0, hi = 127; other.noteRange(lo, hi);
-        check(s && s->keyMap[size_t(lo - 2)] == 2, "the state carries the key map");
+        check(s && s->keyMaps[0][size_t(lo - 2)] == 2 && s->keyMaps[2][size_t(23)] == 1, "the state carries the key maps, one per channel");
         check(other.bank() && other.bank()->instrument(1) != nullptr && other.bank()->instrument(1)->name == solo.bank()->instrument(1)->name, "the state carries the bank");
         check(int(get(other.apvts, solo.channelParamId(0, ids::cmd2X))) == 8, "the state carries the row");
     }
