@@ -164,17 +164,26 @@ void SoloStrip::refreshInstrumentName()
     instrumentName_.setColour(instrumentFitsChannel(inst->type, processor_.channel()) ? instrumentKindColour(int(inst->type)) : colours::warn);
 }
 
+/// The sound's name, and whether the row has moved away from it since the
+/// recall -- an instrument, table or command changed by hand or by a lane.
 void SoloStrip::refreshSoundName()
 {
     const auto s = processor_.solo();
     const int slot = paramValue(processor_, solo::ids::sound);
-    if (s.get() == soundsFor_ && slot == soundShown_) return;
-    soundsFor_ = s.get(); soundShown_ = slot;
+    bool edited = false;
+    if (s && slot >= 1 && s->sounds[size_t(slot - 1)].used) {
+        const auto& snd = s->sounds[size_t(slot - 1)];
+        const driver::ChannelParams row = processor_.params.read(ChannelKind::Any);
+        edited = row.instrument != snd.inst || row.table != snd.table || !bank::sameCmd(row.cmd[0], snd.cmd1) || !bank::sameCmd(row.cmd[1], snd.cmd2);
+    }
+    if (s.get() == soundsFor_ && slot == soundShown_ && edited == editedShown_) return;
+    soundsFor_ = s.get(); soundShown_ = slot; editedShown_ = edited;
     if (sound_.value() != slot) sound_.setValue(slot, dontSendNotification);
     if (slot < 1) { soundName_.setText("none recalled"); soundName_.setColour(colours::textDim); return; }
     const auto& snd = s ? s->sounds[size_t(slot - 1)] : SoloSound{};
-    soundName_.setText(snd.used ? String(CharPointer_UTF8(snd.name.c_str())) : kDash + " empty " + kDash);
-    soundName_.setColour(snd.used ? colours::text : colours::textDim);
+    soundName_.setText(snd.used ? String(CharPointer_UTF8(snd.name.c_str())) + (edited ? " (edited)" : "") : kDash + " empty " + kDash);
+    soundName_.setColour(!snd.used ? colours::textDim : edited ? colours::warn : colours::text);
+    soundName_.setTooltip(edited ? "The row has changed since this sound was recalled: Store keeps it" : String());
 }
 
 void SoloStrip::showSoundMenu()
@@ -390,7 +399,7 @@ private:
 
 SoundsPanel::SoundsPanel(SoloProcessor& p)
     : EditorPanel(p), processor_(p),
-      listTitle_(String("Sounds ") + String(CharPointer_UTF8("\xc2\xb7")) + " double-click recalls, Enter renames", Fonts::caption(10.0f, true), colours::textDim), keysTitle_("Keys outside the range", Fonts::caption(10.0f, true), colours::textDim),
+      listTitle_(String("Sounds ") + String(CharPointer_UTF8("\xc2\xb7")) + " double-click recalls", Fonts::caption(10.0f, true), colours::textDim), keysTitle_("Keys outside the range", Fonts::caption(10.0f, true), colours::textDim),
       keysHelp_({}, Fonts::sans(11.0f), colours::textDim),
       recallBtn_("Recall"), storeBtn_("Store here"), clearBtn_("Clear"), defaultKeysBtn_("Default"), clearKeysBtn_("Clear"),
       keyMap_("Key map on")
@@ -457,6 +466,7 @@ void SoundsPanel::rebuildList()
         if (snd.used) {
             const bank::Instrument* inst = b ? b->instrument(snd.inst) : nullptr;
             r.note = snd.inst == 0 ? "bare" : ValueFormat::slot(snd.inst) + (inst ? " " + String(inst->name) : String());
+            if (k + 1 == playingShown_) r.note = String(CharPointer_UTF8("\xe2\x96\xb6 ")) + r.note;   // the sound the row came from
             String letters;
             if (snd.table) letters += " T";
             for (const auto* cmd : { &snd.cmd1, &snd.cmd2 }) if (cmd->cmd != bank::Cmd::None) letters += String(" ") + bank::cmdLetter(cmd->cmd);
@@ -509,6 +519,8 @@ void SoundsPanel::hexChanged() { rowsFor_ = nullptr; rebuildList(); keysForChann
 void SoundsPanel::tick()
 {
     if (processor_.recallSerial() != lastSerial_) { lastSerial_ = processor_.recallSerial(); message(processor_.lastRecall()); }
+    const int playing = paramValue(processor_, solo::ids::sound);
+    if (playing != playingShown_) { playingShown_ = playing; rowsFor_ = nullptr; rebuildList(); }
 }
 
 RichText SoundsPanel::contextLine() const
@@ -857,6 +869,7 @@ public:
         setCurrent(current);
     }
     int currentPanel() const { const int i = bar_.getCurrentTabIndex(); return i >= 0 && i < int(panelOf_.size()) ? panelOf_[size_t(i)] : 0; }
+    int panelAt(int i) const { return i >= 0 && i < int(panelOf_.size()) ? panelOf_[size_t(i)] : -1; }
     void setCurrent(int panel)
     {
         for (int i = 0; i < int(panelOf_.size()); ++i)
@@ -1169,6 +1182,8 @@ bool SoloEditor::keyPressed(const KeyPress& key)
         const bool isY = code == 'Y' || code == 'y' || ch == 'y' || ch == 'Y';
         if (isZ) { if (mods.isShiftDown()) redo(); else undo(); return true; }
         if (isY) { redo(); return true; }
+        // Ctrl+1 .. Ctrl+8: the pages in the bar's order, for a hand on the keys.
+        if (ch >= '1' && ch <= '8') { const int p = tabs_->panelAt(int(ch - '1')); if (p >= 0) showTab(p); return true; }
     }
     return false;
 }

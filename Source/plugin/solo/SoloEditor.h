@@ -63,6 +63,7 @@ private:
     const bank::Bank* namesFor_ = nullptr;
     const SoloState* soundsFor_ = nullptr;
     int instrumentShown_ = -1, loadedInstrument_ = 0, soundShown_ = -1;
+    bool editedShown_ = false;        ///< the row differs from the sound it was recalled from
     int modelShown_ = -1;
     juce::String noteShown_;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SoloStrip)
@@ -100,7 +101,7 @@ private:
     int keysForChannel_ = -1;
     const SoloState* rowsFor_ = nullptr;
     const bank::Bank* rowsBank_ = nullptr;
-    int lastSerial_ = -1;
+    int lastSerial_ = -1, playingShown_ = -1;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SoundsPanel)
 };
 
