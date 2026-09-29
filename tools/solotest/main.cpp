@@ -335,6 +335,23 @@ int main(int argc, char** argv)
         juce::MidiBuffer off; off.addEvent(juce::MidiMessage::noteOff(1, 60), 0);
         run(solo, off, 8, on);
     }
+    // --- Stop: every note off, the pedal too -----------------------------------
+    {
+        juce::MidiBuffer m;
+        m.addEvent(juce::MidiMessage::controllerEvent(1, 64, 127), 0);
+        m.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8) 100), 0);
+        m.addEvent(juce::MidiMessage::noteOff(1, 60), 64);
+        int on = 0; run(solo, m, 8, on);
+        check(solo.driverView().view(0).active, "the pedal holds the released note");
+        solo.stopNotes();
+        run(solo, {}, 8, on);
+        check(!solo.driverView().view(0).active, "Stop ends it");
+        juce::MidiBuffer n; n.addEvent(juce::MidiMessage::noteOn(1, 62, (juce::uint8) 100), 0); n.addEvent(juce::MidiMessage::noteOff(1, 62), 64);
+        run(solo, n, 8, on);
+        check(!solo.driverView().view(0).active, "and the pedal is up: the next note releases");
+        juce::MidiBuffer up; up.addEvent(juce::MidiMessage::controllerEvent(1, 64, 0), 0);
+        run(solo, up, 4, on);
+    }
     {
         // Live follow: a held note takes an instrument change at once.
         juce::MidiBuffer m; m.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8) 100), 0);

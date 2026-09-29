@@ -136,7 +136,8 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
   screenshots, the header's wordmark no longer clipped, the compact Waves top row laid
   out from the right (the frame readout keeps its width, the name takes the rest, no
   FRAME label), the Kits page's table hint shortened, and the Main page's note line
-  reduced to the range and the note (the recall is the status line's).
+  reduced to the range and the note (the recall is the status line's), and a **Stop**
+  button on the Main page (every note off, the pedal too; `stopNotes`, checked).
 - **A record-test flake fixed on the way** (§226 amendment): a message for a row already
   fitted opened a second take and its finish cleared the row; a second take now re-fits
   the row over the union of both takes' messages. The groove cases record the same with

@@ -101,6 +101,9 @@ public:
     /// A sound's row into the parameters. By hand it is one undo step and the
     /// Sound parameter follows; from a key or the parameter it is not an edit.
     void recallSound(int slot, bool byHand);
+    /// Every note off on the next block -- a hanging note, a pedal left
+    /// down -- from a button or a key; the row and the sound stay.
+    void stopNotes() { stopReq_.store(true, std::memory_order_release); }
     /// What the last recall was, for the status line, and a count that moves.
     juce::String lastRecall() const { return lastRecall_; }
     int recallSerial() const { return recallSerial_; }
@@ -165,6 +168,7 @@ private:
     int  overrideBlocks_ = 0;
     uint8_t overrideInst_ = 0, overrideTable_ = 0;   ///< the sound's row, without its name (no allocation here)
     bank::Command overrideCmd_[2];
+    std::atomic<bool>     stopReq_{ false };     ///< stopNotes(), served at the top of the block
     std::atomic<uint32_t> recallReq_{ 0 };       ///< slot | key << 8 | serial << 16, for the timer
     std::atomic<uint32_t> recallApplied_{ 0 };   ///< the serial the timer last wrote into the parameters
     uint32_t recallSeen_ = 0, recallSerialAudio_ = 0;

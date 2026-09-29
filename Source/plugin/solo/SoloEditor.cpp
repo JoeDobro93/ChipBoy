@@ -42,7 +42,7 @@ SoloStrip::SoloStrip(SoloProcessor& p)
       pan_({ String(CharPointer_UTF8("\xe2\x80\x93")), "L", "LR", "R", "inst" })
 {
     for (auto* l : { &soundLabel_, &instLabel_, &tableLabel_, &transposeLabel_, &panLabel_, &levelLabel_ }) l->setUpperCase(true);
-    for (auto* c : std::initializer_list<Component*>{ &led_, &name_, &scope_, &regs_, &soundLabel_, &sound_, &soundName_, &storeBtn_, &instLabel_, &instrument_, &instrumentName_,
+    for (auto* c : std::initializer_list<Component*>{ &led_, &name_, &scope_, &regs_, &soundLabel_, &sound_, &soundName_, &storeBtn_, &stopBtn_, &instLabel_, &instrument_, &instrumentName_,
                                                      &tableLabel_, &table_, &transposeLabel_, &transpose_, &panLabel_, &pan_, &levelLabel_, &level_, &noteLine_ })
         addAndMakeVisible(c);
     led_.setInterceptsMouseClicks(false, false);
@@ -86,6 +86,10 @@ SoloStrip::SoloStrip(SoloProcessor& p)
         processor_.storeSound(slot);
         if (const auto s = processor_.solo(); s && onMessage) onMessage("Stored the row as sound " + ValueFormat::slot(slot) + " " + String(CharPointer_UTF8(s->sounds[size_t(slot - 1)].name.c_str())));
     };
+
+    stopBtn_.setButtonText("Stop");
+    stopBtn_.setTooltip("Every note off: a note left hanging, a pedal left down. The row keeps its sound.");
+    stopBtn_.onClick = [this] { processor_.stopNotes(); if (onMessage) onMessage("Every note off"); };
 
     instrument_.setTooltip("The instrument the row plays. Right-click lists the bank, double-click opens it.");
     instrument_.attach(param(processor_, processor_.channelParamId(0, ids::instrument)));
@@ -373,7 +377,8 @@ void SoloStrip::resized()
         cmd2_->setBounds(x + half + kGap, y, half, CommandSlot::kHeight);
     }
     y += CommandSlot::kHeight + kGap;
-    noteLine_.setBounds(x, y, w, 14);
+    stopBtn_.setBounds(x + w - 52, y - 2, 52, 18);
+    noteLine_.setBounds(x, y, w - 60, 14);
 }
 
 /* ------------------------------------------------------------ sounds */

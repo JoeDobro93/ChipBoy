@@ -731,8 +731,9 @@ a DAW track or a keyboard: 560 × 552, fixed, one page at a time -- the width an
   the tempo in force (host or own); under it the page bar with the page's context line.
 - **Main**: the channel's scope and registers across the top, the row under them, compact
   -- SOUND with *Store*, INST with the name the driver loaded, TABLE, TRANSPOSE, PAN,
-  LEVEL, CMD 1 and CMD 2 -- and a note line: the playable range, the last note, the last
-  recall ("Sound 5 Bass · key C1").
+  LEVEL, CMD 1 and CMD 2 -- and a note line: the playable range and the last note, with
+  *Stop* (every note off) at its right; the last recall ("Sound 5 Bass · key C1") is the
+  status line's.
 - The other pages take the whole window: **Sounds** (the sixty-four slots with the
   instrument each recalls; Recall, Store here, Clear; the channel's key map as a list of
   the keys outside its range with a sound each, Default, Clear, the toggle),

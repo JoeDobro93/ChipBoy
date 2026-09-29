@@ -6832,8 +6832,11 @@ ChipBoy Voice, which stays in the tree this round.
   window's accent), the model and the tempo in force; a page bar; one page at a time. The
   **Main** page is the scope, as tall as the page leaves it, the registers, and the row
   under them, compact -- SOUND with *Store*, INST with the loaded instrument's name (§30),
-  TABLE, TRANSPOSE, PAN, LEVEL, CMD 1, CMD 2, a note line with the playable range, the
-  last note and the last recall. The other pages take the whole window: Sounds, Instrument,
+  TABLE, TRANSPOSE, PAN, LEVEL, CMD 1, CMD 2, a note line with the playable range and the
+  last note (the last recall is the status line's), and **Stop** at its right: every note
+  off on the next block, the pedal's hold too, for a note left hanging by a lost note-off
+  (`stopNotes`, served at the top of the block as a channel change is). The other pages
+  take the whole window: Sounds, Instrument,
   Tables, Waves and Kits (on WAV only), Commands, Setup (the user's note after the first
   build: the settings as pages of their own, so the window can be small with the
   oscilloscope on top). The status line carries the page's context line, a message for

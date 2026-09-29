@@ -56,7 +56,7 @@ private:
     ui::RegisterLine regs_;
     ui::Stepper sound_, instrument_, table_, transpose_;
     TextLine soundName_, instrumentName_;
-    juce::TextButton storeBtn_;
+    juce::TextButton storeBtn_, stopBtn_;
     ui::Stepper level_;
     ui::Segmented pan_;
     std::unique_ptr<SegmentedParam> panParam_;

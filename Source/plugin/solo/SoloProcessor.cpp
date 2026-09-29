@@ -362,6 +362,11 @@ void SoloProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi)
         sustained_.fill(false); keyDown_.fill(false);
     }
     prevChannel_ = ch;
+    if (stopReq_.exchange(false, std::memory_order_acq_rel)) {
+        driver::NoteEvent e; e.kind = driver::NoteEvent::AllNotesOff; e.channel = uint8_t(ch); e.offset = 0;
+        events_.push_back(e);
+        sustain_ = false; sustained_.fill(false); keyDown_.fill(false);
+    }
     driver_.setGateMask(1u << ch);
     driver::GlobalParams g;
     g.masterL = g.masterR = uint8_t(std::clamp(paramInt(pVolume_, 7), 0, 7));
