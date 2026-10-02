@@ -50,7 +50,7 @@ private:
     ui::SlotList list_;
     TextLine listTitle_;
     ui::Stepper slotStepper_;                   ///< the compact form's slot field (setCompact)
-    juce::TextButton importBtn_;
+    ui::PushButton importBtn_;
     ScrollBlock scroll_;
     SampleList* samples_ = nullptr;
     Preview* preview_ = nullptr;
@@ -62,10 +62,10 @@ private:
     ui::Segmented* dist_ = nullptr;
     HexPage* hex_ = nullptr;                 // section 194
     ui::Toggle* lcd_ = nullptr;
-    juce::TextButton* randBtn_ = nullptr;
-    juce::TextButton* zeroBtn_ = nullptr;
-    juce::TextButton* loadBtn_ = nullptr;
-    juce::TextButton* playBtn_ = nullptr;
+    ui::PushButton* randBtn_ = nullptr;
+    ui::PushButton* zeroBtn_ = nullptr;
+    ui::PushButton* loadBtn_ = nullptr;
+    ui::PushButton* playBtn_ = nullptr;
     TextLine* info_ = nullptr;
     int slot_ = 1, sample_ = 0;
     int builtSlot_ = -1, builtCount_ = -1, builtSample_ = -1;

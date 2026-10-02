@@ -26,6 +26,28 @@ intended product rather than a progress report.
 
 ## Spec revisions
 
+### 2026-10-02 -- the tracker's second clean-up: the right click lists and nothing else; the command cell in two parts (§228, D-UI-46)
+
+`docs/COMMANDS_AND_TEMPO.md` §228, `docs/UI_DESIGN.md` D-UI-46 and §2.1. Six rules from the
+user's notes after playing the tracker. Two revise the editing conventions of §2.1: **a
+right click only lists** -- it no longer selects a cell, toggles an arm, presses a button,
+switches a tab or starts a drag (JUCE's buttons answer any mouse button, so the windows'
+text buttons are `ui::PushButton` and the tab bars make their tabs from `ui::LeftTabButton`),
+and held on a note cell it **plays the row** (`ChipBoyProcessor::previewCell`, a
+`NoteEvent::preview` flag that passes the driver's source gate; the link layout is version
+6 for the new field); and **a command cell's letter and values are selected apart** -- the
+border draws around one part, ←/→ stop at both, Enter and the double click open the palette
+on the letter and the box over the values alone, and Shift+arrows on the letter cycle it
+through the channel's letters with a per-visit memory of each letter's values. The rest:
+the chain's `+` appends a blank row to every channel short of one (a typed note allocates
+the phrase; `tracker::releaseBlankPhrases` returns a blank unreferenced phrase to the pool
+after every edit); only the cursor's block carries the chain's border; the FILE row is a
+toolbar across the lane column; a kit row's sample columns list the samples on a double
+click and step sample to sample on the arrows and the drag. Checked by `record_preview`
+(the row sounds and stops), a core test of the release, and `chipboy_uishot --cell-check`
+(the letter cycle and its memory, the parts, the border). Nothing audible changes in a
+song that plays; the preview is a new event the user asks for by hand.
+
 ### 2026-09-29 -- ChipBoy Solo, a channel as a plugin of its own
 
 `docs/plan-solo.md`, `docs/COMMANDS_AND_TEMPO.md` §227, `docs/UI_DESIGN.md` §8.1 and D-UI-45.

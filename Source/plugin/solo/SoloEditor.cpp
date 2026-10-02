@@ -730,7 +730,7 @@ namespace {
 class ButtonRow : public Component {
 public:
     ButtonRow(const String& a, const String& b, const String& c) : first(a), second(b), third(c) { addAndMakeVisible(first); addAndMakeVisible(second); addAndMakeVisible(third); }
-    TextButton first, second, third;
+    ui::PushButton first, second, third;
     void resized() override
     {
         auto r = getLocalBounds();
@@ -951,6 +951,7 @@ private:
     struct Bar : TabbedButtonBar {
         Bar() : TabbedButtonBar(TabbedButtonBar::TabsAtTop) {}
         std::function<void(int)> onChange;
+        TabBarButton* createTabButton(const String& name, int) override { return new ui::LeftTabButton(name, *this); }   // section 228
         void currentTabChanged(int i, const String&) override { if (onChange) onChange(i); }
     } bar_;
     std::vector<int> panelOf_;

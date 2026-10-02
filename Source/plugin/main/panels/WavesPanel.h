@@ -64,11 +64,11 @@ private:
     ui::SlotList list_;
     TextLine listTitle_;
     ui::Stepper slotStepper_;                   ///< the compact form's slot field (setCompact)
-    juce::TextButton newBtn_;
+    ui::PushButton newBtn_;
     ui::NameField name_;
     TextLine frameLabel_, frameText_;
     ui::Segmented shape_, view_;
-    juce::TextButton interp_, import_;
+    ui::PushButton interp_, import_;
     ScrollBlock scroll_, synthScroll_;
     ui::WaveGrid grid_;
     FrameStrip* frames_ = nullptr;

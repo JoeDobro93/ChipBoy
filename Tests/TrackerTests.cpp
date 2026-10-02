@@ -1132,3 +1132,25 @@ TEST_CASE("time signatures number the song's bars and nothing else", "[tracker][
     buildRowTables(s);
     CHECK(rowStartTick(s, 0, 1) == kEmptyRowTicks);
 }
+
+TEST_CASE("a blank phrase in no chain goes back to the pool; a named or filled one stays", "[tracker][phrase][release]")
+{
+    // Section 228: a row added from the chain's "+" and never used costs no slot.
+    Song s;
+    s.phrases[0].used = true;                                  // blank, named by PU1's row 0: holds its place
+    s.chain[0] = { 1 };
+    s.phrases[1].used = true;                                  // blank, in no chain: released
+    s.phrases[2].used = true; s.phrases[2].cells[3].note = 60; // filled, in no chain: stays, "free"
+    s.phrases[3].used = true; s.phrases[3].steps = 12;         // shortened, in no chain: content, stays
+    s.phrases[4].used = true; s.phrases[4].groove = 2;         // a groove is content too
+    releaseBlankPhrases(s);
+    CHECK(s.phrases[0].used);
+    CHECK_FALSE(s.phrases[1].used);
+    CHECK(s.phrases[2].used);
+    CHECK(s.phrases[3].used);
+    CHECK(s.phrases[4].used);
+    // The released slot is the first unused one again.
+    int first = 0;
+    for (int i = 0; i < kPhraseSlots; ++i) if (!s.phrases[size_t(i)].used) { first = i + 1; break; }
+    CHECK(first == 2);
+}

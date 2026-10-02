@@ -135,8 +135,9 @@ void Knob::paint(juce::Graphics& g)
     if (hasKeyboardFocus(false)) focusRing(g, b.toFloat(), 6.0f);
 }
 
-void Knob::mouseDown(const juce::MouseEvent&)
+void Knob::mouseDown(const juce::MouseEvent& e)
 {
+    if (e.mods.isPopupMenu()) return;        // a right click does nothing here (section 228)
     impl_->dragStart = impl_->value;
     grabKeyboardFocus();
 }
@@ -162,7 +163,7 @@ void Knob::mouseUp(const juce::MouseEvent&)
 /// A double click types the value; with Alt it puts the default back.
 void Knob::mouseDoubleClick(const juce::MouseEvent& e)
 {
-    if (!isEnabled()) return;
+    if (!isEnabled() || e.mods.isPopupMenu()) return;
     if (e.mods.isAltDown()) { setValue(impl_->bind.def); return; }
     auto& im = *impl_;
     const auto b = getLocalBounds();
@@ -342,7 +343,7 @@ void Segmented::mouseMove(const juce::MouseEvent& e)
 void Segmented::mouseExit(const juce::MouseEvent&) { impl_->hover = -1; repaint(); }
 void Segmented::mouseDown(const juce::MouseEvent& e)
 {
-    if (!isEnabled()) return;
+    if (!isEnabled() || e.mods.isPopupMenu()) return;   // a choice is the left button's (section 228)
     const int i = impl_->indexAt(e.position);
     if (i >= 0 && impl_->enabled[size_t(i)]) setSelected(i);
 }
@@ -557,7 +558,7 @@ void Stepper::mouseUp(const juce::MouseEvent&)
 }
 void Stepper::mouseDoubleClick(const juce::MouseEvent& e)
 {
-    if (e.x < 23 || e.x >= getWidth() - 23) return;
+    if (e.mods.isPopupMenu() || e.x < 23 || e.x >= getWidth() - 23) return;
     if (onOpen) onOpen(); else beginTypedEntry();
 }
 bool Stepper::keyPressed(const juce::KeyPress& k)
@@ -669,7 +670,7 @@ void Toggle::mouseEnter(const juce::MouseEvent&) { impl_->hover = true; repaint(
 void Toggle::mouseExit(const juce::MouseEvent&) { impl_->hover = false; repaint(); }
 void Toggle::mouseUp(const juce::MouseEvent& e)
 {
-    if (!isEnabled() || !getLocalBounds().contains(e.getPosition())) return;
+    if (!isEnabled() || e.mods.isPopupMenu() || !getLocalBounds().contains(e.getPosition())) return;
     grabKeyboardFocus();
     setToggled(!impl_->on);
 }
@@ -746,10 +747,10 @@ void Fader::paint(juce::Graphics& g)
     g.drawText(impl_->readout(), getLocalBounds().removeFromBottom(18), juce::Justification::centred, false);
 }
 /// The dB readout under the fader is a typed field like every other number.
-void Fader::mouseDoubleClick(const juce::MouseEvent&)
+void Fader::mouseDoubleClick(const juce::MouseEvent& e)
 {
     auto& im = *impl_;
-    if (im.param == nullptr) return;
+    if (im.param == nullptr || e.mods.isPopupMenu()) return;
     im.entry.begin(*this, getLocalBounds().removeFromBottom(18), juce::String(im.slider.getValue(), 1), juce::Justification::centred,
                    [this](const juce::String& text) {
                        auto& in = *impl_;
@@ -932,6 +933,7 @@ struct SlotList::Impl {
         void mouseExit(const juce::MouseEvent&) override { im.hover = -1; repaint(); }
         void mouseDown(const juce::MouseEvent& e) override
         {
+            if (e.mods.isPopupMenu()) return;     // section 228: the right button lists, never selects
             im.owner.grabKeyboardFocus();
             const int r = rowAt(e.y);
             if (r >= 0) im.selectRow(r, juce::sendNotification);
@@ -939,7 +941,7 @@ struct SlotList::Impl {
         void mouseDoubleClick(const juce::MouseEvent& e) override
         {
             const int r = rowAt(e.y);
-            if (r < 0) return;
+            if (r < 0 || e.mods.isPopupMenu()) return;
             im.selectRow(r, juce::sendNotification);
             if (im.owner.onDoubleClick) im.owner.onDoubleClick(im.rows[size_t(r)].slot);
         }

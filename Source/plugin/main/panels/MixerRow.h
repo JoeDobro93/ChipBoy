@@ -72,7 +72,7 @@ private:
     TextLine tableLabel_, transposeLabel_;
     ui::Stepper table_, transpose_;
     ui::Segmented pan_;
-    juce::TextButton mute_, solo_, keyswitch_;
+    ui::PushButton mute_, solo_, keyswitch_;
     ui::CommandSlot cmd1_, cmd2_;
     std::unique_ptr<SegmentedParam> panParam_;
     std::unique_ptr<ToggleParam> keyswitchAtt_;

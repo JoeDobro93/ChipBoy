@@ -183,10 +183,32 @@ private:
 /// the transport's play / pause, stop, loop and follow over the chain. On
 /// (its toggle state) it is filled like a TextButton that is on; the word
 /// is the tooltip's.
+/// A text button the right mouse button never presses (UI_DESIGN D-UI-46,
+/// docs/COMMANDS_AND_TEMPO.md section 228): a right click lists and does
+/// nothing else, anywhere in the window. JUCE's own buttons answer any
+/// button, so every text button in both windows is one of these.
+class PushButton : public juce::TextButton {
+public:
+    using juce::TextButton::TextButton;
+    void mouseDown(const juce::MouseEvent& e) override { if (e.mods.isPopupMenu()) return; juce::TextButton::mouseDown(e); }
+    void mouseUp(const juce::MouseEvent& e) override { if (e.mods.isPopupMenu()) return; juce::TextButton::mouseUp(e); }
+};
+
+/// A tab bar's button that ignores the right mouse button (D-UI-46); the
+/// windows' tab bars make their tabs from it through createTabButton().
+class LeftTabButton : public juce::TabBarButton {
+public:
+    using juce::TabBarButton::TabBarButton;
+    void mouseDown(const juce::MouseEvent& e) override { if (e.mods.isPopupMenu()) return; juce::TabBarButton::mouseDown(e); }
+    void mouseUp(const juce::MouseEvent& e) override { if (e.mods.isPopupMenu()) return; juce::TabBarButton::mouseUp(e); }
+};
+
 class IconButton : public juce::Button {
 public:
     enum class Icon { Play, Pause, Stop, Loop, Follow, Record, Save, Load, Import, Export };
     explicit IconButton(Icon i);
+    void mouseDown(const juce::MouseEvent& e) override { if (e.mods.isPopupMenu()) return; juce::Button::mouseDown(e); }
+    void mouseUp(const juce::MouseEvent& e) override { if (e.mods.isPopupMenu()) return; juce::Button::mouseUp(e); }
     void setIcon(Icon i);
     Icon icon() const { return icon_; }
     /// A word beside the glyph (the FILE toolbar's buttons, D-UI-39), and a
@@ -390,6 +412,9 @@ public:
     /// The right-click list's first entry on a slot field: open that item's
     /// own tab with it selected (section 35).
     std::function<void(SlotKind, int slot)> onOpenSlot;
+    /// A right click held on a note cell plays its row on its channel
+    /// (section 228): on at the press with the cell, off at the release.
+    std::function<void(int ch, int row, const tracker::Cell&, bool on)> onPreview;
     juce::String getTooltip() override;   ///< the hovered cell: what the column is, and what the command says
     /// The head is the name row, the chip row (PHRASE, TSP, STEPS, TICKS --
     /// D-UI-37) and the column captions: 26 + 20 + 22.
@@ -449,6 +474,9 @@ public:
     /// told when a typed value is finished with (a click, a cursor move).
     std::function<void()> onEntryEnd;
     std::function<void(int ch, int row, int phraseSlot)> onChainChange;   ///< 0 clears; a row past the chain's end grows it
+    /// A click on a channel's "+" (section 228): one blank row appended to
+    /// every channel that has no row at that channel's next index.
+    std::function<void(int ch)> onAddRow;
     std::function<void(int ch, int row, int semis)> onChainTransposeChange;   ///< the row's transpose on that channel (section 48)
     std::function<void(int ch, bool loop)> onChainEndChange;              ///< the channel plays its chain round again, or stops at its end (section 212)
     juce::String getTooltip() override;

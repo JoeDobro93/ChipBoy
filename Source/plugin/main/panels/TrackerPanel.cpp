@@ -24,6 +24,8 @@ constexpr int kCaption = 12, kToolRow = 26, kCard = 44, kTabGap = 6, kSongBar = 
 constexpr int kLeftHead = kCard + kTabGap + SongTabStrip::kHeight + kSongBar;
 static_assert(kLeftHead == 108, "the head keeps its budget");
 constexpr int kChainGap = 12;
+/// The toolbar's FILE section: its four buttons and their gaps (D-UI-46).
+constexpr int kFileSection = 4 + 64 + 4 + 64 + 4 + 72 + 4 + 86 + 4;
 /// Between two groups of one row, with the hairline in the middle of it;
 /// then between two fields of a group, and between a caption and its field.
 constexpr int kFieldGap = 14, kLabelGap = 2;
@@ -229,6 +231,18 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
             if (slot >= 1 && slot <= tracker::kPhraseSlots) s.phrases[size_t(slot - 1)].used = true;
         });
     };
+    // The "+" (section 228): a blank row on every channel short of one at
+    // this channel's next index; the play head goes to it.
+    chain_.onAddRow = [this](int ch) {
+        const auto before = processor.song();
+        if (!before) return;
+        const int row = before->rows(ch);
+        if (row > 4095) return;
+        editSong("Chain: new row", [row](tracker::Song& s) {
+            for (auto& c : s.chain) if (int(c.size()) <= row) c.resize(size_t(row) + 1, 0);
+        });
+        if (const auto after = processor.song()) { cursor_ = std::max<int64_t>(0, tracker::rowStartTick(*after, ch, row)); refreshViews(); contextChanged(); }
+    };
     // The row's transpose on a channel (docs/COMMANDS_AND_TEMPO.md section 48).
     chain_.onChainTransposeChange = [this](int ch, int bar, int semis) {
         editSong("Chain: " + String(colours::channelName(ch)) + " row " + String(bar + 1) + " transpose", [ch, bar, semis](tracker::Song& s) {
@@ -274,6 +288,13 @@ TrackerPanel::TrackerPanel(ChipBoyProcessor& p)
         });
     };
     grid_.onOpenSlot = [this](ui::SlotKind kind, int slot) { openSlot(kind, slot); };
+    // A held right click on a note cell plays its row (section 228), with
+    // the chain row's transpose as the Player would add it.
+    grid_.onPreview = [this](int ch, int, const tracker::Cell& cell, bool on) {
+        const auto s = processor.song();
+        const int8_t tsp = s ? s->transposeAt(ch, rowOf(ch)) : int8_t(0);
+        processor.previewCell(ch, cell, tsp, on);
+    };
     grid_.onGrooveChange = [this](int ch, int groove) {
         const int bar = rowOf(ch);
         editSong(String(colours::channelName(ch)) + " phrase groove " + ValueFormat::slot(groove), [ch, bar, groove](tracker::Song& s) {
@@ -682,9 +703,13 @@ void TrackerPanel::tick()
 void TrackerPanel::paint(Graphics& g)
 {
     using namespace colours;
-    // The FILE card, its caption inset as the chain's is (D-UI-39).
+    // The toolbar row across the lane column (D-UI-46): the FILE section at
+    // its left, its caption inset as the chain's is (D-UI-39), a hairline
+    // where the section ends, and room for the sections to come.
     draw::panel(g, fileCard_, panel2, line, 4.0f);
-    draw::caption(g, "File", { fileCard_.getX() + 6, fileCard_.getY() + 2, fileCard_.getWidth() - 12, kCaption }, Justification::centredLeft, textDim, 9.0f);
+    draw::caption(g, "File", { fileCard_.getX() + 6, fileCard_.getY() + 2, kFileSection - 12, kCaption }, Justification::centredLeft, textDim, 9.0f);
+    g.setColour(lineSoft);
+    g.fillRect(fileCard_.getX() + kFileSection, fileCard_.getY() + 6, 1, fileCard_.getHeight() - 12);
     // The TRANSPORT card, stuck to the chain: only its top corners rounded
     // and no bottom line of its own -- the chain's top hairline is the joint.
     {
@@ -717,10 +742,10 @@ void TrackerPanel::resized()
     };
     auto label = [&place](Rectangle<int>& row, TextLine& t) { place(row, t, t.preferredWidth() + 4, kToolRow); };
 
-    // FILE: a card as wide as its four buttons, left-aligned.
+    // The toolbar row (D-UI-46): the whole lane width, the FILE section's
+    // four buttons at its left.
     {
-        auto row = area.removeFromTop(kCard);
-        fileCard_ = row.withWidth(4 + 64 + 4 + 64 + 4 + 72 + 4 + 86 + 4);
+        fileCard_ = area.removeFromTop(kCard);
         auto r = fileCard_.withTrimmedTop(kCaption + 2).withHeight(kToolRow).withTrimmedLeft(4);
         place(r, saveSong_, 64, 24); r.removeFromLeft(4);
         place(r, loadSong_, 64, 24); r.removeFromLeft(4);

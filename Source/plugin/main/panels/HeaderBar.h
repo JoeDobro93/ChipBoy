@@ -51,15 +51,15 @@ private:
     // follow, the song's own tempo, and whether notes wait for a tick
     ui::Segmented tempoSource_;
     std::unique_ptr<TempoReadout> tempoRead_;
-    juce::TextButton quantize_;
-    juce::TextButton bankPrev_, bankNext_, bankMenu_;
+    ui::PushButton quantize_;
+    ui::PushButton bankPrev_, bankNext_, bankMenu_;
     /// Undo and redo, right of the bank: what they would take back is in
     /// their tooltips, and they grey out when there is nothing (UI_DESIGN 2.1).
-    juce::TextButton undo_, redo_;
+    ui::PushButton undo_, redo_;
     ui::NameField bankName_;
     ui::Pill stock_;
     TipBox stockBox_;
-    juce::TextButton visualizer_, hex_, settings_;
+    ui::PushButton visualizer_, hex_, settings_;
     std::unique_ptr<ToggleParam> hexAtt_, quantizeAtt_;
     std::unique_ptr<ParamWatch> tempoWatch_;
     float scale_ = 1.0f;

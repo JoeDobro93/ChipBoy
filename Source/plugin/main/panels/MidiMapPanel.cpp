@@ -47,7 +47,7 @@ public:
     }
     void mouseMove(const MouseEvent& e) override { const int b = boundaryAt(e.x); if (b != hover_) { hover_ = b; setMouseCursor(b > 0 ? MouseCursor::LeftRightResizeCursor : MouseCursor::NormalCursor); repaint(); } }
     void mouseExit(const MouseEvent&) override { hover_ = -1; repaint(); }
-    void mouseDown(const MouseEvent& e) override { drag_ = boundaryAt(e.x); if (drag_ > 0 && onGesture) onGesture(true); }
+    void mouseDown(const MouseEvent& e) override { if (e.mods.isPopupMenu()) return; drag_ = boundaryAt(e.x); if (drag_ > 0 && onGesture) onGesture(true); }
     void mouseDrag(const MouseEvent& e) override
     {
         if (drag_ <= 0 || drag_ >= int(regions_.size())) return;

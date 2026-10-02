@@ -308,6 +308,7 @@ void GrooveEditor::mouseExit(const juce::MouseEvent&)
 void GrooveEditor::mouseDown(const juce::MouseEvent& e)
 {
     auto& im = *impl_;
+    if (e.mods.isPopupMenu()) return;            // section 228
     grabKeyboardFocus();
     im.dragRow = -1;
     for (int i = 0; i < 2; ++i)
@@ -336,6 +337,7 @@ void GrooveEditor::mouseUp(const juce::MouseEvent&)
 }
 void GrooveEditor::mouseDoubleClick(const juce::MouseEvent& e)
 {
+    if (e.mods.isPopupMenu()) return;
     // The cell takes typed digits as the grids do, so a double click is the
     // invitation to type rather than a second gesture of its own.
     auto& im = *impl_;

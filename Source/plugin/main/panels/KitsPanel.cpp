@@ -94,6 +94,7 @@ public:
     }
     void mouseDown(const MouseEvent& e) override
     {
+        if (e.mods.isPopupMenu()) return;        // section 228
         const int i = (e.y - 4) / kRow;
         if (i >= 0 && i < int(rows_.size()) && onSelect) onSelect(i);
     }
@@ -265,7 +266,7 @@ void KitsPanel::rebuildContent()
         loopPoint_ = grid->addField("Loop point", "in 4-bit samples", std::move(s), Stepper::kHeight, 0);
     }
     {
-        auto remove = std::make_unique<TextButton>("Remove");
+        auto remove = std::make_unique<ui::PushButton>("Remove");
         remove->setTooltip("Remove this sample from the kit");
         remove->setEnabled(have);
         remove->onClick = [this, cur] {
@@ -321,15 +322,15 @@ void KitsPanel::rebuildContent()
         lcd->setTooltip("Read the table as LSDj reads a page of video RAM: a byte mixed while the LCD draws a line comes back FF, which puts FE bytes through each frame in the scanline's rhythm (section 184). An import sets it for a page in video RAM.");
         lcd->onChange = [this](bool on) { editKit("LCD holes", [on](bank::Kit& k) { k.distVram = on; }); };
         lcd_ = grid->addField("Quirk", "video RAM's", std::move(lcd), Toggle::kHeight, 0);
-        auto rnd = std::make_unique<TextButton>("Randomize");
+        auto rnd = std::make_unique<ui::PushButton>("Randomize");
         rnd->setTooltip("Fill the table with random bytes.");
         rnd->onClick = [this] { editKit("dist table randomized", [](bank::Kit& k) { Random r; k.distTable.assign(256, 0); for (auto& byte : k.distTable) byte = uint8_t(r.nextInt(256)); }); };
         randBtn_ = grid->addField("Fill", "a new table", std::move(rnd), Stepper::kHeight, 96);
-        auto zero = std::make_unique<TextButton>("Zero");
+        auto zero = std::make_unique<ui::PushButton>("Zero");
         zero->setTooltip("Fill the table with zeros: silence, as LSDj's blank video RAM pages mix.");
         zero->onClick = [this] { editKit("dist table zeroed", [](bank::Kit& k) { k.distTable.assign(256, 0); }); };
         zeroBtn_ = grid->addField(String(), String(), std::move(zero), Stepper::kHeight, 96);
-        auto load = std::make_unique<TextButton>("Load" + String(CharPointer_UTF8("\xe2\x80\xa6")));
+        auto load = std::make_unique<ui::PushButton>("Load" + String(CharPointer_UTF8("\xe2\x80\xa6")));
         load->setTooltip("Read the first 256 bytes of any file into the table.");
         load->onClick = [this] {
             auto chooser = std::make_shared<FileChooser>("Load a 256-byte table", File(), "*");
@@ -351,7 +352,7 @@ void KitsPanel::rebuildContent()
     }
     {
         // D-UI-29: hear the selected sample without disturbing the song.
-        auto btn = std::make_unique<TextButton>("Play");
+        auto btn = std::make_unique<ui::PushButton>("Play");
         btn->setTooltip("Play the selected sample once at the kit's rate. It mixes in beside the song; it does not stop it.");
         btn->onClick = [this] { host.previewKitSample(slot_, sample_); };
         playBtn_ = grid->addField("Audition", "4-bit, kit rate", std::move(btn), Stepper::kHeight, 80);

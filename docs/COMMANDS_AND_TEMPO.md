@@ -1165,7 +1165,7 @@ to be learned twice and no field surprises:
 | **Click** | selects the field (the cursor lands on it) and nothing else |
 | **Type** | edits the selected field in place, without a box (below) |
 | **Double-click** | opens the inline box holding the value — Enter commits, Escape cancels. On a **slot field** (instrument, table, groove, wave, kit) it opens **that item's own tab** instead: a slot is typed at the selected field already, so the box would add nothing; an empty slot field opens the box |
-| **Right-click** | lists the choices where the field has them: the bank's slots by *slot · name*, the command palette, the phrases, the grooves — and, at the top, **Open in its tab** for the slot the field names |
+| **Right-click** | lists the choices where the field has them: the bank's slots by *slot · name*, a kit's samples, the command palette, the phrases, the grooves — and, at the top, **Open in its tab** for the slot the field names. It lists and does nothing else (§228): no selection, no drag, no toggle; held on a note cell it plays the row |
 | **Shift + arrows** | moves the value: ←/→ by one, ↑/↓ by sixteen (a note: a semitone and an octave) |
 
 - **Typing in place.** The first digit typed at a selected field **replaces** what was
@@ -6894,4 +6894,73 @@ ChipBoy Voice, which stays in the tree this round.
   or a bank file carries it across); the DAW's program list (JUCE's programs) as a way to
   the sounds, not done because the VST3 and AU wrappers treat programs differently and
   the user builds those platforms by hand. ChipBoy Voice stays, on the user's word.
+
+## 228. The tracker, second clean-up: rows from the +, one selected block, a toolbar, the right click, kit lists, the command cell's two parts
+
+The user's six notes after playing the tracker (D-UI-46). Each is a rule of its own;
+`PhraseGrid`, `TableGrid` and `RegionGrid` share the code, so the Tables tab and the
+MIDI tab's regions take the same behaviour where they have the same cells.
+
+- **A row from the +.** The chain's `+` block was a place to *type* a phrase number past
+  the chain's end, which made the musician remember which numbers were taken. Now a
+  **click on any channel's `+` appends one blank row** -- a row with no phrase, sixteen
+  empty steps (the row that already existed as "no phrase", §25) -- **to every channel
+  whose chain has no row at that index yet**, and the play head goes to the new row; one
+  undo step, "Chain: new row". Typing a note (or anything) into a blank row's cells gives
+  the row a phrase: the first unused slot, as `ensurePhrase` always did when a cell was
+  typed into a row without one. A right click on `+` still lists the song's phrases
+  (by *slot · used in n rows / free*) to append an existing one, and a number typed at
+  the selected blank row picks an existing phrase as before. **A phrase that is blank --
+  every cell empty, sixteen steps, no groove -- and in no channel's chain goes back to
+  the pool** (`tracker::releaseBlankPhrases`, run after every song edit by
+  `ChipBoyProcessor::mutateSong`): a row added and never used costs no number. A blank
+  phrase that a chain row still names stays, since it holds that row's place; a phrase
+  with content stays however unreferenced, listed as *free*.
+- **One selected block.** The chain drew the play head's row in all four channels with the
+  accent border and marked the one the cursor typed into with a bar under its number.
+  Now **only the cursor's own block carries the border**; the other channels' blocks at
+  the play head are plain -- the play head's line and the lanes say where the row is. On
+  the transpose (the right 40 % of the block, §48) the border draws around that zone
+  alone; on the phrase number, around the whole block.
+- **A toolbar row.** The FILE card was a card as wide as its four buttons. **The row now
+  runs the whole width of the lane column**, a toolbar with the file buttons left-aligned
+  in a *File* section whose end a hairline marks, and room to its right for the sections
+  to come.
+- **The right click does one thing: it lists.** A right click opens the list a field
+  has -- the bank's instruments and tables on INS and TBL, a kit's samples on its sample
+  columns, the command palette on a command cell's letter and values, the grooves on the
+  groove chip, the phrases on a chain block, a stepper's list -- and **nothing else**: it
+  does not move the cursor, select a chip, toggle an arm, switch a tab, press a button,
+  pick a segment, start a drag or place the play head. **On a note cell a right click
+  held down plays that row**: the cell as the Player would fire it (note, instrument,
+  table, both commands, a kit's two samples, the chain row's transpose) on its channel,
+  a note-off when the button lifts -- `ChipBoyProcessor::previewCell`, a request the
+  audio thread serves at the top of its block, as the kit audition is (D-UI-29). On a
+  kit row the right click is the preview on both sample columns. *As built:* the custom
+  components test `isPopupMenu()` first; JUCE's own buttons answer any mouse button, so
+  the window's text buttons are `ui::PushButton` (a `TextButton` that ignores the right
+  button), `IconButton` ignores it too, and the two windows' tab bars make their tabs
+  from a `TabBarButton` that does the same.
+- **Kit rows list their samples.** On a WAV row whose instrument in force is a kit, a
+  **double click on either sample column** (the note column, which names the first sample
+  by its label, D-UI-34, and the second-sample column) opens the kit's sample list, where
+  the box used to open; and **Shift with the arrows, and a drag, step from sample to
+  sample** -- the note column takes the next sample's own note rather than the next
+  semitone, since semitones between two samples' notes changed nothing on screen.
+- **The command cell's two parts are two cells.** The letter and the values were one
+  selection with the letter told apart by where the click landed. Now the cursor is on
+  **the letter or the values** (`GridCore::curPart`): the accent border draws around the
+  part selected, ←/→ move letter → values → the next column (a cell with no letter has
+  only the letter part), and Enter or a double click opens what the part has -- the
+  palette on the letter, the box on the values, the box drawn **over the values only** so
+  the letter stays in view. **Shift with the arrows on the letter cycles it** through the
+  letters this channel carries, in the palette's order, wrapping -- ←/↓ back, →/↑
+  forward -- and the cell takes the new letter with **the values it had under that letter
+  in this visit, else the letter's defaults**: the cell keeps a memory per letter
+  (`cmdMemo`) from the moment the cursor arrives, so `L 60` cycled through `E`, `K`, `R`
+  and back to `L` is `L 60` again; the memory is dropped when the values are typed,
+  nudged or dragged, when the palette picks, and when the cursor leaves the cell -- `L 60`
+  changed to `E 6A` by typing and cycled back to `L` takes `L`'s defaults. Shift with the
+  arrows on the values moves the argument the cursor is on, as before (§35). The Tables
+  tab's command columns and the MIDI tab's region command take all of this.
 

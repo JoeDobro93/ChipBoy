@@ -315,6 +315,8 @@ if(CHIPBOY_BUILD_PLUGIN)
     chipboy_configure_plugin(chipboy_recordtest)
     set(CHIPBOY_MODAL_LOOPS 0)
     add_test(NAME chipboy_recordtest COMMAND chipboy_recordtest --out "${CMAKE_CURRENT_BINARY_DIR}/recordtest")
+    # Section 228: a row previewed from the lane sounds, and stops at the release.
+    add_test(NAME record_preview COMMAND chipboy_recordtest --out "${CMAKE_CURRENT_BINARY_DIR}/recordtest" --preview-check)
 
     # The demo song file is the recorded pass, written through the song writer
     # (docs/COMMANDS_AND_TEMPO.md section 16): recording the demo again must

@@ -16,7 +16,7 @@ design. Read `docs/HANDOFF.md` first: current state, open questions, next steps.
   (the same code as *Import .sav…*; saves and ROMs stay outside the tree, at `/root/lsdj/`);
   `--trace-song FILE OUT.csv [seconds]` writes a song's register trace in the harness's CSV.
 - Screenshots: `chipboy_uishot` under Xvfb (`--song`, `--shaped`, `--hex`,
-  `--scope-check`, `--tab-switch`).
+  `--scope-check`, `--tab-switch`, `--cell-check`).
 - LSDj parity: configure with `-DCHIPBOY_LSDJREF=ON` and `CHIPBOY_LSDJ_ROM` (the ROM
   stays outside the tree; tests skip without it).
 - Review a change: `/review [base] [§section]`.

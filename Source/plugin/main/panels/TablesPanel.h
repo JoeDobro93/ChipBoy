@@ -40,7 +40,7 @@ private:
     ui::SlotList list_;
     TextLine listTitle_;
     ui::Stepper slotStepper_;                   ///< the compact form's slot field (setCompact)
-    juce::TextButton newBtn_;
+    ui::PushButton newBtn_;
     ui::NameField name_;
     TextLine used_, stepRateLabel_, stepRate_;
     ScrollBlock scroll_;

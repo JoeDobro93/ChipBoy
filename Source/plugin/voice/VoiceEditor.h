@@ -79,7 +79,7 @@ private:
     juce::String instrumentTarget_;
     bool instrumentHex_ = false, instrumentLinked_ = false;
     ui::Segmented sourceSeg_;
-    juce::TextButton pushButton_, pullButton_, openButton_;
+    ui::PushButton pushButton_, pullButton_, openButton_;
 
     // the channel's parameters: the same set the host shows as lanes, in
     // the order of docs/COMMANDS_AND_TEMPO.md section 3

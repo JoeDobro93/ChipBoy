@@ -1334,10 +1334,11 @@ int main(int argc, char** argv)
     juce::File recSong, recMidi, recOut, recExpect; int recBars = 16;   // --record-midi SONG.cbsong FILE.mid OUT.cbsong [bars] [--expect FILE] (section 226)
     juce::File checkSongFile, checkMidiFile; int checkBars = 0;   // --check-remake SONG.cbsong FILE.mid [bars]; 0: the song's own length
     int playBars = 8;                                         // --play-song's default (section 24)
-    bool dump = false;
+    bool dump = false, previewCheck = false;                  // --preview-check: a row previewed from the lane sounds and stops (section 228)
     for (int i = 1; i < argc; ++i) {
         const juce::String key(argv[i]);
         if (key == "--dump") dump = true;                     // every write, to diff by hand
+        else if (key == "--preview-check") previewCheck = true;
         else if (key == "--no-noise") midiNoise = false;      // --export-midi's option (section 224)
         else if (key == "--expect" && i + 1 < argc) recExpect = juce::File::getCurrentWorkingDirectory().getChildFile(argv[++i]);   // --record-midi's check (section 226)
         else if (i + 1 >= argc) continue;
@@ -1391,6 +1392,23 @@ int main(int argc, char** argv)
     outDir.createDirectory();
 
     /* ---- --import-sav: one song of an LSDj save into a .cbsong (section 54) ---- */
+    // Section 228: a held right click on a note cell plays its row. The
+    // request reaches the audio thread on the next block and the note-off at
+    // the release.
+    if (previewCheck) {
+        ChipBoyProcessor p;
+        p.prepareToPlay(48000.0, 256);
+        juce::AudioBuffer<float> buf(2, 256); juce::MidiBuffer m;
+        tracker::Cell c; c.note = 60; c.inst = 1;
+        p.previewCell(0, c, 0, true);
+        for (int k = 0; k < 4; ++k) p.processBlock(buf, m);
+        const bool sounds = p.driverView().view(0).active;
+        p.previewCell(0, c, 0, false);
+        for (int k = 0; k < 4; ++k) p.processBlock(buf, m);
+        const bool stops = !p.driverView().view(0).active;
+        std::printf("%s preview: the row %s and %s at the release\n", sounds && stops ? "PASSED" : "FAILED", sounds ? "sounds" : "is silent", stops ? "stops" : "rings on");
+        return sounds && stops ? 0 : 1;
+    }
     // The plugin's importer from the command line: the same code the dialog
     // runs, so a save can be converted and then played with --play-song.
     if (importSav != juce::File()) {

@@ -190,6 +190,20 @@ int64_t chainLoopTicks(const Song& s, int ch)
     return rows > 0 ? rowStartTick(s, ch, rows) : 0;
 }
 
+void releaseBlankPhrases(Song& s)
+{
+    std::array<bool, kPhraseSlots + 1> named{};
+    for (const auto& c : s.chain)
+        for (uint8_t slot : c) if (slot >= 1 && slot <= kPhraseSlots) named[size_t(slot)] = true;
+    for (int i = 0; i < kPhraseSlots; ++i) {
+        Phrase& p = s.phrases[size_t(i)];
+        if (!p.used || named[size_t(i + 1)] || p.steps != 16 || p.groove != 0) continue;
+        bool blank = true;
+        for (const auto& c : p.cells) if (!emptyCell(c)) { blank = false; break; }
+        if (blank) p = Phrase{};
+    }
+}
+
 void rowAtTick(const Song& s, int ch, int64_t tick, int& row, int& inRow, int* pass)
 {
     int64_t at = std::max<int64_t>(0, tick);

@@ -56,7 +56,7 @@ private:
     ui::RegisterLine regs_;
     ui::Stepper sound_, instrument_, table_, transpose_;
     TextLine soundName_, instrumentName_;
-    juce::TextButton storeBtn_, stopBtn_;
+    ui::PushButton storeBtn_, stopBtn_;
     ui::Stepper level_;
     ui::Segmented pan_;
     std::unique_ptr<SegmentedParam> panParam_;
@@ -94,7 +94,7 @@ private:
     SoloProcessor& processor_;
     ui::SlotList list_;
     TextLine listTitle_, keysTitle_, keysHelp_;
-    juce::TextButton recallBtn_, storeBtn_, clearBtn_, defaultKeysBtn_, clearKeysBtn_;
+    ui::PushButton recallBtn_, storeBtn_, clearBtn_, defaultKeysBtn_, clearKeysBtn_;
     ui::Toggle keyMap_;
     ScrollBlock keys_;
     std::vector<KeyRow*> keyRows_;
@@ -124,7 +124,7 @@ private:
     SoloProcessor& processor_;
     ui::SlotList list_;
     TextLine listTitle_, refTitle_, rowLine_;
-    juce::TextButton use1Btn_, use2Btn_, store1Btn_, store2Btn_, clearBtn_;
+    ui::PushButton use1Btn_, use2Btn_, store1Btn_, store2Btn_, clearBtn_;
     ScrollBlock reference_;
     juce::String rowShown_;
     int entry_ = 1;
@@ -195,7 +195,7 @@ private:
     // header
     TextLine wordmark_, product_, tempoLabel_, tempo_;
     ui::Segmented channel_, model_;
-    juce::TextButton undoBtn_, redoBtn_;
+    ui::PushButton undoBtn_, redoBtn_;
     SoloStrip strip_;
     std::unique_ptr<TabBar> tabs_;
     std::array<std::unique_ptr<EditorPanel>, kTabs> panels_;

@@ -3535,7 +3535,8 @@ void Driver::handleEvent(NoteEvent& e)
     Voice& v = v_[size_t(ch)];
     // Channels playing from the tracker ignore the piano roll and vice versa.
     // Only notes are gated: a flush silences a channel whatever its source is.
-    if (song_) {
+    // A previewed row (section 228) passes whatever the channel plays from.
+    if (song_ && !e.preview) {
         // Trkr only: a Hybrid channel's notes come from MIDI and its cells
         // never carry one, so both pass its gate (section 20).
         const bool trackerCh = song_->noteSource[size_t(ch)] == tracker::NoteSource::Tracker;

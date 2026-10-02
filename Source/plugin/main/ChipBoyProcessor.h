@@ -202,6 +202,13 @@ public:
         previewReq_.store(req, std::memory_order_release);
     }
 
+    /// A row played from the lane by a held right click (section 228): the
+    /// cell as the Player would fire it on its channel -- note, instrument,
+    /// table, both commands, a kit's two samples, the row's transpose -- and
+    /// its note-off at the release. The audio thread serves it at the top of
+    /// its block; a request it misses is replaced by the next.
+    void previewCell(int ch, const tracker::Cell& cell, int8_t transpose, bool on);
+
     // tracker
     void setRecordArm(bool on) { recordArm_.store(on); }
     bool recordArm() const { return recordArm_.load(); }
@@ -341,6 +348,16 @@ private:
     // thread can post it without a lock; the rest is the audio thread's alone.
     std::atomic<uint32_t> previewReq_{ 0 };
     uint32_t previewSeq_ = 0, previewSeen_ = 0;
+    // The lane's row preview (section 228): the cell under a spin lock the
+    // audio thread only tries, and a count that says a new one is there.
+    juce::SpinLock cellPreviewLock_;
+    tracker::Cell cellPreview_;
+    int    cellPreviewCh_ = 0;
+    int8_t cellPreviewTsp_ = 0;
+    bool   cellPreviewOn_ = false;
+    std::atomic<uint32_t> cellPreviewSeq_{ 0 };
+    uint32_t cellPreviewSeen_ = 0;
+    std::array<uint8_t, 4> previewNote_{};   ///< audio thread: the note a preview left sounding per channel
     int      previewSlot_ = 0, previewIdx_ = 0;
     double   previewPos_ = 0.0, previewStep_ = 0.0;
     bool     previewOn_ = false;

@@ -112,7 +112,7 @@ VoiceEditor::VoiceEditor(VoiceProcessor& p)
     sourceSeg_.setOptionTooltip(1, "A private copy in this track's state, pushed to the instance on connect.");
     sourceSeg_.attach(*processor_.apvts.getParameter("inst_source"));
 
-    auto button = [this](TextButton& b, const String& text, const String& tip, std::function<void()> fn) {
+    auto button = [this](ui::PushButton& b, const String& text, const String& tip, std::function<void()> fn) {
         addAndMakeVisible(b);
         b.setButtonText(text);
         b.setTooltip(tip);
@@ -128,10 +128,10 @@ VoiceEditor::VoiceEditor(VoiceProcessor& p)
     });
     button(openButton_, "Open editor " + String(CharPointer_UTF8("\xe2\x86\x97")), "Show this channel's instrument in the ChipBoy window",
            [this] { processor_.requestFocus(); });
-    openButton_.setColour(TextButton::buttonColourId, colours::accent);      // .btn.primary
-    openButton_.setColour(TextButton::buttonOnColourId, colours::accentHi);
-    openButton_.setColour(TextButton::textColourOffId, Colours::white);
-    openButton_.setColour(TextButton::textColourOnId, Colours::white);
+    openButton_.setColour(ui::PushButton::buttonColourId, colours::accent);      // .btn.primary
+    openButton_.setColour(ui::PushButton::buttonOnColourId, colours::accentHi);
+    openButton_.setColour(ui::PushButton::textColourOffId, Colours::white);
+    openButton_.setColour(ui::PushButton::textColourOnId, Colours::white);
 
     // The wheel never edits, here as everywhere: it belongs to whatever
     // scrolls (UI_DESIGN section 2.1).
@@ -477,7 +477,7 @@ void VoiceEditor::resized()
     right.removeFromTop(8);
     auto buttons = right.removeFromTop(kButtonHeight);
     const Font buttonFont = Fonts::sans(11.0f);
-    auto place = [&](TextButton& b) {
+    auto place = [&](ui::PushButton& b) {
         const int w = std::min(GlyphArrangement::getStringWidthInt(buttonFont, b.getButtonText()) + 16, buttons.getWidth());
         b.setBounds(buttons.removeFromLeft(w));
         buttons.removeFromLeft(8);

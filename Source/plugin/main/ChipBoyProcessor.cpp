@@ -112,6 +112,7 @@ void ChipBoyProcessor::mutateSong(const std::function<void(tracker::Song&)>& fn)
     auto copy = std::make_shared<tracker::Song>();          // on the heap, as mutateBank's is
     if (songShared_) *copy = *songShared_;
     fn(*copy);
+    tracker::releaseBlankPhrases(*copy);                     // section 228
     publishSong(std::move(copy));
 }
 
@@ -1215,6 +1216,26 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
         pendingLink_.clear();
     }
 
+    // --- a row previewed from the lane (section 228) ---------------------
+    if (cellPreviewSeq_.load(std::memory_order_acquire) != cellPreviewSeen_) {
+        const juce::SpinLock::ScopedTryLockType lock(cellPreviewLock_);
+        if (lock.isLocked()) {
+            cellPreviewSeen_ = cellPreviewSeq_.load(std::memory_order_relaxed);
+            const int ch = cellPreviewCh_ & 3;
+            driver::NoteEvent e; e.offset = 0; e.channel = uint8_t(ch); e.source = driver::NoteEvent::Tracker; e.preview = true;
+            bool push = false;
+            if (cellPreviewOn_) {
+                const tracker::Cell& c = cellPreview_;
+                e.inst = c.inst; e.table = c.table; e.cmd1 = c.cmd1; e.cmd2 = c.cmd2; e.transpose = cellPreviewTsp_;
+                if (c.note == tracker::kNoteOff) { e.kind = driver::NoteEvent::NoteOff; e.a = previewNote_[size_t(ch)]; push = e.a != 0; previewNote_[size_t(ch)] = 0; }
+                else if (c.note != 0) { e.kind = driver::NoteEvent::NoteOn; e.a = c.note; e.b = tracker::velocityOf(c); previewNote_[size_t(ch)] = c.note; push = true; }
+            } else if (previewNote_[size_t(ch)] != 0) {
+                e.kind = driver::NoteEvent::NoteOff; e.a = previewNote_[size_t(ch)]; previewNote_[size_t(ch)] = 0; push = true;
+            }
+            if (push) events_.push_back(e);
+        }
+    }
+
     // --- a lane changing hands (section 9.1) -----------------------------
     // A channel whose feed changes -- its Source, its Trk/Roll choice, or a
     // Voice letting it go -- must not be left ringing. The flushes go in front
@@ -1384,6 +1405,15 @@ void ChipBoyProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi
     frames_ += uint64_t(n);
     prevBlock_ = n;
     lastHostFrame_ = hostFrame;
+}
+
+void ChipBoyProcessor::previewCell(int ch, const tracker::Cell& cell, int8_t transpose, bool on)
+{
+    {
+        const juce::SpinLock::ScopedLockType lock(cellPreviewLock_);
+        cellPreview_ = cell; cellPreviewCh_ = ch & 3; cellPreviewTsp_ = transpose; cellPreviewOn_ = on;
+    }
+    cellPreviewSeq_.fetch_add(1, std::memory_order_release);
 }
 
 void ChipBoyProcessor::mixPreview(float* left, float* right, int n)

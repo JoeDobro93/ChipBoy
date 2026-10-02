@@ -5,7 +5,7 @@
 // whether a tab fits the window. Needs a display (Xvfb will do).
 //
 //   chipboy_uishot <output folder> [--desktop] [--song <file.cbsong>]
-//                  [--hybrid] [--shaped] [--hex] [--scope-check] [--tab-switch] [--solo]
+//                  [--hybrid] [--shaped] [--hex] [--scope-check] [--tab-switch] [--cell-check] [--solo]
 //
 // --solo shoots ChipBoy Solo instead (docs/plan-solo.md): every tab on PU1,
 // then the Waves and Kits tabs on WAV, with a sound stored and a mapped key
@@ -276,7 +276,7 @@ int main(int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI init;
     juce::String out = "shots", songPath;
     bool desktop = false;                       // a real window: the scopes' timers run
-    bool hybrid = false, shaped = false, hex = false, scopeCheck = false, tabSwitch = false, soloOnly = false;
+    bool hybrid = false, shaped = false, hex = false, scopeCheck = false, tabSwitch = false, soloOnly = false, cellCheck = false;
     for (int i = 1; i < argc; ++i) {
         const juce::String a(argv[i]);
         if (a == "--desktop") desktop = true;
@@ -286,6 +286,7 @@ int main(int argc, char** argv)
         else if (a == "--hex") hex = true;
         else if (a == "--scope-check") scopeCheck = true;
         else if (a == "--tab-switch") tabSwitch = true;
+        else if (a == "--cell-check") cellCheck = true;
         else if (a == "--song" && i + 1 < argc) songPath = argv[++i];
         else if (!a.startsWith("--")) out = a;
     }
@@ -320,6 +321,72 @@ int main(int argc, char** argv)
             });
         proc.transportPlay();
     }
+    // --cell-check (section 228): a PhraseGrid driven by its keys -- the
+    // command cell's two parts, the letter cycle and its memory -- and a
+    // snapshot with the cursor on a letter, for the eye.
+    if (cellCheck) {
+        using namespace chipboy;
+        auto song = std::make_shared<tracker::Song>();
+        song->phrases[0].used = true; song->chain[0] = { 1 };
+        song->noteSource[0] = tracker::NoteSource::Tracker;
+        auto& first = song->phrases[0].cells[0];
+        first.note = 60; first.inst = 1;
+        first.cmd1.cmd = bank::Cmd::L; first.cmd1.a = 60;
+        ui::PhraseGrid grid;
+        grid.setSize(976, ui::PhraseGrid::preferredHeight());
+        grid.setBank(std::make_shared<const bank::Bank>(bank::Bank::factory()));
+        const int rows[4] = { 0, 0, 0, 0 };
+        grid.setSong(song, rows);
+        tracker::Cell last = first; int changes = 0;
+        grid.onCellChange = [&](int ch, int step, const tracker::Cell& c) { if (ch == 0 && step == 0) { last = c; ++changes; } };
+        auto key = [&](int code, bool shift = false) {
+            grid.keyPressed(juce::KeyPress(code, shift ? juce::ModifierKeys::shiftModifier : juce::ModifierKeys(), 0));
+            const auto* i1 = commandInfo(last.cmd1.cmd); const auto* i2 = commandInfo(last.cmd2.cmd);
+            std::printf("    key %s%s: CMD1 %c %d  CMD2 %c %d  (%d changes)\n", shift ? "Shift+" : "", code == juce::KeyPress::rightKey ? "right" : code == juce::KeyPress::leftKey ? "left" : code == juce::KeyPress::upKey ? "up" : "down",
+                        i1 ? i1->letter : '-', int(last.cmd1.a), i2 ? i2->letter : '-', int(last.cmd2.a), changes);
+        };
+        int bad = 0;
+        auto check = [&bad](bool ok, const char* what) { std::printf("  %s %s\n", ok ? "ok  " : "FAIL", what); if (!ok) ++bad; };
+        // The cursor goes to the lane's first column, the note; three right
+        // is CMD 1's letter (NOTE, INS, TBL, CMD).
+        for (int i = 0; i < 8; ++i) key(juce::KeyPress::leftKey);
+        key(juce::KeyPress::rightKey); key(juce::KeyPress::rightKey); key(juce::KeyPress::rightKey);
+        key(juce::KeyPress::rightKey, true);
+        check(changes == 1 && last.cmd1.cmd != bank::Cmd::L && last.cmd1.cmd != bank::Cmd::None, "Shift+right on the letter cycles it to another letter");
+        const auto second = last.cmd1.cmd;
+        key(juce::KeyPress::upKey, true);
+        check(last.cmd1.cmd != second && last.cmd1.cmd != bank::Cmd::L, "Shift+up cycles on");
+        key(juce::KeyPress::downKey, true); key(juce::KeyPress::leftKey, true);
+        check(last.cmd1.cmd == bank::Cmd::L && last.cmd1.a == 60, "cycled back, L has its 60 again");
+        // The values part: right lands on it, Shift+right moves the value by one.
+        key(juce::KeyPress::rightKey); key(juce::KeyPress::rightKey, true);
+        check(last.cmd1.cmd == bank::Cmd::L && last.cmd1.a == 61, "right is the values; Shift+right there moves the value, not the letter");
+        // Left is the letter again; a cycle away, the next letter's value edited, and back: L forgets its 61.
+        key(juce::KeyPress::leftKey); key(juce::KeyPress::rightKey, true);
+        const auto other = last.cmd1.cmd;
+        key(juce::KeyPress::rightKey); key(juce::KeyPress::rightKey, true);
+        check(last.cmd1.cmd == other && last.cmd1.a == plugin::defaultCommand(other).a + 1, "the next letter's value moved by one");
+        key(juce::KeyPress::leftKey); key(juce::KeyPress::leftKey, true);
+        check(last.cmd1.cmd == bank::Cmd::L && last.cmd1.a == plugin::defaultCommand(bank::Cmd::L).a, "back on L after an edit: the memory is gone, L takes its default");
+        // Right past the values is the next column (CMD 2's letter), and the memory of CMD 1 is dropped with the cursor.
+        key(juce::KeyPress::rightKey); key(juce::KeyPress::rightKey);
+        key(juce::KeyPress::rightKey, true);
+        check(last.cmd2.cmd != bank::Cmd::None, "two rights from the letter reach CMD 2; Shift+right there writes its letter");
+        key(juce::KeyPress::leftKey, true);
+        check(last.cmd2.cmd == bank::Cmd::None, "and Shift+left on it goes back to none");
+        key(juce::KeyPress::leftKey);
+        check(last.cmd1.cmd == bank::Cmd::L, "left from CMD 2's letter is CMD 1's values (the cell still L)");
+        // The picture: the cursor on CMD 1's letter.
+        key(juce::KeyPress::leftKey);
+        grid.setVisible(true);
+        const juce::Image img = grid.createComponentSnapshot(grid.getLocalBounds(), false, 1.0f);
+        const juce::File png = outDir.getChildFile("cell_check.png");
+        juce::FileOutputStream pngOut(png);
+        if (pngOut.openedOk()) { pngOut.setPosition(0); pngOut.truncate(); juce::PNGImageFormat().writeImageToStream(img, pngOut); std::printf("wrote %s\n", png.getFullPathName().toRawUTF8()); }
+        std::printf("cell-check: %s\n", bad == 0 ? "PASSED" : "FAILED");
+        return bad == 0 ? 0 : 1;
+    }
+
     // --scope-check: two frames of a steady tone, compared (section 22).
     if (scopeCheck) {
         chipboy::ui::ScopeView::setOffscreenRefresh(true);

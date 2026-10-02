@@ -182,6 +182,7 @@ void SongTabStrip::mouseExit(const juce::MouseEvent&)
 void SongTabStrip::mouseDown(const juce::MouseEvent& e)
 {
     auto& im = *impl_;
+    if (e.mods.isPopupMenu()) return;            // section 228: a tab is the left button's
     const int i = im.indexAt(e.getPosition());
     if (i < 0) return;
     if (i >= int(im.tabs.size())) { if (onNew) onNew(); return; }

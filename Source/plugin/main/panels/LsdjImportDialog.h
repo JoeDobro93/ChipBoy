@@ -43,7 +43,7 @@ private:
     std::vector<std::unique_ptr<Row>> rows_;
     juce::Label title_, versionLabel_, romLine_;
     juce::ComboBox version_;
-    juce::TextButton import_, cancel_, chooseRom_;
+    ui::PushButton import_, cancel_, chooseRom_;
     std::unique_ptr<juce::FileChooser> chooser_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LsdjImportDialog)

@@ -161,15 +161,23 @@ belong to the Voice's own history, and anything the audio thread does. One gestu
 one undo: a knob drag, a stepper held down and the digits of one typed value each
 collapse into a single step.
 
-**Command cells are two parts.** The letter is chosen, the values are typed. A
-**right click** on the cell, or a double click on the **letter** (the first glyph of the
-cell, drawn against its own hairline), opens a palette of the letters this channel can
-carry, each with its name and what its arguments mean, plus *none* and the letter's
-revert form; typing a letter key does the same. The **values** are typed as numbers and
-validated against that letter's ranges: a digit the letter cannot take is refused and the
-cell shows what it had. Changing the letter keeps the values, clamped into the new
-letter's ranges — an empty cell instead takes the letter's own defaults, so one keystroke
-still writes a command that does something.
+**Command cells are two parts, selected apart** (D-UI-46). The letter is chosen, the
+values are typed, and the cursor sits on one or the other: ←/→ move from the letter to
+the values and on to the next column, and the accent border draws around the part
+selected. A **right click** anywhere on the cell, or a double click or Enter on the
+**letter** (the first glyph of the cell, drawn against its own hairline), opens a palette
+of the letters this channel can carry, each with its name and what its arguments mean,
+plus *none* and the letter's revert form; typing a letter key does the same from either
+part. **Shift with the arrows on the letter cycles it** through the channel's letters,
+and the cell takes the values it had under that letter since the cursor arrived, else
+the letter's defaults — so a value is not lost to a cycle, and `L 60` is `L 60` again
+when the cycle comes back; the memory goes when the values are edited or the cursor
+leaves. The **values** are typed as numbers and validated against that letter's ranges:
+a digit the letter cannot take is refused and the cell shows what it had; a double click
+or Enter on them opens the box over the values alone, the letter staying in view.
+Changing the letter from the palette keeps the values, clamped into the new letter's
+ranges — an empty cell instead takes the letter's own defaults, so one keystroke still
+writes a command that does something.
 
 **One convention for every slot field.** Wherever a slot is picked — the lane's **ins**
 and **tbl** cells, the groove chip, the strips' instrument and table steppers, the
@@ -179,7 +187,7 @@ gestures apply ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §30):
 | Gesture | What it does |
 |---|---|
 | **Click** | selects the field and lets you type into it — digits at a grid cell, a stepper or a chip |
-| **Right-click** | lists the slots by **slot · name** — only the ones in use, the ones this channel plays first and the rest marked with their type — and picks one; its first entry, **Open … in its tab**, opens the item the field names |
+| **Right-click** | lists the slots by **slot · name** — only the ones in use, the ones this channel plays first and the rest marked with their type — and picks one; its first entry, **Open … in its tab**, opens the item the field names. A right click lists and does nothing else, anywhere in the window (D-UI-46); held on a note cell it plays the row |
 | **Double-click** | **opens that item's own tab** with it selected: Instrument, Tables, Waves, Kits or Grooves. An empty slot field opens the box instead |
 
 A slot is typed at the selected field already, so the double click is free for the tab
@@ -820,4 +828,5 @@ recorded in `CHANGES.md`.
 | D-UI-43a | (amendment) What else is in a region, and how are velocities shown? | **TSP and Smp columns** -- the chain row's transpose and a kit's second sample, so a region is the whole row but its note (§225 amendments); **up to 127 regions**, one a velocity, so the grid scrolls in its pane; **velocities in decimal** in both display bases, since they are MIDI's numbers. The list opens on the first assigned channel |
 | D-UI-43b | (amendment) The user's five notes on the tab | **Smp 1 and Smp 2 on the WAV target only**, three-letter sample labels (D-UI-34), typed and listed only when the region's INS is a kit and washed out otherwise; with Smp 1 set the region plays those samples whatever key was struck (the one exception to the note coming from MIDI, §225 amendments). **No TSP column** -- transposes are baked into the notes by whoever writes them. **One CMD column**: the second was never needed and is what the recorder writes its `G`s into (§226). **No help pane**: the region grid stretches to the tab's right edge in a viewport, so the info column's "the note is …" text reads in full |
 | D-UI-45 | A channel on its own track, as a synth rather than a remote? | **ChipBoy Solo** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §227, [`plan-solo.md`](plan-solo.md), §8.1): one channel of the engine with its analog stage and the whole bank, the row as the host's parameters with Live follow on, sixty-four **sounds** that recall a row (by a click, by the Sound parameter, or by a **key outside the channel's range**, recalled on the audio thread in front of the note so a simultaneous note sounds with it), a command library, and the Instrument / Tables / Waves / Kits editors shared file for file with the main window through `EditorHost`. 560 × 552, fixed, one page at a time: the scope and the playing row on Main, every editor a page of its own in a compact mode without the slot list; Waves and Kits only on WAV. With the MIDI map routing a track into ChipBoy this replaces the Voice remote, which stays until its link is removed |
+| D-UI-46 | The user's six notes after playing the tracker: a clunky way to add a phrase, every channel's block highlighted, a toolbar that is a small card, the right click doing what the left does, kit samples hard to reach, the command cell's value typed over its letter | **Six rules** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §228): the chain's `+` **appends a blank row** to every channel short of one and typing into it allocates the phrase, a blank unreferenced phrase going back to the pool; **only the cursor's block** carries the border, around the transpose zone when the cursor is there; the FILE row is **a toolbar across the lane column** with its file section marked; **a right click only lists**, never selects, toggles, presses or drags, and held on a note cell it **plays the row**; on a kit row a **double click lists the samples** and Shift+arrows step sample to sample; a command cell's **letter and values are selected apart**, Shift+arrows cycle the letter with a per-visit memory of each letter's values, and the value box covers the values only. Shared with the Tables tab and the MIDI tab's regions |
 | D-UI-44 | Can the tracker record what was played rather than where the grid was? | **Auto groove, a toggle at the right of the SONG bar** ([`COMMANDS_AND_TEMPO.md`](COMMANDS_AND_TEMPO.md) §226, [`plan-groove-inference.md`](plan-groove-inference.md)), on for a new song and saved with it. With it on, a recorded row is fitted at its end against the simplest groove that lands every note exactly on a step of its own -- straight, the swings, triplets, thirty-seconds, two grids joined by a `G`, or the row's own gaps -- and laid again from the take; the status line says what each row became and what it cost (`PU1 row 9: 6 (12 steps) then G 3 (8 steps) · new groove slot`). Off, the recorder is as it was. `Demo/midi-map/groove-cases.mid` runs sixteen bars of cases through it |

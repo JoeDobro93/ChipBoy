@@ -309,6 +309,13 @@ int rowTicks(const Song& s, int ch, int row);
 /// tick to (row, step) through them without walking the phrases (section 25).
 void buildRowTables(Song& s);
 
+/// Section 228: a phrase that is blank -- every cell empty, sixteen steps,
+/// no groove -- and in no channel's chain is released, so a row added from
+/// the chain's "+" and never used costs no slot. A blank phrase a chain row
+/// still names keeps its place; a phrase with content stays however unused.
+/// Run after every song edit (ChipBoyProcessor::mutateSong).
+void releaseBlankPhrases(Song& s);
+
 /// The tick a channel's row starts on. Rows past the chain's end are empty
 /// rows, end to end.
 int64_t rowStartTick(const Song& s, int ch, int row);

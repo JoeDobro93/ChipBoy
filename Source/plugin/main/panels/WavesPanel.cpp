@@ -110,6 +110,7 @@ public:
     }
     void mouseDown(const MouseEvent& e) override
     {
+        if (e.mods.isPopupMenu()) return;        // section 228
         for (int k = 0; k < kCells; ++k) {
             if (!cell(k).contains(e.getPosition())) continue;
             if (onSelect) onSelect(k);
@@ -126,7 +127,7 @@ private:
 /// grid's view. Holds the panel's own widgets, so it owns nothing.
 class WavesPanel::ToolsRow : public Block {
 public:
-    ToolsRow(Segmented& shape, TextButton& interp, TextButton& import, Segmented& view)
+    ToolsRow(Segmented& shape, ui::PushButton& interp, ui::PushButton& import, Segmented& view)
         : drawLabel_("Draw", Fonts::caption(10.0f), colours::textDim), viewLabel_("View", Fonts::caption(10.0f), colours::textDim),
           shape_(shape), interp_(interp), import_(import), view_(view)
     {
@@ -166,8 +167,8 @@ public:
 private:
     TextLine drawLabel_, viewLabel_;
     Segmented& shape_;
-    TextButton& interp_;
-    TextButton& import_;
+    ui::PushButton& interp_;
+    ui::PushButton& import_;
     Segmented& view_;
 };
 
@@ -215,7 +216,7 @@ public:
         g.setColour(colours::scopeBorder);
         g.drawRect(getLocalBounds(), 1);
     }
-    void mouseDown(const MouseEvent& e) override { drag(e); }
+    void mouseDown(const MouseEvent& e) override { if (!e.mods.isPopupMenu()) drag(e); }
     void mouseDrag(const MouseEvent& e) override { drag(e); }
 private:
     void drag(const MouseEvent& e)
@@ -299,7 +300,7 @@ struct WavesPanel::SynthWidgets {
     ShaperRow* stage[bank::kSynthStages] = { nullptr, nullptr, nullptr, nullptr };
     Stepper* from = nullptr;
     Stepper* to = nullptr;
-    juce::TextButton* generate = nullptr;
+    ui::PushButton* generate = nullptr;
     MiniWave* start = nullptr;
     MiniWave* end = nullptr;
     RunStrip* run = nullptr;
@@ -690,7 +691,7 @@ void WavesPanel::buildSynth()
         };
         sw_->to = to.get();
         run->add("To frame", std::move(to), 90, Stepper::kHeight, "The slot frame the run ends at; the wave grows to reach it and the frames after it stay.");
-        auto go = std::make_unique<juce::TextButton>("Generate");
+        auto go = std::make_unique<ui::PushButton>("Generate");
         go->setTooltip("Write the run into the slot's frames From..To. One undo; the parameters stay, so the run can be made again.");
         go->onClick = [this] { runSynth(); };
         sw_->generate = go.get();

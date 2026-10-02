@@ -50,6 +50,7 @@ private:
     struct Bar : TabbedButtonBar {
         Bar() : TabbedButtonBar(TabbedButtonBar::TabsAtTop) {}
         std::function<void(int)> onChange;
+        TabBarButton* createTabButton(const String& name, int) override { return new ui::LeftTabButton(name, *this); }   // section 228
         void currentTabChanged(int i, const String&) override { if (onChange) onChange(i); }
     } bar_;
     RichText context_;

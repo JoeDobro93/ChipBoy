@@ -146,8 +146,8 @@ HeaderBar::HeaderBar(ChipBoyProcessor& p)
     visualizer_.setTooltip(kVisualizerTip);
     // Open or closed shows in the colour, not in the width: a button that
     // grew would shove the bank along beside it.
-    visualizer_.setColour(TextButton::buttonOnColourId, colours::accentSoft);
-    visualizer_.setColour(TextButton::textColourOnId, colours::accentHi);
+    visualizer_.setColour(ui::PushButton::buttonOnColourId, colours::accentSoft);
+    visualizer_.setColour(ui::PushButton::textColourOnId, colours::accentHi);
     visualizer_.onClick = [this] { if (onToggleVisualizer) onToggleVisualizer(); };
     hex_.setTooltip(kHexTip);
     hex_.setClickingTogglesState(true);

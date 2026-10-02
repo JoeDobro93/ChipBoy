@@ -97,6 +97,49 @@ state file is `ChipBoy.settings` under the app-data folder (`%APPDATA%\ChipBoy` 
   `CHANGES.md`: departures newest first, implementation status. `Demo/`: Reaper
   projects, `.cbsong` files, `PARAMETERS.md`.
 
+## Done (2026-10-02) -- the tracker's second clean-up (§228, D-UI-46)
+
+The user's six notes after playing the tracker, each a rule in §228 and a D-UI-46 row:
+
+- **The chain's `+` appends a blank row** to every channel short of one at that channel's
+  next index and puts the play head on it (`ChainColumn::onAddRow`, "Chain: new row");
+  a note typed into it allocates the phrase as `ensurePhrase` always did; a right click on
+  `+` still lists the phrases to append an existing one. `tracker::releaseBlankPhrases`
+  (run by `ChipBoyProcessor::mutateSong` after every edit) returns a blank, unreferenced
+  phrase to the pool; a core test covers it. The old typing-at-`+` state (`endEdit`) is gone.
+- **Only the cursor's block carries the chain's border**, around the transpose zone when
+  the cursor is on TSP; the other channels' blocks at the play head are plain.
+- **The FILE row is a toolbar** across the lane column, the four buttons left in a *File*
+  section a hairline ends (`kFileSection`).
+- **A right click lists and does nothing else**: `PhraseGrid`, `TableGrid`, `RegionGrid`,
+  `ChainColumn`, `WaveGrid`, `Knob`, `Segmented`, `Toggle`, `Stepper`'s box, `SlotList`,
+  `SongTabStrip`, `GrooveEditor`, the Kits and Waves lists, the MIDI tab's boundaries, the
+  channel strips, `IconButton`, every text button (`ui::PushButton` replaces
+  `juce::TextButton` in both windows) and the two tab bars (`ui::LeftTabButton`). Held on
+  a note cell -- or a kit row's sample columns -- it **plays the row**:
+  `PhraseGrid::onPreview` → `ChipBoyProcessor::previewCell` (a spin-locked cell and a
+  count; the audio thread tries the lock at the top of its block) → a `NoteEvent` with the
+  new `preview` flag, which passes the driver's source gate on any channel; the note-off at
+  the release. `LinkLayout::kVersion` is 6 for the field. `chipboy_recordtest
+  --preview-check` (CTest `record_preview`) plays and releases one.
+- **Kit rows list their samples**: a double click, Enter or a right click on the note
+  column (`openKitNoteMenu`, the pick writes the sample's own note) or the second-sample
+  column; Shift+arrows and the drag step sample to sample (`stepKitSample`, the drag's unit
+  one sample).
+- **The command cell's two parts** (`GridCore::curPart`, `placeCursor`, `partRect`,
+  `cmdHasLetter`): the border around the part selected, ←/→ stopping at letter and
+  values, Enter and the double click opening the palette on the letter and the box over
+  `valueRect` on the values, and Shift+arrows on the letter cycling it
+  (`cycleCommandLetter`, the ring "none" then the channel's letters in the palette's order)
+  with `GridCore::CmdMemo` -- the values held under each letter since the cursor arrived,
+  dropped when the cell is edited (the memo's `last` no longer matches) or the cursor
+  leaves. `TableGrid` and `RegionGrid` share all of it. `chipboy_uishot --cell-check`
+  drives a `PhraseGrid` by its keys and checks the cycle, the memory and the parts.
+- **Open / not done**: the arrows that cycle the letter are **Shift**+arrows (the window's
+  value keys, §35), read from the note's "arrow keys to increment the value"; if the user
+  meant the plain arrows, navigation on a letter would have to move elsewhere. Nothing of
+  this is seen on Windows or macOS yet.
+
 ## Done (2026-09-29) -- ChipBoy Solo (§227, D-UI-45, `docs/plan-solo.md`)
 
 - **The brief**: standalone individual channel plugins from the same engine for DAW and

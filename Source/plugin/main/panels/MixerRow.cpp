@@ -326,7 +326,7 @@ void ChannelStrip::hexChanged()
 
 void ChannelStrip::mouseDown(const MouseEvent& e)
 {
-    if (e.y < kPad + kHead + kGap && onSelect) onSelect(ch_);
+    if (!e.mods.isPopupMenu() && e.y < kPad + kHead + kGap && onSelect) onSelect(ch_);
 }
 
 void ChannelStrip::paint(Graphics& g)
